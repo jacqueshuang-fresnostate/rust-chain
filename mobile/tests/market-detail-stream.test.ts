@@ -4,22 +4,33 @@ import test from 'node:test'
 import {
   createMarketDetailStreamSession,
   startMarketDetailStream,
+  type MarketDetailSocket,
   type MarketDetailStreamOptions,
 } from '../src/api/marketDetailStream.ts'
+import { normalizeDecimalText } from '../src/core/decimal.ts'
 import type { KlinePoint } from '../src/core/types.ts'
 
 type SocketEventType = 'open' | 'message' | 'close' | 'error'
+type FakeSocketEventMap = {
+  open: unknown
+  message: { data: unknown }
+  close: unknown
+  error: unknown
+}
 
-class FakeSocket {
+class FakeSocket implements MarketDetailSocket {
   readyState = 0
   sent: string[] = []
   closed = false
   closeCount = 0
-  private readonly listeners = new Map<SocketEventType, Array<(event: { data?: unknown }) => void>>()
+  private readonly listeners = new Map<SocketEventType, Array<(event: unknown) => void>>()
 
-  addEventListener(type: SocketEventType, listener: (event: { data?: unknown }) => void): void {
+  addEventListener<Type extends SocketEventType>(
+    type: Type,
+    listener: (event: FakeSocketEventMap[Type]) => void,
+  ): void {
     const listeners = this.listeners.get(type) ?? []
-    listeners.push(listener)
+    listeners.push(listener as (event: unknown) => void)
     this.listeners.set(type, listeners)
   }
 
@@ -36,7 +47,8 @@ class FakeSocket {
   emit(type: SocketEventType, data?: unknown): void {
     if (type === 'open') this.readyState = 1
     if (type === 'close') this.readyState = 3
-    for (const listener of this.listeners.get(type) ?? []) listener({ data })
+    const event = type === 'message' ? { data } : undefined
+    for (const listener of this.listeners.get(type) ?? []) listener(event)
   }
 }
 
@@ -148,16 +160,16 @@ test('detail stream subscribes depth, trade, and kline, filters symbols, reconne
 
   sockets[0]?.emit('message', JSON.stringify({
     symbol: 'ETHUSDT',
-    bids: [{ price: 2, quantity: 1 }],
-    asks: [{ price: 3, quantity: 1 }],
+    bids: [{ price: '2', quantity: '1' }],
+    asks: [{ price: '3', quantity: '1' }],
     observed_at: 1_720_000_000_000,
   }))
   assert.equal(depths.length, 0)
 
   sockets[0]?.emit('message', JSON.stringify({
     symbol: 'BTCUSDT',
-    bids: [{ price: 101, quantity: 1 }, { price: 102, quantity: 2 }],
-    asks: [{ price: 104, quantity: 1 }, { price: 103, quantity: 2 }],
+    bids: [{ price: '101', quantity: '1' }, { price: '102', quantity: '2' }],
+    asks: [{ price: '104', quantity: '1' }, { price: '103', quantity: '2' }],
     observed_at: 1_720_000_000_000,
   }))
   sockets[0]?.emit('message', JSON.stringify({
@@ -172,8 +184,14 @@ test('detail stream subscribes depth, trade, and kline, filters symbols, reconne
   assert.equal(scheduler.frames.size, 1)
   scheduler.runFrames()
   assert.deepEqual(depths, [{
-    bids: [{ price: 102, quantity: 2 }, { price: 101, quantity: 1 }],
-    asks: [{ price: 103, quantity: 2 }, { price: 104, quantity: 1 }],
+    bids: [
+      { price: 102, quantity: 2, priceText: '102', quantityText: '2' },
+      { price: 101, quantity: 1, priceText: '101', quantityText: '1' },
+    ],
+    asks: [
+      { price: 103, quantity: 2, priceText: '103', quantityText: '2' },
+      { price: 104, quantity: 1, priceText: '104', quantityText: '1' },
+    ],
   }])
   assert.deepEqual(trades, [{
     id: 'trade-live',
@@ -406,7 +424,7 @@ test('detail stream coalesces high-frequency depth snapshots and cancels pending
   for (const price of [100, 101, 102]) {
     sockets[0]?.emit('message', JSON.stringify({
       symbol: 'BTCUSDT',
-      bids: [{ price, quantity: 1 }],
+      bids: [{ price: String(price), quantity: '1' }],
       asks: [],
       observed_at: 1_720_000_000_000 + price,
     }))
@@ -419,7 +437,7 @@ test('detail stream coalesces high-frequency depth snapshots and cancels pending
 
   sockets[0]?.emit('message', JSON.stringify({
     symbol: 'BTCUSDT',
-    bids: [{ price: 103, quantity: 1 }],
+    bids: [{ price: '103', quantity: '1' }],
     asks: [],
     observed_at: 1_720_000_000_103,
   }))
@@ -436,7 +454,7 @@ test('detail stream coalesces high-frequency depth snapshots and cancels pending
   sockets[1]?.emit('open')
   sockets[1]?.emit('message', JSON.stringify({
     symbol: 'BTCUSDT',
-    bids: [{ price: 104, quantity: 1 }],
+    bids: [{ price: '104', quantity: '1' }],
     asks: [],
     observed_at: 1_720_000_000_104,
   }))
@@ -605,7 +623,15 @@ test('detail session executes live/REST races and isolates interval, request, an
     [{ symbol: 'BTCUSDT', interval: '15m' }],
   )
 
-  starts[0]?.onDepth({ bids: [{ price: 101, quantity: 1 }], asks: [] })
+  starts[0]?.onDepth({
+    bids: [{
+      price: 101,
+      quantity: 1,
+      priceText: normalizeDecimalText('101'),
+      quantityText: normalizeDecimalText('1'),
+    }],
+    asks: [],
+  })
   starts[0]?.onTrade({
     id: 'trade-15m',
     side: 'buy',
@@ -652,7 +678,15 @@ test('detail session executes live/REST races and isolates interval, request, an
     ],
   )
 
-  starts[0]?.onDepth({ bids: [{ price: 999, quantity: 1 }], asks: [] })
+  starts[0]?.onDepth({
+    bids: [{
+      price: 999,
+      quantity: 1,
+      priceText: normalizeDecimalText('999'),
+      quantityText: normalizeDecimalText('1'),
+    }],
+    asks: [],
+  })
   starts[0]?.onTrade({
     id: 'stale-trade',
     side: 'sell',
@@ -668,7 +702,15 @@ test('detail session executes live/REST races and isolates interval, request, an
     assert.equal(session.resolveKlineRequest(staleRestRequest, [point(1_720_000_000_000, 999)]), null)
   }
 
-  starts[1]?.onDepth({ bids: [{ price: 102, quantity: 1 }], asks: [] })
+  starts[1]?.onDepth({
+    bids: [{
+      price: 102,
+      quantity: 1,
+      priceText: normalizeDecimalText('102'),
+      quantityText: normalizeDecimalText('1'),
+    }],
+    asks: [],
+  })
   starts[1]?.onTrade({
     id: 'trade-5m',
     side: 'buy',
@@ -702,7 +744,15 @@ test('detail session executes live/REST races and isolates interval, request, an
   const symbolSwitchRequest = session.beginKlineRequest(thirdContext)
   assert.ok(symbolSwitchRequest)
   const fourthContext = session.replace('ETH_USDT', '1m', 2)
-  starts[2]?.onDepth({ bids: [{ price: 997, quantity: 1 }], asks: [] })
+  starts[2]?.onDepth({
+    bids: [{
+      price: 997,
+      quantity: 1,
+      priceText: normalizeDecimalText('997'),
+      quantityText: normalizeDecimalText('1'),
+    }],
+    asks: [],
+  })
   starts[2]?.onTrade({
     id: 'stale-symbol-trade',
     side: 'sell',

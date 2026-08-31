@@ -23,14 +23,23 @@ import {
 import { fetchMarketTickers } from '@/api/market'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import {
+  decimalCompare,
+  decimalDivide,
+  decimalMultiply,
+  decimalPortion,
+  decimalTextFromBoundary,
+  formatDecimalText,
+  positiveDecimalInput,
+  type DecimalText,
+} from '@/core/decimal'
 import { useModalDialog } from '@/core/modalDialog'
-import { newCoinPurchaseQuantity } from '@/core/newCoinPurchase'
 import type { MarketTicker, WalletAccount } from '@/core/types'
 import { useSessionStore } from '@/stores/session'
 
 const props = defineProps<{ symbol: string }>()
 const router = useRouter()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const session = useSessionStore()
 const project = ref<NewCoinProject | null>(null)
 const accounts = ref<WalletAccount[]>([])
@@ -54,16 +63,35 @@ const quoteSymbol = computed(() => canPurchase.value ? selectedTicker.value?.quo
 const selectedAccount = computed(() => canPurchase.value
   ? accounts.value.find((account) => account.symbol === selectedTicker.value?.quote)
   : accounts.value.find((account) => account.assetId === quoteAssetId.value))
-const amountNumber = computed(() => Number(amount.value || 0))
+const amountText = computed(() => positiveDecimalInput(amount.value))
+const availableText = computed(() => decimalTextFromBoundary(
+  selectedAccount.value?.availableText ?? selectedAccount.value?.available,
+  { allowNegative: false },
+))
 const executionPrice = computed(() => selectedTicker.value?.lastPrice || project.value?.issuePrice || 0)
-const paymentAmount = computed(() => canPurchase.value ? amountNumber.value * executionPrice.value : amountNumber.value)
-const estimatedQuantity = computed(() => canSubscribe.value && project.value?.issuePrice ? amountNumber.value / project.value.issuePrice : amountNumber.value)
+const executionPriceText = computed(() => selectedTicker.value?.lastPriceText
+  || project.value?.issuePriceText
+  || decimalTextFromBoundary(executionPrice.value, { allowNegative: false, allowZero: false }))
+const paymentAmount = computed<DecimalText | null>(() => amountText.value
+  && (canPurchase.value && executionPriceText.value
+    ? decimalMultiply(amountText.value, executionPriceText.value)
+    : amountText.value))
+const estimatedQuantity = computed<DecimalText | null>(() => amountText.value
+  && (canSubscribe.value && project.value?.issuePriceText
+    ? decimalDivide(amountText.value, project.value.issuePriceText, 18)
+    : amountText.value))
 const canSubmit = computed(() => {
-  if (!project.value || !selectedAccount.value || !Number.isFinite(amountNumber.value) || amountNumber.value <= 0) return false
-  if (paymentAmount.value > selectedAccount.value.available) return false
-  if (canSubscribe.value) return estimatedQuantity.value > 0
-  return canPurchase.value && executionPrice.value > 0
+  if (!project.value || !availableText.value || !amountText.value || !paymentAmount.value) return false
+  if (decimalCompare(paymentAmount.value, availableText.value) > 0) return false
+  if (canSubscribe.value) return Boolean(estimatedQuantity.value && estimatedQuantity.value !== '0')
+  return canPurchase.value && Boolean(executionPriceText.value)
 })
+
+function formatMoney(value: DecimalText | null): string {
+  return value
+    ? formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+    : '--'
+}
 
 const lifecycleLabel = computed(() => {
   const keys: Record<string, string> = {
@@ -125,11 +153,15 @@ function selectDefaultAccount(): void {
 }
 
 function setAmount(value: number): void {
-  const available = selectedAccount.value?.available || 0
-  const next = canPurchase.value
-    ? newCoinPurchaseQuantity(available, value, executionPrice.value)
-    : Math.max(0, Math.min(available * value, available))
-  amount.value = next ? String(Number(next.toFixed(8))) : ''
+  if (!availableText.value) {
+    amount.value = ''
+    return
+  }
+  const budget = decimalPortion(availableText.value, Math.round(value * 100), 100, 18)
+  const next = canPurchase.value && executionPriceText.value
+    ? decimalDivide(budget, executionPriceText.value, 18)
+    : budget
+  amount.value = next === '0' ? '' : next
 }
 
 function openLogin(): void {
@@ -174,20 +206,22 @@ async function submit(): Promise<void> {
   submitting.value = true
   error.value = ''
   try {
+    const requestAmount = amountText.value
+    if (!requestAmount) throw new TypeError('invalid new-coin amount')
     if (canSubscribe.value) {
       await subscribeNewCoin({
         symbol: project.value.symbol,
         quoteAssetId: quoteAssetId.value,
-        quoteAmount: amountNumber.value,
-        issuePrice: project.value.issuePrice,
+        quoteAmount: requestAmount,
+        issuePrice: project.value.issuePriceText,
       })
       success.value = t('newCoin.subscriptionSubmitted')
     } else if (canPurchase.value && project.value.postListingPairId) {
       await createNewCoinPurchase({
         symbol: project.value.symbol,
         pairId: project.value.postListingPairId,
-        price: executionPrice.value,
-        quantity: amountNumber.value,
+        price: executionPriceText.value || project.value.issuePriceText,
+        quantity: requestAmount,
       })
       success.value = t('newCoin.purchaseSubmitted')
     }
@@ -269,7 +303,7 @@ onMounted(() => { void load() })
             </span>
           </div>
           <dl id="new-coin-entry-summary" class="sr-only">
-            <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric">{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</dd></div>
+            <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric">{{ formatMoney(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</dd></div>
             <div v-if="selectedAccount"><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="pencil-numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
           </dl>
         </section>
@@ -311,8 +345,8 @@ onMounted(() => { void load() })
         </header>
         <dl class="entry-review__summary">
           <div><dt>{{ t('newCoin.paymentAsset') }}</dt><dd>{{ selectedAccount.symbol }}</dd></div>
-          <div><dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt><dd class="pencil-numeric">{{ formatAmount(amountNumber) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd></div>
-          <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric up">{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd></div>
+          <div><dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt><dd class="pencil-numeric">{{ formatMoney(amountText) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd></div>
+          <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric up">{{ formatMoney(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd></div>
           <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="pencil-numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
         </dl>
         <p v-if="error" class="entry-review__error" role="alert">{{ error }}</p>

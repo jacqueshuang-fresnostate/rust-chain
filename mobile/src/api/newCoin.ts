@@ -5,6 +5,13 @@ import {
   type ReferenceRequestOptions,
 } from './requestCache'
 import { asNumber } from '@/core/format'
+import {
+  decimalCompare,
+  decimalDivide,
+  normalizeDecimalText,
+  requiredDecimalText,
+  type DecimalText,
+} from '@/core/decimal'
 
 export interface NewCoinProject {
   id: number
@@ -13,6 +20,7 @@ export interface NewCoinProject {
   lifecycleStatus: string
   totalSupply: number
   issuePrice: number
+  issuePriceText: DecimalText
   listedAt?: number
   unlockType: string
   fixedUnlockAt?: number
@@ -74,6 +82,7 @@ export interface NewCoinUnlock {
   unlockFeeBasis?: string
   unlockFeeAssetId?: number
   unlockFeeAmount?: number
+  unlockFeeAmountText?: DecimalText
   feePaidStatus: string
   status: string
   idempotencyKey: string
@@ -93,11 +102,21 @@ export async function fetchNewCoinProject(symbol: string): Promise<NewCoinProjec
   return mapProject(response.data)
 }
 
-export async function subscribeNewCoin(input: { symbol: string; quoteAssetId: number; quoteAmount: number; issuePrice: number }): Promise<void> {
+export async function subscribeNewCoin(input: {
+  symbol: string
+  quoteAssetId: number
+  quoteAmount: DecimalText
+  issuePrice: DecimalText
+}): Promise<void> {
+  const quoteAmount = normalizeDecimalText(input.quoteAmount)
+  const issuePrice = normalizeDecimalText(input.issuePrice)
+  if (decimalCompare(issuePrice, normalizeDecimalText('0')) <= 0) {
+    throw new RangeError('new-coin issue price must be positive')
+  }
   await client.post(requestUrl(`/new-coins/${encodeURIComponent(input.symbol)}/subscriptions`), {
     quote_asset_id: input.quoteAssetId,
-    quote_amount: String(input.quoteAmount),
-    quantity: String(input.issuePrice > 0 ? input.quoteAmount / input.issuePrice : 0),
+    quote_amount: quoteAmount,
+    quantity: decimalDivide(quoteAmount, issuePrice, 18),
     idempotency_key: createIdempotencyKey('mobile-new-coin'),
   })
 }
@@ -161,6 +180,7 @@ export async function fetchNewCoinUnlocks(limit = 50): Promise<NewCoinUnlock[]> 
     unlockFeeBasis: optionalText(unlock.unlock_fee_basis),
     unlockFeeAssetId: optionalNumber(unlock.unlock_fee_asset),
     unlockFeeAmount: optionalNumber(unlock.unlock_fee_amount),
+    unlockFeeAmountText: optionalDecimalText(unlock.unlock_fee_amount),
     feePaidStatus: String(unlock.fee_paid_status || ''),
     status: String(unlock.status || ''),
     idempotencyKey: String(unlock.idempotency_key || ''),
@@ -168,19 +188,28 @@ export async function fetchNewCoinUnlocks(limit = 50): Promise<NewCoinUnlock[]> 
   }))
 }
 
-export async function createNewCoinPurchase(input: { symbol: string; pairId: number; price: number; quantity: number }): Promise<void> {
+export async function createNewCoinPurchase(input: {
+  symbol: string
+  pairId: number
+  price: DecimalText
+  quantity: DecimalText
+}): Promise<void> {
   await client.post(requestUrl(`/new-coins/${encodeURIComponent(input.symbol)}/purchase`), {
     pair_id: input.pairId,
-    price: String(input.price),
-    quantity: String(input.quantity),
+    price: normalizeDecimalText(input.price),
+    quantity: normalizeDecimalText(input.quantity),
     idempotency_key: createIdempotencyKey('mobile-new-coin-purchase'),
   })
 }
 
-export async function payNewCoinUnlockFee(input: { idempotencyKey: string; paymentAssetId: number; amount: number }): Promise<void> {
+export async function payNewCoinUnlockFee(input: {
+  idempotencyKey: string
+  paymentAssetId: number
+  amount: DecimalText
+}): Promise<void> {
   await client.post(requestUrl(`/new-coins/unlocks/${encodeURIComponent(input.idempotencyKey)}/pay-fee`), {
     payment_asset_id: input.paymentAssetId,
-    amount: String(input.amount),
+    amount: normalizeDecimalText(input.amount),
   })
 }
 
@@ -196,6 +225,11 @@ function mapProject(project: Record<string, unknown>): NewCoinProject {
     lifecycleStatus: String(project.lifecycle_status || ''),
     totalSupply: asNumber(project.total_supply),
     issuePrice: asNumber(project.issue_price),
+    issuePriceText: requiredDecimalText(project.issue_price, 'issue_price', 'new-coin project', {
+      allowNegative: false,
+      maxIntegerDigits: 20,
+      maxScale: 18,
+    }),
     listedAt: optionalTimestamp(project.listed_at),
     unlockType: String(project.unlock_type || ''),
     fixedUnlockAt: optionalTimestamp(project.fixed_unlock_at),
@@ -218,6 +252,15 @@ function optionalTimestamp(value: unknown): number | undefined {
 function optionalNumber(value: unknown): number | undefined {
   const number = asNumber(value)
   return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
+function optionalDecimalText(value: unknown): DecimalText | undefined {
+  if (value === null || value === undefined || value === '') return undefined
+  return requiredDecimalText(value, 'decimal', 'new-coin record', {
+    allowNegative: false,
+    maxIntegerDigits: 20,
+    maxScale: 18,
+  })
 }
 
 function optionalText(value: unknown): string | undefined {

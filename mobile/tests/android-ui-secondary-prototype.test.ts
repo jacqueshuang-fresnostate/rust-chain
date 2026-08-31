@@ -49,18 +49,18 @@ test('提币、闪兑与新币资金动作进入可访问底部复核层', () =>
 
 test('复核层没有改变真实校验、请求与载荷合同', () => {
   assert.match(sources.withdraw, /@submit\.prevent="requestSubmit"/)
-  assert.match(sources.withdraw, /amount\.value = String\(maximumQuotedWithdrawalAmount\(/)
+  assert.match(sources.withdraw, /const maximum = maximumQuotedWithdrawalAmountText\([\s\S]*amount\.value = maximum === '0' \? '' : maximum/)
   assert.match(sources.withdraw, /const authorized = await fetchWithdrawalQuote\(\{[\s\S]*assetSymbol: requestedAsset,[\s\S]*network: requestedNetwork,[\s\S]*amount: requestedAmount,/)
   assert.match(sources.withdraw, /await submitWithdrawal\(\{[\s\S]*quote: quote\.value,[\s\S]*address: address\.value,[\s\S]*fundPassword: fundPassword\.value \|\| undefined,[\s\S]*totpCode: totpCode\.value \|\| undefined,/)
 
-  assert.match(sources.swap, /quote\.value = await requestConvertQuote\(selectedPair\.value, amountNumber\.value\)/)
+  assert.match(sources.swap, /const requestAmount = amountText\.value[\s\S]*quote\.value = await requestConvertQuote\(selectedPair\.value, requestAmount\)/)
   assert.match(sources.swap, /quote\.value\.expiresAt <= Date\.now\(\)/)
   assert.match(sources.swap, /await confirmConvertQuote\(quote\.value\.quoteId\)/)
   assert.match(sources.swap, /@click="openReview"/)
 
-  assert.match(sources.newCoinDetail, /paymentAmount\.value > selectedAccount\.value\.available/)
-  assert.match(sources.newCoinDetail, /await subscribeNewCoin\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*quoteAssetId: quoteAssetId\.value,[\s\S]*quoteAmount: amountNumber\.value,[\s\S]*issuePrice: project\.value\.issuePrice,/)
-  assert.match(sources.newCoinDetail, /await createNewCoinPurchase\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*pairId: project\.value\.postListingPairId,[\s\S]*price: executionPrice\.value,[\s\S]*quantity: amountNumber\.value,/)
+  assert.match(sources.newCoinDetail, /decimalCompare\(paymentAmount\.value, availableText\.value\) > 0/)
+  assert.match(sources.newCoinDetail, /const requestAmount = amountText\.value[\s\S]*await subscribeNewCoin\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*quoteAssetId: quoteAssetId\.value,[\s\S]*quoteAmount: requestAmount,[\s\S]*issuePrice: project\.value\.issuePriceText,/)
+  assert.match(sources.newCoinDetail, /await createNewCoinPurchase\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*pairId: project\.value\.postListingPairId,[\s\S]*price: executionPriceText\.value \|\| project\.value\.issuePriceText,[\s\S]*quantity: requestAmount,/)
   assert.match(sources.newCoinDetail, /@click="requestSubmit"/)
 })
 

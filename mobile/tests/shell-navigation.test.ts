@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { ROUTE_ACCESSIBILITY_TITLE_KEYS } from '../src/core/navigation/accessibility.ts'
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
 const appSource = read('../src/App.vue')
@@ -61,4 +62,23 @@ test('导航触控和头部层级由受检原型 CSS 统一提供', () => {
   assert.match(prototypeStyles, /\.topbar,[\s\S]*?\.secondary-header\s*\{[\s\S]*?z-index:\s*70/)
   assert.match(pageHeaderSource, /pencil \? 'pencil-page-header' : 'secondary-header'/)
   assert.match(prototypeStyles, /Signal Theatre final secondary-surface contract[\s\S]*?\.secondary-header\s*\{[\s\S]*?min-height:\s*76px/)
+  assert.match(baseStyles, /@media \(min-width: 320px\) and \(max-width: 448px\) and \(pointer: coarse\)/)
+  assert.match(baseStyles, /\.contract-pair-filters button,[\s\S]*?\.loan-presets button,[\s\S]*?\.spot-side-switch button,[\s\S]*?\.contract-open-close button/)
+  assert.match(baseStyles, /height:\s*max\(100%, 44px\) !important;[\s\S]*?width:\s*max\(100%, 44px\) !important;/)
+})
+
+test('根壳不占用 main landmark，并只保留一个可聚焦跳转入口和路由播报区', () => {
+  assert.match(appSource, /<div\s+[\s\S]*?class="app-stage"/)
+  assert.doesNotMatch(appSource, /<main\s+[\s\S]*?class="app-stage"/)
+  assert.equal((appSource.match(/class="route-skip-link"/g) || []).length, 1)
+  assert.equal((appSource.match(/class="route-announcer sr-only"/g) || []).length, 1)
+  assert.match(appSource, /@click\.prevent="routeAccessibility\.focusMainContent"/)
+  assert.match(appSource, /aria-live="polite"[\s\S]*?aria-atomic="true"/)
+  assert.match(appSource, /@after-enter="routeAccessibility\.handleRouteEntered"/)
+  assert.match(baseStyles, /\.route-skip-link:focus,[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translate\(-50%, 0\)/)
+
+  const routerRouteNames = [...routerSource.matchAll(
+    /\{\s*path:\s*'[^']+'(?:,\s*alias:\s*'[^']+')?,\s*name:\s*'([^']+)'/g,
+  )].map((match) => match[1])
+  assert.deepEqual(routerRouteNames, Object.keys(ROUTE_ACCESSIBILITY_TITLE_KEYS))
 })

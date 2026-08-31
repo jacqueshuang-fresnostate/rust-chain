@@ -91,6 +91,7 @@ test('market WebSocket parser preserves confirmations, complete ticker snapshots
       type: 'ticker',
       symbol: 'BTC-USDT',
       lastPrice: 61234.5,
+      lastPriceText: '61234.5',
       highPrice: 62000.25,
       lowPrice: 60100.75,
       volume: 1234.567,
@@ -100,7 +101,7 @@ test('market WebSocket parser preserves confirmations, complete ticker snapshots
   )
   assert.deepEqual(
     parseMarketSocketFrame('{"symbol":"BTC-USDT","last_price":"61234.5"}'),
-    { type: 'ticker', symbol: 'BTC-USDT', lastPrice: 61234.5 },
+    { type: 'ticker', symbol: 'BTC-USDT', lastPrice: 61234.5, lastPriceText: '61234.5' },
   )
   assert.deepEqual(parseMarketSocketFrame('pong'), { type: 'pong' })
   assert.equal(parseMarketSocketFrame('{"type":"error","code":"invalid_request"}'), null)
@@ -120,8 +121,8 @@ test('depth frames map the verified full snapshot shape, sort both sides, and ca
     quantity: String(index + 1),
   }))
   const asks = Array.from({ length: 14 }, (_, index) => ({
-    price: 220 - index,
-    quantity: index + 1,
+    price: String(220 - index),
+    quantity: String(index + 1),
   }))
   const frame = parseMarketSocketFrame(JSON.stringify({
     symbol: 'BTCUSDT',
@@ -138,6 +139,12 @@ test('depth frames map the verified full snapshot shape, sort both sides, and ca
   ])
   assert.deepEqual(frame.asks.map((row) => row.price), [
     207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218,
+  ])
+  assert.deepEqual(frame.bids.map((row) => row.priceText), [
+    '113', '112', '111', '110', '109', '108', '107', '106', '105', '104', '103', '102',
+  ])
+  assert.deepEqual(frame.asks.map((row) => row.quantityText), [
+    '14', '13', '12', '11', '10', '9', '8', '7', '6', '5', '4', '3',
   ])
   assert.equal(frame.observedAt, 1_720_000_000_000)
 })
@@ -275,31 +282,51 @@ test('shared kline adapters sort, deduplicate, upsert live candles, and retain t
   assert.equal(capped.at(-1)?.time, 1_720_000_000_000 + DEFAULT_MARKET_KLINE_LIMIT * 60_000)
 })
 
-test('shared REST adapters filter invalid rows before sorting, dedupe trades, and enforce limits', () => {
+test('shared REST depth adapter preserves exact text, sorts display numbers, and rejects number authority', () => {
   const snapshot = mapMarketDepthSnapshot({
     bids: [
       { price: '99', amount: '1.5' },
       { price: '101', quantity: '0.5' },
-      { price: 100, quantity: 2 },
-      { price: 0, quantity: 8 },
+      { price: '100', quantity: '2' },
     ],
     asks: [
       { price: '104', amount: '1' },
       { price: '102', quantity: '2' },
-      { price: 103, quantity: 3 },
-      { price: 105, quantity: 0 },
+      { price: '103', quantity: '3' },
     ],
   }, 2)
   assert.deepEqual(snapshot, {
     bids: [
-      { price: 101, quantity: 0.5 },
-      { price: 100, quantity: 2 },
+      { price: 101, quantity: 0.5, priceText: '101', quantityText: '0.5' },
+      { price: 100, quantity: 2, priceText: '100', quantityText: '2' },
     ],
     asks: [
-      { price: 102, quantity: 2 },
-      { price: 103, quantity: 3 },
+      { price: 102, quantity: 2, priceText: '102', quantityText: '2' },
+      { price: 103, quantity: 3, priceText: '103', quantityText: '3' },
     ],
   })
+
+  const exact = mapMarketDepthSnapshot({
+    bids: [{
+      price: '9007199254740993.000000000000000001',
+      quantity: '0.000000000000000001',
+    }],
+    asks: [{
+      price: '9007199254740993.000000000000000002',
+      quantity: '0.000000000000000001',
+    }],
+  })
+  assert.equal(exact.bids[0]?.priceText, '9007199254740993.000000000000000001')
+  assert.equal(exact.bids[0]?.quantityText, '0.000000000000000001')
+  assert.equal(exact.asks[0]?.priceText, '9007199254740993.000000000000000002')
+  assert.throws(() => mapMarketDepthSnapshot({
+    bids: [{ price: 9007199254740994, quantity: 1e-18 }],
+    asks: [],
+  }), /invalid market depth/)
+  assert.throws(() => mapMarketDepthSnapshot({
+    bids: [{ price: '1e-18', quantity: '1' }],
+    asks: [],
+  }), /invalid market depth/)
 
   const trades = mapMarketTrades([
     { id: 'older', direction: 'buy', price: '100', amount: '2', time: 1_720_000_000 },
@@ -395,6 +422,12 @@ test('REST history reconciliation keeps already-rendered live trades first and d
 })
 
 test('malformed depth, trade, and kline frames are ignored instead of replacing valid fallback state', () => {
+  assert.equal(parseMarketSocketFrame(JSON.stringify({
+    symbol: 'BTCUSDT',
+    bids: [{ price: 100, quantity: 1 }],
+    asks: [],
+    observed_at: 1_720_000_000_000,
+  })), null)
   assert.equal(parseMarketSocketFrame(JSON.stringify({
     symbol: 'BTCUSDT',
     bids: [{ price: 'bad', quantity: 1 }],

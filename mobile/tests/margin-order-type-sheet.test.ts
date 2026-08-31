@@ -54,7 +54,7 @@ test('确认快照冻结订单类型、限价、参考价和幂等键，市价�
     side: 'buy',
     marginMode: 'cross',
     leverage: 5,
-    marginAmount: 20,
+    marginAmount: '20',
     orderType: 'market',
     limitPrice: '88.88',
     pricePrecision: 2,
@@ -69,7 +69,7 @@ test('确认快照冻结订单类型、限价、参考价和幂等键，市价�
     side: 'long',
     marginMode: 'cross',
     leverage: 5,
-    marginAmount: 20,
+    marginAmount: '20',
     orderType: 'market',
     idempotencyKey: 'market-frozen-key',
   })
@@ -79,7 +79,7 @@ test('确认快照冻结订单类型、限价、参考价和幂等键，市价�
     side: 'sell',
     marginMode: 'isolated',
     leverage: 3,
-    marginAmount: 25,
+    marginAmount: '25',
     orderType: 'limit',
     limitPrice: '105.50',
     pricePrecision: 2,
@@ -91,10 +91,10 @@ test('确认快照冻结订单类型、限价、参考价和幂等键，市价�
   assert.equal(limit.isValid, true)
   assert.equal(limit.referencePrice, 101)
   assert.equal(limit.request.orderType, 'limit')
-  assert.equal(limit.request.price, '105.50')
+  assert.equal(limit.request.price, '105.5')
   assert.equal(limit.request.idempotencyKey, 'limit-frozen-key')
-  assert.match(tradeSource, /reviewedMarginOrder\.value = mode\.value === 'contract'[\s\S]*?createCurrentMarginOrderReview\(createMarginOrderIdempotencyKey\(\)\)/)
-  assert.match(tradeSource, /await placeMarginOrder\(review\.request\)/)
+  assert.match(tradeSource, /const marginSnapshot = mode\.value === 'contract'[\s\S]*?createCurrentMarginOrderReview\(createMarginOrderIdempotencyKey\(\)\)[\s\S]*?marginReview\.value = marginSnapshot/)
+  assert.match(tradeSource, /await placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
 })
 
 test('BBO 做多回填卖一、做空回填买一，持仓与挂单按可空入场价分流', () => {
@@ -152,8 +152,10 @@ test('杠杆 API 按冻结类型组装请求，市价不带 price，限价才带
   assert.match(apiSource, /order_type: input\.orderType/)
   assert.match(apiSource, /if \(input\.orderType === 'limit'\) \{[\s\S]*?payload\.price = price/)
   assert.doesNotMatch(apiSource, /order_type: 'market'/)
-  assert.match(apiSource, /entryPrice: parseMarginRiskNumber\(position\.entry_price\)/)
-  assert.match(apiSource, /limitPrice: optionalDecimalString\(position\.limit_price\)/)
+  assert.match(apiSource, /const entryPriceText = nullableTradingDecimal\(position\.entry_price/)
+  assert.match(apiSource, /const limitPriceText = nullableTradingDecimal\(position\.limit_price/)
+  assert.match(apiSource, /entryPrice: nullableDecimalDisplayNumber\(entryPriceText\)/)
+  assert.match(apiSource, /limitPrice: limitPriceText/)
   assert.match(tradeSource, /:readonly="contractOrderType !== 'limit'"/)
   assert.match(tradeSource, /:aria-errormessage="contractOrderType === 'limit'[\s\S]*?contract-limit-price-error/)
   assert.match(tradeSource, /@click="fillContractLimitPrice"/)

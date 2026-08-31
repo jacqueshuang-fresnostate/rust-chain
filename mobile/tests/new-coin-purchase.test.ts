@@ -14,6 +14,6 @@ test('new-coin purchase locks payment to the authoritative pair quote asset', as
   const source = await readFile(new URL('../src/views/NewCoinDetailView.vue', import.meta.url), 'utf8')
   assert.match(source, /canPurchase\.value[\s\S]*accounts\.value\.find\(\(account\) => account\.symbol === selectedTicker\.value\?\.quote\)/)
   assert.match(source, /<select v-if="canSubscribe" v-model="quoteAssetId">/)
-  assert.match(source, /newCoinPurchaseQuantity\(available, value, executionPrice\.value\)/)
+  assert.match(source, /const budget = decimalPortion\(availableText\.value,[\s\S]*decimalDivide\(budget, executionPriceText\.value, 18\)/)
   assert.match(source, /pairId: project\.value\.postListingPairId/)
 })

@@ -28,6 +28,8 @@ test('max_margin DTO 边界保留正值，缺失或非法非正值映射为 null
   }), {
     minMargin: 10,
     maxMargin: 125.5,
+    minMarginText: '10',
+    maxMarginText: '125.5',
   })
 
   for (const max_margin of [undefined, null, '', '   ', 0, '0', -1, '-2', 'invalid', '1e2', '0x10', '+5', Number.POSITIVE_INFINITY, true]) {
@@ -35,20 +37,20 @@ test('max_margin DTO 边界保留正值，缺失或非法非正值映射为 null
   }
 
   assert.match(tradingApiSource, /max_margin\?: string \| number \| null/)
-  assert.match(tradingApiSource, /const marginLimits = mapMarginProductMarginLimits\(product\)/)
-  assert.match(tradingApiSource, /minMargin: marginLimits\.minMargin,[\s\S]*?maxMargin: marginLimits\.maxMargin/)
+  assert.match(tradingApiSource, /const minMarginText = tradingDecimal\(product\.min_margin,[\s\S]*?allowZero: false/)
+  assert.match(tradingApiSource, /const maxMarginText = nullableTradingDecimal\(product\.max_margin,[\s\S]*?allowZero: false/)
+  assert.match(tradingApiSource, /minMargin: decimalDisplayNumber\(minMarginText,[\s\S]*?maxMargin: nullableDecimalDisplayNumber\(maxMarginText\)/)
   assert.match(typesSource, /interface MarginProduct \{[\s\S]*?minMargin: number[\s\S]*?maxMargin: number \| null/)
 })
 
 test('合约百分比以钱包可用额与产品上限的较小值为唯一基数', () => {
-  assert.equal(marginShortcutAvailable(1_000, 120), 120)
-  assert.equal(marginShortcutAvailable(80, 120), 80)
-  assert.equal(marginShortcutAvailable(1_000, null), 1_000)
-  assert.equal(marginShortcutAvailable(1_000, 0), 1_000)
-  const preciseMaximum = 100.000000009
-  assert.ok(Number(preciseMaximum.toFixed(8)) > preciseMaximum)
+  assert.equal(marginShortcutAvailable('1000', '120'), '120')
+  assert.equal(marginShortcutAvailable('80', '120'), '80')
+  assert.equal(marginShortcutAvailable('1000', null), '1000')
+  assert.equal(marginShortcutAvailable('1000', '0'), '1000')
+  const preciseMaximum = '100.000000009'
   assert.equal(
-    clampMarginShortcutAmount(Number(preciseMaximum.toFixed(8)), 1_000, preciseMaximum),
+    clampMarginShortcutAmount('100.00000001', '1000', preciseMaximum),
     preciseMaximum,
   )
 
@@ -59,7 +61,7 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
     percentage: .25,
     price: 50,
     side: 'buy',
-  }), 30)
+  }), '30')
   assert.equal(quantityForBalancePercentage({
     available: 1_000,
     maximum: 120,
@@ -67,7 +69,7 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
     percentage: .37,
     price: 50,
     side: 'buy',
-  }), 44.4)
+  }), '44.4')
   assert.equal(quantityForBalancePercentage({
     available: 1_000,
     maximum: 120,
@@ -75,7 +77,7 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
     percentage: 1,
     price: 50,
     side: 'sell',
-  }), 120)
+  }), '120')
   assert.equal(quantityForBalancePercentage({
     available: 1_000,
     maximum: null,
@@ -83,7 +85,7 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
     percentage: .5,
     price: 0,
     side: 'buy',
-  }), 500)
+  }), '500')
   assert.equal(quantityForBalancePercentage({
     available: 1_000,
     maximum: 120,
@@ -91,23 +93,23 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
     percentage: .5,
     price: 50,
     side: 'buy',
-  }), 10)
+  }), '10')
 })
 
 test('最小与最大保证金边界包含端点，并直接决定确认快照是否有效', () => {
-  assert.deepEqual(validateMarginAmount({ amount: 9.99, minMargin: 10, maxMargin: 100 }).error, 'below-minimum')
-  assert.equal(validateMarginAmount({ amount: 10, minMargin: 10, maxMargin: 100 }).isValid, true)
-  assert.equal(validateMarginAmount({ amount: 100, minMargin: 10, maxMargin: 100 }).isValid, true)
-  assert.deepEqual(validateMarginAmount({ amount: 100.01, minMargin: 10, maxMargin: 100 }).error, 'above-maximum')
-  assert.deepEqual(validateMarginAmount({ amount: Number.NaN, minMargin: 10, maxMargin: 100 }).error, 'invalid')
-  assert.equal(validateMarginAmount({ amount: 10_000, minMargin: 10, maxMargin: null }).isValid, true)
+  assert.deepEqual(validateMarginAmount({ amount: '9.99', minMargin: '10', maxMargin: '100' }).error, 'below-minimum')
+  assert.equal(validateMarginAmount({ amount: '10', minMargin: '10', maxMargin: '100' }).isValid, true)
+  assert.equal(validateMarginAmount({ amount: '100', minMargin: '10', maxMargin: '100' }).isValid, true)
+  assert.deepEqual(validateMarginAmount({ amount: '100.01', minMargin: '10', maxMargin: '100' }).error, 'above-maximum')
+  assert.deepEqual(validateMarginAmount({ amount: 'NaN', minMargin: '10', maxMargin: '100' }).error, 'invalid')
+  assert.equal(validateMarginAmount({ amount: '10000', minMargin: '10', maxMargin: null }).isValid, true)
 
   const belowMinimum = createMarginOrderReview({
     productId: 42,
     side: 'buy',
     marginMode: 'cross',
     leverage: 5,
-    marginAmount: 9,
+    marginAmount: '9',
     minMargin: 10,
     maxMargin: 100,
     orderType: 'market',
@@ -123,7 +125,7 @@ test('最小与最大保证金边界包含端点，并直接决定确认快照�
     side: 'sell',
     marginMode: 'isolated',
     leverage: 5,
-    marginAmount: 100,
+    marginAmount: '100',
     minMargin: 10,
     maxMargin: 100,
     orderType: 'market',
@@ -133,20 +135,20 @@ test('最小与最大保证金边界包含端点，并直接决定确认快照�
   })
   assert.equal(atMaximum.marginAmountValidation.isValid, true)
   assert.equal(atMaximum.isValid, true)
-  assert.equal(atMaximum.request.marginAmount, 100)
+  assert.equal(atMaximum.request.marginAmount, '100')
 })
 
 test('字段、打开确认层和最终 placeMarginOrder 共用同一校验结果', () => {
   const reviewOrderSource = sliceFunction('function reviewOrder(event?: Event): void {', 'function reviewContractOrder')
   const submitOrderSource = sliceFunction('async function submitOrder(): Promise<void> {', 'function trapDialogFocus')
 
-  assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?minMargin: selectedProduct\.value\?\.minMargin,[\s\S]*?maxMargin: selectedProduct\.value\?\.maxMargin/)
+  assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?minMargin: selectedProduct\.value\?\.minMarginText \?\? selectedProduct\.value\?\.minMargin,[\s\S]*?maxMargin: selectedProduct\.value\?\.maxMarginText \?\? selectedProduct\.value\?\.maxMargin/)
   assert.match(tradeSource, /marginAmountError = computed\([\s\S]*?marginOrderDraft\.value\.marginAmountValidation/)
   assert.match(reviewOrderSource, /!marginOrderDraft\.value\.marginAmountValidation\.isValid[\s\S]*?marginAmountValidationMessage/)
-  assert.match(submitOrderSource, /validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?minMargin: product\.minMargin,[\s\S]*?maxMargin: product\.maxMargin,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?marginAmountValidationMessage\(requestMarginValidation\)[\s\S]*?await placeMarginOrder\(review\.request\)/)
+  assert.match(submitOrderSource, /validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?minMargin: product\.minMarginText \?\? product\.minMargin,[\s\S]*?maxMargin: product\.maxMarginText \?\? product\.maxMargin,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?marginAmountValidationMessage\(requestMarginValidation\)[\s\S]*?if \(!review \|\| !review\.marginAmountText\) return[\s\S]*?await placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
   assert.equal(submitOrderSource.match(/placeMarginOrder\(/g)?.length, 1)
-  assert.match(tradeSource, /maximum: mode\.value === 'contract' \? selectedProduct\.value\?\.maxMargin : null/)
-  assert.match(tradeSource, /clampMarginShortcutAmount\(roundedQuantity, availableBalance\.value, selectedProduct\.value\?\.maxMargin\)/)
+  assert.match(tradeSource, /maximum: mode\.value === 'contract'[\s\S]*?selectedProduct\.value\?\.maxMarginText \?\? selectedProduct\.value\?\.maxMargin[\s\S]*?: null/)
+  assert.match(tradeSource, /quantity\.value = nextQuantity === '0' \? '' : nextQuantity/)
   assert.match(tradeSource, /contractShortcutAvailable = computed\(\(\) => marginShortcutAvailable\(/)
   assert.match(tradeSource, /const percentage = ref<number \| null>\(0\)/)
   assert.match(tradeSource, /function setContractPercentageFromSlider\(event: Event\): void \{[\s\S]*?setQuantity\(value\)/)

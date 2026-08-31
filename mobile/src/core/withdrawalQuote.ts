@@ -1,7 +1,23 @@
+import {
+  decimalAdd,
+  decimalCompare,
+  decimalDivide,
+  decimalMultiply,
+  decimalSubtract,
+  decimalTextFromBoundary,
+  decimalTruncate,
+  normalizeDecimalText,
+  type DecimalBoundary,
+  type DecimalText,
+} from './decimal.ts'
+
 export interface WithdrawalFeeTier {
   minAmount: number
   maxAmount?: number
   feeRatePercent: number
+  minAmountText?: DecimalText
+  maxAmountText?: DecimalText
+  feeRatePercentText?: DecimalText
 }
 
 interface ExactDecimal {
@@ -126,6 +142,79 @@ export function maximumQuotedWithdrawalAmount(
   return normalizedCandidate(best)
 }
 
+export function normalizeWithdrawalPreviewAmountText(
+  amount: DecimalText,
+  precisionScale = 18,
+): DecimalText {
+  return decimalTruncate(amount, normalizePrecisionScale(precisionScale))
+}
+
+export function calculateWithdrawalFeeText(
+  amount: DecimalText,
+  fixedFee: DecimalBoundary,
+  tiers: readonly WithdrawalFeeTier[],
+  precisionScale = 18,
+): DecimalText {
+  const normalizedAmount = normalizeWithdrawalPreviewAmountText(amount, precisionScale)
+  if (decimalCompare(normalizedAmount, normalizeDecimalText('0')) <= 0) return normalizeDecimalText('0')
+  const tier = tiers.find((candidate) => {
+    const minimum = tierBoundary(candidate.minAmountText ?? candidate.minAmount) || normalizeDecimalText('0')
+    const maximum = tierBoundary(candidate.maxAmountText ?? candidate.maxAmount)
+    return decimalCompare(normalizedAmount, minimum) >= 0
+      && (!maximum || decimalCompare(normalizedAmount, maximum) < 0)
+  })
+  const fee = tier
+    ? decimalDivide(
+        decimalMultiply(normalizedAmount, tierBoundary(tier.feeRatePercentText ?? tier.feeRatePercent) || normalizeDecimalText('0')),
+        normalizeDecimalText('100'),
+        normalizePrecisionScale(precisionScale),
+      )
+    : tierBoundary(fixedFee) || normalizeDecimalText('0')
+  return decimalTruncate(fee, normalizePrecisionScale(precisionScale))
+}
+
+/** Exact piecewise candidate search for the largest amount whose reserve can fit. */
+export function maximumQuotedWithdrawalAmountText(
+  available: DecimalText,
+  fixedFee: DecimalBoundary,
+  tiers: readonly WithdrawalFeeTier[],
+  precisionScale = 18,
+): DecimalText {
+  const scale = normalizePrecisionScale(precisionScale)
+  const zero = normalizeDecimalText('0')
+  const normalizedAvailable = decimalTruncate(available, scale)
+  if (decimalCompare(normalizedAvailable, zero) <= 0) return zero
+  const unit = normalizeDecimalText(scale === 0 ? '1' : `0.${'0'.repeat(scale - 1)}1`)
+  const candidates: DecimalText[] = [normalizedAvailable]
+  const fixed = tierBoundary(fixedFee) || zero
+  if (decimalCompare(normalizedAvailable, fixed) > 0) {
+    candidates.push(decimalTruncate(decimalSubtract(normalizedAvailable, fixed), scale))
+  }
+
+  for (const tier of tiers) {
+    const minimum = tierBoundary(tier.minAmountText ?? tier.minAmount) || zero
+    const maximum = tierBoundary(tier.maxAmountText ?? tier.maxAmount)
+    const rate = tierBoundary(tier.feeRatePercentText ?? tier.feeRatePercent) || zero
+    const divisor = decimalAdd(normalizeDecimalText('1'), decimalDivide(rate, normalizeDecimalText('100'), 36))
+    let candidate = decimalTruncate(decimalDivide(normalizedAvailable, divisor, scale), scale)
+    if (decimalCompare(candidate, minimum) < 0) candidate = minimum
+    if (maximum && decimalCompare(candidate, maximum) >= 0) {
+      candidate = decimalCompare(maximum, unit) > 0 ? decimalSubtract(maximum, unit) : zero
+    }
+    candidates.push(candidate, minimum)
+    if (maximum && decimalCompare(maximum, unit) > 0) candidates.push(decimalSubtract(maximum, unit))
+  }
+
+  return candidates.reduce((best, rawCandidate) => {
+    const candidate = decimalTruncate(rawCandidate, scale)
+    if (decimalCompare(candidate, zero) <= 0 || decimalCompare(candidate, normalizedAvailable) > 0) return best
+    const reserved = decimalAdd(candidate, calculateWithdrawalFeeText(candidate, fixedFee, tiers, scale))
+    return decimalCompare(reserved, normalizedAvailable) <= 0 && decimalCompare(candidate, best) > 0
+      ? candidate
+      : best
+  }, zero)
+}
+
 function parseExactDecimal(value: string): ExactDecimal | null {
   const normalized = value.trim()
   if (!isWithdrawalDecimalString(normalized)) return null
@@ -156,4 +245,8 @@ function truncatePreviewDecimal(value: number, precisionScale: number): number {
     Number.EPSILON * Math.max(1, Math.abs(scaled)) * 2,
   )
   return Math.trunc(scaled + Math.sign(scaled) * tolerance) / factor
+}
+
+function tierBoundary(value: DecimalBoundary): DecimalText | null {
+  return decimalTextFromBoundary(value, { allowNegative: false, maxIntegerDigits: 20, maxScale: 18 })
 }

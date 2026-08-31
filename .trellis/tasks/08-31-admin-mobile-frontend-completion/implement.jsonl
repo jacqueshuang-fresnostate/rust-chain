@@ -1,0 +1,19 @@
+{"file":".trellis/spec/admin/index.md","reason":"Admin 开发前检查、质量门禁与规范索引。"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"Admin 页面、表格、权限动作与可访问交互必须保持既有 UI 系统。"}
+{"file":".trellis/spec/admin/auth-turnstile.md","reason":"登录、2FA、Turnstile 与认证错误恢复约束。"}
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile 开发前检查与质量门禁索引。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Mobile API、Decimal、错误合同、实时与服务端权威数据约束。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"PWA/Tauri、性能、主题、弹层与移动壳层约束。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"路由、焦点、i18n、状态枚举和可访问导航约束。"}
+{"file":".trellis/spec/backend/auth-sessions.md","reason":"两端 session generation、refresh、logout 与失效语义。"}
+{"file":".trellis/spec/backend/user-authentication.md","reason":"认证接口、令牌和客户端兼容边界。"}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"共享行情与私有 WS 的身份、重连、watchdog 和 freshness 约束。"}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"资金 Decimal text、资产精度、展示与比较规范。"}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"现货批量撤单端点和部分成功合同。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"稳定错误码、ContractError 与安全用户文案。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"若需最小后端兼容改动时的测试和 clippy 门禁。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"会话、资金、实时和 UI 跨层闭环。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"先建立共享 primitive，再迁移页面，避免重复实现。"}
+{"file":".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/frontend-admin-delta-2026-08-31.md","reason":"Admin FAD-P0/P1/P2 的完整源码证据、建议与验证记录。"}
+{"file":".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/frontend-mobile-delta-2026-08-31.md","reason":"Mobile FMD-P1/P2 的完整源码证据、建议与验证记录。"}
+{"file":".trellis/tasks/08-31-admin-mobile-frontend-completion/research/remediation-scope.md","reason":"用户明确范围、风险顺序、写入边界与验收矩阵。"}

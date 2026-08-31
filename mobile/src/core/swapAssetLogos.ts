@@ -1,3 +1,9 @@
+import {
+  decimalTextFromBoundary,
+  normalizeDecimalText,
+  type DecimalText,
+} from './decimal.ts'
+
 export type SwapPickerSide = 'from' | 'to'
 
 export class ConvertPairContractError extends Error {
@@ -30,6 +36,8 @@ export interface ConvertPair {
   toAssetLogoUrl?: string
   minAmount: number
   maxAmount?: number
+  minAmountText?: DecimalText
+  maxAmountText?: DecimalText
   feeRate: number
   enabled: boolean
 }
@@ -77,6 +85,11 @@ export function mapConvertPair(pair: BackendConvertPair): ConvertPair {
     maxAmount: pair.max_amount === null || pair.max_amount === undefined
       ? undefined
       : toFiniteNumber(pair.max_amount),
+    minAmountText: decimalTextFromBoundary(pair.min_amount, { allowNegative: false })
+      || normalizeDecimalText('0'),
+    maxAmountText: pair.max_amount === null || pair.max_amount === undefined
+      ? undefined
+      : decimalTextFromBoundary(pair.max_amount, { allowNegative: false }) || undefined,
     feeRate: toFiniteNumber(pair.fee_rate),
     enabled: pair.enabled !== false,
   }
@@ -208,6 +221,12 @@ function mapReverseConvertPair(source: BackendConvertPair, forward: ConvertPair)
     maxAmount: reverseMaximum === null || reverseMaximum === undefined
       ? undefined
       : toFiniteNumber(reverseMaximum),
+    minAmountText: decimalTextFromBoundary(source.target_min_amount ?? source.min_amount, {
+      allowNegative: false,
+    }) || normalizeDecimalText('0'),
+    maxAmountText: reverseMaximum === null || reverseMaximum === undefined
+      ? undefined
+      : decimalTextFromBoundary(reverseMaximum, { allowNegative: false }) || undefined,
     feeRate: forward.feeRate,
     enabled: forward.enabled,
   }

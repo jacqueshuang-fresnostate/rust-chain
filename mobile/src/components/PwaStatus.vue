@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { CircleAlert, CloudCheck, Download, RefreshCw, WifiOff, X } from 'lucide-vue-next'
@@ -8,10 +8,13 @@ import {
   dismissOfflineReady,
   dismissPwaInstall,
   dismissPwaUpdate,
+  markPwaInstallOfferShown,
+  markPwaInstallValueAction,
   promptPwaInstall,
   pwaState,
   retryPwaRegistration,
 } from '@/pwa'
+import { isPwaInstallValueRoute } from '@/pwa/eligibility'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -41,6 +44,16 @@ const visible = computed(() => pwaState.enabled && (
   || showOfflineReady.value
   || showPwaError.value
 ))
+
+watch(() => route.fullPath, (currentPath, previousPath) => {
+  if ((previousPath === undefined || currentPath !== previousPath) && isPwaInstallValueRoute(route.name)) {
+    markPwaInstallValueAction()
+  }
+}, { immediate: true })
+
+watch(showInstall, (shown) => {
+  if (shown) markPwaInstallOfferShown()
+}, { immediate: true })
 
 async function install(): Promise<void> {
   installing.value = true
@@ -92,7 +105,7 @@ async function retry(): Promise<void> {
         v-if="showUpdate"
         class="pwa-status__card pwa-status__card--update"
         data-tone="accent"
-        role="status"
+        :role="pwaState.updateError ? 'alert' : 'status'"
         :aria-busy="pwaState.updating"
       >
         <div class="pwa-status__panel">
@@ -102,7 +115,7 @@ async function retry(): Promise<void> {
           <div class="pwa-status__body">
             <span class="pwa-status__kicker"><i aria-hidden="true" />{{ t('pwa.statusLabel') }}</span>
             <strong>{{ t('pwa.updateTitle') }}</strong>
-            <p>{{ t('pwa.updateDescription') }}</p>
+            <p>{{ t(pwaState.updateError ? 'pwa.registrationFailed' : 'pwa.updateDescription') }}</p>
             <div class="pwa-status__actions">
               <button class="pwa-status__button pwa-status__button--primary" type="button" :disabled="pwaState.updating" @click="update">
                 <span>{{ pwaState.updating ? t('pwa.updating') : t('pwa.updateNow') }}</span>

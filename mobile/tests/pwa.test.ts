@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
 import test from 'node:test'
 import en from '../src/i18n/messages/en.ts'
@@ -37,15 +37,27 @@ test('PWA config keeps native builds disabled and financial traffic out of runti
   const mainSource = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8')
   const pwaSource = await readFile(new URL('../src/pwa/index.ts', import.meta.url), 'utf8')
   const pwaStatusSource = await readFile(new URL('../src/components/PwaStatus.vue', import.meta.url), 'utf8')
-  const marketStoreSource = await readFile(new URL('../src/stores/market.ts', import.meta.url), 'utf8')
   const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8')
   const viteConfig = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8')
   const tauriConfig = JSON.parse(await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))
+  const releaseGate = await readFile(new URL('../../scripts/p0-release-gate.sh', import.meta.url), 'utf8')
 
   assert.equal(packageJson.devDependencies['vite-plugin-pwa'], '1.3.0')
   assert.match(packageJson.scripts['build:pwa'], /vite build --mode pwa/)
   assert.match(packageJson.scripts['build:tauri'], /vite build --mode tauri/)
+  assert.match(packageJson.scripts['release:gate'], /type-check && npm run type-check:tests && npm test && npm run build:pwa/)
+  assert.match(packageJson.scripts['release:gate'], /check:artifacts:pwa && npm run check:bundle/)
+  assert.match(packageJson.scripts['release:gate'], /build:tauri && npm run check:artifacts:tauri && npm run check:bundle/)
+  assert.match(releaseGate, /npm --prefix mobile run release:gate/)
   assert.equal(tauriConfig.build.beforeBuildCommand, 'npm run build:tauri')
+  assert.ok(tauriConfig.app.security.csp)
+  assert.ok(tauriConfig.app.security.csp['connect-src'].includes('https://hipoex.cllbmz.kdns.fr'))
+  assert.ok(tauriConfig.app.security.csp['connect-src'].includes('wss://hipoex.cllbmz.kdns.fr'))
+  assert.ok(!tauriConfig.app.security.csp['connect-src'].includes('https:'))
+  assert.ok(!tauriConfig.app.security.csp['connect-src'].includes('wss:'))
+  assert.ok(tauriConfig.app.security.csp['script-src'].includes('https://challenges.cloudflare.com'))
+  assert.ok(tauriConfig.app.security.csp['img-src'].includes('data:'))
+  assert.ok(tauriConfig.app.security.csp['img-src'].includes('blob:'))
 
   assert.match(viteConfig, /strategies: 'generateSW'/)
   assert.match(viteConfig, /registerType: 'prompt'/)
@@ -56,7 +68,9 @@ test('PWA config keeps native builds disabled and financial traffic out of runti
   assert.match(viteConfig, /navigateFallbackDenylist:\s*\[[\s\S]*?\/\\\/ws\(\?:\\\/\|\$\)\//)
   assert.match(viteConfig, /navigateFallbackDenylist:\s*\[[\s\S]*?\/\\\/health\(\?:\\\/\|\$\)\//)
   assert.match(viteConfig, /navigateFallbackDenylist:\s*\[[\s\S]*?\/\\\/downloads\?\(\?:\\\/\|\$\)\//)
-  assert.match(viteConfig, /globIgnores: \['pwa\/\*\.png', 'manifest\.webmanifest'\]/)
+  assert.match(viteConfig, /globIgnores:\s*\[[\s\S]*?'pwa\/\*\.png'/)
+  assert.match(viteConfig, /globIgnores:\s*\[[\s\S]*?'manifest\.webmanifest'/)
+  assert.match(viteConfig, /globIgnores:\s*\[[\s\S]*?'\*\*\/signal-theatre-\*\.webp'/)
   assert.match(viteConfig, /publicDir: isTauriBuild \? false : 'public'/)
   assert.match(viteConfig, /isolateTauriIndexHtml\(isTauriBuild\)/)
   assert.match(viteConfig, /mode === 'pwa'/)
@@ -75,8 +89,6 @@ test('PWA config keeps native builds disabled and financial traffic out of runti
     assert.doesNotMatch(pwaStatusSource, new RegExp(`['"]${sensitiveRoute}['"]`))
   }
   assert.match(pwaStatusSource, /promptSafeRoute\.value && pwaState\.needRefresh/)
-  assert.match(marketStoreSource, /tickers\.value = mergeMarketTickerSnapshots\(tickers\.value, next\)[\s\S]*updatedAt\.value = Date\.now\(\)[\s\S]*catch/)
-  assert.doesNotMatch(marketStoreSource, /finally\s*\{[^}]*updatedAt\.value/)
 })
 
 test('production source and tests do not depend on the ignored prototype workspace', async () => {
@@ -114,6 +126,17 @@ test('copied prototype CSS resolves production-owned font and image paths', asyn
       await access(new URL(assetPath, stylesheet))
     }
   }
+})
+
+test('desktop stage uses a compact modern asset and loads it only above the mobile canvas breakpoint', async () => {
+  const appSource = await readFile(new URL('../src/App.vue', import.meta.url), 'utf8')
+  const modernAsset = new URL('../src/assets/brand/signal-theatre.webp', import.meta.url)
+
+  assert.ok((await stat(modernAsset)).size <= 128 * 1024)
+  await assert.rejects(access(new URL('../src/assets/brand/signal-theatre.png', import.meta.url)))
+  assert.match(appSource, /signal-theatre\.webp/)
+  assert.match(appSource, /matchMedia\('\(min-width: 821px\)'\)/)
+  assert.match(appSource, /v-if="showDesktopStageImage" class="stage-image"/)
 })
 
 test('PWA and message-center locale contracts stay complete in Chinese and English', () => {

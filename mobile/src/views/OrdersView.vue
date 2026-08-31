@@ -23,6 +23,12 @@ import {
 } from '@/api/trading'
 import { formatAmount, formatPrice } from '@/core/format'
 import { isFilledMarginPosition, isPendingMarginPosition } from '@/core/marginOrder'
+import {
+  commitSpotCancelAllResult,
+  createOrdersRequestLifecycle,
+  type OrdersRequestSnapshot,
+} from '@/core/ordersRequest'
+import { orderStatusPresentation } from '@/core/financialEnumPresentation'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { MarginProduct, MarketPair } from '@/core/types'
@@ -66,6 +72,31 @@ const pendingAction = ref<PendingAction | null>(null)
 const confirmDialog = ref<HTMLElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
+const requestLifecycle = createOrdersRequestLifecycle()
+
+function actionSessionIsCurrent(generation: number): boolean {
+  return session.isAuthenticated && session.generation === generation
+}
+
+function clearPrivateState(): void {
+  spotOrders.value = []
+  historyOrders.value = []
+  positions.value = []
+  historyPositions.value = []
+  products.value = []
+  pairs.value = []
+  loading.value = false
+  actionId.value = ''
+  feedback.value = ''
+  error.value = ''
+  pendingAction.value = null
+}
+
+type OrdersLoadPayload =
+  | { kind: 'spot-current'; orders: SpotOrder[] }
+  | { kind: 'spot-history'; orders: SpotOrder[] }
+  | { kind: 'margin-current'; positions: MarginPosition[]; products: MarginProduct[]; pairs: MarketPair[] }
+  | { kind: 'margin-history'; positions: MarginPosition[]; products: MarginProduct[]; pairs: MarketPair[] }
 
 const openedPositions = computed(() => positions.value.filter((position) => position.status === 'opened'))
 const cancelablePositions = computed(() => openedPositions.value.filter(isPendingMarginPosition))
@@ -126,6 +157,7 @@ function setMarketTab(tab: MarketTab): void {
   }
   marketTab.value = tab
   if (tab === 'spot' && stateTab.value === 'positions') stateTab.value = 'current'
+  void load()
 }
 
 function setStateTab(tab: StateTab): void {
@@ -134,6 +166,7 @@ function setStateTab(tab: StateTab): void {
     return
   }
   stateTab.value = tab
+  void load()
 }
 
 function openHistory(): void {
@@ -197,109 +230,162 @@ function positionAmount(position: MarginPosition): string {
 }
 
 function statusTone(status: string): 'positive' | 'negative' | 'info' {
-  const normalized = status.trim().toLowerCase()
-  if (['completed', 'filled', 'closed'].includes(normalized)) return 'positive'
-  if (['canceled', 'cancelled', 'liquidated', 'rejected'].includes(normalized)) return 'negative'
+  const tone = orderStatusPresentation(status).tone
+  if (tone === 'positive') return 'positive'
+  if (tone === 'negative') return 'negative'
   return 'info'
 }
 
 async function load(): Promise<void> {
-  if (!session.isAuthenticated) return
+  if (!session.isAuthenticated) {
+    requestLifecycle.invalidate()
+    loading.value = false
+    return
+  }
+  const snapshot: OrdersRequestSnapshot = {
+    sessionGeneration: session.generation,
+    market: marketTab.value,
+    state: stateTab.value,
+  }
   loading.value = true
-  feedback.value = ''
   error.value = ''
-  try {
-    if (marketTab.value === 'spot') {
-      if (stateTab.value === 'current') spotOrders.value = await fetchOpenSpotOrders()
-      else if (stateTab.value === 'history') historyOrders.value = await fetchSpotOrderHistory()
-      return
+  const result = await requestLifecycle.load(snapshot, async (signal): Promise<OrdersLoadPayload> => {
+    if (snapshot.market === 'spot') {
+      if (snapshot.state === 'current') {
+        return { kind: 'spot-current', orders: await fetchOpenSpotOrders(30, signal) }
+      }
+      return { kind: 'spot-history', orders: await fetchSpotOrderHistory(30, signal) }
     }
-    if (stateTab.value !== 'history') {
+    if (snapshot.state !== 'history') {
       const [nextPositions, nextProducts, nextPairs] = await Promise.all([
-        fetchMarginPositions('opened'),
+        fetchMarginPositions('opened', 30, signal),
         fetchMarginProducts(),
         fetchMarketPairs(),
       ])
-      positions.value = nextPositions
-      products.value = nextProducts
-      pairs.value = nextPairs
-      return
+      return {
+        kind: 'margin-current',
+        positions: nextPositions,
+        products: nextProducts,
+        pairs: nextPairs,
+      }
     }
     const [closed, liquidated, canceled, nextProducts, nextPairs] = await Promise.all([
-      fetchMarginPositions('closed'),
-      fetchMarginPositions('liquidated'),
-      fetchMarginPositions('canceled'),
+      fetchMarginPositions('closed', 30, signal),
+      fetchMarginPositions('liquidated', 30, signal),
+      fetchMarginPositions('canceled', 30, signal),
       fetchMarginProducts(),
       fetchMarketPairs(),
     ])
-    historyPositions.value = [...closed, ...liquidated, ...canceled]
-    products.value = nextProducts
-    pairs.value = nextPairs
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, t('orders.loadFailed'))
-  } finally {
-    loading.value = false
+    return {
+      kind: 'margin-history',
+      positions: [...closed, ...liquidated, ...canceled],
+      products: nextProducts,
+      pairs: nextPairs,
+    }
+  })
+  if (result.state === 'stale') return
+  loading.value = false
+  if (result.state === 'error') {
+    error.value = apiErrorMessage(result.error, t('orders.loadFailed'))
+    return
+  }
+  const payload = result.value
+  if (payload.kind === 'spot-current') spotOrders.value = payload.orders
+  else if (payload.kind === 'spot-history') historyOrders.value = payload.orders
+  else if (payload.kind === 'margin-current') positions.value = payload.positions
+  else historyPositions.value = payload.positions
+  if (payload.kind === 'margin-current' || payload.kind === 'margin-history') {
+    products.value = payload.products
+    pairs.value = payload.pairs
   }
 }
 
 async function cancelSpot(order: SpotOrder): Promise<boolean> {
+  const actionGeneration = session.generation
   actionId.value = `spot-${order.id}`
   error.value = ''
   try {
     await cancelSpotOrder(order.id)
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     await load()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     feedback.value = t('orders.spotCanceled')
     return true
   } catch (reason) {
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     error.value = apiErrorMessage(reason, t('orders.spotCancelFailed'))
     return false
   } finally {
-    actionId.value = ''
+    if (actionSessionIsCurrent(actionGeneration)) actionId.value = ''
   }
 }
 
 async function cancelAllSpot(): Promise<boolean> {
   if (!spotOrders.value.length) return false
+  const actionGeneration = session.generation
   actionId.value = 'spot-all'
   error.value = ''
   try {
-    await cancelAllSpotOrders(spotOrders.value.map((order) => order.id))
+    const result = await cancelAllSpotOrders()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
+    const committed = commitSpotCancelAllResult(spotOrders.value, result)
+    spotOrders.value = committed.remainingOrders
     await load()
-    feedback.value = t('orders.allSpotCanceled')
+    if (!actionSessionIsCurrent(actionGeneration)) return false
+    const outcome = committed.outcome
+    const details = outcome.failureDetails.join('; ')
+    if (outcome.kind === 'success') {
+      feedback.value = t('orders.allSpotCanceled', { succeeded: outcome.succeeded })
+    } else if (outcome.kind === 'partial') {
+      error.value = `${t('orders.batchSpotCancelPartial', {
+        succeeded: outcome.succeeded,
+        failed: outcome.failed,
+      })}${details ? ` ${details}` : ''}`
+    } else {
+      error.value = `${t('orders.batchSpotCancelFailure', { failed: outcome.failed })}${details ? ` ${details}` : ''}`
+    }
     return true
   } catch (reason) {
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     error.value = apiErrorMessage(reason, t('orders.allSpotCancelFailed'))
     return false
   } finally {
-    actionId.value = ''
+    if (actionSessionIsCurrent(actionGeneration)) actionId.value = ''
   }
 }
 
 async function actOnPosition(position: MarginPosition): Promise<boolean> {
   const shouldCancel = isPendingMarginPosition(position)
+  const actionGeneration = session.generation
   actionId.value = `margin-${position.id}`
   error.value = ''
   try {
     if (shouldCancel) await cancelMarginPosition(position.id)
     else await closeMarginPosition(position.id)
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     await load()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     feedback.value = shouldCancel ? t('orders.marginCanceled') : t('orders.closeSubmitted')
     return true
   } catch (reason) {
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     error.value = apiErrorMessage(reason, shouldCancel ? t('orders.marginCancelFailed') : t('orders.closeFailed'))
     return false
   } finally {
-    actionId.value = ''
+    if (actionSessionIsCurrent(actionGeneration)) actionId.value = ''
   }
 }
 
 async function cancelAllMargin(): Promise<boolean> {
   if (!cancelablePositions.value.length) return false
+  const actionGeneration = session.generation
   actionId.value = 'margin-cancel-all'
   error.value = ''
   try {
     const result = await cancelAllMarginPositions()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     await load()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     if (result.failures.length) {
       error.value = t('orders.batchCancelPartial', {
         succeeded: result.positions.length,
@@ -310,20 +396,24 @@ async function cancelAllMargin(): Promise<boolean> {
     }
     return true
   } catch (reason) {
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     error.value = apiErrorMessage(reason, t('orders.batchCancelFailed'))
     return false
   } finally {
-    actionId.value = ''
+    if (actionSessionIsCurrent(actionGeneration)) actionId.value = ''
   }
 }
 
 async function closeAllMargin(): Promise<boolean> {
   if (!closablePositions.value.length) return false
+  const actionGeneration = session.generation
   actionId.value = 'margin-close-all'
   error.value = ''
   try {
     const result = await closeAllMarginPositions()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     await load()
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     if (result.failures.length) {
       error.value = t('orders.batchClosePartial', {
         succeeded: result.positions.length,
@@ -334,10 +424,11 @@ async function closeAllMargin(): Promise<boolean> {
     }
     return true
   } catch (reason) {
+    if (!actionSessionIsCurrent(actionGeneration)) return false
     error.value = apiErrorMessage(reason, t('orders.allCloseFailed'))
     return false
   } finally {
-    actionId.value = ''
+    if (actionSessionIsCurrent(actionGeneration)) actionId.value = ''
   }
 }
 
@@ -386,7 +477,6 @@ function trapDialogFocus(event: KeyboardEvent): void {
   }
 }
 
-watch([marketTab, stateTab], () => { void load() })
 watch(pendingAction, async (action) => {
   if (action) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -402,6 +492,15 @@ watch(pendingAction, async (action) => {
   returnFocus = null
 })
 
+watch(() => session.generation, () => {
+  requestLifecycle.invalidate()
+  if (!session.isAuthenticated) {
+    clearPrivateState()
+    return
+  }
+  void load()
+}, { flush: 'sync' })
+
 onMounted(() => {
   if (route.query.tab === 'positions') {
     marketTab.value = 'margin'
@@ -415,26 +514,13 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  requestLifecycle.stop()
   document.body.style.overflow = previousBodyOverflow
 })
 
 function statusLabel(status: string): string {
-  const keyByStatus: Record<string, string> = {
-    submitted: 'orders.statusSubmitted',
-    pending: 'orders.statusPending',
-    trading: 'orders.statusTrading',
-    open: 'orders.statusTrading',
-    partially_filled: 'orders.statusPartiallyFilled',
-    completed: 'orders.statusCompleted',
-    filled: 'orders.statusCompleted',
-    canceled: 'orders.statusCanceled',
-    cancelled: 'orders.statusCanceled',
-    closed: 'orders.statusClosed',
-    liquidated: 'orders.statusLiquidated',
-    rejected: 'orders.statusRejected',
-  }
-  const key = keyByStatus[status.trim().toLowerCase()]
-  return key ? t(key) : status
+  const presentation = orderStatusPresentation(status)
+  return t(presentation.translationKey, { source: presentation.source || '--' })
 }
 </script>
 

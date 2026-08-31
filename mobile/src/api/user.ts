@@ -38,7 +38,7 @@ export interface KycSubmission {
   enterpriseName?: string
   businessRegistrationNumber?: string
   documentType: string
-  status: 'pending' | 'approved' | 'rejected'
+  status: string
   targetKycLevel: number
   reviewReason?: string
   submittedAt: number
@@ -298,8 +298,14 @@ function mapThirdPartyBindings(response: { policy?: Record<string, unknown>; bin
   }
 }
 
-function mapKycSubmission(submission: Record<string, unknown>): KycSubmission {
-  const status = String(submission.status || 'pending').toLowerCase()
+export function mapKycSubmission(submission: Record<string, unknown>): KycSubmission {
+  const statusSource = String(submission.status || '').trim()
+  const normalizedStatus = statusSource.toLowerCase()
+  const status = normalizedStatus === 'pending'
+    || normalizedStatus === 'approved'
+    || normalizedStatus === 'rejected'
+    ? normalizedStatus
+    : statusSource
   return {
     id: asNumber(submission.id),
     realName: String(submission.real_name || ''),
@@ -309,7 +315,7 @@ function mapKycSubmission(submission: Record<string, unknown>): KycSubmission {
     enterpriseName: optionalText(submission.enterprise_name),
     businessRegistrationNumber: optionalText(submission.business_registration_number),
     documentType: String(submission.document_type || ''),
-    status: status === 'approved' || status === 'rejected' ? status : 'pending',
+    status,
     targetKycLevel: asNumber(submission.target_kyc_level),
     reviewReason: optionalText(submission.review_reason),
     submittedAt: normalizeTimestamp(submission.submitted_at),

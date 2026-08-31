@@ -20,6 +20,13 @@ import { apiErrorMessage } from '@/api/client'
 import { confirmConvertQuote, fetchConvertOrders, fetchConvertPairs, requestConvertQuote, type ConvertOrder, type ConvertPair, type ConvertQuote } from '@/api/swap'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import {
+  decimalCompare,
+  decimalTextFromBoundary,
+  decimalWithinRange,
+  positiveDecimalInput,
+} from '@/core/decimal'
+import { convertStatusPresentation } from '@/core/financialEnumPresentation'
 import { useModalDialog } from '@/core/modalDialog'
 import {
   buildSwapAvailableBalanceMap,
@@ -62,11 +69,20 @@ const selectedPair = computed(() => resolveSelectedSwapPair(pairs.value, pairSel
 const availableBySymbol = computed(() => buildSwapAvailableBalanceMap(accounts.value))
 const availableBalance = (symbol: string): number => availableBySymbol.value.get(symbol.trim().toUpperCase()) || 0
 const available = computed(() => selectedPair.value ? availableBalance(selectedPair.value.fromAssetSymbol) : 0)
-const amountNumber = computed(() => Number(amount.value || 0))
+const selectedAccount = computed(() => accounts.value.find((account) => (
+  account.symbol === selectedPair.value?.fromAssetSymbol
+)))
+const availableText = computed(() => decimalTextFromBoundary(
+  selectedAccount.value?.availableText ?? selectedAccount.value?.available,
+  { allowNegative: false },
+))
+const amountText = computed(() => positiveDecimalInput(amount.value))
 const amountAllowed = computed(() => {
   const pair = selectedPair.value
-  if (!pair || !Number.isFinite(amountNumber.value)) return false
-  return amountNumber.value >= pair.minAmount && (!pair.maxAmount || amountNumber.value <= pair.maxAmount)
+  return Boolean(pair && decimalWithinRange(amountText.value, {
+    minimum: pair.minAmountText ?? pair.minAmount,
+    maximum: pair.maxAmountText ?? pair.maxAmount,
+  }))
 })
 const quoteExpired = computed(() => !quote.value || quote.value.expiresAt <= Date.now())
 const pickerAssets = computed(() => {
@@ -112,7 +128,7 @@ function swapDirection(): void {
 }
 
 function useMaximum(): void {
-  amount.value = String(available.value)
+  amount.value = availableText.value ? String(availableText.value) : ''
   quote.value = null
 }
 
@@ -150,13 +166,15 @@ async function getQuote(): Promise<void> {
     error.value = t('swap.invalidAmount')
     return
   }
-  if (amountNumber.value > available.value) {
+  if (amountText.value && availableText.value && decimalCompare(amountText.value, availableText.value) > 0) {
     error.value = t('swap.exceedsBalance')
     return
   }
   quoting.value = true
   try {
-    quote.value = await requestConvertQuote(selectedPair.value, amountNumber.value)
+    const requestAmount = amountText.value
+    if (!requestAmount) throw new TypeError('invalid convert amount')
+    quote.value = await requestConvertQuote(selectedPair.value, requestAmount)
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('swap.quoteFailed'))
   } finally {
@@ -211,6 +229,11 @@ function handleReviewKeydown(event: KeyboardEvent): void {
 
 function handlePickerKeydown(event: KeyboardEvent): void {
   trapPickerFocus(event, closePicker)
+}
+
+function orderStatusLabel(status: string): string {
+  const presentation = convertStatusPresentation(status)
+  return t(presentation.translationKey, { source: presentation.source || '--' })
 }
 
 onMounted(() => { void load() })
@@ -311,7 +334,7 @@ onMounted(() => { void load() })
             <div v-if="orders.length" class="pencil-list">
               <article v-for="order in orders" :key="order.id" class="pencil-row swap-history-row">
                 <span class="pencil-row__copy"><strong>{{ order.fromAssetSymbol || t('swap.asset') }} → {{ order.toAssetSymbol || t('swap.asset') }}</strong><small>{{ formatDateTime(order.createdAt) }}</small></span>
-                <span class="pencil-row__value"><strong class="pencil-numeric">{{ formatAmount(order.fromAmount) }} → {{ formatAmount(order.toAmount) }}</strong><small>{{ order.status }}</small></span>
+                <span class="pencil-row__value"><strong class="pencil-numeric">{{ formatAmount(order.fromAmount) }} → {{ formatAmount(order.toAmount) }}</strong><small>{{ orderStatusLabel(order.status) }}</small></span>
               </article>
             </div>
             <div v-else class="pencil-state"><PackageOpen :size="22" /><span>{{ t('swap.emptyHistory') }}</span></div>

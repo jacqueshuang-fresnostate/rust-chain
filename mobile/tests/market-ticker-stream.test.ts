@@ -227,6 +227,7 @@ test('ticker stream forwards the complete backend 24h snapshot without recomputi
   assert.deepEqual(updates, [{
     symbol: 'BTCUSDT',
     lastPrice: 63_700,
+    lastPriceText: '63700',
     highPrice: 64_700,
     lowPrice: 62_900,
     volume: 125.75,

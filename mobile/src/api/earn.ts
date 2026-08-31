@@ -6,6 +6,7 @@ import {
 } from './requestCache'
 import { asNumber } from '@/core/format'
 import { i18n } from '@/i18n'
+import { decimalTextFromBoundary, normalizeDecimalText, type DecimalText } from '@/core/decimal'
 
 export interface EarnProduct {
   id: number
@@ -21,6 +22,8 @@ export interface EarnProduct {
   earlyRedeemFeeRate?: number
   minSubscribe: number
   maxSubscribe?: number
+  minSubscribeText?: DecimalText
+  maxSubscribeText?: DecimalText
   status: string
 }
 
@@ -57,6 +60,10 @@ export async function fetchEarnProducts(limit = 50, options: ReferenceRequestOpt
       earlyRedeemFeeRate: optionalNumber(product.early_redeem_fee_rate),
       minSubscribe: asNumber(product.min_subscribe),
       maxSubscribe: product.max_subscribe === null || product.max_subscribe === undefined ? undefined : asNumber(product.max_subscribe),
+      minSubscribeText: productDecimal(product.min_subscribe),
+      maxSubscribeText: product.max_subscribe === null || product.max_subscribe === undefined
+        ? undefined
+        : productDecimal(product.max_subscribe),
       status: String(product.status || ''),
     }))
   }, options)
@@ -67,10 +74,10 @@ export async function fetchEarnSubscriptions(limit = 50): Promise<EarnSubscripti
   return (response.data.subscriptions || []).map(mapSubscription)
 }
 
-export async function subscribeEarnProduct(productId: number, amount: number): Promise<void> {
+export async function subscribeEarnProduct(productId: number, amount: DecimalText): Promise<void> {
   await client.post(requestUrl('/earn/subscriptions'), {
     product_id: productId,
-    amount: String(amount),
+    amount: normalizeDecimalText(amount),
     idempotency_key: createIdempotencyKey('mobile-earn'),
   })
 }
@@ -111,4 +118,9 @@ function optionalText(value: unknown): string | undefined {
 function normalizeTimestamp(value: unknown): number {
   const timestamp = asNumber(value)
   return timestamp > 0 && timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
+}
+
+function productDecimal(value: unknown): DecimalText {
+  return decimalTextFromBoundary(value as string | number, { allowNegative: false })
+    || normalizeDecimalText('0')
 }

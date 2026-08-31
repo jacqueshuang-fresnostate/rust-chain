@@ -11,6 +11,12 @@ import {
   type ReturnHistoryPeriodDays,
 } from '../src/core/returnHistory.ts'
 import { buildReturnHistoryGeometry } from '../src/core/returnHistoryGeometry.ts'
+import {
+  decimalAdd,
+  decimalCompare,
+  decimalDivide,
+  normalizeDecimalText,
+} from '../src/core/decimal.ts'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
@@ -28,7 +34,7 @@ test('收益历史适配器接受四个白名单周期并严格映射连续 UTC 
     assert.equal(mapped.points.at(-1)?.dayStartAt, Date.UTC(2026, 7, 9))
     assert.equal(mapped.points.at(-1)?.valuedAt, CALCULATED_AT)
     assert.equal(mapped.status, 'complete')
-    assert.deepEqual(mapped.summary, { amount: 0, basisAmount: 0, rate: 0 })
+    assert.deepEqual(mapped.summary, { amount: '0', basisAmount: '0', rate: '0' })
   }
 
   const secondsPayload = historyPayload(1)
@@ -46,8 +52,8 @@ test('收益历史适配器接受四个白名单周期并严格映射连续 UTC 
   summary.basis_amount = '-0.000000000000000000'
   summary.rate = '-0.000000000000000000'
   const mappedSeconds = mapReturnHistory(secondsPayload, 1)
-  assert.equal(Object.is(mappedSeconds.points[0]?.amount, -0), false)
-  assert.equal(Object.is(mappedSeconds.summary.amount, -0), false)
+  assert.equal(mappedSeconds.points[0]?.amount, '0')
+  assert.equal(mappedSeconds.summary.amount, '0')
 })
 
 test('收益历史适配器拒绝周期、数值、点数、UTC、状态与累计合同漂移', () => {
@@ -91,8 +97,8 @@ test('partial 点金额为空、首个缺价后累计为空且顶层 summary 与
   const mapped = mapReturnHistory(payload, 7)
   assert.equal(mapped.status, 'partial')
   assert.deepEqual(mapped.summary, { amount: null, basisAmount: null, rate: null })
-  assert.equal(mapped.points[0]?.cumulativeAmount, 1)
-  assert.equal(mapped.points[1]?.cumulativeAmount, 3)
+  assert.equal(mapped.points[0]?.cumulativeAmount, '1')
+  assert.equal(mapped.points[1]?.cumulativeAmount, '3')
   assert.deepEqual(mapped.points[2], {
     dayStartAt: mapped.periodStartAt + RETURN_HISTORY_DAY_MS * 2,
     valuedAt: mapped.periodStartAt + RETURN_HISTORY_DAY_MS * 3,
@@ -103,7 +109,7 @@ test('partial 点金额为空、首个缺价后累计为空且顶层 summary 与
     status: 'partial',
     missingPriceAssets: ['BTC'],
   })
-  assert.equal(mapped.points[3]?.amount, 4)
+  assert.equal(mapped.points[3]?.amount, '4')
   assert.equal(mapped.points[3]?.cumulativeAmount, null)
   assert.deepEqual(mapped.missingPrices, [{
     dayStartAt: mapped.periodStartAt + RETURN_HISTORY_DAY_MS * 2,
@@ -129,8 +135,8 @@ test('收益几何为 1 日增加零基线、全零居中并让 y 域始终包�
   assert.ok(oneDayGeometry)
   assert.equal(oneDayGeometry.points.length, 2)
   assert.deepEqual(oneDayGeometry.points.map(({ x, value }) => ({ x, value })), [
-    { x: 0, value: 0 },
-    { x: 358, value: 5 },
+    { x: 0, value: '0' },
+    { x: 358, value: '5' },
   ])
   assert.equal(oneDayGeometry.latest.x, 358)
   assert.equal(oneDayGeometry.tone, 'positive')
@@ -257,9 +263,10 @@ function historyPayload(
   const periodStartAt = Date.UTC(2026, 7, 9) - (periodDays - 1) * RETURN_HISTORY_DAY_MS
   const amounts = Array.from({ length: periodDays }, (_, index) => options.amounts?.[index] ?? 0)
   const bases = Array.from({ length: periodDays }, (_, index) => options.bases?.[index] ?? 0)
-  let cumulative = 0
+  const zero = normalizeDecimalText('0')
+  let cumulative = zero
   let cumulativeKnown = true
-  let basisTotal = 0
+  let basisTotal = zero
   const points = amounts.map((amount, index) => {
     const dayStartAt = periodStartAt + index * RETURN_HISTORY_DAY_MS
     if (index === options.partialIndex) {
@@ -275,16 +282,19 @@ function historyPayload(
         missing_price_assets: ['BTC'],
       }
     }
-    const basis = bases[index] ?? 0
-    basisTotal += basis
-    if (cumulativeKnown) cumulative += amount
+    const amountText = normalizeDecimalText(String(amount))
+    const basisText = normalizeDecimalText(String(bases[index] ?? 0))
+    basisTotal = decimalAdd(basisTotal, basisText)
+    if (cumulativeKnown) cumulative = decimalAdd(cumulative, amountText)
     return {
       day_start_at: dayStartAt,
       valued_at: index === periodDays - 1 ? CALCULATED_AT : dayStartAt + RETURN_HISTORY_DAY_MS,
-      amount: fixed(amount),
-      basis_amount: fixed(basis),
-      rate: fixed(basis > 0 ? amount / basis : 0),
-      cumulative_amount: cumulativeKnown ? fixed(cumulative) : null,
+      amount: amountText,
+      basis_amount: basisText,
+      rate: decimalCompare(basisText, zero) > 0
+        ? decimalDivide(amountText, basisText, 18)
+        : zero,
+      cumulative_amount: cumulativeKnown ? cumulative : null,
       status: 'complete',
       missing_price_assets: [],
     }
@@ -301,9 +311,11 @@ function historyPayload(
     summary: partial
       ? { amount: null, basis_amount: null, rate: null }
       : {
-          amount: fixed(cumulative),
-          basis_amount: fixed(basisTotal),
-          rate: fixed(basisTotal > 0 ? cumulative / basisTotal : 0),
+          amount: cumulative,
+          basis_amount: basisTotal,
+          rate: decimalCompare(basisTotal, zero) > 0
+            ? decimalDivide(cumulative, basisTotal, 18)
+            : zero,
         },
     missing_prices: partial ? [{ day_start_at: missingDay, asset_symbol: 'BTC' }] : [],
     points,
@@ -316,10 +328,6 @@ function mappedHistory(period: ReturnHistoryPeriodDays, marker: number): ReturnH
   const bases = Array.from({ length: period }, () => 0)
   bases[period - 1] = 10
   return mapReturnHistory(historyPayload(period, { amounts, bases }), period)
-}
-
-function fixed(value: number): string {
-  return value.toFixed(18)
 }
 
 function deferred<T>(): {

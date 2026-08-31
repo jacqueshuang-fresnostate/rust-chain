@@ -2,9 +2,15 @@ import {
   normalizeRealizedReturnAssetSymbol,
   normalizeRealizedReturnAssetSymbols,
   normalizeRealizedReturnTimestamp,
-  nullableRealizedReturnNumber,
-  requiredRealizedReturnNumber,
+  nullableRealizedReturnDecimal,
 } from './realizedReturn.ts'
+import {
+  decimalAdd,
+  decimalCompare,
+  decimalDivide,
+  normalizeDecimalText,
+  type DecimalText,
+} from './decimal.ts'
 import {
   createSessionRequestLifecycle,
   type SessionRequestLifecycle,
@@ -52,9 +58,9 @@ export interface BackendReturnHistory {
 }
 
 export interface ReturnHistorySummary {
-  amount: number | null
-  basisAmount: number | null
-  rate: number | null
+  amount: DecimalText | null
+  basisAmount: DecimalText | null
+  rate: DecimalText | null
 }
 
 export interface ReturnHistoryMissingPrice {
@@ -65,10 +71,10 @@ export interface ReturnHistoryMissingPrice {
 export interface ReturnHistoryPoint {
   dayStartAt: number
   valuedAt: number
-  amount: number | null
-  basisAmount: number | null
-  rate: number | null
-  cumulativeAmount: number | null
+  amount: DecimalText | null
+  basisAmount: DecimalText | null
+  rate: DecimalText | null
+  cumulativeAmount: DecimalText | null
   status: ReturnHistoryStatus
   missingPriceAssets: string[]
 }
@@ -125,8 +131,9 @@ export function mapReturnHistory(
   if (!Array.isArray(payload.points) || payload.points.length !== expectedPeriodDays) {
     throw new Error('invalid return history points length')
   }
-  let cumulative = 0
-  let basisTotal = 0
+  const zero = normalizeDecimalText('0')
+  let cumulative = zero
+  let basisTotal = zero
   let cumulativeKnown = true
   let hasPartialPoint = false
   const pointMissingKeys: string[] = []
@@ -157,22 +164,22 @@ export function mapReturnHistory(
       point.missing_price_assets,
       `points[${index}].missing_price_assets`,
     )
-    const amount = nullableRealizedReturnNumber(
+    const amount = nullableRealizedReturnDecimal(
       point.amount,
       `points[${index}].amount`,
       'return history',
     )
-    const basisAmount = nullableRealizedReturnNumber(
+    const basisAmount = nullableRealizedReturnDecimal(
       point.basis_amount,
       `points[${index}].basis_amount`,
       'return history',
     )
-    const rate = nullableRealizedReturnNumber(
+    const rate = nullableRealizedReturnDecimal(
       point.rate,
       `points[${index}].rate`,
       'return history',
     )
-    const cumulativeAmount = nullableRealizedReturnNumber(
+    const cumulativeAmount = nullableRealizedReturnDecimal(
       point.cumulative_amount,
       `points[${index}].cumulative_amount`,
       'return history',
@@ -192,15 +199,19 @@ export function mapReturnHistory(
       if (amount === null || basisAmount === null || rate === null || missingPriceAssets.length) {
         throw new Error('invalid complete return history point')
       }
-      if (basisAmount < 0) throw new Error('invalid return history point basis_amount')
-      const expectedRate = basisAmount > 0 ? amount / basisAmount : 0
-      if (!financiallyEqual(rate, expectedRate)) {
+      if (decimalCompare(basisAmount, zero) < 0) {
+        throw new Error('invalid return history point basis_amount')
+      }
+      const expectedRate = decimalCompare(basisAmount, zero) > 0
+        ? decimalDivide(amount, basisAmount, 18)
+        : zero
+      if (decimalCompare(rate, expectedRate) !== 0) {
         throw new Error('invalid return history point rate consistency')
       }
-      basisTotal += basisAmount
+      basisTotal = decimalAdd(basisTotal, basisAmount)
       if (cumulativeKnown) {
-        cumulative += amount
-        if (cumulativeAmount === null || !financiallyEqual(cumulativeAmount, cumulative)) {
+        cumulative = decimalAdd(cumulative, amount)
+        if (cumulativeAmount === null || decimalCompare(cumulativeAmount, cumulative) !== 0) {
           throw new Error('invalid return history cumulative consistency')
         }
       } else if (cumulativeAmount !== null) {
@@ -246,11 +257,13 @@ export function mapReturnHistory(
       throw new Error('invalid complete return history summary')
     }
     const finalCumulative = points.at(-1)?.cumulativeAmount
-    const expectedRate = basisTotal > 0 ? summary.amount / basisTotal : 0
+    const expectedRate = decimalCompare(basisTotal, zero) > 0
+      ? decimalDivide(summary.amount, basisTotal, 18)
+      : zero
     if (finalCumulative === null || finalCumulative === undefined
-      || !financiallyEqual(summary.amount, finalCumulative)
-      || !financiallyEqual(summary.basisAmount, basisTotal)
-      || !financiallyEqual(summary.rate, expectedRate)) {
+      || decimalCompare(summary.amount, finalCumulative) !== 0
+      || decimalCompare(summary.basisAmount, basisTotal) !== 0
+      || decimalCompare(summary.rate, expectedRate) !== 0) {
       throw new Error('invalid return history summary consistency')
     }
   }
@@ -333,14 +346,14 @@ function mapMissingPrices(
 function mapSummary(value: unknown): ReturnHistorySummary {
   if (!isRecord(value)) throw new Error('invalid return history summary')
   const summary = value as unknown as BackendReturnHistorySummary
-  const amount = nullableRealizedReturnNumber(summary.amount, 'summary.amount', 'return history')
-  const basisAmount = nullableRealizedReturnNumber(
+  const amount = nullableRealizedReturnDecimal(summary.amount, 'summary.amount', 'return history')
+  const basisAmount = nullableRealizedReturnDecimal(
     summary.basis_amount,
     'summary.basis_amount',
     'return history',
   )
-  const rate = nullableRealizedReturnNumber(summary.rate, 'summary.rate', 'return history')
-  if (basisAmount !== null && basisAmount < 0) {
+  const rate = nullableRealizedReturnDecimal(summary.rate, 'summary.rate', 'return history')
+  if (basisAmount !== null && decimalCompare(basisAmount, normalizeDecimalText('0')) < 0) {
     throw new Error('invalid return history summary.basis_amount')
   }
   return { amount, basisAmount, rate }
@@ -351,10 +364,6 @@ function compareMissingKey(left: string, right: string): number {
   const [rightDay = '', rightAsset = ''] = right.split(':')
   const dayOrder = Number(leftDay) - Number(rightDay)
   return dayOrder || leftAsset.localeCompare(rightAsset)
-}
-
-function financiallyEqual(left: number, right: number): boolean {
-  return Math.abs(left - right) <= Math.max(1, Math.abs(left), Math.abs(right)) * 1e-12
 }
 
 function arraysEqual<T>(left: T[], right: T[]): boolean {

@@ -17,13 +17,30 @@ import { apiErrorMessage } from '@/api/client'
 import { fetchEarnProducts, fetchEarnSubscriptions, redeemEarnSubscription, subscribeEarnProduct, type EarnProduct, type EarnSubscription } from '@/api/earn'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime } from '@/core/format'
+import {
+  decimalDivide,
+  decimalMinimum,
+  decimalMultiply,
+  decimalTextFromBoundary,
+  decimalTextFromFiniteNumber,
+  decimalWithinRange,
+  formatDecimalText,
+  normalizeDecimalText,
+  positiveDecimalInput,
+  type DecimalText,
+} from '@/core/decimal'
+import {
+  earnCategoryPresentation,
+  earnStatusPresentation,
+  isEarnRedeemableStatus,
+} from '@/core/financialEnumPresentation'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
 const router = useRouter()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const products = ref<EarnProduct[]>([])
 const subscriptions = ref<EarnSubscription[]>([])
 const accounts = ref<WalletAccount[]>([])
@@ -40,22 +57,30 @@ const holdingsSection = ref<HTMLElement | null>(null)
 
 const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === selected.value?.assetId))
 const available = computed<number | null>(() => selectedAccount.value?.available ?? null)
+const availableText = computed(() => decimalTextFromBoundary(
+  selectedAccount.value?.availableText ?? selectedAccount.value?.available,
+  { allowNegative: false },
+))
 const availableLabel = computed(() => available.value === null ? '--' : formatAmount(available.value))
-const amountNumber = computed(() => Number(amount.value || 0))
+const amountText = computed(() => positiveDecimalInput(amount.value))
 const dialogOpen = computed(() => Boolean(selected.value))
-const estimatedDailyYield = computed<number | null>(() => {
-  if (!selected.value || !Number.isFinite(amountNumber.value) || amountNumber.value <= 0 || selected.value.aprRate < 0) return null
-  return amountNumber.value * selected.value.aprRate / 365
+const estimatedDailyYield = computed<DecimalText | null>(() => {
+  if (!selected.value || !amountText.value || !Number.isFinite(selected.value.aprRate) || selected.value.aprRate < 0) return null
+  return decimalDivide(
+    decimalMultiply(amountText.value, decimalTextFromFiniteNumber(selected.value.aprRate)),
+    normalizeDecimalText('365'),
+    18,
+  )
 })
 const canSubscribe = computed(() => {
   const product = selected.value
   return Boolean(
     product
-    && available.value !== null
-    && Number.isFinite(amountNumber.value)
-    && amountNumber.value >= product.minSubscribe
-    && (product.maxSubscribe === undefined || amountNumber.value <= product.maxSubscribe)
-    && amountNumber.value <= available.value,
+    && decimalWithinRange(amountText.value, {
+      minimum: product.minSubscribeText ?? product.minSubscribe,
+      maximum: product.maxSubscribeText ?? product.maxSubscribe,
+      available: availableText.value,
+    }),
   )
 })
 const availabilityLabel = computed(() => {
@@ -64,11 +89,17 @@ const availabilityLabel = computed(() => {
   const values = {
     available: availableLabel.value,
     asset: product.assetSymbol,
-    minimum: formatAmount(product.minSubscribe),
-    maximum: product.maxSubscribe === undefined ? '--' : formatAmount(product.maxSubscribe),
+    minimum: formatMoney(product.minSubscribeText || decimalTextFromFiniteNumber(product.minSubscribe)),
+    maximum: product.maxSubscribeText === undefined && product.maxSubscribe === undefined
+      ? '--'
+      : formatMoney(product.maxSubscribeText || decimalTextFromFiniteNumber(product.maxSubscribe || 0)),
   }
   return t(product.maxSubscribe === undefined ? 'earn.availability' : 'earn.availabilityWithMaximum', values)
 })
+
+function formatMoney(value: DecimalText): string {
+  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+}
 const selectedRedemptionRule = computed(() => {
   const product = selected.value
   if (!product) return ''
@@ -89,7 +120,7 @@ const categories = computed(() => [
   { value: 'all', label: t('earn.all') },
   ...[...new Set(products.value.map((product) => product.category).filter(Boolean))]
     .slice(0, 4)
-    .map((value) => ({ value, label: value })),
+    .map((value) => ({ value, label: categoryLabel(value) })),
 ])
 const visibleProducts = computed(() => activeCategory.value === 'all'
   ? products.value
@@ -138,17 +169,15 @@ function openSubscribe(product: EarnProduct): void {
     return
   }
   selected.value = product
-  amount.value = String(product.minSubscribe)
+  amount.value = product.minSubscribeText || String(product.minSubscribe)
   success.value = ''
   error.value = ''
 }
 
 function useMaximum(): void {
-  if (available.value === null) return
-  const productMaximum = selected.value?.maxSubscribe
-  amount.value = String(productMaximum === undefined
-    ? available.value
-    : Math.min(available.value, productMaximum))
+  if (!availableText.value) return
+  const productMaximum = selected.value?.maxSubscribeText ?? selected.value?.maxSubscribe
+  amount.value = String(decimalMinimum(availableText.value, productMaximum) || availableText.value)
 }
 
 function openHoldings(): void {
@@ -169,7 +198,9 @@ async function subscribe(): Promise<void> {
   submitting.value = true
   error.value = ''
   try {
-    await subscribeEarnProduct(selected.value.id, amountNumber.value)
+    const requestAmount = amountText.value
+    if (!requestAmount) throw new TypeError('invalid earn amount')
+    await subscribeEarnProduct(selected.value.id, requestAmount)
     selected.value = null
     success.value = t('earn.subscribed')
     await load()
@@ -214,6 +245,16 @@ function earlyRedeemRule(product: EarnProduct): string {
     rate: configuredRate(product.earlyRedeemFeeRate),
     basis: basisLabel,
   })
+}
+
+function categoryLabel(category: string): string {
+  const presentation = earnCategoryPresentation(category)
+  return t(presentation.translationKey, { source: presentation.source || '--' })
+}
+
+function subscriptionStatusLabel(status: string): string {
+  const presentation = earnStatusPresentation(status)
+  return t(presentation.translationKey, { source: presentation.source || '--' })
 }
 
 onMounted(() => { void load() })
@@ -270,7 +311,7 @@ onMounted(() => { void load() })
               <div><dt>{{ t('earn.minimumLabel') }}</dt><dd class="pencil-numeric">{{ formatAmount(product.minSubscribe) }} {{ product.assetSymbol }}</dd></div>
               <div><dt>{{ t('earn.riskLabel') }}</dt><dd>{{ t('earn.platformRules') }}</dd></div>
             </dl>
-            <p>{{ product.category }} · {{ t('earn.bannerDescription') }}</p>
+            <p>{{ categoryLabel(product.category) }} · {{ t('earn.bannerDescription') }}</p>
             <span class="earn-product-pencil__action">{{ t('earn.viewAvailableProducts') }}</span>
           </button>
         </div>
@@ -290,8 +331,8 @@ onMounted(() => { void load() })
                 <small>{{ t('earn.subscribedAt', { time: formatDateTime(subscription.subscribedAt) }) }}</small>
               </span>
               <span class="pencil-row__value">
-                <small>{{ subscription.status }}</small>
-                <button v-if="subscription.status === 'subscribed'" type="button" :disabled="actionId === subscription.id" @click="redeem(subscription)">
+                <small>{{ subscriptionStatusLabel(subscription.status) }}</small>
+                <button v-if="isEarnRedeemableStatus(subscription.status)" type="button" :disabled="actionId === subscription.id" @click="redeem(subscription)">
                   {{ actionId === subscription.id ? t('earn.redeeming') : t('earn.redeem') }}
                 </button>
               </span>
@@ -333,7 +374,7 @@ onMounted(() => { void load() })
         <dl class="earn-dialog-summary">
           <div>
             <dt>{{ t('earn.estimatedDailyYield') }}</dt>
-            <dd>{{ estimatedDailyYield === null ? '--' : `${formatAmount(estimatedDailyYield)} ${selected.assetSymbol}` }}</dd>
+            <dd>{{ estimatedDailyYield === null ? '--' : `${formatMoney(estimatedDailyYield)} ${selected.assetSymbol}` }}</dd>
           </div>
           <div><dt>{{ t('earn.interestStartRule') }}</dt><dd>{{ t('earn.ruleUnavailable') }}</dd></div>
           <div><dt>{{ t('earn.redemptionRule') }}</dt><dd>{{ selectedRedemptionRule }}</dd></div>

@@ -6,12 +6,22 @@ import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { createQuickRechargeOrder, fetchQuickRechargeConfig, fetchQuickRechargeOrders, type QuickRechargeConfig, type QuickRechargeOrder } from '@/api/wallet'
-import { formatAmount, formatDateTime, formatFiat } from '@/core/format'
+import { formatDateTime } from '@/core/format'
+import {
+  decimalCompare,
+  decimalMultiply,
+  formatDecimalText,
+  normalizeDecimalText,
+  positiveDecimalInput,
+  decimalWithinRange,
+  type DecimalText,
+} from '@/core/decimal'
+import { quickRechargeStatusPresentation } from '@/core/financialEnumPresentation'
 import { detectClientPlatform } from '@/core/platform'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const config = ref<QuickRechargeConfig | null>(null)
 const orders = ref<QuickRechargeOrder[]>([])
 const amount = ref('')
@@ -25,12 +35,20 @@ const platformTarget = computed<'ios_app' | 'android_app' | 'mobile_web' | 'desk
   return detectClientPlatform()
 })
 
-const numericAmount = computed(() => Number(amount.value || 0))
+const amountText = computed(() => positiveDecimalInput(amount.value))
 const amountValid = computed(() => {
-  if (!config.value || !Number.isFinite(numericAmount.value)) return false
-  return numericAmount.value >= config.value.minAmount && (!config.value.maxAmount || numericAmount.value <= config.value.maxAmount)
+  if (!config.value) return false
+  return decimalWithinRange(amountText.value, {
+    minimum: config.value.minAmountText,
+    maximum: config.value.maxAmountText,
+  })
 })
 const amountInvalid = computed(() => validationAttempted.value && !amountValid.value)
+const quickValues = computed(() => {
+  const minimum = config.value?.minAmountText
+  if (!minimum) return []
+  return [minimum, decimalMultiply(minimum, normalizeDecimalText('2')), decimalMultiply(minimum, normalizeDecimalText('5'))]
+})
 
 async function load(): Promise<void> {
   if (!session.isAuthenticated) return
@@ -40,7 +58,7 @@ async function load(): Promise<void> {
     const [nextConfig, nextOrders] = await Promise.all([fetchQuickRechargeConfig(), fetchQuickRechargeOrders()])
     config.value = nextConfig
     orders.value = nextOrders
-    if (!amount.value && nextConfig.minAmount > 0) amount.value = String(nextConfig.minAmount)
+    if (!amount.value && nextConfig.minAmountText !== '0') amount.value = nextConfig.minAmountText
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('quickRecharge.unavailable'))
   } finally {
@@ -48,8 +66,14 @@ async function load(): Promise<void> {
   }
 }
 
-function setAmount(value: number): void {
-  amount.value = String(value)
+function setAmount(value: DecimalText): void {
+  amount.value = value
+}
+
+function formatMoney(value: DecimalText): string {
+  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', {
+    maximumFractionDigits: 18,
+  })
 }
 
 async function submit(): Promise<void> {
@@ -62,7 +86,9 @@ async function submit(): Promise<void> {
   }
   submitting.value = true
   try {
-    const order = await createQuickRechargeOrder(numericAmount.value, platformTarget.value)
+    const requestAmount = amountText.value
+    if (!requestAmount) throw new TypeError('invalid quick-recharge amount')
+    const order = await createQuickRechargeOrder(requestAmount, platformTarget.value)
     submittedOrder.value = order
     orders.value = [order, ...orders.value.filter((item) => item.id !== order.id)]
     validationAttempted.value = false
@@ -79,10 +105,15 @@ function continuePayment(): void {
 }
 
 function orderStatusTone(status: string): string {
-  const normalized = status.toLowerCase()
-  if (['completed', 'confirmed', 'paid', 'success', 'succeeded'].includes(normalized)) return 'is-positive'
-  if (['canceled', 'cancelled', 'expired', 'failed', 'rejected'].includes(normalized)) return 'is-negative'
-  return 'is-pending'
+  const tone = quickRechargeStatusPresentation(status).tone
+  if (tone === 'positive') return 'is-positive'
+  if (tone === 'negative') return 'is-negative'
+  return tone === 'pending' ? 'is-pending' : 'is-neutral'
+}
+
+function orderStatusLabel(status: string): string {
+  const presentation = quickRechargeStatusPresentation(status)
+  return t(presentation.translationKey, { source: presentation.source || '--' })
 }
 
 onMounted(() => { void load() })
@@ -134,26 +165,26 @@ onMounted(() => { void load() })
               </label>
               <div class="quick-values">
                 <button
-                  v-for="value in [config.minAmount, config.minAmount * 2, config.minAmount * 5]"
+                  v-for="value in quickValues"
                   :key="value"
                   type="button"
-                  :aria-pressed="numericAmount === value"
-                  :class="{ 'is-active': numericAmount === value }"
+                  :aria-pressed="Boolean(amountText && decimalCompare(amountText, value) === 0)"
+                  :class="{ 'is-active': amountText && decimalCompare(amountText, value) === 0 }"
                   @click="setAmount(value)"
                 >
-                  {{ formatFiat(value, config.currency) }}
+                  {{ formatMoney(value) }} {{ config.currency }}
                 </button>
               </div>
               <dl>
                 <div><dt>{{ t('quickRecharge.receivedAsset') }}</dt><dd>{{ config.token }}</dd></div>
                 <div><dt>{{ t('quickRecharge.network') }}</dt><dd>{{ config.network || t('quickRecharge.providerNetwork') }}</dd></div>
-                <div><dt>{{ t('quickRecharge.amountRange') }}</dt><dd class="numeric">{{ formatFiat(config.minAmount, config.currency) }}<span v-if="config.maxAmount"> - {{ formatFiat(config.maxAmount, config.currency) }}</span></dd></div>
+                <div><dt>{{ t('quickRecharge.amountRange') }}</dt><dd class="numeric">{{ formatMoney(config.minAmountText) }}<span v-if="config.maxAmountText"> - {{ formatMoney(config.maxAmountText) }}</span> {{ config.currency }}</dd></div>
               </dl>
               <button class="button button--primary button--full recharge-submit" type="submit" :disabled="submitting">{{ submitting ? t('quickRecharge.creating') : t('quickRecharge.buy', { token: config.token }) }}</button>
             </form>
             <section v-if="submittedOrder" class="order-result" aria-live="polite">
               <div><ReceiptText :size="20" aria-hidden="true" /><span>{{ t('quickRecharge.order', { id: submittedOrder.orderId }) }}</span></div>
-              <strong class="numeric">{{ formatAmount(submittedOrder.actualAmount || submittedOrder.fiatAmount) }} {{ submittedOrder.actualAmount ? submittedOrder.token : submittedOrder.currency }}</strong>
+              <strong class="numeric">{{ formatMoney(submittedOrder.actualAmountText || submittedOrder.fiatAmountText) }} {{ submittedOrder.actualAmountText ? submittedOrder.token : submittedOrder.currency }}</strong>
               <button v-if="submittedOrder.paymentUrl" class="button button--secondary button--full" type="button" @click="continuePayment">
                 {{ t('quickRecharge.continuePayment') }}
                 <ExternalLink :size="16" aria-hidden="true" />
@@ -169,12 +200,12 @@ onMounted(() => { void load() })
                 <div>
                   <span class="history-row__identity">
                     <strong>{{ order.token }}</strong>
-                    <b class="history-row__status" :class="orderStatusTone(order.status)">{{ order.status }}</b>
+                    <b class="history-row__status" :class="orderStatusTone(order.status)">{{ orderStatusLabel(order.status) }}</b>
                   </span>
                   <small>{{ formatDateTime(order.createdAt) }}</small>
                 </div>
                 <span>
-                  <b class="numeric">{{ formatFiat(order.fiatAmount, order.currency) }}</b>
+                  <b class="numeric">{{ formatMoney(order.fiatAmountText) }} {{ order.currency }}</b>
                   <small>{{ order.network || t('quickRecharge.quickPayment') }}</small>
                 </span>
               </article>

@@ -1,4 +1,9 @@
-import { formatAmount, formatPercent } from './format.ts'
+import {
+  decimalMultiply,
+  decimalSign,
+  formatDecimalText,
+  normalizeDecimalText,
+} from './decimal.ts'
 import { isCompleteTodayReturn, type TodayReturn } from './todayReturn.ts'
 
 export type TodayReturnViewState = 'idle' | 'loading' | 'complete' | 'partial' | 'error'
@@ -16,6 +21,7 @@ export function resolveTodayReturnPresentation(input: {
   value: TodayReturn | null
   amountMask: string
   detailMask: string
+  locale?: string
   messages: {
     loading: string
     partial: (assets: string) => string
@@ -28,11 +34,17 @@ export function resolveTodayReturnPresentation(input: {
   }
 
   if (input.state === 'complete' && isCompleteTodayReturn(input.value)) {
-    const sign = input.value.amount > 0 ? '+' : ''
+    const amountSign = decimalSign(input.value.amount)
     return {
-      amount: `${sign}${formatAmount(input.value.amount)} ${input.value.reportingAsset}`,
-      detail: formatPercent(input.value.rate * 100),
-      tone: input.value.amount > 0 ? 'positive' : input.value.amount < 0 ? 'negative' : '',
+      amount: `${amountSign > 0 ? '+' : ''}${formatDecimalText(input.value.amount, input.locale || 'en-US', {
+        maximumFractionDigits: 18,
+      })} ${input.value.reportingAsset}`,
+      detail: `${formatDecimalText(
+        decimalMultiply(input.value.rate, normalizeDecimalText('100')),
+        input.locale || 'en-US',
+        { maximumFractionDigits: 8 },
+      )}%`,
+      tone: amountSign > 0 ? 'positive' : amountSign < 0 ? 'negative' : '',
     }
   }
 

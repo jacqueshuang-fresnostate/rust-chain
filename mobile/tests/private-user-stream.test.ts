@@ -2,12 +2,18 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  PRIVATE_USER_INBOUND_IDLE_TIMEOUT_MS,
   createPrivateUserStream,
   parsePrivateUserFrame,
   type PrivateUserEvent,
   type PrivateUserSocket,
   type PrivateUserStreamScheduler,
 } from '../src/api/privateUserStream.ts'
+import {
+  createPrivateUserStreamManager,
+  eventMatchesTopic,
+  type PrivateUserManagerSession,
+} from '../src/core/privateUserStreamManager.ts'
 
 const tradeSource = readFileSync(new URL('../src/views/TradeView.vue', import.meta.url), 'utf8')
 
@@ -58,6 +64,7 @@ test('private stream makes no connection without a token and reconnect reads the
     },
     scheduler,
     reconnectBaseMs: 10,
+    reconnectJitterRatio: 0,
   })
 
   assert.equal(stream.start(), false)
@@ -103,6 +110,7 @@ test('private stream filters events, sends heartbeat only on the current socket,
     },
     scheduler,
     reconnectBaseMs: 10,
+    reconnectJitterRatio: 0,
     heartbeatMs: 20,
   })
 
@@ -136,7 +144,11 @@ test('private stream filters events, sends heartbeat only on the current socket,
   assert.equal(opened.length, 2)
   assert.equal(events.length, 1)
   assert.deepEqual(first.sent, ['ping'])
-  assert.deepEqual(scheduler.pendingTimeoutDelays(), [])
+  assert.deepEqual(
+    scheduler.pendingTimeoutDelays(),
+    [PRIVATE_USER_INBOUND_IDLE_TIMEOUT_MS],
+    'late handlers do not replace the current socket watchdog',
+  )
 
   scheduler.fireIntervals()
   assert.deepEqual(second.sent, ['ping'])
@@ -178,6 +190,7 @@ test('private reconnect delay grows exponentially and remains bounded', () => {
     scheduler,
     reconnectBaseMs: 100,
     reconnectMaxMs: 250,
+    reconnectJitterRatio: 0,
   })
 
   stream.start()
@@ -200,54 +213,267 @@ test('private reconnect delay grows exponentially and remains bounded', () => {
   stream.stop()
 })
 
-test('TradeView scopes the private stream to mounted authenticated contract mode and treats events as REST hints', () => {
-  const streamSetup = sliceBetween(
+test('private reconnect jitter is deterministic and remains bounded by the configured maximum', () => {
+  const scheduler = new ManualScheduler()
+  const sockets: MockPrivateSocket[] = []
+  const randomValues = [0, 1, 1]
+  const stream = createPrivateUserStream({
+    getAccessToken: () => 'TOKEN',
+    getUrl: () => 'ws://localhost/ws/private?token=TOKEN',
+    onEvent: () => undefined,
+    createSocket: (url) => {
+      const socket = new MockPrivateSocket(url)
+      sockets.push(socket)
+      return socket
+    },
+    scheduler,
+    random: () => randomValues.shift() ?? 0.5,
+    reconnectBaseMs: 100,
+    reconnectMaxMs: 250,
+    reconnectJitterRatio: 0.2,
+  })
+
+  stream.start()
+  requiredSocket(sockets, 0).serverClose()
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [80])
+  scheduler.runNextTimeout()
+
+  requiredSocket(sockets, 1).serverClose()
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [240])
+  scheduler.runNextTimeout()
+
+  requiredSocket(sockets, 2).serverClose()
+  assert.deepEqual(
+    scheduler.pendingTimeoutDelays(),
+    [250],
+    'jitter cannot exceed the configured reconnect maximum',
+  )
+  stream.stop()
+})
+
+test('private inbound watchdog rearms on every frame and stale callbacks cannot close a replacement', () => {
+  let clock = 100
+  const scheduler = new ManualScheduler()
+  const sockets: MockPrivateSocket[] = []
+  const states: string[] = []
+  const inboundFrames: number[] = []
+  const stream = createPrivateUserStream({
+    getAccessToken: () => 'TOKEN',
+    getUrl: () => 'ws://localhost/ws/private?token=TOKEN',
+    onInboundFrame: (receivedAt) => inboundFrames.push(receivedAt),
+    onStateChange: (state) => states.push(state),
+    onEvent: () => undefined,
+    createSocket: (url) => {
+      const socket = new MockPrivateSocket(url)
+      sockets.push(socket)
+      return socket
+    },
+    scheduler,
+    now: () => clock,
+    reconnectBaseMs: 10,
+    reconnectJitterRatio: 0,
+    heartbeatMs: 20,
+    inboundIdleTimeoutMs: 50,
+  })
+
+  stream.start()
+  const first = requiredSocket(sockets, 0)
+  first.open()
+  const staleWatchdog = scheduler.latestTimeoutCallback(50)
+  assert.deepEqual(states, ['connecting', 'live'])
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [50])
+
+  clock = 125
+  first.message('pong')
+  assert.deepEqual(inboundFrames, [125])
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [50])
+  staleWatchdog?.()
+  assert.equal(first.closeCount, 0, 'a cleared watchdog is inert after a newer inbound frame')
+  assert.equal(states.at(-1), 'live')
+
+  scheduler.runTimeoutWithDelay(50)
+  assert.equal(first.closeCount, 1)
+  assert.equal(states.at(-1), 'stale')
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [10])
+
+  scheduler.runTimeoutWithDelay(10)
+  const second = requiredSocket(sockets, 1)
+  assert.equal(states.at(-1), 'connecting')
+  first.open()
+  first.message('{"type":"support.refresh"}')
+  first.error()
+  first.serverClose()
+  assert.equal(second.closeCount, 0)
+  assert.equal(states.at(-1), 'connecting')
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [])
+
+  second.open()
+  assert.equal(states.at(-1), 'live')
+  stream.stop()
+  assert.equal(second.closeCount, 1)
+  assert.equal(states.at(-1), 'stopped')
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [])
+})
+
+test('shared private manager keeps one generation-scoped socket across independent topic leases', () => {
+  let clock = 1_000
+  let session: PrivateUserManagerSession = {
+    accessToken: 'TOKEN-A',
+    scope: 'USER-A',
+    generation: 4,
+  }
+  const scheduler = new ManualScheduler()
+  const sockets: MockPrivateSocket[] = []
+  const marginEvents: string[] = []
+  const supportEvents: string[] = []
+  const opens: string[] = []
+  const manager = createPrivateUserStreamManager({
+    readSession: () => session,
+    isOnline: () => true,
+    openTransport: (context) => createPrivateUserStream({
+      getAccessToken: () => context.accessToken,
+      getUrl: (token) => `ws://localhost/ws/private?token=${token}`,
+      onOpen: context.onOpen,
+      onInboundFrame: context.onInboundFrame,
+      onStateChange: context.onStateChange,
+      onEvent: context.onEvent,
+      createSocket: (url) => {
+        const socket = new MockPrivateSocket(url)
+        sockets.push(socket)
+        return socket
+      },
+      scheduler,
+      now: () => clock,
+      reconnectBaseMs: 10,
+      reconnectJitterRatio: 0,
+      heartbeatMs: 20,
+      inboundIdleTimeoutMs: 50,
+    }),
+  })
+
+  const marginLease = manager.acquire({
+    topic: 'margin',
+    consumerId: 'trade',
+    onOpen: () => opens.push('margin'),
+    onEvent: (event) => marginEvents.push(event.type),
+  })
+  const supportLease = manager.acquire({
+    topic: 'support',
+    consumerId: 'support-chat',
+    onOpen: () => opens.push('support'),
+    onEvent: (event) => supportEvents.push(event.type),
+  })
+
+  assert.equal(sockets.length, 1)
+  assert.equal(requiredSocket(sockets, 0).url, 'ws://localhost/ws/private?token=TOKEN-A')
+  assert.deepEqual(manager.snapshot(), {
+    connection: 'connecting',
+    connecting: true,
+    live: false,
+    stale: false,
+    offline: false,
+    lastFrameAt: 0,
+    consumerCount: 2,
+    marginConsumerCount: 1,
+    supportConsumerCount: 1,
+    sessionGeneration: 4,
+  })
+
+  const first = requiredSocket(sockets, 0)
+  first.open()
+  assert.deepEqual(opens, ['margin', 'support'])
+  clock = 1_125
+  first.message('{"type":"margin.position.closed","position_id":"P1"}')
+  first.message('{"type":"support.refresh","conversation_id":9}')
+  first.message('{"type":"wallet.changed"}')
+  assert.deepEqual(marginEvents, ['margin.position.closed'])
+  assert.deepEqual(supportEvents, ['support.refresh'])
+  assert.equal(manager.snapshot().lastFrameAt, 1_125)
+  assert.equal(manager.snapshot().live, true)
+
+  marginLease.release()
+  assert.equal(first.closeCount, 0, 'releasing one consumer preserves the shared support socket')
+  assert.equal(manager.snapshot().consumerCount, 1)
+  first.message('{"type":"margin.position.liquidated"}')
+  assert.deepEqual(marginEvents, ['margin.position.closed'])
+
+  session = { accessToken: 'TOKEN-B', scope: 'USER-A', generation: 5 }
+  manager.synchronizeSession()
+  assert.equal(first.closeCount, 1)
+  assert.equal(sockets.length, 2)
+  assert.equal(requiredSocket(sockets, 1).url, 'ws://localhost/ws/private?token=TOKEN-B')
+  assert.equal(manager.snapshot().sessionGeneration, 5)
+  assert.equal(manager.snapshot().lastFrameAt, 0)
+
+  first.open()
+  first.message('{"type":"support.refresh","conversation_id":"OLD"}')
+  first.error()
+  first.serverClose()
+  assert.equal(manager.snapshot().connecting, true)
+  assert.deepEqual(supportEvents, ['support.refresh'])
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [])
+
+  const second = requiredSocket(sockets, 1)
+  second.open()
+  clock = 1_250
+  second.message('pong')
+  assert.equal(manager.snapshot().lastFrameAt, 1_250)
+  manager.setOnline(false)
+  assert.equal(second.closeCount, 1)
+  assert.equal(manager.snapshot().offline, true)
+
+  second.message('{"type":"support.refresh","conversation_id":"OFFLINE"}')
+  manager.setOnline(true)
+  assert.equal(sockets.length, 3)
+  assert.equal(manager.snapshot().connecting, true)
+
+  const third = requiredSocket(sockets, 2)
+  session = { accessToken: '', scope: '', generation: 6 }
+  manager.synchronizeSession()
+  assert.equal(third.closeCount, 1, 'logout closes the shared generation even with an active lease')
+  assert.equal(manager.snapshot().connection, 'idle')
+  assert.equal(manager.snapshot().sessionGeneration, 6)
+  assert.deepEqual(scheduler.pendingTimeoutDelays(), [])
+
+  supportLease.release()
+  assert.equal(manager.snapshot().consumerCount, 0)
+  manager.dispose()
+})
+
+test('private manager routes only exact supported topic event types', () => {
+  assert.equal(eventMatchesTopic({ type: 'margin.position.liquidated' }, 'margin'), true)
+  assert.equal(eventMatchesTopic({ type: 'margin.position.partially_closed' }, 'margin'), true)
+  assert.equal(eventMatchesTopic({ type: 'margin.position.closed' }, 'margin'), true)
+  assert.equal(eventMatchesTopic({ type: 'margin.position.opened' }, 'margin'), false)
+  assert.equal(eventMatchesTopic({ type: 'support.refresh' }, 'support'), true)
+  assert.equal(eventMatchesTopic({ type: 'support.refresh.extra' }, 'support'), false)
+})
+
+test('TradeView leases the shared margin topic and treats private frames only as REST hints', () => {
+  const leaseSetup = sliceBetween(
     tradeSource,
-    'const privateUserStream = createPrivateUserStream',
+    'usePrivateUserStreamLease({',
     'const { trapFocus:',
   )
   const refreshHint = sliceBetween(
     tradeSource,
     'function requestPrivateMarginReconciliation',
-    'function handlePrivateUserEvent',
-  )
-  const eventHandler = sliceBetween(
-    tradeSource,
-    'function handlePrivateUserEvent',
-    'function syncPrivateUserStream',
-  )
-  const streamSync = sliceBetween(
-    tradeSource,
-    'function syncPrivateUserStream',
     'function isCurrentTradingBalancesRequest',
   )
 
-  assert.match(tradeSource, /import \{ apiErrorMessage, readAccessToken \} from '@\/api\/client'/)
-  assert.match(tradeSource, /import \{ privateUserWebSocketUrl, publicMarketWebSocketUrl \} from '@\/config\/app'/)
-  assert.match(streamSetup, /getAccessToken: readAccessToken/)
-  assert.match(streamSetup, /getUrl: privateUserWebSocketUrl/)
-  assert.match(streamSetup, /onOpen: requestPrivateMarginReconciliation/)
-  assert.match(streamSetup, /onEvent: handlePrivateUserEvent/)
-
-  assert.match(eventHandler, /'margin\.position\.liquidated'/)
-  assert.match(eventHandler, /'margin\.position\.partially_closed'/)
-  assert.match(eventHandler, /'margin\.position\.closed'/)
-  assert.match(eventHandler, /\.includes\(event\.type\)/)
-  assert.match(eventHandler, /requestPrivateMarginReconciliation\(\)/)
-  assert.doesNotMatch(eventHandler, /marginWallets\.value|marginPositions\.value|marginRiskSnapshots\.value/)
-  assert.match(refreshHint, /!viewMounted[\s\S]*?!session\.token[\s\S]*?mode\.value !== 'contract'/)
+  assert.match(tradeSource, /import \{ usePrivateUserStreamLease \} from '@\/composables\/usePrivateUserStreamLease'/)
+  assert.match(leaseSetup, /topic: 'margin'/)
+  assert.match(leaseSetup, /consumerId: 'trade-margin-account'/)
+  assert.match(leaseSetup, /enabled: \(\) => viewActive && session\.isAuthenticated && mode\.value === 'contract'/)
+  assert.match(leaseSetup, /onOpen: requestPrivateMarginReconciliation/)
+  assert.match(leaseSetup, /onEvent: requestPrivateMarginReconciliation/)
+  assert.match(refreshHint, /!viewActive[\s\S]*?!session\.token[\s\S]*?mode\.value !== 'contract'/)
   assert.match(refreshHint, /marginAccountReconciliation\.refreshBackground\(\{ queueIfBusy: true \}\)/)
+  assert.doesNotMatch(refreshHint, /marginWallets\.value|marginPositions\.value|marginRiskSnapshots\.value/)
 
-  assertOrdered(streamSync, [
-    'privateUserStream.stop()',
-    '!viewMounted',
-    '!session.isAuthenticated',
-    "mode.value !== 'contract'",
-    'privateUserStream.start()',
-  ])
-  assert.match(tradeSource, /onMounted\(async \(\) => \{\s*viewMounted = true[\s\S]*?syncPrivateUserStream\(\)/)
-  assert.match(tradeSource, /watch\(\(\) => \[mode\.value, session\.token\] as const,[\s\S]*?marginAccountReconciliation\.invalidate\(\)[\s\S]*?syncPrivateUserStream\(\)[\s\S]*?flush: 'sync'/)
-  assert.match(tradeSource, /onBeforeUnmount\(\(\) => \{\s*viewMounted = false[\s\S]*?privateUserStream\.stop\(\)[\s\S]*?marginAccountReconciliation\.stop\(\)/)
+  assert.doesNotMatch(tradeSource, /createPrivateUserStream|privateUserWebSocketUrl|readAccessToken/)
+  assert.doesNotMatch(tradeSource, /privateUserStream\.(?:start|stop)\(\)/)
+  assert.match(tradeSource, /onBeforeUnmount\(\(\) => \{\s*viewActive = false[\s\S]*?marginAccountReconciliation\.stop\(\)/)
 
   assert.match(tradeSource, /marginAccountReconciliation\.startPolling\(\)/)
   assert.match(tradeSource, /document\.visibilityState === 'hidden'[\s\S]*?refreshBackground\(\{ queueIfBusy: true \}\)/)
@@ -359,6 +585,19 @@ class ManualScheduler implements PrivateUserStreamScheduler {
     return this.intervals.at(-1)?.callback || null
   }
 
+  latestTimeoutCallback(delay?: number): (() => void) | null {
+    return this.timeouts
+      .filter((task) => !task.cleared && (delay === undefined || task.delay === delay))
+      .at(-1)?.callback || null
+  }
+
+  runTimeoutWithDelay(delay: number): void {
+    const task = this.timeouts.find((candidate) => !candidate.cleared && candidate.delay === delay)
+    assert.ok(task, `expected a pending ${delay}ms timeout`)
+    task.cleared = true
+    task.callback()
+  }
+
   activeIntervalCount(): number {
     return this.intervals.filter((task) => !task.cleared).length
   }
@@ -380,13 +619,4 @@ function sliceBetween(source: string, start: string, end: string): string {
   const endIndex = source.indexOf(end, startIndex)
   assert.ok(startIndex >= 0 && endIndex > startIndex, `missing source slice ${start} -> ${end}`)
   return source.slice(startIndex, endIndex)
-}
-
-function assertOrdered(source: string, fragments: readonly string[]): void {
-  let cursor = -1
-  fragments.forEach((fragment) => {
-    const next = source.indexOf(fragment, cursor + 1)
-    assert.ok(next > cursor, `expected ${fragment} after index ${cursor}`)
-    cursor = next
-  })
 }

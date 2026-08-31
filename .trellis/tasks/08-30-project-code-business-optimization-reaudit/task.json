@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-31-admin-mobile-frontend-completion"
+  ],
   "parent": null,
   "relatedFiles": [
     "docs/architecture/project-optimization-reaudit-2026-08-30.md"

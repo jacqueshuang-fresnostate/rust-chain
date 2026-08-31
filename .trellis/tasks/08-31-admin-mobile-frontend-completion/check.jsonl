@@ -1,0 +1,17 @@
+{"file":".trellis/spec/admin/index.md","reason":"复核 Admin 质量门禁。"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"复核权限动作、表格、ARIA 与视觉系统一致性。"}
+{"file":".trellis/spec/admin/auth-turnstile.md","reason":"复核登录/2FA/Turnstile 不重放与失败恢复。"}
+{"file":".trellis/spec/mobile/index.md","reason":"复核 Mobile 全量门禁。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核 API、Decimal、错误和实时合同。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核 PWA/Tauri、性能、弹层和壳层。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"复核路由焦点、i18n 和键盘交互。"}
+{"file":".trellis/spec/backend/auth-sessions.md","reason":"复核 session generation/CAS 和 logout 竞态。"}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"复核连接身份、重连、watchdog 与 freshness。"}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"复核资金全链路十进制语义。"}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"复核批量撤单及部分成功呈现。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"复核 ContractError 与用户安全错误文案。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"复核 Rust 相关门禁（若修改后端）。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"独立复核跨层业务闭环而非只看 UI。"}
+{"file":".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/frontend-admin-delta-2026-08-31.md","reason":"逐项核对 Admin 审计 ID 是否关闭。"}
+{"file":".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/frontend-mobile-delta-2026-08-31.md","reason":"逐项核对 Mobile 审计 ID 是否关闭。"}
+{"file":".trellis/tasks/08-31-admin-mobile-frontend-completion/research/remediation-scope.md","reason":"复核排除 PC、保留现有改动和最终验收矩阵。"}

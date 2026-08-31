@@ -6,6 +6,7 @@ import {
 } from './requestCache'
 import { asNumber } from '@/core/format'
 import { i18n } from '@/i18n'
+import { decimalTextFromBoundary, normalizeDecimalText, type DecimalText } from '@/core/decimal'
 
 export interface LoanProduct {
   id: number
@@ -19,6 +20,8 @@ export interface LoanProduct {
   minKycLevel: number
   minAmount: number
   maxAmount?: number
+  minAmountText?: DecimalText
+  maxAmountText?: DecimalText
 }
 
 export interface LoanOrder {
@@ -58,6 +61,10 @@ export async function fetchLoanProducts(limit = 50, options: ReferenceRequestOpt
       minKycLevel: asNumber(product.min_kyc_level),
       minAmount: asNumber(product.min_amount),
       maxAmount: product.max_amount === null || product.max_amount === undefined ? undefined : asNumber(product.max_amount),
+      minAmountText: productDecimal(product.min_amount),
+      maxAmountText: product.max_amount === null || product.max_amount === undefined
+        ? undefined
+        : productDecimal(product.max_amount),
     }))
   }, options)
 }
@@ -83,12 +90,19 @@ export async function fetchLoanOrders(limit = 50): Promise<LoanOrder[]> {
   }))
 }
 
-export async function applyLoan(input: { productId: number; amount: number; collateralAssetId?: number; collateralAmount?: number }): Promise<void> {
+export async function applyLoan(input: {
+  productId: number
+  amount: DecimalText
+  collateralAssetId?: number
+  collateralAmount?: DecimalText
+}): Promise<void> {
   await client.post(requestUrl('/loan/orders'), {
     product_id: input.productId,
-    amount: String(input.amount),
+    amount: normalizeDecimalText(input.amount),
     collateral_asset_id: input.collateralAssetId,
-    collateral_amount: input.collateralAmount === undefined ? undefined : String(input.collateralAmount),
+    collateral_amount: input.collateralAmount === undefined
+      ? undefined
+      : normalizeDecimalText(input.collateralAmount),
     idempotency_key: createIdempotencyKey('mobile-loan'),
   })
 }
@@ -118,4 +132,9 @@ function normalizeTimestamp(value: unknown): number {
 
 function createIdempotencyKey(scope: string): string {
   return `${scope}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function productDecimal(value: unknown): DecimalText {
+  return decimalTextFromBoundary(value as string | number, { allowNegative: false })
+    || normalizeDecimalText('0')
 }

@@ -1,4 +1,5 @@
 import { asNumber, splitSymbol } from './format.ts'
+import { tryNormalizeDecimalText } from './decimal.ts'
 import type { MarketTicker } from './types.ts'
 
 export interface BackendMarketRecord {
@@ -44,6 +45,7 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
     baseIconUrl: market.base_logo_url?.trim() || undefined,
     quoteIconUrl: market.quote_logo_url?.trim() || undefined,
     lastPrice,
+    lastPriceText: exactPositiveTickerPrice(ticker.last_price) || undefined,
     openPrice,
     highPrice: asNumber(ticker.high_24h, lastPrice),
     lowPrice: asNumber(ticker.low_24h, lastPrice),
@@ -52,6 +54,16 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
       explicitChangePercent ?? (openPrice ? ((lastPrice - openPrice) / openPrice) * 100 : 0),
     observedAt,
   }
+}
+
+function exactPositiveTickerPrice(value: unknown) {
+  if (typeof value !== 'string') return null
+  return tryNormalizeDecimalText(value, {
+    allowNegative: false,
+    allowZero: false,
+    maxIntegerDigits: 20,
+    maxScale: 18,
+  })
 }
 
 function optionalFiniteNumber(value: unknown): number | null {

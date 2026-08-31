@@ -1,5 +1,6 @@
 # 项目代码与业务优化复审报告（2026-08-30）
 
+> **2026-08-31 前端增量更新：生产发布继续 HOLD。** 8 月 30 日列出的三个原始代码 P0 修复证据仍保留，但增量前端复审又确认两组客户端 P0：PC 充值网络/地址乱序错配，以及 Admin/PC 资金命令在超时、响应丢失或组件重建后的幂等意图不可恢复。详细证据和重新分级见 `docs/architecture/frontend-optimization-audit-2026-08-31.md`；在这两项通过乱序与 commit-before-timeout 故障测试前，“全部代码 P0 已关闭”仅代表 8 月 30 日审计切片，不代表当前完整前端。
 > **发布结论：代码 P0 已关闭 / 生产发布仍 HOLD。** 修复工作树已关闭 3 个严格 P0 并通过完整本地发布门禁；生产发布仍须完成供应链事件取证、凭据轮换、旧缓存/制品失效和生产数据对账，不能用代码测试替代这些运行证据。
 > **证据基线：** 原始审计基线为 `main@fac1defff85d55d556949ec8b04b3c5a3f9e262a`（简称 `main@fac1def`）；P0 修复证据来自 2026-08-30 当前未提交工作树，尚未成为生产基线。
 > **证据口径：** `S` 表示静态源码、配置、migration 或仓库测试证据；`R` 表示生产数据、真实拓扑、运行日志、制品或故障注入证据。`S=成立、R=待补` 不等于线上已发生损失。
@@ -301,3 +302,20 @@ flowchart LR
 - 未取得生产 MySQL/Mongo/Redis/RabbitMQ、链网关、负载均衡、WAF、KMS、监控告警、备份、GitHub protection/Actions run 和已部署 digest；这些均列入运行时证据清单。
 - 行号会随代码移动，因此正文以文件与符号为主；行数仅按当前基线定位。
 - 报告未包含任何 Secret 或解码 payload 内容。
+
+## 13. 2026-08-31 前端增量复审
+
+本节是对第 12 节之后当前检出前端的增量更新，详细报告位于 `docs/architecture/frontend-optimization-audit-2026-08-31.md`。原始研究分别位于当前 Trellis 任务的：
+
+- `research/frontend-mobile-delta-2026-08-31.md`；
+- `research/frontend-pc-delta-2026-08-31.md`；
+- `research/frontend-admin-delta-2026-08-31.md`。
+
+跨端去重并沿用本报告严重级别口径后，新增目录为 **2 组 P0、11 组 P1、6 组 P2**。PC 研究中再次定位的杠杆风险 read model 和秒合约 settlement evidence 继续归入既有 `CUR-P1-11`，不因客户端显示缺口重复提升；真正重开发布阻断的是：
+
+1. **PC 充值 selector 无 generation。** 旧币种/网络响应可覆盖新选择，使当前网络说明与地址/二维码不是同一快照，存在不可恢复链上误充路径。
+2. **客户端资金 intent 仍不可恢复。** Admin 充值金额没有按十进制语义规范化且 key 只在行组件内存中；PC 多数资金 mutation 每次调用换 key。超时、响应丢失、刷新或组件重建后，同一业务意图可能绕过服务端 key 去重。
+
+本轮还确定性复现了 Mobile logout 后旧 refresh 写回 token、PC 私有 WebSocket 旧 close 覆盖新 generation、Wallet Ledger/PC/Admin 的 Decimal 精度损失，并发现 PC 全量 97 项测试有 5 项失败而标准 release gate 只执行其中一个测试文件。Mobile 538/538、Admin Web 382/382、三端类型检查及生产构建通过，但这些绿色结果没有覆盖上述故障时序。
+
+Ego Browser 在 Mobile 390/320px、PC 1366×768、Admin 1440×900 完成运行时检查：关键页面未出现文档级横向溢出或破图；Mobile 存在 22–33px/30–32px 小触控目标和约 2.8 MB 冷启动传输，PC 首页仍用固定市场数字、旧新闻及无真实状态依据的 `Stable Connection`。这些分别计入无障碍、性能和实时真实性 P2/P1，不与资金 P0 重复。

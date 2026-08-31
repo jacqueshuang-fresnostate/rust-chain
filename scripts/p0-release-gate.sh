@@ -31,7 +31,6 @@ npm --prefix pc run test:margin
 npm --prefix pc run build
 
 echo "[P0 gate] Mobile frontend"
-npm --prefix mobile run type-check
-npm --prefix mobile test
+npm --prefix mobile run release:gate
 
 echo "[P0 gate] All checks passed"

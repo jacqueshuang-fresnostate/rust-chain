@@ -1,4 +1,4 @@
-import { client, readAccessToken, requestUrl } from './client'
+import { client, readAuthSessionSnapshot, requestUrl } from './client'
 import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
 import {
   createReferenceRequestKey,
@@ -35,13 +35,35 @@ import {
   withdrawalQuoteAmountsAreConsistent,
   type WithdrawalFeeTier,
 } from '@/core/withdrawalQuote'
+import {
+  decimalCompare,
+  normalizeDecimalText,
+  requiredDecimalText,
+  type DecimalText,
+} from '@/core/decimal'
+
+const WALLET_DECIMAL_CONSTRAINTS = {
+  allowNegative: false,
+  maxIntegerDigits: 20,
+  maxScale: 18,
+} as const
+
+export class WalletFinancialContractError extends TypeError {
+  constructor(field: string) {
+    super(`invalid wallet financial ${field}`)
+    this.name = 'WalletFinancialContractError'
+  }
+}
 
 const walletTransferIdempotencyKeys = new RetryStableIdempotencyKeys('mobile-transfer')
 
 export {
   calculateWithdrawalFee,
+  calculateWithdrawalFeeText,
   maximumQuotedWithdrawalAmount,
+  maximumQuotedWithdrawalAmountText,
   normalizeWithdrawalPreviewAmount,
+  normalizeWithdrawalPreviewAmountText,
 } from '@/core/withdrawalQuote'
 export type { WithdrawalFeeTier } from '@/core/withdrawalQuote'
 
@@ -102,21 +124,40 @@ export type {
   WalletLedgerRequestResult,
 } from '@/core/walletLedger'
 
-export interface WithdrawalAsset extends DepositAsset {
+export interface WalletDepositAsset extends DepositAsset {
+  minDepositAmountText: DecimalText
+  depositFee: number
+  depositFeeText: DecimalText
+}
+
+export interface StrictWithdrawalFeeTier extends WithdrawalFeeTier {
+  minAmountText: DecimalText
+  maxAmountText?: DecimalText
+  feeRatePercentText: DecimalText
+}
+
+export interface StrictWalletAccount extends WalletAccount {
+  availableText: DecimalText
+  frozenText: DecimalText
+  lockedText: DecimalText
+}
+
+export interface WithdrawalAsset extends WalletDepositAsset {
   withdrawEnabled: boolean
   withdrawFee: number
+  withdrawFeeText: DecimalText
   precisionScale: number
-  withdrawFeeTiers: WithdrawalFeeTier[]
+  withdrawFeeTiers: StrictWithdrawalFeeTier[]
 }
 
 export interface WithdrawalQuote {
   quoteId: string
   assetSymbol: string
   network: string
-  amount: string
-  fee: string
-  net: string
-  totalReserved: string
+  amount: DecimalText
+  fee: DecimalText
+  net: DecimalText
+  totalReserved: DecimalText
   feeConfigVersion: string
   expiresAt: number
 }
@@ -134,6 +175,8 @@ export interface WithdrawalRecord {
   address: string
   amount: number
   fee: number
+  amountText: DecimalText
+  feeText: DecimalText
   status: string
   txHash?: string
   failureReason?: string
@@ -148,6 +191,8 @@ export interface QuickRechargeConfig {
   network: string
   minAmount: number
   maxAmount?: number
+  minAmountText: DecimalText
+  maxAmountText?: DecimalText
 }
 
 export interface QuickRechargeOrder {
@@ -159,6 +204,8 @@ export interface QuickRechargeOrder {
   network: string
   fiatAmount: number
   actualAmount?: number
+  fiatAmountText: DecimalText
+  actualAmountText?: DecimalText
   paymentUrl?: string
   redirectUrl?: string
   status: string
@@ -171,6 +218,7 @@ interface BackendDepositAsset {
   logo_url?: string | null
   deposit_enabled?: boolean | null
   min_deposit_amount?: string | number | null
+  deposit_fee?: string | number | null
   withdraw_enabled?: boolean | null
   withdraw_fee?: string | number | null
   precision_scale?: number | null
@@ -237,22 +285,16 @@ interface BackendWalletTransferResponse {
 
 export interface WalletTransferResult {
   transferId: string
-  spotWallet: WalletAccount
-  marginWallet: WalletAccount
+  spotWallet: StrictWalletAccount
+  marginWallet: StrictWalletAccount
 }
 
-export async function fetchDepositAssets(options: ReferenceRequestOptions = {}): Promise<DepositAsset[]> {
+export async function fetchDepositAssets(options: ReferenceRequestOptions = {}): Promise<WalletDepositAsset[]> {
   const url = requestUrl('/wallet/deposit-assets')
   return referenceRequestRegistry.request(walletReferenceKey(url), 30_000, async () => {
     const response = await client.get<{ assets?: BackendDepositAsset[] }>(url)
     return (response.data.assets || [])
-      .map((asset) => ({
-        symbol: asset.symbol.toUpperCase(),
-        name: asset.name?.trim() || undefined,
-        logoUrl: asset.logo_url?.trim() || undefined,
-        depositEnabled: asset.deposit_enabled !== false,
-        minDepositAmount: asNumber(asset.min_deposit_amount),
-      }))
+      .map(mapDepositAsset)
       .filter((asset) => asset.depositEnabled)
   }, options)
 }
@@ -262,21 +304,31 @@ export async function fetchWithdrawalAssets(options: ReferenceRequestOptions = {
   return referenceRequestRegistry.request(walletReferenceKey(url), 30_000, async () => {
     const response = await client.get<{ assets?: BackendDepositAsset[] }>(url)
     return (response.data.assets || [])
-      .map((asset) => ({
-        symbol: asset.symbol.toUpperCase(),
-        logoUrl: asset.logo_url?.trim() || undefined,
-        depositEnabled: asset.deposit_enabled !== false,
-        withdrawEnabled: asset.withdraw_enabled !== false,
-        minDepositAmount: asNumber(asset.min_deposit_amount),
-        withdrawFee: asNumber(asset.withdraw_fee),
-        precisionScale: Math.min(18, Math.max(0, Math.trunc(asNumber(asset.precision_scale)))),
-        withdrawFeeTiers: (asset.withdraw_fee_tiers || []).map((tier) => ({
-          minAmount: asNumber(tier.min_amount),
-          maxAmount: tier.max_amount == null ? undefined : asNumber(tier.max_amount),
-          feeRatePercent: asNumber(tier.fee_rate_percent),
-        })).sort((left, right) => left.minAmount - right.minAmount),
-        name: asset.name?.trim() || undefined,
-      }))
+      .map((asset) => {
+        const deposit = mapDepositAsset(asset)
+        const withdrawFeeText = walletDecimal(asset.withdraw_fee, 'withdraw_fee')
+        const withdrawFeeTiers = (asset.withdraw_fee_tiers || []).map((tier, index) => {
+          const minAmountText = walletDecimal(tier.min_amount, `withdraw_fee_tiers[${index}].min_amount`)
+          const maxAmountText = nullableWalletDecimal(tier.max_amount, `withdraw_fee_tiers[${index}].max_amount`)
+          const feeRatePercentText = walletDecimal(tier.fee_rate_percent, `withdraw_fee_tiers[${index}].fee_rate_percent`)
+          return {
+            minAmount: decimalDisplayNumber(minAmountText, 'withdraw tier minimum'),
+            maxAmount: maxAmountText ? decimalDisplayNumber(maxAmountText, 'withdraw tier maximum') : undefined,
+            feeRatePercent: decimalDisplayNumber(feeRatePercentText, 'withdraw tier rate'),
+            minAmountText,
+            maxAmountText: maxAmountText || undefined,
+            feeRatePercentText,
+          }
+        }).sort((left, right) => decimalCompare(left.minAmountText, right.minAmountText))
+        return {
+          ...deposit,
+          withdrawEnabled: asset.withdraw_enabled !== false,
+          withdrawFee: decimalDisplayNumber(withdrawFeeText, 'withdraw fixed fee'),
+          withdrawFeeText,
+          precisionScale: walletPrecisionScale(asset.precision_scale),
+          withdrawFeeTiers,
+        }
+      })
       .filter((asset) => asset.withdrawEnabled)
   }, options)
 }
@@ -305,7 +357,7 @@ export async function fetchDepositNetworks(
 
 /** 钱包目录可能受账号或地区策略影响，因此按当前内存会话隔离，不跨 token 共享。 */
 function walletReferenceKey(url: string, params: Readonly<Record<string, unknown>> = {}): string {
-  return createReferenceRequestKey(url, params, `wallet:${readAccessToken() || 'guest'}`)
+  return createReferenceRequestKey(url, params, `wallet:${readAuthSessionSnapshot().scope || 'guest'}`)
 }
 
 export async function createDepositAddress(assetSymbol: string, network: string, minimum = 0): Promise<DepositAddress> {
@@ -322,16 +374,12 @@ export async function createDepositAddress(assetSymbol: string, network: string,
   }
 }
 
-export async function fetchWalletAccounts(): Promise<WalletAccount[]> {
+export async function fetchWalletAccounts(): Promise<StrictWalletAccount[]> {
   const response = await client.get<{ accounts?: BackendWalletAccount[] }>(requestUrl('/wallet/accounts'))
-  return (response.data.accounts || []).map((account) => ({
-    assetId: asNumber(account.asset_id),
-    symbol: account.symbol.toUpperCase(),
-    logoUrl: account.logo_url?.trim() || undefined,
-    available: asNumber(account.available),
-    frozen: asNumber(account.frozen),
-    locked: asNumber(account.locked),
-  }))
+  if (!Array.isArray(response.data.accounts)) {
+    throw new WalletFinancialContractError('wallet accounts envelope')
+  }
+  return response.data.accounts.map((account) => mapWalletAccount(account, account.symbol))
 }
 
 export async function fetchTodayReturn(): Promise<TodayReturn> {
@@ -352,12 +400,12 @@ export async function fetchReturnHistory(
 export async function fetchWithdrawalQuote(input: {
   assetSymbol: string
   network: string
-  amount: string | number
+  amount: DecimalText
 }): Promise<WithdrawalQuote> {
   const response = await client.post<BackendWithdrawalQuote>(requestUrl('/wallet/withdrawals/quote'), {
     asset_symbol: input.assetSymbol.toUpperCase(),
     network: input.network,
-    amount: String(input.amount),
+    amount: normalizeDecimalText(input.amount),
   })
   return mapWithdrawalQuote(response.data, true)
 }
@@ -409,7 +457,7 @@ function mapWithdrawalQuote(raw: BackendWithdrawalQuote, requireUnexpired = fals
       quote.net,
       quote.totalReserved,
     )) {
-    throw new Error('invalid withdrawal quote response')
+    throw new WalletFinancialContractError('withdrawal quote')
   }
   return quote
 }
@@ -439,28 +487,15 @@ function assertWithdrawalContract(quote: WithdrawalQuote, submitted: WithdrawalS
   }
 }
 
-function decimalString(value: string | number | undefined): string {
-  if (typeof value !== 'string') {
-    throw new Error('invalid withdrawal decimal response')
+function decimalString(value: string | number | undefined): DecimalText {
+  if (typeof value !== 'string' || !isWithdrawalDecimalString(value.trim())) {
+    throw new WalletFinancialContractError('withdrawal quote decimal')
   }
-  const normalized = value.trim()
-  if (!isWithdrawalDecimalString(normalized)) {
-    throw new Error('invalid withdrawal decimal response')
-  }
-  return normalized
+  return walletDecimal(value, 'withdrawal quote decimal')
 }
 
 function sameDecimal(left: string, right: string): boolean {
-  return canonicalDecimal(left) === canonicalDecimal(right)
-}
-
-function canonicalDecimal(value: string): string {
-  const match = value.trim().match(/^([+-]?)(\d+)(?:\.(\d*))?$/)
-  if (!match) return value.trim()
-  const whole = (match[2] || '0').replace(/^0+(?=\d)/, '')
-  const fraction = (match[3] || '').replace(/0+$/, '')
-  const zero = whole === '0' && !fraction
-  return `${match[1] === '-' && !zero ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
+  return decimalCompare(normalizeDecimalText(left), normalizeDecimalText(right)) === 0
 }
 
 interface BackendWithdrawalRecord {
@@ -479,19 +514,25 @@ interface BackendWithdrawalRecord {
 
 export async function fetchWithdrawalRecords(limit = 50): Promise<WithdrawalRecord[]> {
   const response = await client.get<{ withdrawals?: BackendWithdrawalRecord[] }>(requestUrl('/wallet/withdrawals'), { params: { limit } })
-  return (response.data.withdrawals || []).map((record) => ({
-    id: record.id,
-    assetSymbol: record.asset_symbol.toUpperCase(),
-    network: record.network || undefined,
-    address: record.address,
-    amount: asNumber(record.amount),
-    fee: asNumber(record.fee),
-    status: record.status,
-    txHash: record.tx_hash || undefined,
-    failureReason: record.failure_reason || undefined,
-    reviewReason: record.review_reason || undefined,
-    createdAt: record.created_at > 0 && record.created_at < 1_000_000_000_000 ? record.created_at * 1000 : record.created_at,
-  }))
+  return (response.data.withdrawals || []).map((record) => {
+    const amountText = walletDecimal(record.amount, 'withdrawal amount')
+    const feeText = walletDecimal(record.fee, 'withdrawal fee')
+    return {
+      id: record.id,
+      assetSymbol: record.asset_symbol.toUpperCase(),
+      network: record.network || undefined,
+      address: record.address,
+      amount: decimalDisplayNumber(amountText, 'withdrawal amount'),
+      fee: decimalDisplayNumber(feeText, 'withdrawal fee'),
+      amountText,
+      feeText,
+      status: record.status,
+      txHash: record.tx_hash || undefined,
+      failureReason: record.failure_reason || undefined,
+      reviewReason: record.review_reason || undefined,
+      createdAt: record.created_at > 0 && record.created_at < 1_000_000_000_000 ? record.created_at * 1000 : record.created_at,
+    }
+  })
 }
 
 function createWithdrawalIdempotencyKey(quoteId: string): string {
@@ -535,19 +576,26 @@ export async function fetchWalletLedger(options: {
 
 export async function fetchQuickRechargeConfig(): Promise<QuickRechargeConfig> {
   const response = await client.get<{ enabled?: boolean; currency?: string; token?: string; network?: string; min_amount?: string | number; max_amount?: string | number | null }>(requestUrl('/wallet/quick-recharge/config'))
+  const minAmountText = walletDecimal(response.data.min_amount, 'quick-recharge min_amount')
+  const maxAmountText = nullableWalletDecimal(response.data.max_amount, 'quick-recharge max_amount')
   return {
     enabled: Boolean(response.data.enabled),
     currency: String(response.data.currency || '').toUpperCase(),
     token: String(response.data.token || '').toUpperCase(),
     network: String(response.data.network || ''),
-    minAmount: asNumber(response.data.min_amount),
-    maxAmount: response.data.max_amount === null || response.data.max_amount === undefined ? undefined : asNumber(response.data.max_amount),
+    minAmount: decimalDisplayNumber(minAmountText, 'quick-recharge min amount'),
+    maxAmount: maxAmountText ? decimalDisplayNumber(maxAmountText, 'quick-recharge max amount') : undefined,
+    minAmountText,
+    maxAmountText: maxAmountText || undefined,
   }
 }
 
-export async function createQuickRechargeOrder(amount: number, returnTarget: 'ios_app' | 'android_app' | 'mobile_web' | 'desktop_web'): Promise<QuickRechargeOrder> {
+export async function createQuickRechargeOrder(
+  amount: DecimalText,
+  returnTarget: 'ios_app' | 'android_app' | 'mobile_web' | 'desktop_web',
+): Promise<QuickRechargeOrder> {
   const response = await client.post<BackendQuickRechargeOrder>(requestUrl('/wallet/quick-recharge/orders'), {
-    amount: String(amount),
+    amount: normalizeDecimalText(amount),
     return_target: returnTarget,
   })
   return mapQuickRechargeOrder(response.data)
@@ -573,13 +621,18 @@ export async function fetchQuickRechargeOrders(limit = 20): Promise<QuickRecharg
   return (response.data.orders || []).map(mapQuickRechargeOrder)
 }
 
-export async function transferWalletFunds(assetSymbol: string, from: 'spot' | 'margin', to: 'spot' | 'margin', amount: number): Promise<WalletTransferResult> {
+export async function transferWalletFunds(
+  assetSymbol: string,
+  from: 'spot' | 'margin',
+  to: 'spot' | 'margin',
+  amount: DecimalText,
+): Promise<WalletTransferResult> {
   const symbol = assetSymbol.toUpperCase()
   const businessIntent = {
     asset_symbol: symbol,
     from,
     to,
-    amount: String(amount),
+    amount: normalizeDecimalText(amount),
   }
   const intent = canonicalRequestIntent(businessIntent)
   const idempotencyKey = walletTransferIdempotencyKeys.acquire(intent)
@@ -595,18 +648,14 @@ export async function transferWalletFunds(assetSymbol: string, from: 'spot' | 'm
   }
 }
 
-function mapTransferWallet(wallet: BackendWalletTransferAccount, symbol: string): WalletAccount {
-  return {
-    assetId: asNumber(wallet.asset_id),
-    symbol,
-    available: asNumber(wallet.available),
-    frozen: asNumber(wallet.frozen),
-    locked: asNumber(wallet.locked),
-  }
+function mapTransferWallet(wallet: BackendWalletTransferAccount, symbol: string): StrictWalletAccount {
+  return mapWalletAccount(wallet, symbol)
 }
 
 function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeOrder {
   const createdAt = asNumber(order.created_at)
+  const fiatAmountText = walletDecimal(order.fiat_amount, 'quick-recharge fiat_amount')
+  const actualAmountText = nullableWalletDecimal(order.actual_amount, 'quick-recharge actual_amount')
   return {
     id: order.id,
     orderId: order.order_id,
@@ -614,11 +663,83 @@ function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeO
     currency: order.currency.toUpperCase(),
     token: order.token.toUpperCase(),
     network: String(order.network || ''),
-    fiatAmount: asNumber(order.fiat_amount),
-    actualAmount: order.actual_amount === null || order.actual_amount === undefined ? undefined : asNumber(order.actual_amount),
+    fiatAmount: decimalDisplayNumber(fiatAmountText, 'quick-recharge fiat amount'),
+    actualAmount: actualAmountText ? decimalDisplayNumber(actualAmountText, 'quick-recharge actual amount') : undefined,
+    fiatAmountText,
+    actualAmountText: actualAmountText || undefined,
     paymentUrl: order.payment_url || undefined,
     redirectUrl: order.redirect_url || undefined,
     status: order.status,
     createdAt: createdAt > 0 && createdAt < 1_000_000_000_000 ? createdAt * 1000 : createdAt || undefined,
   }
+}
+
+function mapDepositAsset(asset: BackendDepositAsset): WalletDepositAsset {
+  const minDepositAmountText = walletDecimal(asset.min_deposit_amount, 'min_deposit_amount')
+  const depositFeeText = walletDecimal(asset.deposit_fee, 'deposit_fee')
+  return {
+    symbol: asset.symbol.toUpperCase(),
+    name: asset.name?.trim() || undefined,
+    logoUrl: asset.logo_url?.trim() || undefined,
+    depositEnabled: asset.deposit_enabled !== false,
+    minDepositAmount: decimalDisplayNumber(minDepositAmountText, 'min deposit amount'),
+    minDepositAmountText,
+    depositFee: decimalDisplayNumber(depositFeeText, 'deposit fee'),
+    depositFeeText,
+  }
+}
+
+function mapWalletAccount(
+  account: BackendWalletAccount | BackendWalletTransferAccount,
+  symbol: string,
+): StrictWalletAccount {
+  const availableText = walletDecimal(account.available, 'account available')
+  const frozenText = walletDecimal(account.frozen, 'account frozen')
+  const lockedText = walletDecimal(account.locked, 'account locked')
+  return {
+    assetId: requiredWalletInteger(account.asset_id, 'account asset_id'),
+    symbol: symbol.toUpperCase(),
+    logoUrl: 'logo_url' in account ? account.logo_url?.trim() || undefined : undefined,
+    available: decimalDisplayNumber(availableText, 'account available'),
+    frozen: decimalDisplayNumber(frozenText, 'account frozen'),
+    locked: decimalDisplayNumber(lockedText, 'account locked'),
+    availableText,
+    frozenText,
+    lockedText,
+  }
+}
+
+function walletDecimal(value: unknown, field: string): DecimalText {
+  try {
+    return requiredDecimalText(value, field, 'wallet financial response', WALLET_DECIMAL_CONSTRAINTS)
+  } catch {
+    throw new WalletFinancialContractError(field)
+  }
+}
+
+function nullableWalletDecimal(value: unknown, field: string): DecimalText | null {
+  if (value === null || value === undefined) return null
+  return walletDecimal(value, field)
+}
+
+function decimalDisplayNumber(value: DecimalText, field: string): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new WalletFinancialContractError(field)
+  return parsed
+}
+
+function requiredWalletInteger(value: unknown, field: string): number {
+  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
+  if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new WalletFinancialContractError(field)
+  }
+  return parsed
+}
+
+function walletPrecisionScale(value: unknown): number {
+  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
+  if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed < 0 || parsed > 18) {
+    throw new WalletFinancialContractError('precision_scale')
+  }
+  return parsed
 }

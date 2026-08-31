@@ -28,6 +28,7 @@ import {
   type WalletLedgerFilter,
 } from '@/api/wallet'
 import { currentIntlLocale } from '@/i18n'
+import { decimalSign, type DecimalText } from '@/core/decimal'
 import { useSessionStore } from '@/stores/session'
 
 const PAGE_SIZE = 30
@@ -145,18 +146,19 @@ function entryTime(entry: WalletLedgerEntry): string {
 }
 
 function amountTone(entry: WalletLedgerEntry): 'is-positive' | 'is-negative' | 'is-neutral' {
-  if (entry.amount > 0) return 'is-positive'
-  if (entry.amount < 0) return 'is-negative'
+  const sign = decimalSign(entry.amount)
+  if (sign > 0) return 'is-positive'
+  if (sign < 0) return 'is-negative'
   return 'is-neutral'
 }
 
 function signedAmount(entry: WalletLedgerEntry): string {
-  return `${walletLedgerAmountSign(entry.amount)}${ledgerDecimal(entry.amount)} ${entry.symbol}`
+  return `${walletLedgerAmountSign(entry.amount)}${ledgerDecimal(entry.amount, entry.precisionScale)} ${entry.symbol}`
 }
 
-function ledgerDecimal(value: number): string {
+function ledgerDecimal(value: DecimalText, precisionScale: number): string {
   void locale.value
-  return formatWalletLedgerDecimal(value, currentIntlLocale())
+  return formatWalletLedgerDecimal(value, currentIntlLocale(), precisionScale)
 }
 
 function resetSessionState(): void {
@@ -279,10 +281,10 @@ onBeforeUnmount(() => requestLifecycle.stop())
                 <div class="ledger-row__amount">
                   <strong class="numeric" :class="amountTone(entry)">{{ signedAmount(entry) }}</strong>
                   <small class="numeric">
-                    {{ t('ledger.balance', { amount: `${ledgerDecimal(entry.balanceAfter)} ${entry.symbol}` }) }}
+                    {{ t('ledger.balance', { amount: `${ledgerDecimal(entry.balanceAfter, entry.precisionScale)} ${entry.symbol}` }) }}
                   </small>
-                  <small v-if="entry.fee > 0" class="numeric ledger-row__fee">
-                    {{ t('ledger.fee', { amount: ledgerDecimal(entry.fee), symbol: entry.symbol }) }}
+                  <small v-if="decimalSign(entry.fee) > 0" class="numeric ledger-row__fee">
+                    {{ t('ledger.fee', { amount: ledgerDecimal(entry.fee, entry.precisionScale), symbol: entry.symbol }) }}
                   </small>
                 </div>
               </article>

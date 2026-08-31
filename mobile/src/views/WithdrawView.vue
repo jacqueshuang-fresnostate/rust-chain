@@ -8,18 +8,26 @@ import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import {
-  calculateWithdrawalFee,
+  calculateWithdrawalFeeText,
   fetchDepositNetworks,
   fetchWalletAccounts,
   fetchWithdrawalAssets,
   fetchWithdrawalQuote,
-  maximumQuotedWithdrawalAmount,
-  normalizeWithdrawalPreviewAmount,
+  maximumQuotedWithdrawalAmountText,
+  normalizeWithdrawalPreviewAmountText,
   submitWithdrawal,
   type WithdrawalAsset,
   type WithdrawalQuote,
 } from '@/api/wallet'
 import { formatAmount } from '@/core/format'
+import {
+  decimalAdd,
+  decimalTextFromBoundary,
+  formatDecimalText,
+  normalizeDecimalText,
+  positiveDecimalInput,
+  type DecimalText,
+} from '@/core/decimal'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 import type { DepositNetwork, WalletAccount } from '@/core/types'
@@ -27,7 +35,7 @@ import type { DepositNetwork, WalletAccount } from '@/core/types'
 const props = defineProps<{ asset: string }>()
 const router = useRouter()
 const session = useSessionStore()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const asset = ref<WithdrawalAsset | null>(null)
 const account = ref<WalletAccount | null>(null)
 const networks = ref<DepositNetwork[]>([])
@@ -48,24 +56,25 @@ const reviewDialog = ref<HTMLElement | null>(null)
 const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 
 const available = computed(() => account.value?.available || 0)
-const numericAmount = computed(() => Number(amount.value))
-const previewFee = computed(() => asset.value
-  ? calculateWithdrawalFee(
-    numericAmount.value,
-    asset.value.withdrawFee,
+const availableText = computed(() => decimalTextFromBoundary(
+  account.value?.availableText ?? account.value?.available,
+  { allowNegative: false },
+))
+const amountText = computed(() => positiveDecimalInput(amount.value, asset.value?.precisionScale ?? 18))
+const previewFee = computed<DecimalText>(() => asset.value && amountText.value
+  ? calculateWithdrawalFeeText(
+    amountText.value,
+    asset.value.withdrawFeeText ?? asset.value.withdrawFee,
     asset.value.withdrawFeeTiers,
     asset.value.precisionScale,
   )
-  : 0)
-const previewNet = computed(() => asset.value
-  ? Math.max(0, normalizeWithdrawalPreviewAmount(numericAmount.value, asset.value.precisionScale))
-  : 0)
-const previewTotalReserved = computed(() => previewNet.value + previewFee.value)
+  : normalizeDecimalText('0'))
+const previewNet = computed<DecimalText>(() => asset.value && amountText.value
+  ? normalizeWithdrawalPreviewAmountText(amountText.value, asset.value.precisionScale)
+  : normalizeDecimalText('0'))
+const previewTotalReserved = computed(() => decimalAdd(previewNet.value, previewFee.value))
 const addressInvalid = computed(() => validationAttempted.value && !address.value.trim())
-const amountInvalid = computed(() => validationAttempted.value && (
-  !Number.isFinite(numericAmount.value)
-  || numericAmount.value <= 0
-))
+const amountInvalid = computed(() => validationAttempted.value && !amountText.value)
 const selectedNetworkLabel = computed(() => {
   return networks.value.find((network) => network.network === selectedNetwork.value)?.displayName
     || selectedNetwork.value
@@ -94,13 +103,18 @@ async function load(): Promise<void> {
 }
 
 function useMaximum(): void {
-  if (!asset.value) return
-  amount.value = String(maximumQuotedWithdrawalAmount(
-    available.value,
-    asset.value.withdrawFee,
+  if (!asset.value || !availableText.value) return
+  const maximum = maximumQuotedWithdrawalAmountText(
+    availableText.value,
+    asset.value.withdrawFeeText ?? asset.value.withdrawFee,
     asset.value.withdrawFeeTiers,
     asset.value.precisionScale,
-  ))
+  )
+  amount.value = maximum === '0' ? '' : maximum
+}
+
+function formatMoney(value: DecimalText): string {
+  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
 }
 
 async function requestSubmit(): Promise<void> {
@@ -108,13 +122,14 @@ async function requestSubmit(): Promise<void> {
   error.value = ''
   success.value = ''
   validationAttempted.value = true
-  if (!asset.value || !selectedNetwork.value || !address.value.trim() || !Number.isFinite(numericAmount.value) || numericAmount.value <= 0) {
+  const requestedAmount = amountText.value
+  if (!asset.value || !selectedNetwork.value || !address.value.trim() || !requestedAmount) {
     error.value = t('withdraw.invalidRequest')
     return
   }
   const requestedAsset = asset.value.symbol
   const requestedNetwork = selectedNetwork.value
-  const requestedAmount = amount.value
+  const requestedAmountSource = amount.value
   quoting.value = true
   try {
     const authorized = await fetchWithdrawalQuote({
@@ -124,7 +139,7 @@ async function requestSubmit(): Promise<void> {
     })
     if (asset.value?.symbol !== requestedAsset
       || selectedNetwork.value !== requestedNetwork
-      || amount.value !== requestedAmount) return
+      || amount.value !== requestedAmountSource) return
     quote.value = authorized
     reviewOpen.value = true
   } catch (reason) {
@@ -227,7 +242,7 @@ onMounted(() => { void load() })
             </div>
             <span class="withdraw-identity__balance">
               <small>{{ t('withdraw.availableBalance') }}</small>
-              <strong class="numeric">{{ formatAmount(available) }} {{ asset.symbol }}</strong>
+              <strong class="numeric">{{ availableText ? formatMoney(availableText) : formatAmount(available) }} {{ asset.symbol }}</strong>
             </span>
           </section>
           <form class="withdraw-workflow" @submit.prevent="requestSubmit">
@@ -265,9 +280,9 @@ onMounted(() => { void load() })
               <small v-if="amountInvalid" class="withdraw-field__error">{{ t('withdraw.invalidRequest') }}</small>
             </label>
             <section class="withdraw-estimate">
-              <div><span>{{ t('withdraw.networkFee') }}</span><strong class="numeric">{{ formatAmount(previewFee) }} {{ asset.symbol }}</strong></div>
-              <div><span>{{ t('withdraw.estimatedArrival') }}</span><strong class="numeric up">{{ formatAmount(previewNet) }} {{ asset.symbol }}</strong></div>
-              <div><span>{{ t('withdraw.totalReserved') }}</span><strong class="numeric">{{ formatAmount(previewTotalReserved) }} {{ asset.symbol }}</strong></div>
+              <div><span>{{ t('withdraw.networkFee') }}</span><strong class="numeric">{{ formatMoney(previewFee) }} {{ asset.symbol }}</strong></div>
+              <div><span>{{ t('withdraw.estimatedArrival') }}</span><strong class="numeric up">{{ formatMoney(previewNet) }} {{ asset.symbol }}</strong></div>
+              <div><span>{{ t('withdraw.totalReserved') }}</span><strong class="numeric">{{ formatMoney(previewTotalReserved) }} {{ asset.symbol }}</strong></div>
             </section>
             <section class="security-section">
               <div class="security-section__title">

@@ -1,31 +1,31 @@
-const DECIMAL_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/
+import {
+  nullableDecimalText,
+  requiredDecimalText,
+  type DecimalText,
+} from './decimal.ts'
+
 const ASSET_SYMBOL_PATTERN = /^[A-Z0-9]{1,32}$/
 
-export function requiredRealizedReturnNumber(
+export function requiredRealizedReturnDecimal(
   value: unknown,
   field: string,
   contract: string,
-): number {
-  if (typeof value !== 'number' && typeof value !== 'string') {
-    throw new Error(`invalid ${contract} ${field}`)
-  }
-  if (typeof value === 'string' && !value.trim()) {
-    throw new Error(`invalid ${contract} ${field}`)
-  }
-  if (typeof value === 'string' && !DECIMAL_PATTERN.test(value.trim())) {
-    throw new Error(`invalid ${contract} ${field}`)
-  }
-  const parsed = typeof value === 'number' ? value : Number(value.trim())
-  if (!Number.isFinite(parsed)) throw new Error(`invalid ${contract} ${field}`)
-  return Object.is(parsed, -0) ? 0 : parsed
+): DecimalText {
+  return requiredDecimalText(value, field, contract, {
+    maxIntegerDigits: 20,
+    maxScale: 18,
+  })
 }
 
-export function nullableRealizedReturnNumber(
+export function nullableRealizedReturnDecimal(
   value: unknown,
   field: string,
   contract: string,
-): number | null {
-  return value === null ? null : requiredRealizedReturnNumber(value, field, contract)
+): DecimalText | null {
+  return nullableDecimalText(value, field, contract, {
+    maxIntegerDigits: 20,
+    maxScale: 18,
+  })
 }
 
 export function normalizeRealizedReturnTimestamp(
@@ -33,7 +33,11 @@ export function normalizeRealizedReturnTimestamp(
   field: string,
   contract: string,
 ): number {
-  const parsed = requiredRealizedReturnNumber(value, field, contract)
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\d+$/.test(value.trim())
+      ? Number(value.trim())
+      : Number.NaN
   if (parsed <= 0 || !Number.isSafeInteger(parsed)) {
     throw new Error(`invalid ${contract} ${field}`)
   }

@@ -1,3 +1,5 @@
+import type { DecimalText } from './decimal'
+
 export interface MarketTicker {
   id?: number
   symbol: string
@@ -7,6 +9,7 @@ export interface MarketTicker {
   baseIconUrl?: string
   quoteIconUrl?: string
   lastPrice: number
+  lastPriceText?: DecimalText
   openPrice: number
   highPrice: number
   lowPrice: number
@@ -42,6 +45,9 @@ export interface KlinePoint {
 export interface OrderBookLevel {
   price: number
   quantity: number
+  /** Authoritative backend price and quantity. Numeric fields are display/sort-only. */
+  priceText: DecimalText
+  quantityText: DecimalText
 }
 
 export interface TradePrint {
@@ -82,6 +88,10 @@ export interface WalletAccount {
   available: number
   frozen: number
   locked: number
+  availableText?: DecimalText
+  frozenText?: DecimalText
+  lockedText?: DecimalText
+  precisionScale?: number
 }
 
 export type MarginOrderType = 'market' | 'limit'
@@ -101,6 +111,8 @@ export interface MarginProduct {
   maxLeverage: number
   minMargin: number
   maxMargin: number | null
+  minMarginText?: DecimalText
+  maxMarginText?: DecimalText | null
   maintenanceMarginRate: number | null
   hourlyInterestRate: number
   takeProfitStopLossSupported: boolean

@@ -118,9 +118,9 @@ test('trade, market detail, and home use the Bitget ticker as visible-price auth
 })
 
 test('ticker stream remains leased while route transition consumers overlap', () => {
-  assert.match(marketStoreSource, /const liveConsumers = new Set<string>\(\)/)
-  assert.match(marketStoreSource, /liveConsumers\.add\(consumer\)[\s\S]*if \(stopLive \|\| !tickers\.value\.length\) return/)
-  assert.match(marketStoreSource, /liveConsumers\.delete\(consumerId\.trim\(\)\)[\s\S]*if \(liveConsumers\.size\) return[\s\S]*stopLive\?\.\(\)/)
+  assert.match(marketStoreSource, /createSharedMarketLifecycle\(\{/)
+  assert.match(marketStoreSource, /startLiveUpdates\(consumerId: string\)[\s\S]*lifecycle\.acquire\(consumerId\)/)
+  assert.match(marketStoreSource, /stopLiveUpdates\(consumerId: string\)[\s\S]*lifecycle\.release\(consumerId\)/)
   assert.match(homeSource, /if \(viewActive\) marketStore\.startLiveUpdates\('home'\)/)
   assert.match(homeSource, /viewActive = false[\s\S]*marketStore\.stopLiveUpdates\('home'\)/)
   assert.match(marketsSource, /if \(viewActive\) marketStore\.startLiveUpdates\('markets'\)/)

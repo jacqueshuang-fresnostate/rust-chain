@@ -58,3 +58,27 @@ test('后端返回零涨跌幅时不回退到绝对差值推导', () => {
   assert.equal(ticker.changePercent, 0)
   assert.equal(ticker.openPrice, 63670)
 })
+
+test('行情执行价只接受普通十进制字符串且不伪造 DecimalText', () => {
+  const huge = mapMarketTicker(
+    { symbol: 'BTC_USDT' },
+    { last_price: '9007199254740993.000000000000000001' },
+  )
+  const atom = mapMarketTicker(
+    { symbol: 'BTC_USDT' },
+    { last_price: '0.000000000000000001' },
+  )
+  const jsonNumber = mapMarketTicker(
+    { symbol: 'BTC_USDT' },
+    { last_price: 9007199254740994 },
+  )
+  const exponent = mapMarketTicker(
+    { symbol: 'BTC_USDT' },
+    { last_price: '1e-18' },
+  )
+
+  assert.equal(huge.lastPriceText, '9007199254740993.000000000000000001')
+  assert.equal(atom.lastPriceText, '0.000000000000000001')
+  assert.equal(jsonNumber.lastPriceText, undefined)
+  assert.equal(exponent.lastPriceText, undefined)
+})

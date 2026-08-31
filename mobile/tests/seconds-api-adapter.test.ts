@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { normalizeDecimalText } from '../src/core/decimal.ts'
 import {
   activeSecondsOrders,
   createSecondsSettlementResultTracker,
@@ -38,10 +39,14 @@ test('秒合约订单适配器保留锁单赔率、成交价、结算价和 open
     stakeAssetSymbol: 'USDT',
     direction: 'down',
     stakeAmount: 100,
+    stakeAmountText: '100',
     durationSeconds: 30,
     payoutRate: .924,
+    payoutRateText: '0.924',
     entryPrice: 63080,
+    entryPriceText: '63080',
     settlementPrice: undefined,
+    settlementPriceText: null,
     status: 'opened',
     result: undefined,
     expiresAt: 1_722_000_030_000,
@@ -82,9 +87,8 @@ test('活动秒合约保留全量订单并按各自时间和赔率独立计算',
     symbol: id === 1 ? 'BTCUSDT' : 'ETHUSDT',
     stakeAssetSymbol: 'USDT',
     direction: id === 1 ? 'up' : 'down',
-    stakeAmount: id * 10,
+    ...orderFinancialFields(id * 10, id === 1 ? .8 : .9),
     durationSeconds: 60,
-    payoutRate: id === 1 ? .8 : .9,
     status,
     createdAt,
     expiresAt,
@@ -101,8 +105,8 @@ test('活动秒合约保留全量订单并按各自时间和赔率独立计算',
   assert.equal(secondsOrderProgress(first, now), 50)
   assert.ok(Math.abs(secondsOrderProgress(second, now) - 100 / 6) < 1e-12)
   assert.equal(secondsOrderProgress(pending, now), 0)
-  assert.equal(secondsOrderEstimatedProfit(first), 8)
-  assert.equal(secondsOrderEstimatedProfit(second), 18)
+  assert.equal(secondsOrderEstimatedProfit(first), '8')
+  assert.equal(secondsOrderEstimatedProfit(second), '18')
 })
 
 test('历史筛选复用活动状态判定并保留真实结果状态', () => {
@@ -111,9 +115,8 @@ test('历史筛选复用活动状态判定并保留真实结果状态', () => {
     symbol: 'BTCUSDT',
     stakeAssetSymbol: 'USDT',
     direction: 'up',
-    stakeAmount: 10,
+    ...orderFinancialFields(10, .8),
     durationSeconds: 60,
-    payoutRate: .8,
     status,
     result,
     createdAt: 1_720_000_000_000 + id,
@@ -163,9 +166,8 @@ test('历史盈亏只使用订单快照，并区分净盈利、负本金和未�
     symbol: 'BTCUSDT',
     stakeAssetSymbol: 'USDT',
     direction: 'up',
-    stakeAmount: 100,
+    ...orderFinancialFields(100, .8),
     durationSeconds: 60,
-    payoutRate: .8,
     status: result ? 'settled' : 'cancelled',
     result,
     createdAt: 1_720_000_000_000,
@@ -174,21 +176,25 @@ test('历史盈亏只使用订单快照，并区分净盈利、负本金和未�
 
   assert.deepEqual(secondsOrderProfitLossPresentation(order(' WIN ')), {
     translationKey: 'seconds.profitAmount',
+    amountText: '80',
     amount: 80,
     tone: 'positive',
   })
   assert.deepEqual(secondsOrderProfitLossPresentation(order('loss')), {
     translationKey: 'seconds.lossAmount',
+    amountText: '-100',
     amount: -100,
     tone: 'negative',
   })
   assert.deepEqual(secondsOrderProfitLossPresentation(order()), {
     translationKey: 'seconds.profitLossAmount',
+    amountText: null,
     amount: undefined,
     tone: 'pending',
   })
   assert.deepEqual(secondsOrderProfitLossPresentation(order('future-result')), {
     translationKey: 'seconds.profitLossAmount',
+    amountText: null,
     amount: undefined,
     tone: 'pending',
   })
@@ -272,8 +278,8 @@ test('开仓响应可立即纳入会话追踪，重置后不会跨会话重放',
   )
 })
 
-test('秒合约订单适配器不会把无效 API 价格伪装为零价', () => {
-  const order = mapSecondsOrder({
+test('秒合约订单适配器对无效或 JSON-number 金融权威字段 fail closed', () => {
+  const base = {
     id: 44,
     symbol: 'BTCUSDT',
     stake_asset_symbol: 'USDT',
@@ -281,16 +287,52 @@ test('秒合约订单适配器不会把无效 API 价格伪装为零价', () => 
     stake_amount: '10',
     duration_seconds: 60,
     payout_rate: '.8',
-    entry_price: 'not-a-price',
-    settlement_price: false,
+    entry_price: '63000',
+    settlement_price: null,
+    status: 'settled',
+    result: 'win',
+    expires_at: 1_722_000_060_000,
+    created_at: 1_722_000_000_000,
+  }
+
+  assert.throws(() => mapSecondsOrder({ ...base, entry_price: 'not-a-price' }), /entry_price/)
+  assert.throws(() => mapSecondsOrder({ ...base, settlement_price: false }), /settlement_price/)
+  assert.throws(() => mapSecondsOrder({ ...base, stake_amount: 10 }), /stake_amount/)
+  assert.throws(() => mapSecondsOrder({ ...base, payout_rate: 0.8 }), /payout_rate/)
+  assert.throws(() => mapSecondsOrder({ ...base, entry_price: 1e-18 }), /entry_price/)
+  assert.throws(() => mapSecondsOrder({ ...base, stake_amount: '1e-18' }), /stake_amount/)
+})
+
+test('秒合约订单以 DecimalText 精确保留超 2^53 与 1e-18 并计算盈亏', () => {
+  const order = mapSecondsOrder({
+    id: 45,
+    symbol: 'BTCUSDT',
+    stake_asset_symbol: 'USDT',
+    direction: 'up',
+    stake_amount: ' 9007199254740993.000000000000000001 ',
+    duration_seconds: 60,
+    payout_rate: '0.000000000000000001',
+    entry_price: '9007199254740993.000000000000000001',
+    settlement_price: '0.000000000000000001',
     status: 'settled',
     result: 'win',
     expires_at: 1_722_000_060_000,
     created_at: 1_722_000_000_000,
   })
 
-  assert.equal(order.entryPrice, undefined)
-  assert.equal(order.settlementPrice, undefined)
+  assert.equal(order.stakeAmountText, '9007199254740993.000000000000000001')
+  assert.equal(order.payoutRateText, '0.000000000000000001')
+  assert.equal(order.entryPriceText, '9007199254740993.000000000000000001')
+  assert.equal(order.settlementPriceText, '0.000000000000000001')
+  assert.equal(secondsOrderEstimatedProfit(order), '0.009007199254740993000000000000000001')
+  assert.equal(
+    secondsOrderProfitLossPresentation(order).amountText,
+    '0.009007199254740993000000000000000001',
+  )
+  assert.equal(
+    secondsOrderProfitLossPresentation({ ...order, result: 'loss' }).amountText,
+    '-9007199254740993.000000000000000001',
+  )
 })
 
 test('开仓返回值先按 ID 提交，迟到或缺失的列表刷新不会丢单', () => {
@@ -299,9 +341,8 @@ test('开仓返回值先按 ID 提交，迟到或缺失的列表刷新不会丢�
     symbol: id === 1 ? 'BTCUSDT' : 'ETHUSDT',
     stakeAssetSymbol: 'USDT',
     direction: id === 1 ? 'up' : 'down',
-    stakeAmount: id * 10,
+    ...orderFinancialFields(id * 10, .8),
     durationSeconds: 60,
-    payoutRate: .8,
     status,
     createdAt: 1_720_000_000_000 + id,
     expiresAt: 1_720_000_060_000 + id,
@@ -338,12 +379,32 @@ function settlementOrder(
     symbol: id % 2 ? 'BTCUSDT' : 'ETHUSDT',
     stakeAssetSymbol: 'USDT',
     direction: id % 2 ? 'up' : 'down',
-    stakeAmount: 100,
+    ...orderFinancialFields(100, .8),
     durationSeconds: 60,
-    payoutRate: .8,
     status,
     result,
     createdAt: expiresAt - 60_000,
     expiresAt,
+  }
+}
+
+function orderFinancialFields(
+  stakeAmount: number,
+  payoutRate: number,
+): Pick<SecondsOrder,
+  | 'stakeAmount'
+  | 'stakeAmountText'
+  | 'payoutRate'
+  | 'payoutRateText'
+  | 'entryPriceText'
+  | 'settlementPriceText'
+> {
+  return {
+    stakeAmount,
+    stakeAmountText: normalizeDecimalText(String(stakeAmount)),
+    payoutRate,
+    payoutRateText: normalizeDecimalText(String(payoutRate)),
+    entryPriceText: null,
+    settlementPriceText: null,
   }
 }

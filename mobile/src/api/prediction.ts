@@ -6,6 +6,7 @@ import {
 } from './requestCache'
 import { asNumber } from '@/core/format'
 import { i18n } from '@/i18n'
+import { normalizeDecimalText, type DecimalText } from '@/core/decimal'
 
 export type PredictionOutcome = 'yes' | 'no'
 
@@ -84,12 +85,17 @@ export async function fetchPredictionMarkets(limit = 50): Promise<PredictionMark
   }))
 }
 
-export async function requestPredictionQuote(input: { marketId: number; outcome: PredictionOutcome; assetId: number; stakeAmount: number }): Promise<PredictionQuote> {
+export async function requestPredictionQuote(input: {
+  marketId: number
+  outcome: PredictionOutcome
+  assetId: number
+  stakeAmount: DecimalText
+}): Promise<PredictionQuote> {
   const response = await client.post<Record<string, unknown>>(requestUrl('/prediction/quotes'), {
     market_id: input.marketId,
     outcome: input.outcome,
     asset_id: input.assetId,
-    stake_amount: String(input.stakeAmount),
+    stake_amount: normalizeDecimalText(input.stakeAmount),
   })
   return {
     quoteId: String(response.data.quote_id || ''),

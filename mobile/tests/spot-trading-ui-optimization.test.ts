@@ -86,7 +86,7 @@ test('现货钱包持有资产归属当前持仓面板，委托与历史仅导�
   assert.doesNotMatch(accountWorkspace, /orders\.cancelAll|openOrders\('positions'\)|trade\.positionsAndAssets/)
   assert.doesNotMatch(spotTemplate, /openOrders\('positions'\)/)
 
-  assert.match(tradeSource, /const spotVisibleBalances = computed\(\(\) => spotWallets\.value\.filter\(\(wallet\) => \([\s\S]*?\[baseAsset\.value, quoteAsset\.value\]\.includes\(wallet\.symbol\)[\s\S]*?wallet\.available \+ wallet\.frozen \+ wallet\.locked > 0/)
+  assert.match(tradeSource, /const spotVisibleBalances = computed\(\(\) => spotWallets\.value\.filter\(\(wallet\) => \([\s\S]*?\[baseAsset\.value, quoteAsset\.value\]\.includes\(wallet\.symbol\)[\s\S]*?hasBalance\([\s\S]*?wallet\.availableText \?\? wallet\.available,[\s\S]*?wallet\.frozenText \?\? wallet\.frozen,[\s\S]*?wallet\.lockedText \?\? wallet\.locked/)
   assert.match(tradeSource, /else \{\s*const wallets = await fetchWalletAccounts\(\)\s*if \(!isCurrentTradingBalancesRequest[\s\S]*?spotWallets\.value = wallets\s*marginPositions\.value = \[\]/)
   const tradingImport = tradeSource.match(/import \{[\s\S]*?\} from '@\/api\/trading'/)?.[0]
   assert.ok(tradingImport)
@@ -166,11 +166,11 @@ test('现货订单类型触发器只打开选择层，显式选择才更改表�
   assert.match(tradeSource, /class="spot-type-field"[\s\S]*?:aria-expanded="spotOrderTypeOpen"[\s\S]*?aria-controls="spot-order-type-dialog"[\s\S]*?@click="openSpotOrderTypeSheet"/)
   assert.match(tradeSource, /@click="selectSpotOrderType\('limit'\)"/)
   assert.match(tradeSource, /@click="selectSpotOrderType\('market'\)"/)
-  assert.match(tradeSource, /const selectedOrderType = computed\(\(\) => mode\.value === 'contract' \? contractOrderType\.value : orderType\.value\)/)
-  assert.match(tradeSource, /const effectivePrice = computed\(\(\) => \{[\s\S]*?return orderType\.value === 'limit' \? Number\(price\.value\) : currentPrice\.value/)
+  assert.match(tradeSource, /const activeType = computed\(\(\) => mode\.value === 'contract' \? contractOrderType\.value : orderType\.value\)/)
+  assert.match(tradeSource, /const orderPrice = computed<DecimalText \| null>\(\(\) => resolvePrice\(\{[\s\S]*?orderType: activeType\.value,[\s\S]*?limitPrice:[\s\S]*?marketPrice: tickerPrice\.value/)
   assert.match(tradeSource, /:readonly="orderType === 'market'"/)
-  assert.match(tradeSource, /const submittedMode = mode\.value[\s\S]*?const submittedOrderType = orderType\.value/)
-  assert.match(tradeSource, /placeSpotOrder\(\{[\s\S]*?type: submittedOrderType,[\s\S]*?price: limitPrice,[\s\S]*?quantity: orderAmount,/)
+  assert.match(tradeSource, /const spot = spotReview\.value[\s\S]*?const submittedMode = review \? 'contract' : spot \? 'spot' : mode\.value/)
+  assert.match(tradeSource, /placeSpotOrder\(\{[\s\S]*?type: spot\.orderType,[\s\S]*?price: spot\.price,[\s\S]*?quantity: spot\.quantity,/)
   const modeWatch = tradeSource.match(/watch\(\(\) => route\.query\.mode,[\s\S]*?\}, \{ immediate: true \}\)/)?.[0]
   assert.ok(modeWatch)
   assert.match(modeWatch, /if \(mode\.value === 'contract'\) closeSpotOrderTypeSheet\(\)/)

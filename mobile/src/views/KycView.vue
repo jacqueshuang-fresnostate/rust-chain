@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Building2, Camera, Check, CheckCircle2, ChevronDown, IdCard, LockKeyhole, Search, UserRound, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,6 +12,8 @@ import { filterCountryOptions, matchesCountryIdentity } from '@/core/countrySear
 import { filterDocumentTypeOptions, type KycDocumentTypeSearchOption } from '@/core/kycDocumentSearch'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
+import { isKycSubmissionLocked, kycStatusPresentation } from '@/core/financialEnumPresentation'
+import { createObjectUrlRegistry } from '@/core/objectUrlRegistry'
 
 type SubmissionType = 'personal' | 'enterprise'
 type UploadKind = 'front' | 'back' | 'handheld'
@@ -47,6 +49,7 @@ const previews = ref<Record<UploadKind, string>>({ front: '', back: '', handheld
 const frontInput = ref<HTMLInputElement | null>(null)
 const backInput = ref<HTMLInputElement | null>(null)
 const handheldInput = ref<HTMLInputElement | null>(null)
+const previewUrls = createObjectUrlRegistry<UploadKind>()
 const countryPickerOpen = ref(false)
 const countrySearch = ref('')
 const countryPickerDialog = ref<HTMLElement | null>(null)
@@ -65,7 +68,7 @@ const {
 } = useModalDialog(documentTypePickerOpen, documentTypePickerDialog, '[data-document-type-search]')
 
 const latest = computed(() => kyc.value?.latestSubmission)
-const isLocked = computed(() => latest.value?.status === 'pending' || latest.value?.status === 'approved')
+const isLocked = computed(() => latest.value ? isKycSubmissionLocked(latest.value.status) : false)
 const maxDocumentSize = computed(() => kyc.value?.config.maxDocumentSizeBytes || 5 * 1024 * 1024)
 const maxDocumentSizeMb = computed(() => Math.max(1, Math.round(maxDocumentSize.value / 1024 / 1024)))
 const configuredCountries = computed(() => {
@@ -227,9 +230,8 @@ function documentLabel(value: string): string {
 }
 
 function statusLabel(status?: string): string {
-  if (status === 'approved') return t('kyc.approved')
-  if (status === 'rejected') return t('kyc.rejected')
-  return t('kyc.pending')
+  const presentation = kycStatusPresentation(status || '')
+  return t(presentation.translationKey, { source: presentation.source || '--' })
 }
 
 async function load(): Promise<void> {
@@ -290,8 +292,17 @@ function handleFile(event: Event, kind: UploadKind): void {
     return
   }
   documents.value[kind] = file
-  previews.value[kind] = URL.createObjectURL(file)
+  previews.value[kind] = previewUrls.replace(kind, file)
   error.value = ''
+}
+
+function clearDocumentPreviews(): void {
+  previewUrls.clearAll()
+  documents.value = { front: null, back: null, handheld: null }
+  previews.value = { front: '', back: '', handheld: '' }
+  for (const input of [frontInput.value, backInput.value, handheldInput.value]) {
+    if (input) input.value = ''
+  }
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -341,6 +352,7 @@ async function submit(): Promise<void> {
       documentBackImage: back,
       documentHandheldImage: handheld,
     })
+    clearDocumentPreviews()
     success.value = t('kyc.submitted')
     await load()
   } catch (reason) {
@@ -359,6 +371,7 @@ watch(documentTypes, (types) => {
   if (!types.includes(form.value.documentType)) form.value.documentType = types[0] || ''
 }, { immediate: true })
 onMounted(() => { void load() })
+onBeforeUnmount(clearDocumentPreviews)
 </script>
 
 <template>

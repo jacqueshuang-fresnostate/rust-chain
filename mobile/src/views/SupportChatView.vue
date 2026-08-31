@@ -14,6 +14,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import { usePrivateUserStreamLease } from '@/composables/usePrivateUserStreamLease'
 import { apiErrorMessage } from '@/api/client'
 import {
   fetchCurrentSupportConversation,
@@ -71,6 +72,8 @@ let historyPaginationInitialized = false
 let confirmedReadMessageId = 0
 let requestedReadMessageId = 0
 let readLoop: Promise<void> | null = null
+let supportBackgroundRefreshQueued = false
+let supportBackgroundRefreshPromise: Promise<void> | null = null
 
 const groupedMessages = computed(() => groupSupportMessages(messages.value))
 const draftLength = computed(() => supportMessageScalarLength(draft.value))
@@ -132,9 +135,48 @@ const canSend = computed(() => (
   && draftLength.value <= SUPPORT_MESSAGE_MAX_SCALARS
 ))
 
-const polling = createSupportPollingController(async () => {
-  await reconcileConversation(false, sessionGeneration)
-})
+const polling = createSupportPollingController(requestSupportBackgroundReconciliation)
+
+function requestSupportBackgroundReconciliation(): Promise<void> {
+  supportBackgroundRefreshQueued = true
+  return drainSupportBackgroundReconciliation()
+}
+
+function drainSupportBackgroundReconciliation(): Promise<void> {
+  if (
+    !supportBackgroundRefreshQueued
+    || initialLoading.value
+    || !session.isAuthenticated
+  ) return Promise.resolve()
+  if (supportBackgroundRefreshPromise) return supportBackgroundRefreshPromise
+
+  const generation = sessionGeneration
+  let current: Promise<void>
+  current = (async () => {
+    while (
+      supportBackgroundRefreshQueued
+      && generation === sessionGeneration
+      && session.isAuthenticated
+      && !initialLoading.value
+    ) {
+      supportBackgroundRefreshQueued = false
+      await reconcileConversation(false, generation)
+    }
+  })().finally(() => {
+    if (supportBackgroundRefreshPromise !== current) return
+    supportBackgroundRefreshPromise = null
+    if (
+      supportBackgroundRefreshQueued
+      && generation === sessionGeneration
+      && session.isAuthenticated
+      && !initialLoading.value
+    ) {
+      void drainSupportBackgroundReconciliation()
+    }
+  })
+  supportBackgroundRefreshPromise = current
+  return current
+}
 
 function resetConversationState(): void {
   conversation.value = null
@@ -160,6 +202,8 @@ function resetConversationState(): void {
   confirmedReadMessageId = 0
   requestedReadMessageId = 0
   readLoop = null
+  supportBackgroundRefreshQueued = false
+  supportBackgroundRefreshPromise = null
 }
 
 async function activateSession(): Promise<void> {
@@ -170,7 +214,10 @@ async function activateSession(): Promise<void> {
   resetConversationState()
   if (!session.isAuthenticated) return
   await reconcileConversation(true, generation)
-  if (generation === sessionGeneration && session.isAuthenticated) polling.start()
+  if (generation === sessionGeneration && session.isAuthenticated) {
+    await drainSupportBackgroundReconciliation()
+    if (generation === sessionGeneration && session.isAuthenticated) polling.start()
+  }
 }
 
 async function reconcileConversation(initial: boolean, generation: number): Promise<void> {
@@ -470,16 +517,25 @@ function messageTime(timestamp: number): string {
   }).format(new Date(timestamp))
 }
 
-watch(() => session.token, () => { void activateSession() })
+watch(() => session.generation, () => { void activateSession() })
 watch(draft, () => {
   if (draftError.value) draftError.value = ''
 })
 
 onMounted(() => { void activateSession() })
+usePrivateUserStreamLease({
+  topic: 'support',
+  consumerId: 'support-chat',
+  enabled: () => session.isAuthenticated,
+  onOpen: () => { void requestSupportBackgroundReconciliation() },
+  onEvent: () => { void requestSupportBackgroundReconciliation() },
+})
 onBeforeUnmount(() => {
   sessionGeneration += 1
   reconciliationVersion += 1
   polling.stop()
+  supportBackgroundRefreshQueued = false
+  supportBackgroundRefreshPromise = null
   olderMessagesRequestVersion += 1
   readLoop = null
 })

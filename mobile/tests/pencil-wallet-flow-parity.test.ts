@@ -125,7 +125,7 @@ test('提币表单保留真实网络、余额、完整字段焦点、验证和�
   assert.match(source, /\.withdraw-field input \{[\s\S]*?border: 0[\s\S]*?box-shadow: none[\s\S]*?outline: 0/)
   assert.match(source, /:aria-invalid="addressInvalid"/)
   assert.match(source, /:aria-invalid="amountInvalid"/)
-  assert.match(source, /amount\.value = String\(maximumQuotedWithdrawalAmount\(/)
+  assert.match(source, /const maximum = maximumQuotedWithdrawalAmountText\([\s\S]*amount\.value = maximum === '0' \? '' : maximum/)
   assert.match(source, /const authorized = await fetchWithdrawalQuote\(\{[\s\S]*?amount: requestedAmount,/)
   assert.match(source, /await submitWithdrawal\(\{[\s\S]*?quote: quote\.value,[\s\S]*?fundPassword: fundPassword\.value \|\| undefined,[\s\S]*?totpCode: totpCode\.value \|\| undefined,/)
   assert.match(source, /role="dialog"/)
@@ -139,7 +139,7 @@ test('账单、提币记录和快捷充值按连续列表映射且只消费真�
   assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?min-height: 84px/)
   assert.match(sources.ledger, /createWalletLedgerRequestLifecycle\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
   assert.match(sources.ledger, /groupWalletLedgerEntries\(entries\.value\)/)
-  assert.match(sources.ledger, /v-if="entry\.fee > 0"/)
+  assert.match(sources.ledger, /v-if="decimalSign\(entry\.fee\) > 0"/)
 
   assert.match(sources.withdrawalRecords, /const recordFilters: RecordFilter\[\] = \['all', 'processing', 'completed', 'failed'\]/)
   assert.match(sources.withdrawalRecords, /const filteredRecords = computed/)
@@ -148,7 +148,7 @@ test('账单、提币记录和快捷充值按连续列表映射且只消费真�
   assert.match(sources.withdrawalRecords, /records\.value = await fetchWithdrawalRecords\(\)/)
 
   assert.match(sources.quickRecharge, /Promise\.all\(\[fetchQuickRechargeConfig\(\), fetchQuickRechargeOrders\(\)\]\)/)
-  assert.match(sources.quickRecharge, /createQuickRechargeOrder\(numericAmount\.value, platformTarget\.value\)/)
+  assert.match(sources.quickRecharge, /const requestAmount = amountText\.value[\s\S]*createQuickRechargeOrder\(requestAmount, platformTarget\.value\)/)
   assert.match(sources.quickRecharge, /\.recharge-intro strong \{[\s\S]*?font-size: 20px/)
   assert.match(sources.quickRecharge, /\.recharge-amount \{[\s\S]*?min-height: 64px/)
   assert.match(sources.quickRecharge, /\.recharge-submit \{[\s\S]*?height: 48px[\s\S]*?min-height: 48px/)

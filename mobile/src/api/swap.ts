@@ -10,6 +10,7 @@ import {
   type BackendConvertPair,
   type ConvertPair,
 } from '@/core/swapAssetLogos'
+import { normalizeDecimalText, type DecimalText } from '@/core/decimal'
 
 export type { ConvertPair } from '@/core/swapAssetLogos'
 
@@ -45,11 +46,11 @@ export async function fetchConvertPairs(options: ReferenceRequestOptions = {}): 
   }, options)
 }
 
-export async function requestConvertQuote(pair: ConvertPair, amount: number): Promise<ConvertQuote> {
+export async function requestConvertQuote(pair: ConvertPair, amount: DecimalText): Promise<ConvertQuote> {
   const response = await client.post<Record<string, unknown>>(requestUrl('/convert/quote'), {
     from_asset_id: pair.fromAssetId,
     to_asset_id: pair.toAssetId,
-    from_amount: String(amount),
+    from_amount: normalizeDecimalText(amount),
   })
   return {
     quoteId: String(response.data.quote_id || ''),

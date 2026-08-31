@@ -31,6 +31,7 @@ import {
   type TodayReturn,
 } from '@/api/wallet'
 import { formatAmount, formatFiat } from '@/core/format'
+import { decimalCompare, decimalTextFromBoundary, tryNormalizeDecimalText } from '@/core/decimal'
 import { useModalDialog } from '@/core/modalDialog'
 import { createSessionRequestLifecycle } from '@/core/sessionRequest'
 import {
@@ -164,6 +165,7 @@ const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
   visible: balanceVisible.value,
   state: todayReturnState.value,
   value: todayReturn.value,
+  locale: locale.value === 'en' ? 'en-US' : 'zh-CN',
   amountMask: '••••••',
   detailMask: '••••',
   messages: {
@@ -183,7 +185,6 @@ const summaryValueSizeTier = computed<AssetValueSizeTier>(() => (
     : totalValueSizeTier.value
 ))
 
-/** Use stable formatted-length tiers without layout measurement or text below 20px. */
 function assetValueSizeTier(value: string): AssetValueSizeTier {
   const length = Array.from(value).length
   if (length <= 8) return 'full'
@@ -201,6 +202,7 @@ const spotTransferAccounts = computed(() => accounts.value.filter((account) => m
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? spotTransferAccounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
 const transferAvailable = computed<number | null>(() => transferAccount.value?.available ?? null)
+const transferAvailableText = computed(() => decimalTextFromBoundary(transferAccount.value?.availableText ?? transferAvailable.value, { allowNegative: false }))
 const transferAvailableLabel = computed(() => transferAvailable.value === null ? '--' : formatAmount(transferAvailable.value))
 const transferAssetLogo = computed(() => transferAccount.value?.logoUrl
   || accounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
@@ -216,17 +218,11 @@ const filteredTransferAccounts = computed(() => {
     })
 })
 const transferTarget = computed<'spot' | 'margin'>(() => transferFrom.value === 'spot' ? 'margin' : 'spot')
-const canSubmitTransfer = computed(() => {
-  const value = Number(transferAmount.value)
-  return Boolean(
-    transferAsset.value
-    && transferAvailable.value !== null
-    && Number.isFinite(value)
-    && value > 0
-    && value <= transferAvailable.value
-    && !transferring.value,
-  )
-})
+const transferValueText = computed(() => tryNormalizeDecimalText(transferAmount.value, { allowNegative: false, allowZero: false, maxIntegerDigits: 20, maxScale: transferAccount.value?.precisionScale ?? 18 }))
+const canSubmitTransfer = computed(() => Boolean(transferAsset.value
+  && transferValueText.value && transferAvailableText.value
+  && decimalCompare(transferValueText.value, transferAvailableText.value) <= 0
+  && !transferring.value))
 
 async function loadAccounts(): Promise<void> {
   if (!session.token) {
@@ -358,8 +354,8 @@ function selectTransferAsset(account: WalletAccount): void {
 }
 
 function fillTransferAvailable(): void {
-  if (transferring.value || transferAvailable.value === null || transferAvailable.value <= 0) return
-  transferAmount.value = String(transferAvailable.value)
+  if (transferring.value || !transferAvailableText.value || transferAvailableText.value === '0') return
+  transferAmount.value = transferAvailableText.value
   transferFeedback.value = ''
 }
 
@@ -395,13 +391,13 @@ function openProtectedRoute(name: 'withdraw-asset' | 'wallet-ledger' | 'withdraw
 }
 
 async function submitTransfer(): Promise<void> {
-  const transferValue = Number(transferAmount.value)
-  if (!transferAsset.value || transferAvailable.value === null || !Number.isFinite(transferValue) || transferValue <= 0) {
+  const requestAmount = transferValueText.value
+  if (!transferAsset.value || !transferAvailableText.value || !requestAmount) {
     transferFeedback.value = t('assets.invalidTransfer')
     transferFeedbackTone.value = 'error'
     return
   }
-  if (transferValue > transferAvailable.value) {
+  if (decimalCompare(requestAmount, transferAvailableText.value) > 0) {
     transferFeedback.value = t('assets.exceedsBalance')
     transferFeedbackTone.value = 'error'
     return
@@ -416,7 +412,7 @@ async function submitTransfer(): Promise<void> {
     const sourceLogo = transferAccount.value?.logoUrl
       || accounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
       || marginAccounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
-    const result = await transferWalletFunds(transferAsset.value, transferFrom.value, to, transferValue)
+    const result = await transferWalletFunds(transferAsset.value, transferFrom.value, to, requestAmount)
     if (requestVersion !== transferRequestVersion || session.token !== sessionKey) return
     accounts.value = upsertWalletAccount(accounts.value, { ...result.spotWallet, logoUrl: sourceLogo })
     marginAccounts.value = upsertWalletAccount(marginAccounts.value, { ...result.marginWallet, logoUrl: sourceLogo })

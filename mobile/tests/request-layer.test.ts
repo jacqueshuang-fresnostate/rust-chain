@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import axios, { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import { installAuthSessionInterceptors, isAuthBootstrapRequest } from '../src/api/requestAuth.ts'
-
-const clientSource = readFileSync(new URL('../src/api/client.ts', import.meta.url), 'utf8')
+import { normalizeApiError, resolveSafeApiErrorMessage } from '../src/core/apiError.ts'
+import { createSessionOwner, type SessionLease } from '../src/core/sessionOwner.ts'
 
 const bootstrapPaths = [
   '/api/v1/auth/login',
@@ -150,12 +149,88 @@ test('failed refresh clears the protected session without recursive replay', asy
   assert.equal(expiredCalls, 1)
 })
 
-test('HTTP failures without a backend message keep the localized caller fallback', () => {
-  assert.match(
-    clientSource,
-    /if \(axios\.isAxiosError\(error\)\) \{[\s\S]*?if \(!axiosError\.response\) \{[\s\S]*?return i18n\.global\.t\('common\.networkUnavailable'\)[\s\S]*?\}[\s\S]*?return fallback/,
+test('HTTP failures without a stable backend code keep the localized caller fallback', () => {
+  const normalized = normalizeApiError({
+    isAxiosError: true,
+    response: { status: 400, data: {} },
+  })
+  assert.equal(
+    resolveSafeApiErrorMessage(normalized, 'localized fallback', (key) => key),
+    'localized fallback',
   )
-  assert.doesNotMatch(clientSource, /return error instanceof Error[\s\S]*?axiosError\.response/)
+})
+
+test('logout during a deferred refresh prevents token writeback and request replay', async () => {
+  const instance = axios.create()
+  const owner = createSessionOwner({ createId: incrementingId() })
+  owner.replace({ accessToken: 'ACCESS_A', refreshToken: 'REFRESH_A' })
+  const refreshStarted = deferred<void>()
+  const refreshResponse = deferred<{ accessToken: string; refreshToken: string }>()
+  let adapterCalls = 0
+  let expiredCalls = 0
+
+  installAuthSessionInterceptors(instance, {
+    readAccessToken: () => owner.snapshot().accessToken,
+    readSession: () => requestSession(owner.capture()),
+    isSessionCurrent: (session) => owner.isCurrent(session),
+    refreshAccessToken: async (session) => {
+      assert.ok(session)
+      refreshStarted.resolve(undefined)
+      const tokens = await refreshResponse.promise
+      const committed = owner.commitRefresh(session, tokens)
+      if (!committed) return null
+      const current = owner.capture()
+      return { accessToken: current.accessToken, session: requestSession(current) }
+    },
+    clearSession: (session) => Boolean(session && owner.clearIfCurrent(session, 'expired')),
+    onSessionExpired: () => { expiredCalls += 1 },
+  })
+
+  const pending = instance.get('/api/v1/user/profile', {
+    adapter: async (config) => {
+      adapterCalls += 1
+      throw unauthorized(config)
+    },
+  })
+  await refreshStarted.promise
+  owner.clear('logout')
+  refreshResponse.resolve({ accessToken: 'ACCESS_A_LATE', refreshToken: 'REFRESH_A_LATE' })
+
+  await assert.rejects(pending)
+  assert.equal(adapterCalls, 1)
+  assert.equal(expiredCalls, 0)
+  assert.equal(owner.snapshot().accessToken, '')
+})
+
+test('a successful private response from an aborted session generation never reaches callers', async () => {
+  const instance = axios.create()
+  const owner = createSessionOwner({ createId: incrementingId() })
+  owner.replace({ accessToken: 'ACCESS_A', refreshToken: 'REFRESH_A' })
+  const adapterStarted = deferred<void>()
+  const adapterResponse = deferred<AxiosResponse>()
+  let writes = 0
+
+  installAuthSessionInterceptors(instance, {
+    readAccessToken: () => owner.snapshot().accessToken,
+    readSession: () => requestSession(owner.capture()),
+    isSessionCurrent: (session) => owner.isCurrent(session),
+    refreshAccessToken: async () => null,
+    clearSession: () => false,
+    onSessionExpired: () => undefined,
+  })
+
+  const pending = instance.get('/api/v1/wallet/accounts', {
+    adapter: async (config) => {
+      adapterStarted.resolve(undefined)
+      return adapterResponse.promise.then((response) => ({ ...response, config }))
+    },
+  }).then(() => { writes += 1 })
+
+  await adapterStarted.promise
+  owner.clear('logout')
+  adapterResponse.resolve(success({} as InternalAxiosRequestConfig))
+  await assert.rejects(pending)
+  assert.equal(writes, 0)
 })
 
 function unauthorized(config: InternalAxiosRequestConfig): AxiosError {
@@ -177,4 +252,28 @@ function success(config: InternalAxiosRequestConfig): AxiosResponse {
     status: 200,
     statusText: 'OK',
   }
+}
+
+function requestSession(lease: SessionLease) {
+  return {
+    accessToken: lease.accessToken,
+    refreshToken: lease.refreshToken,
+    scope: lease.scope,
+    epoch: lease.epoch,
+    signal: lease.signal,
+  }
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve(value: T | PromiseLike<T>): void
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
+}
+
+function incrementingId(): () => string {
+  let next = 0
+  return () => `session-${++next}`
 }

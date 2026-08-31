@@ -1,8 +1,16 @@
 import {
   normalizeRealizedReturnAssetSymbol,
   normalizeRealizedReturnTimestamp,
-  requiredRealizedReturnNumber,
+  requiredRealizedReturnDecimal,
 } from './realizedReturn.ts'
+import {
+  decimalCompare,
+  decimalFractionDigits,
+  decimalSign,
+  formatDecimalText,
+  normalizeDecimalText,
+  type DecimalText,
+} from './decimal.ts'
 
 export const WALLET_LEDGER_CATEGORIES = [
   'funding',
@@ -20,7 +28,7 @@ export const WALLET_LEDGER_CATEGORIES = [
 export const WALLET_LEDGER_FILTERS = ['all', ...WALLET_LEDGER_CATEGORIES] as const
 export const WALLET_LEDGER_ACCOUNT_TYPES = ['spot', 'margin'] as const
 export const WALLET_LEDGER_ACCOUNT_FILTERS = ['all', ...WALLET_LEDGER_ACCOUNT_TYPES] as const
-export const WALLET_LEDGER_MAX_FRACTION_DIGITS = 8
+export const WALLET_LEDGER_MAX_FRACTION_DIGITS = 18
 
 export type WalletLedgerCategory = typeof WALLET_LEDGER_CATEGORIES[number]
 export type WalletLedgerFilter = typeof WALLET_LEDGER_FILTERS[number]
@@ -36,6 +44,7 @@ export interface BackendWalletLedgerEntry {
   amount: unknown
   fee: unknown
   balance_after: unknown
+  precision_scale?: unknown
   created_at: unknown
 }
 
@@ -57,9 +66,10 @@ export interface WalletLedgerEntry {
   symbol: string
   changeType: string
   category: WalletLedgerCategory
-  amount: number
-  fee: number
-  balanceAfter: number
+  amount: DecimalText
+  fee: DecimalText
+  balanceAfter: DecimalText
+  precisionScale: number
   createdAt: number
 }
 
@@ -225,8 +235,8 @@ export function mergeWalletLedgerEntries(
   return [...byIdentity.values()]
 }
 
-export function walletLedgerAmountSign(amount: number): '+' | '' {
-  return amount > 0 ? '+' : ''
+export function walletLedgerAmountSign(amount: DecimalText): '+' | '' {
+  return decimalSign(amount) > 0 ? '+' : ''
 }
 
 export function isWalletLedgerContractError(error: unknown): error is WalletLedgerContractError {
@@ -359,13 +369,22 @@ export function formatWalletLedgerTime(timestamp: number, locale: string): strin
   }).format(new Date(timestamp))
 }
 
-export function formatWalletLedgerDecimal(value: number, locale: string): string {
-  if (!Number.isFinite(value)) {
+export function formatWalletLedgerDecimal(
+  value: DecimalText,
+  locale: string,
+  precisionScale = WALLET_LEDGER_MAX_FRACTION_DIGITS,
+): string {
+  if (!Number.isSafeInteger(precisionScale) || precisionScale < 0 || precisionScale > 18) {
+    throw new WalletLedgerContractError('invalid wallet ledger display precision')
+  }
+  try {
+    return formatDecimalText(value, locale, {
+      maximumFractionDigits: precisionScale,
+      preserveNonZero: true,
+    })
+  } catch {
     throw new WalletLedgerContractError('invalid wallet ledger display amount')
   }
-  return new Intl.NumberFormat(locale, {
-    maximumFractionDigits: WALLET_LEDGER_MAX_FRACTION_DIGITS,
-  }).format(Object.is(value, -0) ? 0 : value)
 }
 
 export function createWalletLedgerRequestLifecycle(input: {
@@ -437,12 +456,12 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
   if (!isWalletLedgerCategory(entry.category)) {
     throw new WalletLedgerContractError(`invalid wallet ledger entries[${index}].category`)
   }
-  const fee = requiredRealizedReturnNumber(
+  const fee = requiredRealizedReturnDecimal(
     entry.fee,
     `entries[${index}].fee`,
     'wallet ledger',
   )
-  if (fee < 0) {
+  if (decimalCompare(fee, normalizeDecimalText('0')) < 0) {
     throw new WalletLedgerContractError(`invalid wallet ledger entries[${index}].fee`)
   }
   const createdAt = normalizeRealizedReturnTimestamp(
@@ -454,6 +473,25 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
     throw new WalletLedgerContractError(`invalid wallet ledger entries[${index}].created_at`)
   }
 
+  const amount = requiredRealizedReturnDecimal(
+    entry.amount,
+    `entries[${index}].amount`,
+    'wallet ledger',
+  )
+  const balanceAfter = requiredRealizedReturnDecimal(
+    entry.balance_after,
+    `entries[${index}].balance_after`,
+    'wallet ledger',
+  )
+  const inferredScale = Math.max(
+    decimalSourceScale(entry.amount),
+    decimalSourceScale(entry.fee),
+    decimalSourceScale(entry.balance_after),
+  )
+  const precisionScale = entry.precision_scale === null || entry.precision_scale === undefined
+    ? inferredScale
+    : requiredPrecisionScale(entry.precision_scale, `entries[${index}].precision_scale`)
+
   return {
     id: requiredInteger(entry.id, `entries[${index}].id`, 1),
     accountType: entry.account_type,
@@ -464,19 +502,28 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
     ),
     changeType,
     category: entry.category,
-    amount: requiredRealizedReturnNumber(
-      entry.amount,
-      `entries[${index}].amount`,
-      'wallet ledger',
-    ),
+    amount,
     fee,
-    balanceAfter: requiredRealizedReturnNumber(
-      entry.balance_after,
-      `entries[${index}].balance_after`,
-      'wallet ledger',
-    ),
+    balanceAfter,
+    precisionScale,
     createdAt,
   }
+}
+
+function decimalSourceScale(value: unknown): number {
+  if (typeof value !== 'string') throw new WalletLedgerContractError('invalid wallet ledger decimal')
+  try {
+    return Math.min(18, decimalFractionDigits(value))
+  } catch {
+    throw new WalletLedgerContractError('invalid wallet ledger decimal')
+  }
+}
+
+function requiredPrecisionScale(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 18) {
+    throw new WalletLedgerContractError(`invalid wallet ledger ${field}`)
+  }
+  return value
 }
 
 function requiredInteger(value: unknown, field: string, minimum: number): number {

@@ -6,17 +6,18 @@ import {
 import {
   normalizeRealizedReturnAssetSymbols,
   normalizeRealizedReturnTimestamp,
-  requiredRealizedReturnNumber,
+  requiredRealizedReturnDecimal,
 } from './realizedReturn.ts'
+import { decimalCompare, normalizeDecimalText, type DecimalText } from './decimal.ts'
 
 export type TodayReturnStatus = 'complete' | 'partial'
 
 export interface TodayReturn {
   scope: 'realized'
   reportingAsset: 'USDT'
-  amount: number
-  basisAmount: number
-  rate: number
+  amount: DecimalText
+  basisAmount: DecimalText
+  rate: DecimalText
   periodStartAt: number
   calculatedAt: number
   status: TodayReturnStatus
@@ -56,12 +57,14 @@ export function mapTodayReturn(payload: BackendTodayReturn): TodayReturn {
     throw new Error('invalid complete today return missing price assets')
   }
 
-  const amount = requiredRealizedReturnNumber(payload.amount, 'amount', 'today return')
-  const basisAmount = requiredRealizedReturnNumber(payload.basis_amount, 'basis_amount', 'today return')
-  const rate = requiredRealizedReturnNumber(payload.rate, 'rate', 'today return')
+  const amount = requiredRealizedReturnDecimal(payload.amount, 'amount', 'today return')
+  const basisAmount = requiredRealizedReturnDecimal(payload.basis_amount, 'basis_amount', 'today return')
+  const rate = requiredRealizedReturnDecimal(payload.rate, 'rate', 'today return')
   const periodStartAt = normalizeRealizedReturnTimestamp(payload.period_start_at, 'period_start_at', 'today return')
   const calculatedAt = normalizeRealizedReturnTimestamp(payload.calculated_at, 'calculated_at', 'today return')
-  if (basisAmount < 0) throw new Error('invalid today return basis_amount')
+  if (decimalCompare(basisAmount, normalizeDecimalText('0')) < 0) {
+    throw new Error('invalid today return basis_amount')
+  }
   if (periodStartAt % 86_400_000 !== 0
     || calculatedAt < periodStartAt
     || calculatedAt >= periodStartAt + 86_400_000) {

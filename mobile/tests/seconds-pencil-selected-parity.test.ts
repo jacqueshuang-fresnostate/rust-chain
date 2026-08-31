@@ -6,6 +6,7 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
 const secondsSource = read('../src/views/SecondsView.vue')
+const secondsFinancialSource = read('../src/core/secondsFinancial.ts')
 const selectedPageCss = read('../src/styles/pencil-selected-pages.css')
 const secondsTemplate = secondsSource.slice(
   secondsSource.indexOf('<template>') + '<template>'.length,
@@ -76,7 +77,8 @@ test('Seconds 行情摘要只消费实时快照、真实订单轮次和 112px �
   assert.match(secondsSource, /const liveTickerSnapshots = ref<Record<string, TickerUpdate>>\(\{\}\)/)
   assert.match(secondsSource, /update\.changePercent/)
   assert.match(secondsSource, /update\.observedAt/)
-  assert.match(secondsSource, /const liveChange = selectedLiveTicker\.value\?\.changePercent\s*if \(Number\.isFinite\(liveChange\)\) return Number\(liveChange\)\s*const snapshotChange = selectedTicker\.value\?\.changePercent/)
+  assert.match(secondsSource, /const selectedChangePercent = computed\(\(\) => displayChangePercent\([\s\S]*?selectedLiveTicker\.value,[\s\S]*?selectedTicker\.value/)
+  assert.match(secondsFinancialSource, /const displayChangePercent = \([\s\S]*?finiteDisplayNumber\(liveTicker\?\.changePercent\)[\s\S]*?finiteDisplayNumber\(snapshotTicker\?\.changePercent\)/)
   assert.doesNotMatch(secondsSource, /if \(selectedLiveTicker\.value\) return Number\.isFinite\(liveChange\)/)
   assert.match(secondsSource, /const nearestSelectedActiveOrder = computed/)
   assert.match(secondsSource, /nearestSelectedActiveOrder\.value[\s\S]*?orderCountdown\(order\)/)
@@ -130,8 +132,9 @@ test('Seconds 202px 下单表单锁定期限、限额、金额、方向和 44px 
   assert.match(secondsTemplate, /:aria-pressed="direction === 'up'"/)
   assert.match(secondsTemplate, /:aria-pressed="direction === 'down'"/)
   assert.match(secondsTemplate, /\{\{ submitting \? t\('common\.submitting'\) : orderActionLabel \}\}/)
-  assert.match(secondsSource, /orderReview\.value\.stakeAmount \* orderReview\.value\.payoutRate/)
-  assert.match(secondsSource, /amountNumber\.value <= \(account\.value\?\.available \|\| 0\)/)
+  assert.match(secondsSource, /orderReview\.value\?\.estimatedProfit \?\? null/)
+  assert.match(secondsSource, /const availableStakeBalance = computed\(\(\) => walletAvailable\(account\.value\)\)/)
+  assert.match(secondsSource, /validateStake\(amount\.value,[\s\S]*?available: availableStakeBalance\.value/)
   assert.match(secondsSource, /const amountFieldInvalid = computed\(\(\) => Boolean\([\s\S]*?session\.isAuthenticated[\s\S]*?!loading\.value[\s\S]*?!valid\.value/)
   assert.match(secondsTemplate, /:data-field-state="amountFieldInvalid \? 'invalid' : amount && valid \? 'complete' : 'idle'"[\s\S]*?:aria-invalid="amountFieldInvalid"/)
 })
@@ -151,8 +154,8 @@ test('Seconds 活动订单使用真实 Logo、本地筛选和可自然增长的 
   assert.match(secondsStyle, /\.seconds-order-filters button\s*\{[\s\S]*?height:\s*30px;[\s\S]*?min-height:\s*30px(?: !important)?;/)
   assert.match(secondsTemplate, /v-for="order in filteredActiveOrders"/)
   assert.match(secondsTemplate, /<AssetMark[\s\S]*?:src="marketStore\.tickerFor\(order\.symbol\)\?\.baseIconUrl \|\| marketStore\.tickerFor\(order\.symbol\)\?\.iconUrl"[\s\S]*?:size="22"/)
-  assert.match(secondsTemplate, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
-  assert.match(secondsTemplate, /orderEstimatedProfit\(order\)/)
+  assert.match(secondsTemplate, /moneyText\(orderMoney\(order\)\.entryPrice\)/)
+  assert.match(secondsTemplate, /moneyText\(orderProfit\(order\)\)/)
 
   const cardRule = blockOf(secondsStyle, '.seconds-active-order {')
   assert.match(cardRule, /border:\s*1px solid var\(--seconds-line\);/)

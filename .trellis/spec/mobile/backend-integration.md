@@ -1781,3 +1781,108 @@ single-flight behavior, failure behavior, cloning, force, key/global
 invalidation, stable parameter ordering, whitelist presence, and strong-data
 exclusions. A browser route-away/route-back check must prove a stable endpoint
 is requested once within its TTL.
+
+## 19. Shared Session, Request, Realtime, and Decimal Execution Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changing mobile authentication, API transport, public/private live
+  data, order refresh, or any calculation that can reach a financial mutation.
+- This contract prevents late refresh responses from restoring logged-out
+  sessions, route remounts from multiplying sockets/requests, and IEEE-754
+  rounding from changing an order intent.
+
+### 2. Signatures
+
+```ts
+createApiHttpClient(config?: CreateAxiosDefaults): AxiosInstance
+composeAbortSignals(signals: Array<AbortSignal | null | undefined>, timeoutMs: number): ComposedAbortSignal
+
+createSessionOwner(options?: SessionOwnerOptions): SessionOwner
+SessionOwner.capture(): SessionLease
+SessionOwner.commitRefresh(lease, tokens): SessionSnapshot | null
+
+createSharedMarketLifecycle(options: SharedMarketLifecycleOptions): SharedMarketLifecycle
+SharedMarketLifecycle.refresh(force?: boolean): Promise<void>
+SharedMarketLifecycle.acquire(consumerId: string): void
+
+createPrivateUserStreamManager(options: PrivateUserStreamManagerOptions): PrivateUserStreamManager
+PrivateUserStreamManager.acquire(options: PrivateUserTopicLeaseOptions): PrivateUserTopicLease
+
+createSpotOrderReviewSnapshot(input: SpotOrderReviewInput): SpotOrderReviewSnapshot
+createSecondsOrderReviewSnapshot(input: SecondsOrderReviewInput): SecondsOrderReviewSnapshot
+```
+
+### 3. Contracts
+
+- HTTP defaults to a 12-second deadline and composes caller cancellation with
+  timeout cancellation. Error presentation is code-first and must not expose
+  raw server diagnostics as user copy.
+- `PersistedSessionEnvelope.version` is `1`; every login, refresh, logout, and
+  external transition advances `epoch`/`revision`. `scope` is an opaque random
+  identity boundary and never contains an access token. A refresh commits only
+  when its captured `scope + epoch + accessToken` still matches; logout wins.
+- Public market REST refresh is single-flight and TTL-aware. Views acquire a
+  stable consumer lease; one shared connection owns `idle | connecting | live |
+  stale | offline`, `lastFrameAt`, silence detection, and reconnect lifecycle.
+- Margin and support lease topics on one private connection per authenticated
+  generation. Topic release cannot close another topic's lease. Private events
+  invalidate/reconcile REST-owned account state; they do not directly invent a
+  wallet balance or settlement.
+- Price, quantity, amount, fee, rate, percentage-derived value, notional, PnL,
+  and mutation payload values remain canonical decimal text. A compatibility
+  `number` passed to a display-only component is a terminal one-way conversion
+  and must never feed validation, branching, review snapshots, or payloads.
+- Order loaders capture request/session generations and commit only the latest
+  authoritative response. Batch cancel uses the batch endpoint and preserves
+  per-order failures instead of reporting false all-or-nothing success.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|-----------|-------------------|
+| Caller aborts or 12-second deadline expires | Abort transport; classify without a second mutation |
+| Refresh returns after logout/new login | CAS rejects it; current session and caches stay unchanged |
+| Persistence is unavailable | Keep a memory session and expose `persistence: memory` |
+| Public/private stream is silent | Mark `stale`, reconnect with bounded backoff, retain last valid REST data |
+| Session generation changes | Abort stale requests, close old private transport, invalidate scoped caches |
+| Decimal text is missing/invalid/non-positive | Reject locally with typed state; send no mutation |
+| Older order response arrives last | Discard it; do not replace the current list |
+| Batch cancel partially fails | Return successful and failed IDs independently, then reconcile |
+
+### 5. Good / Base / Bad Cases
+
+- Good: two views join during one market cold start, share the same promise and
+  socket, then one leaves without interrupting the other.
+- Good: a refresh is in flight when another tab logs out; the persisted
+  tombstone is applied before CAS and the response is discarded.
+- Base: a display widget receives `legacyTradeDisplayNumber(decimal)` after all
+  financial decisions are frozen as decimal text.
+- Bad: `Number(amount)`, `parseFloat(price)`, or `toFixed()` contributes to an
+  order body, balance check, fee, return, or PnL decision.
+
+### 6. Tests Required
+
+- Session tests assert logout-wins-refresh, external generation ordering,
+  storage failure fallback, scoped cache invalidation, and abort propagation.
+- Market/private-stream tests assert single-flight/ref-counting, topic
+  isolation, silence watchdog, backoff, online/offline transitions, and cleanup.
+- Trade/seconds behavior tests use more precision than JavaScript safely
+  represents and assert exact review/payload strings and boundary decisions.
+- Order tests assert stale-response suppression and mixed batch results.
+- Required gate: `npm --prefix mobile run release:gate`.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: late refresh can resurrect a session and the amount is rounded.
+const amount = Number(form.amount)
+session.accessToken = (await refresh()).accessToken
+await createOrder({ amount })
+
+// Correct: freeze decimal intent and commit refresh only against its lease.
+const review = createSpotOrderReviewSnapshot({ ...input, quantity: form.amount })
+const lease = sessionOwner.capture()
+sessionOwner.commitRefresh(lease, await refresh(lease.signal))
+await createOrder({ quantity: review.quantity })
+```

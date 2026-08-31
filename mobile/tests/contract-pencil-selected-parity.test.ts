@@ -131,7 +131,7 @@ test('用户保存的保证金模式和杠杆倍数由后端设置接口驱动',
   assert.match(tradeSource, /await updateMarginLeverage\(product\.id, \{[\s\S]*?longLeverage: nextLongLeverage,[\s\S]*?shortLeverage: nextShortLeverage,[\s\S]*?\}\)/)
   assert.match(tradeSource, /await updateMarginMode\(product\.id, nextMode\)/)
   assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?marginMode: marginMode\.value,[\s\S]*?leverage: leverage\.value/)
-  assert.match(tradeSource, /placeMarginOrder\(review\.request\)/)
+  assert.match(tradeSource, /placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
 })
 
 test('公开产品、能力、钱包和风险 DTO 被杠杆工作区完整消费', () => {
@@ -150,7 +150,7 @@ test('公开产品、能力、钱包和风险 DTO 被杠杆工作区完整消费
   assert.match(tradingApiSource, /strategy_orders\?: boolean/)
   assert.match(tradingApiSource, /bulk_close\?: boolean/)
   assert.match(tradingApiSource, /position_risk\?: boolean/)
-  assert.match(tradingApiSource, /crossAccounts: \(response\.data\.cross_accounts \|\| \[\]\)\.map/)
+  assert.match(tradingApiSource, /crossAccounts: response\.data\.cross_accounts\.map\(mapMarginCrossAccount\)/)
   assert.match(tradingApiSource, /requestUrl\(`\/margin\/positions\/\$\{encodeURIComponent\(positionId\)\}\/risk`\)/)
   for (const field of [
     'unrealized_pnl',
@@ -173,7 +173,8 @@ test('公开产品、能力、钱包和风险 DTO 被杠杆工作区完整消费
   ]) {
     assert.match(marginRiskContractSource, new RegExp(field))
   }
-  assert.match(tradingApiSource, /crossAccountRisk: mapMarginCrossAccountRisk\(risk\.cross_account_risk\)/)
+  assert.match(tradingApiSource, /crossAccountRisk: mapStrictMarginCrossAccountRisk\(risk\.cross_account_risk\)/)
+  assert.match(tradingApiSource, /function mapStrictMarginCrossAccountRisk[\s\S]*?const mapped = mapMarginCrossAccountRisk\(risk\)/)
   assert.match(tradeSource, /crossAccountRisk: risk\?\.crossAccountRisk/)
   assert.match(tradeSource, /t\('trade\.estimatedAccountLiquidationPrice'\)/)
   assert.match(tradeSource, /t\('trade\.noStableSingleLiquidationPrice'\)/)

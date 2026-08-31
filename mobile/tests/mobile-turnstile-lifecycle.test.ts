@@ -240,8 +240,8 @@ test('a render made stale synchronously is removed and a failed reset invalidate
     callbacks: { callback: (token) => tokens.push(token) },
   }), null)
   ;(staleOptions.callback as (token: string) => void)('stale-token')
-  assert.deepEqual(removed, ['stale-widget'])
-  assert.deepEqual(tokens, [])
+  assert.deepEqual([...removed], ['stale-widget'])
+  assert.deepEqual([...tokens], [])
 
   let activeOptions: Record<string, unknown> = {}
   const resetFailureApi: TurnstileApi = {

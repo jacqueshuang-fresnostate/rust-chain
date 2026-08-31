@@ -427,6 +427,104 @@ textarea::placeholder {
   }
 }
 
+/* Route-owned landmarks stay visually unchanged while the shell provides a
+ * keyboard entry point and a stable programmatic focus target. */
+.route-skip-link {
+  align-items: center;
+  background: var(--ink);
+  border: 2px solid var(--focus);
+  border-radius: 999px;
+  color: var(--surface);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  justify-content: center;
+  left: 50%;
+  min-height: 44px;
+  opacity: 0;
+  padding: 0 18px;
+  pointer-events: none;
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  transform: translate(-50%, calc(-100% - 16px));
+  transition: opacity var(--motion-fast) var(--motion-ease), transform var(--motion-fast) var(--motion-ease);
+  white-space: nowrap;
+  z-index: calc(var(--layer-launch) + 1);
+}
+
+.route-skip-link:focus,
+.route-skip-link:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+[data-route-focus-target='true']:focus {
+  outline: none;
+}
+
+/* Selected Pencil controls keep their compact painted faces. On coarse phone
+ * pointers a transparent pseudo-element expands only hit testing to 44px. */
+@media (min-width: 320px) and (max-width: 448px) and (pointer: coarse) {
+  #app :is(
+    .portfolio-periods button,
+    .home-view .text-action,
+    .market-detail__rail button,
+    .contract-pair-filters button,
+    .loan-presets button,
+    .seconds-message button,
+    .swap-card__balance button,
+    .swap-history-pencil .pencil-section__heading button,
+    .spot-side-switch button,
+    .spot-percentage button,
+    .spot-available-row button,
+    .contract-open-close button,
+    .contract-mode-row button,
+    .contract-available-row button,
+    .contract-workspace-tools button,
+    .contract-pending-card > button
+  ) {
+    overflow: visible;
+    position: relative;
+  }
+
+  #app .contract-order-type {
+    overflow: visible;
+  }
+
+  #app :is(
+    .portfolio-periods button,
+    .home-view .text-action,
+    .market-detail__rail button,
+    .contract-pair-filters button,
+    .loan-presets button,
+    .seconds-message button,
+    .swap-card__balance button,
+    .swap-history-pencil .pencil-section__heading button,
+    .spot-side-switch button,
+    .spot-percentage button,
+    .spot-available-row button,
+    .contract-open-close button,
+    .contract-mode-row button,
+    .contract-order-type,
+    .contract-available-row button,
+    .contract-workspace-tools button,
+    .contract-pending-card > button
+  )::before {
+    background: transparent !important;
+    border: 0 !important;
+    content: '' !important;
+    height: max(100%, 44px) !important;
+    inset: 50% auto auto 50% !important;
+    pointer-events: auto;
+    position: absolute !important;
+    transform: translate(-50%, -50%) !important;
+    width: max(100%, 44px) !important;
+  }
+}
+
 /* Functional feedback keeps moving even when decorative motion is reduced. */
 @keyframes functional-spinner {
   to {

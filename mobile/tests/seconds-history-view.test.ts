@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { compileStyle } from 'vue/compiler-sfc'
+import { normalizeDecimalText } from '../src/core/decimal.ts'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 import { goBackOr } from '../src/core/navigation.ts'
@@ -192,16 +193,19 @@ test('历史页完整展示 API 字段且缺失结算价不使用实时价替代
 
   assert.deepEqual(secondsOrderProfitLossPresentation(order(1, 'settled', 100, { result: 'win' })), {
     translationKey: 'seconds.profitAmount',
+    amountText: '8',
     amount: 8,
     tone: 'positive',
   })
   assert.deepEqual(secondsOrderProfitLossPresentation(order(2, 'settled', 200, { result: 'loss' })), {
     translationKey: 'seconds.lossAmount',
+    amountText: '-10',
     amount: -10,
     tone: 'negative',
   })
   assert.deepEqual(secondsOrderProfitLossPresentation(order(3, 'cancelled', 300)), {
     translationKey: 'seconds.profitLossAmount',
+    amountText: null,
     amount: undefined,
     tone: 'pending',
   })
@@ -474,11 +478,11 @@ function cssRule(source: string, selector: string): string {
 }
 
 function order(id: number, status: string, createdAt: number, overrides: Partial<SecondsOrder> = {}): SecondsOrder {
-  return {
+  const merged = {
     id,
     symbol: 'BTCUSDT',
     stakeAssetSymbol: 'USDT',
-    direction: 'up',
+    direction: 'up' as const,
     stakeAmount: 10,
     durationSeconds: 60,
     payoutRate: .8,
@@ -486,6 +490,13 @@ function order(id: number, status: string, createdAt: number, overrides: Partial
     createdAt,
     expiresAt: createdAt + 60_000,
     ...overrides,
+  }
+  return {
+    ...merged,
+    stakeAmountText: merged.stakeAmountText ?? normalizeDecimalText(String(merged.stakeAmount)),
+    payoutRateText: merged.payoutRateText ?? normalizeDecimalText(String(merged.payoutRate)),
+    entryPriceText: merged.entryPriceText ?? null,
+    settlementPriceText: merged.settlementPriceText ?? null,
   }
 }
 

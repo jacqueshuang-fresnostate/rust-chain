@@ -89,8 +89,8 @@ test('资产会员摘要按字符长度稳定降级且完整显示数值', () =>
 
 test('资产页保留钱包、划转、资金路由与可访问确认层', () => {
   assert.match(assetsSource, /Promise\.all\(\[[\s\S]*marketStore\.refresh\(\),[\s\S]*fetchWalletAccounts\(\),[\s\S]*fetchMarginWallets\(\),[\s\S]*\]\)/)
-  assert.match(assetsSource, /await transferWalletFunds\(transferAsset\.value, transferFrom\.value, to, transferValue\)/)
-  assert.match(assetsSource, /transferValue > transferAvailable\.value/)
+  assert.match(assetsSource, /const requestAmount = transferValueText\.value[\s\S]*await transferWalletFunds\(transferAsset\.value,\s*transferFrom\.value,\s*to,\s*requestAmount\)/)
+  assert.match(assetsSource, /decimalCompare\(requestAmount, transferAvailableText\.value\) > 0/)
   assert.match(assetsSource, /useModalDialog\(transferOpen, transferDialog\)/)
   assert.match(assetsSource, /trapTransferFocus\(event, closeTransfer\)/)
   assert.match(assetsSource, /role="dialog"/)

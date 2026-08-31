@@ -141,6 +141,31 @@ test('定时 REST 对账在卸载时清理且不会重复启动', async () => {
   assert.match(chatSource, /onBeforeUnmount\(\(\) => \{[\s\S]*polling\.stop\(\)/)
 })
 
+test('客服页通过共享 support lease 消费实时提示并仅执行 REST 权威对账', () => {
+  const leaseSetup = sourceSlice(
+    chatSource,
+    'usePrivateUserStreamLease({',
+    'onBeforeUnmount(() => {',
+  )
+  const backgroundReconciliation = sourceSlice(
+    chatSource,
+    'function requestSupportBackgroundReconciliation',
+    'function resetConversationState',
+  )
+
+  assert.match(chatSource, /import \{ usePrivateUserStreamLease \} from '@\/composables\/usePrivateUserStreamLease'/)
+  assert.match(leaseSetup, /topic: 'support'/)
+  assert.match(leaseSetup, /consumerId: 'support-chat'/)
+  assert.match(leaseSetup, /enabled: \(\) => session\.isAuthenticated/)
+  assert.match(leaseSetup, /onOpen: \(\) => \{ void requestSupportBackgroundReconciliation\(\) \}/)
+  assert.match(leaseSetup, /onEvent: \(\) => \{ void requestSupportBackgroundReconciliation\(\) \}/)
+  assert.match(backgroundReconciliation, /supportBackgroundRefreshQueued = true/)
+  assert.match(backgroundReconciliation, /await reconcileConversation\(false, generation\)/)
+  assert.match(chatSource, /createSupportPollingController\(requestSupportBackgroundReconciliation\)/)
+  assert.match(chatSource, /watch\(\(\) => session\.generation/)
+  assert.doesNotMatch(chatSource, /createPrivateUserStream|privateUserWebSocketUrl|privateUserStream\.(?:start|stop)/)
+})
+
 test('客服页面覆盖读游标、分组消息、关闭重开与完整状态', () => {
   assert.match(chatSource, /fetchCurrentSupportConversation\(\)/)
   assert.match(chatSource, /fetchSupportConversationMessages\(\{ limit: 100 \}\)/)
@@ -223,4 +248,11 @@ function resolveMessage(messages: unknown, key: string): unknown {
     if (!value || typeof value !== 'object') return undefined
     return (value as Record<string, unknown>)[segment]
   }, messages)
+}
+
+function sourceSlice(source: string, start: string, end: string): string {
+  const startIndex = source.indexOf(start)
+  const endIndex = source.indexOf(end, startIndex)
+  assert.ok(startIndex >= 0 && endIndex > startIndex, `missing source slice ${start} -> ${end}`)
+  return source.slice(startIndex, endIndex)
 }

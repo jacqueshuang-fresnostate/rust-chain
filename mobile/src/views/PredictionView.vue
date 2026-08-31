@@ -15,6 +15,7 @@ import { apiErrorMessage } from '@/api/client'
 import { confirmPredictionQuote, fetchPredictionConfig, fetchPredictionMarkets, fetchPredictionOrders, requestPredictionQuote, type PredictionAsset, type PredictionMarket, type PredictionOrder, type PredictionOutcome, type PredictionQuote } from '@/api/prediction'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPercent } from '@/core/format'
+import { decimalWithinRange, positiveDecimalInput } from '@/core/decimal'
 import { useModalDialog } from '@/core/modalDialog'
 import { localizePredictionMarketText, type PredictionTextKind } from '@/core/predictionLocale'
 import { useSessionStore } from '@/stores/session'
@@ -53,12 +54,12 @@ const TERMINAL_MARKET_STATUSES = new Set([
 
 const selectedAsset = computed(() => assets.value.find((asset) => asset.assetId === assetId.value))
 const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === assetId.value))
-const amountNumber = computed(() => Number(amount.value || 0))
+const amountText = computed(() => positiveDecimalInput(amount.value))
 const valid = computed(() => Boolean(
   selectedAccount.value
-  && Number.isFinite(amountNumber.value)
-  && amountNumber.value > 0
-  && amountNumber.value <= selectedAccount.value.available,
+  && decimalWithinRange(amountText.value, {
+    available: selectedAccount.value.availableText ?? selectedAccount.value.available,
+  }),
 ))
 const dialogOpen = computed(() => Boolean(selected.value))
 const selectedSettlementLabel = computed(() => {
@@ -116,7 +117,20 @@ async function getQuote(): Promise<void> {
   }
   quoting.value = true
   error.value = ''
-  try { quote.value = await requestPredictionQuote({ marketId: selected.value.id, outcome: outcome.value, assetId: assetId.value, stakeAmount: amountNumber.value }) } catch (reason) { error.value = apiErrorMessage(reason, t('prediction.quoteFailed')) } finally { quoting.value = false }
+  try {
+    const stakeAmount = amountText.value
+    if (!stakeAmount) throw new TypeError('invalid prediction stake')
+    quote.value = await requestPredictionQuote({
+      marketId: selected.value.id,
+      outcome: outcome.value,
+      assetId: assetId.value,
+      stakeAmount,
+    })
+  } catch (reason) {
+    error.value = apiErrorMessage(reason, t('prediction.quoteFailed'))
+  } finally {
+    quoting.value = false
+  }
 }
 
 async function confirm(): Promise<void> {

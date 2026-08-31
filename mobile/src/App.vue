@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppBottomNav from '@/components/AppBottomNav.vue'
@@ -14,18 +14,28 @@ import {
   routeTransitionSequence,
   routeTransitionTier,
 } from '@/core/navigation'
+import { useRouteAccessibility } from '@/core/navigation/useRouteAccessibility'
 import { useSessionStore } from '@/stores/session'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useThemeStore } from '@/stores/theme'
 import stageLogo from '@/assets/brand/hippo-logo-landscape.png'
-import stageImage from '@/assets/brand/signal-theatre.png'
+import stageImage from '@/assets/brand/signal-theatre.webp'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const marketFavorites = useMarketFavoritesStore()
 const theme = useThemeStore()
-const { t } = useI18n()
+const { locale, t } = useI18n()
+const showDesktopStageImage = ref(false)
+let desktopStageMedia: MediaQueryList | null = null
+const routeAccessibility = useRouteAccessibility({
+  route,
+  locale,
+  translate(key, values) {
+    return values ? t(key, { ...values }) : t(key)
+  },
+})
 const shellVisibility = computed(() => resolveRouteShellVisibility(
   route.name,
   route.query.mode,
@@ -54,26 +64,59 @@ watch(() => session.token, (token) => {
 }, { immediate: true })
 
 function handleAuthExpired() {
-  session.logout()
+  session.sync()
   if (!['login', 'login-two-factor'].includes(String(route.name || ''))) {
     void router.replace({ name: 'login', query: { redirect: route.fullPath } })
   }
 }
 
-onMounted(() => window.addEventListener('hippo-mobile-auth-expired', handleAuthExpired))
-onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handleAuthExpired))
+function syncDesktopStageImage(event?: MediaQueryListEvent): void {
+  showDesktopStageImage.value = event?.matches ?? desktopStageMedia?.matches ?? false
+}
+
+watch(() => session.externalLogoutVersion, (current, previous) => {
+  if (current > previous) handleAuthExpired()
+})
+
+onMounted(() => {
+  desktopStageMedia = window.matchMedia('(min-width: 821px)')
+  syncDesktopStageImage()
+  desktopStageMedia.addEventListener('change', syncDesktopStageImage)
+  session.initialize()
+  window.addEventListener('hippo-mobile-auth-expired', handleAuthExpired)
+})
+onUnmounted(() => {
+  desktopStageMedia?.removeEventListener('change', syncDesktopStageImage)
+  desktopStageMedia = null
+  window.removeEventListener('hippo-mobile-auth-expired', handleAuthExpired)
+  session.dispose()
+})
 </script>
 
 <template>
-  <main
+  <div
     class="app-stage"
     :class="theme.isDark ? 'theme-dark' : 'theme-light'"
     :data-route-direction="routeDirection"
     :data-transition-tier="routeTransitionTier"
     :data-motion-zone="showSignalField ? 'expressive' : 'protected'"
   >
+    <a
+      class="route-skip-link"
+      :href="`#${routeAccessibility.mainContentId}`"
+      @click.prevent="routeAccessibility.focusMainContent"
+    >
+      {{ t('routeAccessibility.skipToMain') }}
+    </a>
+    <p
+      class="route-announcer sr-only"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      {{ routeAccessibility.announcement.value }}
+    </p>
     <div class="stage-art" aria-hidden="true">
-      <div class="stage-image" :style="{ backgroundImage: `url(${stageImage})` }" />
+      <div v-if="showDesktopStageImage" class="stage-image" :style="{ backgroundImage: `url(${stageImage})` }" />
       <span
         class="stage-brand-lockup"
         :style="{ backgroundImage: `url(${stageLogo})` }"
@@ -117,10 +160,14 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
       <RootHeader v-if="showRootHeader" />
       <div class="app-route-host">
         <RouterView v-slot="{ Component, route: currentRoute }">
-          <Transition :name="routeTransitionName">
+          <Transition
+            :name="routeTransitionName"
+            @after-enter="routeAccessibility.handleRouteEntered"
+          >
             <component
               :is="Component"
               :key="currentRoute.fullPath"
+              :data-route-accessibility-key="routeAccessibility.renderKeyFor(currentRoute)"
               :class="[
                 'app-route-layer',
                 'view-stack',
@@ -133,5 +180,5 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
       </div>
       <AppBottomNav v-if="showBottomNav" />
     </section>
-  </main>
+  </div>
 </template>

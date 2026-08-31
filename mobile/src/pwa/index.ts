@@ -1,6 +1,8 @@
 import { reactive, readonly } from 'vue'
 import { isTauriRuntime } from '@/core/platform'
+import { createPwaInstallEligibilitySession } from './eligibility'
 import { isIosBrowser, isStandaloneDisplay, resolveServiceWorkerLocation } from './runtime'
+import { runPwaUpdate } from './update'
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>
@@ -11,7 +13,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const INSTALL_DISMISS_KEY = 'hippo_pwa_install_dismissed_at'
-const INSTALL_DISMISS_DURATION_MS = 7 * 24 * 60 * 60 * 1000
+const INSTALL_SHOWN_KEY = 'hippo_pwa_install_shown_at'
 const UPDATE_INTERVAL_MS = 60 * 60 * 1000
 
 const state = reactive({
@@ -26,16 +28,20 @@ const state = reactive({
   offlineReady: false,
   registrationError: false,
   updateDismissed: false,
+  updateError: false,
   updating: false,
 })
 
 export const pwaState = readonly(state)
 
 let installPrompt: BeforeInstallPromptEvent | null = null
+let installEligibility = createPwaInstallEligibilitySession()
+let installEligibilityTimer: number | null = null
 let registration: ServiceWorkerRegistration | null = null
 let initializePromise: Promise<void> | null = null
-let reloadRequested = false
 let reloadTriggered = false
+let updatePromise: Promise<boolean> | null = null
+let updateGeneration = 0
 
 function navigatorStandalone(): boolean | undefined {
   return (navigator as Navigator & { standalone?: boolean }).standalone
@@ -48,33 +54,51 @@ function standaloneDisplay(): boolean {
   )
 }
 
-function installDismissedRecently(): boolean {
+function readInstallTimestamp(key: string): number | undefined {
   try {
-    const dismissedAt = Number(window.localStorage.getItem(INSTALL_DISMISS_KEY))
-    return Number.isFinite(dismissedAt) && Date.now() - dismissedAt < INSTALL_DISMISS_DURATION_MS
+    const value = Number(window.localStorage.getItem(key))
+    return Number.isFinite(value) && value > 0 ? value : undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
-function persistInstallDismissal(): void {
+function persistInstallTimestamp(key: string): void {
   try {
-    window.localStorage.setItem(INSTALL_DISMISS_KEY, String(Date.now()))
+    window.localStorage.setItem(key, String(Date.now()))
   } catch {
     // A private browser context may reject storage while install state can still work in memory.
   }
 }
 
 function refreshInstallAvailability(): void {
-  const dismissed = installDismissedRecently()
   state.isStandalone = standaloneDisplay()
-  state.installAvailable = Boolean(installPrompt) && !dismissed && !state.isStandalone
-  state.iosInstallAvailable = (
-    !installPrompt
-    && !dismissed
-    && !state.isStandalone
+  const iosInstallSurface = !installPrompt
     && isIosBrowser(navigator.userAgent, navigator.maxTouchPoints)
-  )
+  const eligibility = installEligibility.evaluate({
+    now: Date.now(),
+    hasInstallSurface: Boolean(installPrompt) || iosInstallSurface,
+    isStandalone: state.isStandalone,
+    lastDismissedAt: readInstallTimestamp(INSTALL_DISMISS_KEY),
+    lastShownAt: readInstallTimestamp(INSTALL_SHOWN_KEY),
+  })
+
+  state.installAvailable = Boolean(installPrompt) && eligibility.eligible
+  state.iosInstallAvailable = iosInstallSurface && eligibility.eligible
+}
+
+function scheduleInstallEligibilityRefresh(): void {
+  if (installEligibilityTimer !== null) {
+    window.clearTimeout(installEligibilityTimer)
+    installEligibilityTimer = null
+  }
+
+  const remainingDelay = installEligibility.remainingDelay(Date.now())
+  if (remainingDelay <= 0) return
+  installEligibilityTimer = window.setTimeout(() => {
+    installEligibilityTimer = null
+    refreshInstallAvailability()
+  }, Math.max(1, remainingDelay))
 }
 
 function handleBeforeInstallPrompt(event: Event): void {
@@ -83,10 +107,12 @@ function handleBeforeInstallPrompt(event: Event): void {
   installPrompt = promptEvent
   state.installError = false
   refreshInstallAvailability()
+  scheduleInstallEligibilityRefresh()
 }
 
 function handleAppInstalled(): void {
   installPrompt = null
+  installEligibility.closeOffer()
   state.installAvailable = false
   state.iosInstallAvailable = false
   state.isStandalone = true
@@ -98,6 +124,7 @@ function markWorkerInstalled(worker: ServiceWorker): void {
   if (navigator.serviceWorker.controller) {
     state.needRefresh = true
     state.updateDismissed = false
+    state.updateError = false
   } else {
     state.offlineReady = true
   }
@@ -113,6 +140,7 @@ function observeRegistration(currentRegistration: ServiceWorkerRegistration): vo
   if (currentRegistration.waiting) {
     state.needRefresh = true
     state.updateDismissed = false
+    state.updateError = false
   } else if (currentRegistration.active && !navigator.serviceWorker.controller) {
     state.offlineReady = true
   }
@@ -158,12 +186,6 @@ async function checkForUpdate(): Promise<void> {
   }
 }
 
-function handleControllerChange(): void {
-  if (!reloadRequested || reloadTriggered) return
-  reloadTriggered = true
-  window.location.reload()
-}
-
 function bindRuntimeEvents(): void {
   window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
   window.addEventListener('appinstalled', handleAppInstalled)
@@ -180,15 +202,16 @@ function bindRuntimeEvents(): void {
       void checkForUpdate()
     }
   })
-  navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange)
   window.setInterval(() => void checkForUpdate(), UPDATE_INTERVAL_MS)
 }
 
 async function initializeBrowserPwa(): Promise<void> {
+  installEligibility = createPwaInstallEligibilitySession(Date.now())
   state.enabled = true
   state.isOnline = navigator.onLine
   state.initialized = true
   refreshInstallAvailability()
+  scheduleInstallEligibilityRefresh()
   bindRuntimeEvents()
   await registerServiceWorker()
 }
@@ -211,7 +234,8 @@ export async function promptPwaInstall(): Promise<'accepted' | 'dismissed' | 'un
     await currentPrompt.prompt()
     const choice = await currentPrompt.userChoice
     installPrompt = null
-    if (choice.outcome === 'dismissed') persistInstallDismissal()
+    installEligibility.closeOffer()
+    if (choice.outcome === 'dismissed') persistInstallTimestamp(INSTALL_DISMISS_KEY)
     refreshInstallAvailability()
     return choice.outcome
   } catch {
@@ -221,7 +245,8 @@ export async function promptPwaInstall(): Promise<'accepted' | 'dismissed' | 'un
 }
 
 export function dismissPwaInstall(): void {
-  persistInstallDismissal()
+  installEligibility.closeOffer()
+  persistInstallTimestamp(INSTALL_DISMISS_KEY)
   state.installAvailable = false
   state.iosInstallAvailable = false
 }
@@ -232,26 +257,56 @@ export function dismissOfflineReady(): void {
 
 export function dismissPwaUpdate(): void {
   state.updateDismissed = true
+  state.updateError = false
 }
 
-export async function applyPwaUpdate(): Promise<boolean> {
-  if (!registration) return false
+export function markPwaInstallValueAction(): void {
+  installEligibility.recordValueAction()
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return
+  refreshInstallAvailability()
+  scheduleInstallEligibilityRefresh()
+}
 
-  state.updating = true
-  state.registrationError = false
-  if (!registration.waiting) {
-    await checkForUpdate()
-  }
+/** Frequency-cap only an offer that reached a prompt-safe visible surface. */
+export function markPwaInstallOfferShown(): void {
+  if (!state.installAvailable && !state.iosInstallAvailable) return
+  if (installEligibility.markOfferShown()) persistInstallTimestamp(INSTALL_SHOWN_KEY)
+}
 
-  const waitingWorker = registration.waiting
-  if (!waitingWorker) {
+export function applyPwaUpdate(): Promise<boolean> {
+  if (updatePromise) return updatePromise
+  if (!registration || !navigator.serviceWorker) {
     state.updating = false
-    return false
+    state.updateError = true
+    return Promise.resolve(false)
   }
 
-  reloadRequested = true
-  waitingWorker.postMessage({ type: 'SKIP_WAITING' })
-  return true
+  state.registrationError = false
+  const currentRegistration = registration
+  const attempt = runPwaUpdate({
+    registration: currentRegistration,
+    controllerTarget: navigator.serviceWorker,
+    onBusyChange: (busy) => {
+      state.updating = busy
+    },
+    onErrorChange: (error) => {
+      state.updateError = error
+    },
+    onFailure: () => {
+      state.needRefresh = true
+      state.updateDismissed = false
+    },
+    reload: () => {
+      if (reloadTriggered) return
+      reloadTriggered = true
+      window.location.reload()
+    },
+  })
+  const attemptGeneration = ++updateGeneration
+  updatePromise = attempt.finally(() => {
+    if (updateGeneration === attemptGeneration) updatePromise = null
+  })
+  return updatePromise
 }
 
 export async function retryPwaRegistration(): Promise<void> {

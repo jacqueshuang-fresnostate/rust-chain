@@ -29,12 +29,25 @@ import {
 } from '@/api/loan'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime } from '@/core/format'
+import {
+  decimalAdd,
+  decimalCompare,
+  decimalMinimum,
+  decimalMultiply,
+  decimalTextFromBoundary,
+  decimalTextFromFiniteNumber,
+  decimalWithinRange,
+  formatDecimalText,
+  normalizeDecimalText,
+  positiveDecimalInput,
+  type DecimalText,
+} from '@/core/decimal'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
 const router = useRouter()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const products = ref<LoanProduct[]>([])
 const orders = ref<LoanOrder[]>([])
 const accounts = ref<WalletAccount[]>([])
@@ -57,9 +70,13 @@ const riskNote = ref<HTMLElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 
-const amountNumber = computed(() => Number(amount.value || 0))
-const collateralAmountNumber = computed(() => Number(collateralAmount.value || 0))
+const amountText = computed(() => positiveDecimalInput(amount.value))
+const collateralAmountText = computed(() => positiveDecimalInput(collateralAmount.value))
 const selectedCollateral = computed(() => accounts.value.find((account) => account.assetId === collateralAssetId.value))
+const collateralAvailableText = computed(() => decimalTextFromBoundary(
+  selectedCollateral.value?.availableText ?? selectedCollateral.value?.available,
+  { allowNegative: false },
+))
 const dialogOpen = computed(() => Boolean(pendingAction.value))
 const modalOpen = computed(() => dialogOpen.value || collateralPickerOpen.value)
 const hasProducts = computed(() => products.value.length > 0)
@@ -71,28 +88,27 @@ const loanWorkspaceState = computed(() => {
 const amountInvalid = computed(() => {
   const product = selected.value
   if (!product) return false
-  return !Number.isFinite(amountNumber.value)
-    || amountNumber.value < product.minAmount
-    || Boolean(product.maxAmount && amountNumber.value > product.maxAmount)
+  return !decimalWithinRange(amountText.value, {
+    minimum: product.minAmountText ?? product.minAmount,
+    maximum: product.maxAmountText ?? product.maxAmount,
+  })
 })
 const collateralInvalid = computed(() => {
   if (selected.value?.loanType !== 'collateralized') return false
   return !selectedCollateral.value
-    || !Number.isFinite(collateralAmountNumber.value)
-    || collateralAmountNumber.value <= 0
-    || collateralAmountNumber.value > selectedCollateral.value.available
+    || !decimalWithinRange(collateralAmountText.value, { available: collateralAvailableText.value })
 })
 const canApply = computed(() => {
   const product = selected.value
-  if (!product || !Number.isFinite(amountNumber.value) || amountNumber.value < product.minAmount) return false
-  if (product.maxAmount && amountNumber.value > product.maxAmount) return false
+  if (!product || !decimalWithinRange(amountText.value, {
+    minimum: product.minAmountText ?? product.minAmount,
+    maximum: product.maxAmountText ?? product.maxAmount,
+  })) return false
   if (
     product.loanType === 'collateralized'
     && (
       !selectedCollateral.value
-      || !Number.isFinite(collateralAmountNumber.value)
-      || collateralAmountNumber.value <= 0
-      || collateralAmountNumber.value > selectedCollateral.value.available
+      || !decimalWithinRange(collateralAmountText.value, { available: collateralAvailableText.value })
     )
   ) return false
   return true
@@ -109,20 +125,28 @@ const visibleProducts = computed(() => productFilter.value === 'all'
 const amountPresets = computed(() => {
   const product = selected.value
   if (!product) return []
-  const maximum = product.maxAmount || product.minAmount * 10
-  return [...new Set([
-    product.minAmount,
-    Math.min(maximum, product.minAmount * 2),
-    Math.min(maximum, product.minAmount * 5),
+  const minimum = product.minAmountText || decimalTextFromFiniteNumber(product.minAmount)
+  const maximum = product.maxAmountText
+    || (product.maxAmount ? decimalTextFromFiniteNumber(product.maxAmount) : decimalMultiply(minimum, normalizeDecimalText('10')))
+  return [...new Set<DecimalText>([
+    minimum,
+    decimalMinimum(maximum, decimalMultiply(minimum, normalizeDecimalText('2'))) || minimum,
+    decimalMinimum(maximum, decimalMultiply(minimum, normalizeDecimalText('5'))) || minimum,
     maximum,
-  ])].filter((value) => Number.isFinite(value) && value >= product.minAmount && value <= maximum)
+  ])]
 })
-const estimatedInterest = computed(() => {
+const estimatedInterest = computed<DecimalText>(() => {
   const product = selected.value
-  if (!product || !Number.isFinite(amountNumber.value) || amountNumber.value <= 0) return 0
-  return amountNumber.value * product.interestRate
+  if (!product || !amountText.value || !Number.isFinite(product.interestRate)) return normalizeDecimalText('0')
+  return decimalMultiply(amountText.value, decimalTextFromFiniteNumber(product.interestRate))
 })
-const estimatedRepayment = computed(() => amountNumber.value + estimatedInterest.value)
+const estimatedRepayment = computed(() => amountText.value
+  ? decimalAdd(amountText.value, estimatedInterest.value)
+  : normalizeDecimalText('0'))
+
+function formatMoney(value: DecimalText): string {
+  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+}
 async function load(): Promise<void> {
   loading.value = true
   productsReady.value = false
@@ -163,7 +187,7 @@ async function load(): Promise<void> {
 function openApply(product: LoanProduct, reset = true): void {
   collateralPickerOpen.value = false
   selected.value = product
-  if (reset || !amount.value) amount.value = String(product.minAmount)
+  if (reset || !amount.value) amount.value = product.minAmountText || String(product.minAmount)
   collateralAssetId.value = accounts.value[0]?.assetId || 0
   collateralAmount.value = ''
   error.value = ''
@@ -208,14 +232,21 @@ async function submitApplication(): Promise<void> {
   submitting.value = true
   error.value = ''
   try {
+    const requestAmount = amountText.value
+    const requestCollateral = selected.value.loanType === 'collateralized'
+      ? collateralAmountText.value
+      : undefined
+    if (!requestAmount || (selected.value.loanType === 'collateralized' && !requestCollateral)) {
+      throw new TypeError('invalid loan amount')
+    }
     await applyLoan({
       productId: selected.value.id,
-      amount: amountNumber.value,
+      amount: requestAmount,
       collateralAssetId: selected.value.loanType === 'collateralized'
         ? collateralAssetId.value
         : undefined,
       collateralAmount: selected.value.loanType === 'collateralized'
-        ? collateralAmountNumber.value
+        ? requestCollateral || undefined
         : undefined,
     })
     selected.value = null
@@ -434,7 +465,7 @@ onBeforeUnmount(() => {
             </div>
           </label>
           <div class="loan-presets">
-            <button v-for="preset in amountPresets" :key="preset" type="button" :aria-pressed="amountNumber === preset" @click="amount = String(preset); error = ''; success = ''">{{ formatAmount(preset) }}</button>
+            <button v-for="preset in amountPresets" :key="preset" type="button" :aria-pressed="Boolean(amountText && decimalCompare(amountText, preset) === 0)" @click="amount = preset; error = ''; success = ''">{{ formatMoney(preset) }}</button>
           </div>
 
           <template v-if="selected.loanType === 'collateralized'">
@@ -470,8 +501,8 @@ onBeforeUnmount(() => {
 
           <dl class="loan-estimate-pencil">
             <div><dt>{{ t('loan.term') }}</dt><dd>{{ t('loan.termDays', { days: selected.termDays }) }}</dd></div>
-            <div><dt>{{ t('loan.estimatedInterest') }}</dt><dd class="pencil-numeric">{{ formatAmount(estimatedInterest) }} {{ selected.assetSymbol }}</dd></div>
-            <div><dt>{{ t('loan.estimatedRepayment') }}</dt><dd class="pencil-numeric">{{ formatAmount(estimatedRepayment) }} {{ selected.assetSymbol }}</dd></div>
+            <div><dt>{{ t('loan.estimatedInterest') }}</dt><dd class="pencil-numeric">{{ formatMoney(estimatedInterest) }} {{ selected.assetSymbol }}</dd></div>
+            <div><dt>{{ t('loan.estimatedRepayment') }}</dt><dd class="pencil-numeric">{{ formatMoney(estimatedRepayment) }} {{ selected.assetSymbol }}</dd></div>
             <div><dt>{{ t('loan.interestModeUnavailable') }}</dt><dd>{{ interestModeLabel(selected.interestCalculationMode) }}</dd></div>
           </dl>
           <button class="pencil-primary pencil-primary--full" type="submit" :disabled="submitting || (session.isAuthenticated && !canApply)" :aria-busy="submitting">

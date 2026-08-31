@@ -26,7 +26,7 @@ test('内存 TTL 只接入明确白名单并在调用点写明 TTL', () => {
   assert.match(sources.newCoin, /fetchNewCoinProjects[\s\S]*?30_000/)
   assert.equal((sources.wallet.match(/referenceRequestRegistry\.request\(walletReferenceKey/g) || []).length, 3)
   assert.match(sources.wallet, /asset_symbol: normalizedAsset,[\s\S]*?minimum,/)
-  assert.match(sources.wallet, /wallet:\$\{readAccessToken\(\) \|\| 'guest'\}/)
+  assert.match(sources.wallet, /wallet:\$\{readAuthSessionSnapshot\(\)\.scope \|\| 'guest'\}/)
   assert.match(sources.auth, /公开配置不随登录身份变化，缓存键刻意不包含 token/)
 })
 

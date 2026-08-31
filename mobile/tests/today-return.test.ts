@@ -8,9 +8,9 @@ import {
   type TodayReturn,
 } from '../src/core/todayReturn.ts'
 import { resolveTodayReturnPresentation } from '../src/core/todayReturnPresentation.ts'
+import { decimalDivide, normalizeDecimalText } from '../src/core/decimal.ts'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
-import { formatAmount, formatPercent } from '../src/core/format.ts'
 
 const walletSource = readFileSync(new URL('../src/api/wallet.ts', import.meta.url), 'utf8')
 const homeSource = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
@@ -32,20 +32,18 @@ test('今日收益适配器保留 realized 合同、UTC 周期并归一化负零
   assert.deepEqual(result, {
     scope: 'realized',
     reportingAsset: 'USDT',
-    amount: 0,
-    basisAmount: 0,
-    rate: 0,
+    amount: '0',
+    basisAmount: '0',
+    rate: '0',
     periodStartAt: 1_754_697_600_000,
     calculatedAt: 1_754_733_645_000,
     status: 'complete',
     missingPriceAssets: [],
   })
   assert.equal(isCompleteTodayReturn(result), true)
-  assert.equal(Object.is(result.amount, -0), false)
-  assert.equal(Object.is(result.basisAmount, -0), false)
-  assert.equal(Object.is(result.rate, -0), false)
-  assert.equal(formatAmount(result.amount), '0')
-  assert.equal(formatPercent(result.rate * 100), '0.00%')
+  assert.notEqual(result.amount, '-0')
+  assert.notEqual(result.basisAmount, '-0')
+  assert.notEqual(result.rate, '-0')
 })
 
 test('partial 响应保留缺价资产但不满足首页数值展示条件', () => {
@@ -61,7 +59,7 @@ test('partial 响应保留缺价资产但不满足首页数值展示条件', () 
     missing_price_assets: ['btc', 'BTC'],
   })
 
-  assert.equal(result.amount, 99)
+  assert.equal(result.amount, '99')
   assert.equal(result.periodStartAt, 1_754_697_600_000)
   assert.deepEqual(result.missingPriceAssets, ['BTC'])
   assert.equal(isCompleteTodayReturn(result), false)
@@ -151,12 +149,13 @@ test('首页独立请求受保护接口并仅在 complete 时格式化数值', (
   assert.match(homeSource, /createTodayReturnRequestLifecycle\(\{[\s\S]*sessionKey: \(\) => session\.token,[\s\S]*fetchTodayReturn/)
   assert.match(homeSource, /const result = await todayReturnRequestLifecycle\.load\(\)/)
   assert.match(homeSource, /todayReturnState\.value = result\.value\.status/)
-  assert.match(homeSource, /todayReturnState\.value !== 'complete' \|\| !isCompleteTodayReturn\(value\)\) return '--'/)
-  assert.match(homeSource, /todayReturnState\.value === 'partial'[\s\S]*todayReturnPartial/)
-  assert.match(homeSource, /value\.rate \* 100/)
-  assert.match(homeSource, /value\.amount > 0[\s\S]*return 'positive'[\s\S]*value\.amount < 0[\s\S]*return 'negative'/)
-  assert.match(homeSource, /const displayedTodayReturnAmount = computed\(\(\) => \{\s*if \(!assetVisible\.value\) return '••••'/)
-  assert.match(homeSource, /const displayedTodayReturnDetail = computed\(\(\) => \{\s*if \(!assetVisible\.value\) return '••••'/)
+  assert.match(homeSource, /const todayReturnPresentation = computed\(\(\) => resolveTodayReturnPresentation\(\{/)
+  assert.match(homeSource, /visible: assetVisible\.value,[\s\S]*state: todayReturnState\.value,[\s\S]*value: todayReturn\.value/)
+  assert.match(homeSource, /partial: \(assets\) => t\('home\.todayReturnPartial'/)
+  assert.match(homeSource, /const displayedTodayReturnAmount = computed\(\(\) => todayReturnPresentation\.value\.amount\)/)
+  assert.match(homeSource, /const displayedTodayReturnDetail = computed\(\(\) => todayReturnPresentation\.value\.detail\)/)
+  assert.match(homeSource, /const todayReturnTone = computed\(\(\) => todayReturnPresentation\.value\.tone\)/)
+  assert.doesNotMatch(homeSource, /value\.rate \* 100|value\.amount [<>] 0/)
   assert.match(homeSource, /watch\(\(\) => session\.token,[\s\S]*todayReturnRequestLifecycle\.invalidate\(\)/)
   assert.match(homeSource, /onUnmounted\(\(\) => \{[\s\S]*todayReturnRequestLifecycle\.stop\(\)/)
   assert.doesNotMatch(homeSource, /fallbackTodayReturn|mockTodayReturn|demoTodayReturn/)
@@ -184,17 +183,17 @@ test('资产页展示模型执行 complete/partial/error、隐私与正负零语
 
   assert.deepEqual(present('complete', todayReturn(2)), {
     amount: '+2 USDT',
-    detail: '+20.00%',
+    detail: '20%',
     tone: 'positive',
   })
   assert.deepEqual(present('complete', todayReturn(-2)), {
     amount: '-2 USDT',
-    detail: '-20.00%',
+    detail: '-20%',
     tone: 'negative',
   })
   assert.deepEqual(present('complete', todayReturn(0)), {
     amount: '0 USDT',
-    detail: '0.00%',
+    detail: '0%',
     tone: '',
   })
 
@@ -267,12 +266,14 @@ test('今日收益加载、失败和不完整文案中英文对称', () => {
 })
 
 function todayReturn(amount: number): TodayReturn {
+  const amountText = normalizeDecimalText(String(amount))
+  const basisAmount = normalizeDecimalText('10')
   return {
     scope: 'realized',
     reportingAsset: 'USDT',
-    amount,
-    basisAmount: 10,
-    rate: amount / 10,
+    amount: amountText,
+    basisAmount,
+    rate: decimalDivide(amountText, basisAmount, 18),
     periodStartAt: 1_754_697_600_000,
     calculatedAt: 1_754_733_645_000,
     status: 'complete',

@@ -1,4 +1,22 @@
 import { asNumber } from './format.ts'
+import {
+  decimalMultiply,
+  decimalNegate,
+  requiredDecimalText,
+  type DecimalText,
+} from './decimal.ts'
+
+const SECONDS_DECIMAL_CONSTRAINTS = {
+  maxIntegerDigits: 20,
+  maxScale: 18,
+} as const
+
+export class SecondsOrderContractError extends TypeError {
+  constructor(field: string) {
+    super(`invalid seconds order ${field}`)
+    this.name = 'SecondsOrderContractError'
+  }
+}
 
 export interface SecondsOrder {
   id: number
@@ -6,10 +24,14 @@ export interface SecondsOrder {
   stakeAssetSymbol: string
   direction: 'up' | 'down'
   stakeAmount: number
+  stakeAmountText: DecimalText
   durationSeconds: number
   payoutRate: number
+  payoutRateText: DecimalText
   entryPrice?: number
+  entryPriceText: DecimalText | null
   settlementPrice?: number
+  settlementPriceText: DecimalText | null
   status: string
   result?: string
   expiresAt: number
@@ -24,6 +46,8 @@ export interface SecondsOrderStatusPresentation {
 
 export interface SecondsOrderProfitLossPresentation {
   translationKey: 'seconds.profitAmount' | 'seconds.lossAmount' | 'seconds.profitLossAmount'
+  /** Exact authority for presentation; `amount` only supports legacy terminal rendering. */
+  amountText: DecimalText | null
   amount?: number
   tone: 'positive' | 'negative' | 'pending'
 }
@@ -195,27 +219,33 @@ export function secondsOrderStatusPresentation(
  * 赢单返回净收益而非含本金的总派彩，输单返回负本金；没有权威结果时保持不可用。
  */
 export function secondsOrderProfitLossPresentation(
-  order: Pick<SecondsOrder, 'result' | 'stakeAmount' | 'payoutRate'>,
+  order: Pick<SecondsOrder, 'result' | 'stakeAmountText' | 'payoutRateText'>,
 ): SecondsOrderProfitLossPresentation {
   const result = normalizedSecondsOrderResult(order.result)
   if (result === 'win') {
-    const amount = secondsOrderEstimatedProfit(order)
+    const amountText = secondsOrderEstimatedProfit(order)
+    const amount = amountText ? decimalDisplayNumber(amountText) : undefined
     return {
       translationKey: 'seconds.profitAmount',
-      amount: Number.isFinite(amount) && amount >= 0 ? amount : undefined,
-      tone: Number.isFinite(amount) && amount >= 0 ? 'positive' : 'pending',
+      amountText,
+      amount,
+      tone: amountText ? 'positive' : 'pending',
     }
   }
   if (result === 'loss') {
-    const amount = -Math.abs(order.stakeAmount)
+    const stakeAmountText = exactSecondsOrderDecimal(order.stakeAmountText)
+    const amountText = stakeAmountText ? decimalNegate(stakeAmountText) : null
+    const amount = amountText ? decimalDisplayNumber(amountText) : undefined
     return {
       translationKey: 'seconds.lossAmount',
-      amount: Number.isFinite(amount) ? amount : undefined,
-      tone: Number.isFinite(amount) ? 'negative' : 'pending',
+      amountText,
+      amount,
+      tone: amountText ? 'negative' : 'pending',
     }
   }
   return {
     translationKey: 'seconds.profitLossAmount',
+    amountText: null,
     amount: undefined,
     tone: 'pending',
   }
@@ -293,9 +323,13 @@ export function secondsOrderProgress(order: SecondsOrder, now: number): number {
 }
 
 export function secondsOrderEstimatedProfit(
-  order: Pick<SecondsOrder, 'stakeAmount' | 'payoutRate'>,
-): number {
-  return order.stakeAmount * order.payoutRate
+  order: Pick<SecondsOrder, 'stakeAmountText' | 'payoutRateText'>,
+): DecimalText | null {
+  const stakeAmountText = exactSecondsOrderDecimal(order.stakeAmountText)
+  const payoutRateText = exactSecondsOrderDecimal(order.payoutRateText)
+  return stakeAmountText && payoutRateText
+    ? decimalMultiply(stakeAmountText, payoutRateText)
+    : null
 }
 
 export function upsertSecondsOrder(
@@ -322,16 +356,29 @@ export function mergeSecondsOrderReconciliation(
 }
 
 export function mapSecondsOrder(order: Record<string, unknown>): SecondsOrder {
+  const direction = secondsDirection(order.direction)
+  const stakeAmountText = secondsOrderDecimal(order.stake_amount, 'stake_amount', false)
+  const payoutRateText = secondsOrderDecimal(order.payout_rate, 'payout_rate', false)
+  const entryPriceText = nullableSecondsOrderDecimal(order.entry_price, 'entry_price', false)
+  const settlementPriceText = nullableSecondsOrderDecimal(
+    order.settlement_price,
+    'settlement_price',
+    false,
+  )
   return {
     id: asNumber(order.id),
     symbol: String(order.symbol || ''),
     stakeAssetSymbol: String(order.stake_asset_symbol || '').toUpperCase(),
-    direction: secondsDirection(order.direction),
-    stakeAmount: asNumber(order.stake_amount),
+    direction,
+    stakeAmount: decimalDisplayNumber(stakeAmountText),
+    stakeAmountText,
     durationSeconds: asNumber(order.duration_seconds),
-    payoutRate: asNumber(order.payout_rate),
-    entryPrice: optionalNumber(order.entry_price),
-    settlementPrice: optionalNumber(order.settlement_price),
+    payoutRate: decimalDisplayNumber(payoutRateText),
+    payoutRateText,
+    entryPrice: entryPriceText ? decimalDisplayNumber(entryPriceText) : undefined,
+    entryPriceText,
+    settlementPrice: settlementPriceText ? decimalDisplayNumber(settlementPriceText) : undefined,
+    settlementPriceText,
     status: String(order.status || ''),
     result: optionalText(order.result),
     expiresAt: normalizeTimestamp(order.expires_at),
@@ -350,11 +397,41 @@ function optionalText(value: unknown): string | undefined {
   return text || undefined
 }
 
-function optionalNumber(value: unknown): number | undefined {
-  if (value === null || value === undefined || value === '') return undefined
-  if (typeof value !== 'number' && typeof value !== 'string') return undefined
-  const number = Number(value)
-  return Number.isFinite(number) ? number : undefined
+function secondsOrderDecimal(value: unknown, field: string, allowZero: boolean): DecimalText {
+  try {
+    return requiredDecimalText(value, field, 'seconds order', {
+      ...SECONDS_DECIMAL_CONSTRAINTS,
+      allowNegative: false,
+      allowZero,
+    })
+  } catch {
+    throw new SecondsOrderContractError(field)
+  }
+}
+
+function nullableSecondsOrderDecimal(
+  value: unknown,
+  field: string,
+  allowZero: boolean,
+): DecimalText | null {
+  if (value === null || value === undefined) return null
+  return secondsOrderDecimal(value, field, allowZero)
+}
+
+function exactSecondsOrderDecimal(value: unknown): DecimalText | null {
+  try {
+    return requiredDecimalText(value, 'financial authority', 'seconds order', {
+      ...SECONDS_DECIMAL_CONSTRAINTS,
+      allowNegative: false,
+    })
+  } catch {
+    return null
+  }
+}
+
+function decimalDisplayNumber(value: DecimalText): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : Number.NaN
 }
 
 function normalizeTimestamp(value: unknown): number {

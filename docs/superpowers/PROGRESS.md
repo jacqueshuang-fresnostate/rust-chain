@@ -8033,3 +8033,115 @@
 - 修改文件：`mobile/src/views/KycView.vue`、`mobile/src/core/kycDocumentSearch.ts`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{kyc-country-search,kyc-document-type-search}.test.ts`、`.trellis/spec/mobile/{navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/08-31-mobile-kyc-document-type-search/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：新增及国家搜索定向测试 10/10、Mobile 全量测试 538/538、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；PWA/Tauri 构建各转换 2095 modules。
 - 后续事项：无；本轮未提交或推送。
+
+## 2026-08-31 15:10 - 完成 Mobile、PC 与管理后台前端增量复审
+
+- 完成内容：在 2026-08-30 全仓复审基础上继续审计三套前端，覆盖路由/会话、API 与 DTO、资金 Decimal、幂等意图、请求/WebSocket 生命周期、权限、国际化、无障碍、PWA/Tauri、测试和生产构建；跨端去重后确认 2 组 P0、11 组 P1、6 组 P2，并将 PC 充值地址乱序错配和 Admin/PC 不可恢复资金 intent 重新列为发布阻断。使用 Ego Browser 在 Mobile 390/320px、PC 1366×768、Admin 1440×900 做运行时检查，确认关键页面无文档级横向溢出或破图，同时量化小触控目标、首屏资源和 PC 假实时内容；新增独立前端报告，并为 8 月 30 日总报告增加带日期的增量勘误。
+- 修改文件：`.trellis/tasks/08-30-project-code-business-optimization-reaudit/research/frontend-{mobile,pc,admin}-delta-2026-08-31.md`、`docs/architecture/frontend-optimization-audit-2026-08-31.md`、`docs/architecture/project-optimization-reaudit-2026-08-30.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile `type-check`、538/538 tests、PWA production build 通过；PC `type-check` 与 production build 通过，但全量 Node tests 为 92/97，通过门禁未覆盖的 5 项失败暴露 API/WS origin 配置漂移；Admin Web lint/typecheck、53 files/382 tests 和 production build 通过，构建仍报告 direct-eval/大 chunk。Ego Browser 验证 Mobile 390×844 与 320×568 关键路由、PC 1366×768 首页和 Admin 1440×900 登录页；`git diff --check`、报告 FE-ID 唯一性、引用研究文件存在性与 Markdown fence 检查均通过。
+- 后续事项：按顺序先实现 `pc-deposit-selector-generation-safety` 与 `frontend-financial-intent-recovery` 两个 P0，再处理 Mobile session/market lifecycle、跨端 Decimal/权威 DTO、实时 freshness 和客户端 release gate；部署前仍需真实后端乱序、commit-before-timeout、response-drop、多实例 WS 与原生制品验证。本轮未提交或推送。
+
+## 2026-08-31 16:07 - 建立 Admin 与移动端全量整改任务
+
+- 完成内容：依据用户最新范围将实施工作从全端审计中拆为独立 Trellis 子任务，明确只修改 Admin `web/` 与手机端 `mobile/`，PC `pc/` 完全排除；把 Admin 1 个 P0、7 个 P1、4 个 P2 与 Mobile 7 个 P1、5 个 P2 收敛为资金幂等/Decimal、会话与权限、请求/实时生命周期、PWA/Tauri、无障碍、国际化、性能和测试治理验收清单，并配置实现/检查代理上下文与分片写入边界。
+- 修改文件：`.trellis/tasks/08-31-admin-mobile-frontend-completion/{task.json,prd.md,implement.jsonl,check.jsonl,research/remediation-scope.md}`、`.trellis/tasks/08-30-project-code-business-optimization-reaudit/task.json`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`python3 ./.trellis/scripts/task.py validate .trellis/tasks/08-31-admin-mobile-frontend-completion` 通过（implement 19 项、check 17 项），任务已从 planning 激活为 in_progress，当前 session 指向该子任务。
+- 后续事项：按风险顺序完成 Admin 核心安全/正确性、Mobile session/market/Decimal/订单，再处理两端 PWA/实时/无障碍/包体与最终全量门禁；全程不修改 PC。
+
+## 2026-08-31 16:31 - 修复手机端会话与行情生命周期竞态
+
+- 完成内容：手机行情冷启动改为共享同一个 in-flight refresh，并以幂等 live lease 管理订阅，补充 connecting/live/stale/offline/lastFrameAt；会话层加入 epoch/CAS、请求代次取消、logout 优先与跨标签/容器失效，阻止旧 refresh 在退出后复活 token 或重放旧请求；API client 增加统一 timeout/AbortSignal、稳定 code 优先的安全错误文案与诊断信息隔离，App 接入外部退出同步。
+- 修改文件：`mobile/src/App.vue`、`mobile/src/api/{client.ts,requestAuth.ts}`、`mobile/src/core/{apiError.ts,apiRequest.ts,marketLifecycle.ts,sessionOwner.ts}`、`mobile/src/stores/{market.ts,session.ts}`、`mobile/tests/{api-request-error,market-price-authority,market-store-lifecycle,request-layer,session-owner}.test.ts`。
+- 验证结果：会话/行情/API 聚焦行为测试 45/45 通过；`npm --prefix mobile run type-check`、`build:pwa`、`build:tauri` 通过；相关 `git diff --check` 通过。全量测试在其他并行资金切片尚未稳定时出现旧源码合同断言，留待集成后统一更新并重跑。
+- 后续事项：集成 Mobile Decimal/订单切片后重跑全量测试；继续实现私有 WS topic lease、PWA 失败恢复、路由无障碍与资源预算。
+
+## 2026-08-31 16:32 - 修复手机端资金 Decimal、批量撤单与请求竞态
+
+- 完成内容：新增字符串品牌类型 `DecimalText` 及精确规范化、比较、运算和展示工具，将现货/杠杆/秒合约/闪兑/借贷/理财/预测/新币/钱包 mutation 改为拒绝 number 的十进制合同；资金账单和收益保留微额及超 `2^53` 金额；现货全部撤单改为一次调用权威批量端点并展示部分成功；Orders 请求加入 generation/AbortSignal；业务枚举改为类型化展示且保留未知值；KYC 证件 Blob URL 在替换、成功和卸载时释放。
+- 修改文件：`mobile/src/api/{earn,loan,newCoin,prediction,seconds,swap,trading,user,wallet}.ts`、`mobile/src/core/{decimal,financeMutationContracts.typecheck,financialEnumPresentation,objectUrlRegistry,ordersRequest,marginOrderConfirmation,realizedReturn,returnHistory,returnHistoryGeometry,todayReturn,todayReturnPresentation,types,walletLedger}.ts`、相关资产/交易/产品/KYC 视图、双语资源与 `mobile/tests/finance-decimal-lifecycle.test.ts`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；新增 Decimal/Orders/KYC 行为测试 6/6 通过；相关 `git diff --check` 通过。旧聚焦测试 61 项中 43 项通过，18 项仍绑定旧 number、固定 8 位、N 次撤单或原始状态合同，需在集成切片更新。
+- 后续事项：更新 18 项旧合同测试并运行 Mobile 全量测试/双构建；继续消除兼容型 numeric DTO 展示路径。
+
+## 2026-08-31 16:35 - 关闭 Admin 资金幂等与核心会话权限风险
+
+- 完成内容：Admin 管理员充值建立按 session/管理员/用户/资产隔离且可跨刷新恢复的资金意图，金额先做 Decimal 规范化并在 timeout/response-drop 时复用幂等键；API 增加 timeout/Abort/ContractError，会话加入 generation/CAS、跨标签退出、安全回跳及 sessionStorage 兼容迁移；全局 mutation 禁止自动重放登录/2FA；资源创建、批量与用户行动作开始按精确权限拆分；共享可取消目录查询和具备 generation/引用计数/重连/watchdog/freshness 的行情连接管理器已落地。
+- 修改文件：`web/src/admin/{access.tsx,referenceOptions.tsx,sharedOptionQuery.ts,resources/**}`、`web/src/api/{adminAuth,adminResources,agentAuth,client,marketTickerSocket}.ts`、`web/src/app/providers.tsx`、`web/src/auth/{LoginPage,RequireAdmin,authStore,internalRedirect}*`、`web/src/shared/{AmountText,decimal,idempotency,numberFormat}*` 及聚焦测试。
+- 验证结果：`npm --prefix web run typecheck` 通过；9 个聚焦测试文件 37/37 通过，用户充值行为用例通过；`git diff --check -- web` 通过。
+- 后续事项：补齐剩余资源/KYC/安全策略动作级权限和完整角色矩阵；补共享行情 fake socket 测试；完成跨标签/CAS、Abort 去重、旧 localStorage 迁移测试以及 Admin 全量 lint/test/build/P2 收口。
+
+## 2026-08-31 17:05 - 完成手机端 Decimal 与会话切片测试集成
+
+- 完成内容：将 28 个 Mobile 旧测试从 number、固定 8 位、N 次撤单和未知状态旧合同迁移到 DecimalText、18 位资产精度、单次批量 DELETE/部分失败与未知值保留；补充延迟请求、FakeSocket、Turnstile 等严格类型，新增独立测试 TypeScript 配置和 `type-check:tests` 脚本，保证测试代码本身进入类型门禁。
+- 修改文件：`mobile/tsconfig.tests.json`、`mobile/package.json`、28 个 `mobile/tests/*.test.ts`。
+- 验证结果：`npm --prefix mobile run type-check` 通过，Mobile 全量测试 570/570 通过，排除并行 PWA 新用例后的测试 TypeScript 检查通过，`git diff --check` 通过；完整 `type-check:tests` 仅剩并行新增 `pwa-lifecycle.test.ts` 的 fake registration 返回类型，交由 PWA 切片收口。
+- 后续事项：PWA 切片修正 fake `ServiceWorkerRegistration.update()` 返回类型后重跑完整 `type-check:tests` 与双构建。
+
+## 2026-08-31 17:18 - 完成手机端 PWA、Tauri 与资源发布门禁
+
+- 完成内容：PWA 更新增加 15 秒 timeout、controllerchange/worker redundant/postMessage 异常恢复和幂等重试，busy 不再永久卡住；安装提示增加 60 秒首会话延迟、价值路由触发及 7 天频控；1.7MB 舞台 PNG 替换为约 103KB WebP，仅桌面断点加载且不进入 precache；Tauri CSP 改为覆盖 API/WSS、Turnstile、本地协议和必要 data/blob 资源的显式最小白名单；发布门禁补齐应用/测试类型检查、全测、PWA/Tauri 双构建、制品断言和 raw/gzip 预算。
+- 修改文件：`mobile/{package.json,vite.config.ts,src-tauri/tauri.conf.json}`、`mobile/src/{App.vue,components/PwaStatus.vue,pwa/**,styles/prototype-base.css,assets/brand/signal-theatre.webp}`、删除 `signal-theatre.png`、`mobile/scripts/{check-build-artifacts,check-bundle-budget}.mjs`、PWA/发布测试、`scripts/p0-release-gate.sh`。
+- 验证结果：PWA 定向行为测试 30/30 通过；`npm --prefix mobile run release:gate` 通过，Mobile 全量测试 572/572；PWA 145 个 precache 条目且舞台图排除，PWA JS/CSS 为 1321.1/589.3 KiB raw、448.1/110.9 KiB gzip，Tauri 为 1317.2/589.3 KiB raw、446.9/110.9 KiB gzip；双制品断言与 `git diff --check` 通过。
+- 后续事项：完成私有 WS 与路由/触控无障碍后再次运行 release gate；真实已安装 PWA 和签名 Android/iOS/desktop 制品需发布环境 smoke。
+
+## 2026-08-31 17:39 - 完成手机端私有 WS 共享管理与秒合约键盘交互
+
+- 完成内容：新增绑定 session generation 的私有 WS 单例管理器与 topic/consumer lease，一次认证会话只维持一条连接，并具备指数退避+jitter、heartbeat、入站静默 watchdog、旧 socket 代次隔离和 connecting/live/stale/offline/lastFrameAt；Trade 与 SupportChat 改为消费 margin/support.refresh 提示后通过 REST 权威对账；Seconds 交易对 listbox 支持方向键、Home/End、Enter/Space 与 roving tabindex，同时保留对话框焦点闭环和 Escape。
+- 修改文件：`mobile/src/api/{privateUserStream,privateUserStreamManager}.ts`、`mobile/src/composables/usePrivateUserStreamLease.ts`、`mobile/src/core/rovingListbox.ts`、`mobile/src/views/{Trade,SupportChat,Seconds}View.vue` 及私有流、客服和秒合约键盘测试。
+- 验证结果：聚焦行为测试 37/37、Mobile 全量测试 580/580 通过；`npm --prefix mobile run type-check`、`type-check:tests` 与 `git diff --check` 通过。
+- 后续事项：在 Ego Browser 与真机做键盘/焦点及断线恢复手工回归；完成路由 landmark/title/focus 和全局触控目标收口。
+
+## 2026-08-31 18:00 - 完成手机端路由无障碍、触控与结构治理
+
+- 完成内容：App 根壳改为非 landmark，新增可见聚焦 skip link 和单一路由播报区；抽出可测试的路由生命周期，为 39 个路由设置中英文标题，在 DOM 转场后聚焦 route-owned main，并避免同路由 query、活动弹窗或过期转场抢焦点；粗指针 320–448px 下以透明命中区补足关键按钮 44×44；新增巨型视图/共享 CSS 规模预算和关键竞态/金融行为测试门禁，禁止源码字符串测试成为唯一风险证据。
+- 修改文件：`mobile/src/App.vue`、`mobile/src/core/navigation/{accessibility,useRouteAccessibility}.ts`、`mobile/src/styles/base.css`、双语路由文案、`mobile/scripts/{check-source-size,check-test-quality}.mjs`、路由/壳层/治理测试和 `mobile/package.json`。
+- 验证结果：`npm --prefix mobile run release:gate` 通过；应用及测试类型检查、Mobile 全量 593/593、PWA/Tauri 双构建与制品检查、JS/CSS bundle budget、source-size budget、critical behavior quality gate、`git diff --check` 全部通过。
+- 后续事项：使用 Ego Browser 在 320/390/448px 回归标题、焦点、skip link、触控命中和深浅主题；真机读屏/axe 作为发布环境补证。
+
+## 2026-08-31 18:10 - 完成 Admin 权限、实时、可访问性与构建治理收口
+
+- 完成内容：Admin 全部资源动作和 KYC/安全/品牌/SMTP/行情/充值/Prediction 等独立页面按 read/review/settle/operate/write 精确权限 fail-closed，新增 65 个动作描述符×5 类角色矩阵；行情完成共享连接的 refcount/generation/退避/heartbeat/watchdog/freshness；补齐 subject+generation 访问缓存、跨标签退出、refresh CAS、共享目录 Abort/去重和存储迁移测试；秒合约 Tabs 建立正确 tabpanel/键盘/稳定行 ID/记录级标签与删除焦点；资源 action 改为业务域按需加载，增加覆盖率、生产策略和 raw+gzip bundle 门；浏览器标题改为中文，REST/WS 统一显式同源或 API Base 的 fail-closed 配置。
+- 修改文件：`web/src/admin/**`、`web/src/api/**`、`web/src/auth/**`、`web/src/config/backend*`、`web/src/shared/**`、`web/{index.html,package.json,package-lock.json,vite.config.ts,bundle-budget.json}`、`web/scripts/check-bundle-budget.mjs` 及相关测试。
+- 验证结果：Admin lint、typecheck、production-policy 14/14、coverage 20/20、build、budget 通过；覆盖率为语句 85.12%、分支 79.17%、函数 85.36%、行 92.09%；全量首次 412/413，修复唯一懒加载断言后该文件 3/3 通过，最终全量将由独立检查代理重跑。预算：初始 JS 1,628,393/443,351 B raw/gzip、最大异步 JS 205,074/60,075 B、总 JS 2,351,065/672,768 B、总 CSS 593,119/72,961 B。
+- 后续事项：独立 Admin check 重跑 413 项全测及全门禁；部署环境需明确设置 `VITE_API_SAME_ORIGIN` 或 `VITE_API_BASE_URL` 并做真实 REST/WS/权限 smoke。
+
+## 2026-08-31 19:20 - 独立复核并关闭 Admin 全部前端审计项
+
+- 完成内容：独立检查进一步移除资金意图 TTL 自动轮换，确保不确定结果持续复用 key；把 timeout 覆盖到响应 body 消费，强化严格行 DTO/Decimal、subject/generation 查询与 refresh CAS、TanStack Query option 去重/Abort、私有缓存与 socket 清理；消除剩余金额 `Number` 校验，补共享行情连接 timeout/watchdog 和测试异步/QueryClient 缺口。Admin FAD-P0-01、P1-01..07、P2-01..04 共 12/12 全部关闭。
+- 修改文件：在上一 Admin 切片的 `web/src/{admin,api,auth,shared}/**` 与测试上做独立自修复；未修改 Mobile、PC、后端或根脚本。
+- 验证结果：失败目标复测 6 文件 29/29 通过；Admin 最终全量 60 文件 430/430 通过，0 failed、0 unhandled；此前同一集成状态的 lint、typecheck、production-policy、coverage、build、budget 均为绿色，待主会话最终门禁再统一重跑。
+- 后续事项：使用 Ego Browser 回归登录、中文标题、资源权限与表格/秒合约 Tabs；生产环境补证 commit-before-response-drop、真实五角色权限、双标签退出、Turnstile 慢网和真实 WS 静默恢复。
+
+## 2026-08-31 19:36 - 独立复核手机端全链路并修复集成缺口
+
+- 完成内容：独立检查修复钱包参考缓存暴露 token/跨会话污染，改为 opaque session scope；Orders 请求与撤单动作加入完整 session generation，批量部分成功直接提交权威剩余订单；PWA 安装冷却改为实际展示时记录并补深链/延迟 worker 更新；进一步将限额、行情、确认快照、提现 quote 等资金路径迁移到 DecimalText，恢复 `1.`、`+5` 等严格边界；修复 AssetsView 超预算并更新行为合同测试。
+- 修改文件：`mobile/src/api/wallet.ts`、`mobile/src/core/{ordersRequest,decimal,tradeForm,marginOrderConfirmation,withdrawalQuote}.ts`、相关 API/视图、`mobile/src/pwa/**`、`mobile/src/components/PwaStatus.vue` 及 Mobile 测试。
+- 验证结果：Mobile 生产/测试类型检查、全量 595/595、`npm --prefix mobile run release:gate`、PWA/Tauri 双构建、artifact/source-size/test-quality/bundle budgets 与 `git diff --check` 全部通过；PWA precache 145 项约 2214.67 KiB，PWA JS/CSS 1341.7/591.3 KiB，Tauri JS/CSS 1336.9/591.3 KiB，均低于门限。
+- 后续事项：FMD-P1-03 尚余 TradeView 的 `effectivePrice/amountValue/reviewOrder` 和 SecondsView 部分复核/收益派生仍通过 Number/toFixed/数值乘法，需完成端到端 Decimal 收口后再次独立复核；其余 FMD 与跨项均已自动化关闭。
+
+## 2026-08-31 22:46 - 收口 Trade/Seconds 金融视图体积门禁
+
+- 完成内容：将 Trade 利率/保证金区间展示和 Seconds 周期、行情、商品符号、倒计时及金额操作文案适配抽入对应 financial core；修复未验证压缩遗留的 `pointFroms` 参数拼写错误，保留原 Pencil 模板与交互，增加精确文本优先且数值回退仅用于展示的行为回归。
+- 修改文件：`mobile/src/views/{Trade,Seconds}View.vue`、`mobile/src/core/{tradeFinancial,secondsFinancial}.ts`、`mobile/tests/trade-seconds-decimal-derivations.test.ts`。
+- 验证结果：`npm --prefix mobile run check:source-size` 通过（Trade 6125/6131 行、179533/179654 B；Seconds 3462/3464 行、99866/100942 B）；`npm --prefix mobile run type-check`、`type-check:tests` 通过；Decimal 聚焦测试 9/9 通过。
+- 后续事项：无；API/DTO 精度收口由并行代理继续处理。
+
+## 2026-08-31 23:18 - 完成 Mobile Seconds 与盘口 Decimal DTO Phase A 收口
+
+- 完成内容：Seconds 周期 payout/min/max 与订单 stake/payout/entry/settlement 改为严格后端字符串 DecimalText 权威，缺失/畸形/JSON-number 按必填或 unavailable 语义 fail-closed；订单预计收益和历史盈亏改为精确 DecimalText 运算并仅在终端保留兼容 number；REST/WS 盘口档位新增必备 `priceText/quantityText`，非严格正数十进制字符串使 REST 抛合同错误、WS 丢弃整帧，numeric 档位仅用于排序/旧展示。
+- 修改文件：`mobile/src/api/{seconds,marketSocketProtocol}.ts`、`mobile/src/core/{secondsOrder,types}.ts`、`mobile/tests/{seconds-api-adapter,seconds-cycle-decimal-dto,market-socket,market-detail-stream,seconds-history-view}.test.ts`、`.trellis/tasks/08-31-admin-mobile-frontend-completion/research/mobile-trade-seconds-financial-precision-final-check.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦行为测试 41/41 通过，覆盖 `9007199254740993.000000000000000001`、`0.000000000000000001`、JSON-number 与指数形式拒绝；`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests` 均通过，无调用方编译阻塞。
+- 后续事项：按用户 Phase A 边界未修改 `marketMapper`、wallet/trading DTO；其 ticker、余额/费用/限额及 margin 执行/风险字符串权威留待独立后续切片。
+
+## 2026-09-01 00:32 - 完成 Mobile 全链路 Decimal DTO 与发布门禁收口
+
+- 完成内容：关闭 Trade/Seconds 最后一条资金精度阻塞；ticker `lastPriceText`、wallet 余额/费用/记录/划转、trading 现货与杠杆产品/钱包/持仓/风险均改为严格后端字符串 DecimalText 权威，JSON number 仅保留兼容展示，缺失执行字段 fail-closed；同步更新旧 number/页面内派生源码合同测试。
+- 修改文件：`mobile/src/{api/{wallet,trading},core/marketMapper}.ts`、Trade/Seconds 资金适配与相关 Mobile 测试、任务资金终检文档。
+- 验证结果：`npm --prefix mobile run release:gate` 全部通过；应用/测试类型检查、Mobile 607/607、PWA/Tauri 双构建、制品检查、bundle/source-size/test-quality 预算均通过；PWA JS 1355.4/458.6 KiB raw/gzip，Tauri JS 1350.6/457.2 KiB，CSS 591.3/111.3 KiB。
+- 后续事项：真实 Turnstile、公网 REST/WS、已安装 PWA 与签名原生包仅需部署环境 smoke。
+
+## 2026-09-01 00:32 - 完成 Admin/Mobile 浏览器回归与任务关闭证据
+
+- 完成内容：汇总 Admin FAD 12/12 与 Mobile FMD 12/12 的关闭证据；Ego Browser 复核 Mobile 320/390/448px 首页、现货、秒合约及 390px 订单/资产/KYC 登录回跳，复核 Admin 登录、用户资源表、侧栏对比度与列宽实拖；PRD 验收项全部勾选，并补最终关闭报告。
+- 修改文件：`.trellis/tasks/08-31-admin-mobile-frontend-completion/{prd.md,research/*.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 所测路由无横向溢出、破图或重复 ID，转场结束后单一 `main#main-content`、标题和播报正确；Admin 1440/1024/768px 无溢出，9 列 resize handle 生效且第一列 160→208px；`git diff --check` 通过，`pc/**` 无改动。
+- 后续事项：无。

@@ -348,7 +348,7 @@ test('持仓卡片接入纯函数并按权威 opened 持仓保留风险快照的
     'each position risk formula must be resolved once in the computed projection',
   )
   assert.match(tradeSource, /metrics\.crossAccountEstimateState === 'legacy'[\s\S]*?t\('trade\.crossAccountRisk'\)/)
-  assert.match(tradeSource, /metrics\.crossAccountEstimateState === 'estimated'[\s\S]*?formatPrice\(metrics\.estimatedLiquidationPrice\)/)
+  assert.match(tradeSource, /metrics\.crossAccountEstimateState === 'estimated'[\s\S]*?moneyText\(metrics\.estimatedLiquidationPrice\)/)
   assert.match(tradeSource, /t\('trade\.noStableSingleLiquidationPrice'\)/)
   assert.match(tradeSource, /t\('trade\.estimatedAccountLiquidationPrice'\)/)
   assert.match(tradeSource, /const distance = positionRiskDisplayMetrics\(position\)\.liquidationDistanceRate/)
@@ -365,10 +365,29 @@ test('持仓卡片接入纯函数并按权威 opened 持仓保留风险快照的
   assert.match(riskLoader, /marginWallets\.value = margin\.wallets[\s\S]*?marginPositions\.value = margin\.positions/)
   assert.match(riskLoader, /request\.commit\(\(\) => \{[\s\S]*?marginRiskSnapshots\.value = reconcileMarginRiskSnapshots/)
 
-  assert.match(tradingApiSource, /maintenanceMarginRate: parseMarginRiskNumber\(product\.maintenance_margin_rate\)/)
-  assert.match(tradingApiSource, /maintenanceMarginRate: parseMarginRiskNumber\(risk\.maintenance_margin_rate\)/)
-  assert.match(tradingApiSource, /estimatedLiquidationPrice: parseMarginRiskNumber\(risk\.estimated_liquidation_price\)/)
-  assert.match(tradingApiSource, /crossAccountRisk: mapMarginCrossAccountRisk\(risk\.cross_account_risk\)/)
+  const productAdapter = sliceBetween(
+    tradingApiSource,
+    'export async function fetchMarginProducts',
+    'export async function placeMarginOrder',
+  )
+  const positionRiskAdapter = sliceBetween(
+    tradingApiSource,
+    'export async function fetchMarginPositionRisk',
+    'export function createMarginCloseIdempotencyKey',
+  )
+  const positionAdapter = sliceBetween(
+    tradingApiSource,
+    'function mapMarginPosition',
+    'function mapMarginBatchAction',
+  )
+
+  assert.match(productAdapter, /const maintenanceMarginRateText = tradingDecimal\([\s\S]*?product\.maintenance_margin_rate/)
+  assert.match(productAdapter, /maintenanceMarginRate: decimalDisplayNumber\(maintenanceMarginRateText/)
+  assert.match(positionRiskAdapter, /const maintenanceMarginRateText = nonNegativeTradingDecimal\(risk\.maintenance_margin_rate/)
+  assert.match(positionRiskAdapter, /maintenanceMarginRate: decimalDisplayNumber\(maintenanceMarginRateText/)
+  assert.match(positionRiskAdapter, /const estimatedLiquidationPriceText = nullableTradingDecimal\([\s\S]*?risk\.estimated_liquidation_price/)
+  assert.match(positionRiskAdapter, /estimatedLiquidationPrice: nullableDecimalDisplayNumber\(estimatedLiquidationPriceText\)/)
+  assert.match(positionRiskAdapter, /crossAccountRisk: mapStrictMarginCrossAccountRisk\(risk\.cross_account_risk\)/)
   assert.match(tradingApiSource, /mapMarginCrossAccountRisk,[\s\S]*?type MarginCrossAccountRisk,[\s\S]*?from '@\/core\/marginRiskMetrics'/)
   assert.match(marginRiskSource, /export interface MarginCrossAccountRisk \{[\s\S]*?marginAssetId: number[\s\S]*?referencePairId: number[\s\S]*?priceAssumption: MarginCrossAccountPriceAssumption[\s\S]*?conditionalLiquidationPrice: number \| null[\s\S]*?conditionalLiquidationDistanceRate: number \| null[\s\S]*?marksObservedAtMin: number[\s\S]*?marksObservedAtMax: number/)
   for (const field of [
@@ -400,19 +419,17 @@ test('持仓卡片接入纯函数并按权威 opened 持仓保留风险快照的
     'export function createMarginOrderIdempotencyKey',
   )
   assert.doesNotMatch(marginSubmitter, /crossAccountRisk|conditionalLiquidation|liquidationBuffer/)
-  assert.match(tradingApiSource, /marginAmount: requiredMarginRiskNumber\(position\.margin_amount\)/)
-  assert.match(tradingApiSource, /notionalAmount: requiredMarginRiskNumber\(position\.notional_amount\)/)
-  assert.match(tradingApiSource, /entryPrice: parseMarginRiskNumber\(position\.entry_price\)/)
-  assert.match(tradingApiSource, /interestAmount: requiredMarginRiskNumber\(position\.interest_amount\)/)
-  assert.match(tradingApiSource, /returnRate: optionalNumber\(risk\.return_rate\)/)
-  assert.match(tradingApiSource, /marginRatio: optionalNumber\(risk\.margin_ratio\)/)
-  const existingOptionalNumber = sliceBetween(
-    tradingApiSource,
-    'function optionalNumber',
-    'function requiredMarginRiskNumber',
-  )
-  assert.match(existingOptionalNumber, /asNumber\(value, Number\.NaN\)/)
-  assert.doesNotMatch(existingOptionalNumber, /parseMarginRiskNumber|MARGIN_RISK_DECIMAL_PATTERN/)
+  assert.match(positionAdapter, /const marginAmountText = nonNegativeTradingDecimal\(position\.margin_amount/)
+  assert.match(positionAdapter, /const notionalAmountText = nonNegativeTradingDecimal\(position\.notional_amount/)
+  assert.match(positionAdapter, /const entryPriceText = nullableTradingDecimal\(position\.entry_price/)
+  assert.match(positionAdapter, /const interestAmountText = nonNegativeTradingDecimal\(position\.interest_amount/)
+  assert.match(positionAdapter, /marginAmount: decimalDisplayNumber\(marginAmountText/)
+  assert.match(positionAdapter, /notionalAmount: decimalDisplayNumber\(notionalAmountText/)
+  assert.match(positionAdapter, /entryPrice: nullableDecimalDisplayNumber\(entryPriceText\)/)
+  assert.match(positionAdapter, /interestAmount: decimalDisplayNumber\(interestAmountText/)
+  assert.match(positionRiskAdapter, /const returnRateText = nullableTradingDecimal\(risk\.return_rate/)
+  assert.match(positionRiskAdapter, /const marginRatioText = nullableTradingDecimal\(risk\.margin_ratio/)
+  assert.match(tradingApiSource, /function tradingDecimal\([\s\S]*?requiredDecimalText\(value, field, 'trading financial response'/)
   assert.match(tradingApiSource, /maintenanceMarginRate: number \| null/)
   assert.match(typesSource, /maintenanceMarginRate: number \| null/)
 })

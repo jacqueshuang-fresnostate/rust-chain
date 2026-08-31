@@ -27,6 +27,7 @@ import {
   type WalletLedgerFilter,
   type WalletLedgerPage,
 } from '../src/core/walletLedger.ts'
+import { normalizeDecimalText } from '../src/core/decimal.ts'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
@@ -64,9 +65,10 @@ test('账单适配器严格消费权威账户、分类、分页、金额、手�
       symbol: 'USDT',
       changeType: 'withdrawal_confirm',
       category: 'funding',
-      amount: -12.5,
-      fee: 0.25,
-      balanceAfter: 88.25,
+      amount: '-12.5',
+      fee: '0.25',
+      balanceAfter: '88.25',
+      precisionScale: 18,
       createdAt: 1_786_307_400_000,
     }],
     page: {
@@ -145,12 +147,12 @@ test('现货与杠杆的相同数字 ID 使用 accountType:id 复合身份合并
   const margin = ledgerEntry(30, timestamp, 'margin')
   const merged = mergeWalletLedgerEntries(
     [spot],
-    [margin, { ...spot, amount: 999 }],
+    [margin, { ...spot, amount: normalizeDecimalText('999') }],
   )
 
   assert.deepEqual(merged.map(walletLedgerEntryIdentity).sort(), ['margin:30', 'spot:30'])
   assert.equal(merged.length, 2)
-  assert.equal(merged.find((entry) => entry.accountType === 'spot')?.amount, 999)
+  assert.equal(merged.find((entry) => entry.accountType === 'spot')?.amount, '999')
 
   const grouped = groupWalletLedgerEntries(merged, new Date(2026, 7, 10, 18, 0))
   assert.deepEqual(grouped[0].entries.map(walletLedgerEntryIdentity), ['margin:30', 'spot:30'])
@@ -327,18 +329,24 @@ test('业务与账户筛选项、全部已知变动类型在中英文中都有�
 })
 
 test('账单金额仅为正数添加加号，零值保持中性且不带加号', () => {
-  assert.equal(walletLedgerAmountSign(8), '+')
-  assert.equal(walletLedgerAmountSign(0), '')
-  assert.equal(walletLedgerAmountSign(-8), '')
+  assert.equal(walletLedgerAmountSign(normalizeDecimalText('8')), '+')
+  assert.equal(walletLedgerAmountSign(normalizeDecimalText('0')), '')
+  assert.equal(walletLedgerAmountSign(normalizeDecimalText('-8')), '')
 })
 
-test('账单金额、余额和手续费保留最多八位小数且最小非零单位不会显示为零', () => {
-  assert.equal(WALLET_LEDGER_MAX_FRACTION_DIGITS, 8)
-  assert.equal(formatWalletLedgerDecimal(0.00125, 'en-US'), '0.00125')
-  assert.equal(formatWalletLedgerDecimal(0.0000025, 'en-US'), '0.0000025')
-  assert.equal(formatWalletLedgerDecimal(0.00000001, 'en-US'), '0.00000001')
-  assert.equal(formatWalletLedgerDecimal(12.12345678, 'en-US'), '12.12345678')
-  assert.equal(formatWalletLedgerDecimal(-0, 'en-US'), '0')
+test('账单金额、余额和手续费保留最多 18 位精度且不经过 IEEE-754', () => {
+  assert.equal(WALLET_LEDGER_MAX_FRACTION_DIGITS, 18)
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.00125'), 'en-US'), '0.00125')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US'), '0.000000000000000001')
+  assert.equal(
+    formatWalletLedgerDecimal(normalizeDecimalText('12.123456789012345678'), 'en-US'),
+    '12.123456789012345678',
+  )
+  assert.equal(
+    formatWalletLedgerDecimal(normalizeDecimalText('9007199254740993.123456789012345678'), 'en-US'),
+    '9,007,199,254,740,993.123456789012345678',
+  )
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('-0'), 'en-US'), '0')
 })
 
 test('账单请求生命周期阻止旧账户、旧分类、旧会话和卸载后的响应写回', async () => {
@@ -443,16 +451,16 @@ test('页面和 API 源码保留分页、状态分支、手续费、原始未知
   assert.match(viewSource, /accountLabel\(entry\.accountType\)/)
   assert.match(viewSource, /:key="walletLedgerEntryIdentity\(entry\)"/)
   assert.match(viewSource, /mergeWalletLedgerEntries\(entries\.value, result\.value\.entries\)/)
-  assert.match(viewSource, /v-if="entry\.fee > 0"/)
+  assert.match(viewSource, /v-if="decimalSign\(entry\.fee\) > 0"/)
   assert.match(viewSource, /t\('ledger\.sourceType', \{ type: entrySource\(entry\) \}\)/)
   assert.match(viewSource, /advanceWalletLedgerPagination\(offset, result\.value\)/)
   assert.match(walletCoreSource, /nextOffset >= result\.page\.totalElements/)
   assert.match(walletCoreSource, /result\.page\.number \+ 1 >= result\.page\.totalPages/)
   assert.match(viewSource, /isWalletLedgerContractError\(result\.error\)/)
   assert.match(viewSource, /walletLedgerAmountSign\(entry\.amount\)/)
-  assert.match(viewSource, /ledgerDecimal\(entry\.amount\)/)
-  assert.match(viewSource, /ledgerDecimal\(entry\.balanceAfter\)/)
-  assert.match(viewSource, /ledgerDecimal\(entry\.fee\)/)
+  assert.match(viewSource, /ledgerDecimal\(entry\.amount, entry\.precisionScale\)/)
+  assert.match(viewSource, /ledgerDecimal\(entry\.balanceAfter, entry\.precisionScale\)/)
+  assert.match(viewSource, /ledgerDecimal\(entry\.fee, entry\.precisionScale\)/)
   assert.doesNotMatch(viewSource, /formatAmount\(entry\.(?:amount|balanceAfter|fee)/)
   assert.match(viewSource, /v-if="error && !entries\.length"/)
   assert.match(viewSource, /v-else-if="loading && !entries\.length"/)
@@ -501,9 +509,10 @@ function ledgerEntry(
     symbol: 'USDT',
     changeType: 'deposit_confirm',
     category: 'funding',
-    amount: id,
-    fee: 0,
-    balanceAfter: 100 + id,
+    amount: normalizeDecimalText(String(id)),
+    fee: normalizeDecimalText('0'),
+    balanceAfter: normalizeDecimalText(String(100 + id)),
+    precisionScale: 18,
     createdAt,
   }
 }

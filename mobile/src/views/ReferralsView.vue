@@ -7,6 +7,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { bindReferralCode, fetchReferralCode, fetchReferralInvites, type InviteRecord, type ReferralCode } from '@/api/user'
 import { formatDateTime } from '@/core/format'
+import { referralStatusPresentation } from '@/core/financialEnumPresentation'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
@@ -77,6 +78,11 @@ async function bindCodeToAccount(): Promise<void> {
   }
 }
 
+function inviteStatusLabel(status: string): string {
+  const presentation = referralStatusPresentation(status)
+  return t(presentation.translationKey, { source: presentation.source || '--' })
+}
+
 onMounted(() => { void load() })
 </script>
 
@@ -137,7 +143,7 @@ onMounted(() => { void load() })
                 <strong>{{ invite.email || invite.phone || t('referrals.userNumber', { id: invite.userId }) }}</strong>
                 <small>{{ formatDateTime(invite.createdAt) }}</small>
               </div>
-              <span>{{ invite.status }}</span>
+              <span>{{ inviteStatusLabel(invite.status) }}</span>
             </article>
             <p v-if="!invites.length" class="referrals-empty">{{ t('referrals.empty') }}</p>
           </section>

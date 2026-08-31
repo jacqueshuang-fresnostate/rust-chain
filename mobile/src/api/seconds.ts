@@ -6,6 +6,21 @@ import {
 } from './requestCache'
 import { asNumber } from '@/core/format'
 import { mapSecondsOrder, type SecondsOrder } from '@/core/secondsOrder'
+import { normalizeDecimalText, requiredDecimalText, type DecimalText } from '@/core/decimal'
+
+const SECONDS_PRODUCT_DECIMAL_CONSTRAINTS = {
+  allowNegative: false,
+  allowZero: false,
+  maxIntegerDigits: 20,
+  maxScale: 18,
+} as const
+
+export class SecondsContractError extends TypeError {
+  constructor(field: string) {
+    super(`invalid seconds product ${field}`)
+    this.name = 'SecondsContractError'
+  }
+}
 
 export { mapSecondsOrder }
 export type { SecondsOrder }
@@ -14,8 +29,11 @@ export interface SecondsCycle {
   id: number
   durationSeconds: number
   payoutRate: number
+  payoutRateText: DecimalText
   minStake: number
   maxStake?: number
+  minStakeText: DecimalText
+  maxStakeText: DecimalText | null
 }
 
 export interface SecondsProduct {
@@ -33,15 +51,9 @@ export async function fetchSecondsProducts(limit = 50, options: ReferenceRequest
     const response = await client.get<{ products?: Array<Record<string, unknown>> }>(url, { params: { limit } })
     return (response.data.products || []).map((product) => {
       const cycles = Array.isArray(product.cycles) ? product.cycles : []
-      const mappedCycles = cycles.map((cycle) => mapCycle(cycle as Record<string, unknown>))
+      const mappedCycles = cycles.map((cycle) => mapSecondsCycle(cycle as Record<string, unknown>))
       if (!mappedCycles.length) {
-        mappedCycles.push({
-          id: asNumber(product.id),
-          durationSeconds: asNumber(product.duration_seconds),
-          payoutRate: asNumber(product.payout_rate),
-          minStake: asNumber(product.min_stake),
-          maxStake: product.max_stake === null || product.max_stake === undefined ? undefined : asNumber(product.max_stake),
-        })
+        mappedCycles.push(mapSecondsCycle(product))
       }
       return {
         id: asNumber(product.id),
@@ -64,7 +76,7 @@ export interface OpenSecondsOrderInput {
   productId: number
   durationSeconds: number
   direction: 'up' | 'down'
-  stakeAmount: number
+  stakeAmount: DecimalText
   idempotencyKey?: string
 }
 
@@ -73,7 +85,7 @@ export async function openSecondsOrder(input: OpenSecondsOrderInput): Promise<Se
     product_id: input.productId,
     duration_seconds: input.durationSeconds,
     direction: input.direction,
-    stake_amount: String(input.stakeAmount),
+    stake_amount: normalizeDecimalText(input.stakeAmount),
     idempotency_key: input.idempotencyKey || createSecondsOrderIdempotencyKey(),
   })
   if (!response.data.order) throw new Error('Seconds-contract order response is missing order data')
@@ -84,14 +96,39 @@ export function createSecondsOrderIdempotencyKey(): string {
   return createIdempotencyKey('mobile-seconds')
 }
 
-function mapCycle(cycle: Record<string, unknown>): SecondsCycle {
+export function mapSecondsCycle(cycle: Record<string, unknown>): SecondsCycle {
+  const payoutRateText = productDecimal(cycle.payout_rate, 'payout_rate')
+  const minStakeText = productDecimal(cycle.min_stake, 'min_stake')
+  const maxStakeText = nullableProductDecimal(cycle.max_stake, 'max_stake')
   return {
     id: asNumber(cycle.id),
     durationSeconds: asNumber(cycle.duration_seconds),
-    payoutRate: asNumber(cycle.payout_rate),
-    minStake: asNumber(cycle.min_stake),
-    maxStake: cycle.max_stake === null || cycle.max_stake === undefined ? undefined : asNumber(cycle.max_stake),
+    payoutRate: decimalDisplayNumber(payoutRateText),
+    payoutRateText,
+    minStake: decimalDisplayNumber(minStakeText),
+    maxStake: maxStakeText ? decimalDisplayNumber(maxStakeText) : undefined,
+    minStakeText,
+    maxStakeText,
   }
+}
+
+function productDecimal(value: unknown, field: string): DecimalText {
+  try {
+    return requiredDecimalText(value, field, 'seconds product', SECONDS_PRODUCT_DECIMAL_CONSTRAINTS)
+  } catch {
+    throw new SecondsContractError(field)
+  }
+}
+
+function nullableProductDecimal(value: unknown, field: string): DecimalText | null {
+  if (value === null || value === undefined) return null
+  return productDecimal(value, field)
+}
+
+function decimalDisplayNumber(value: DecimalText): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new SecondsContractError('decimal display value')
+  return parsed
 }
 
 function createIdempotencyKey(scope: string): string {

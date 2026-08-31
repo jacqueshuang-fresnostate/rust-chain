@@ -27,7 +27,7 @@ import ContractTradeSheets from '@/components/ContractTradeSheets.vue'
 import MarginCloseSheet from '@/components/MarginCloseSheet.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
-import { apiErrorMessage, readAccessToken } from '@/api/client'
+import { apiErrorMessage } from '@/api/client'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
 import {
   createMarketDetailStreamSession,
@@ -39,10 +39,6 @@ import {
   normalizeMarketKlineInterval,
   type MarketKlineInterval,
 } from '@/api/marketSocketProtocol'
-import {
-  createPrivateUserStream,
-  type PrivateUserEvent,
-} from '@/api/privateUserStream'
 import {
   cancelMarginPosition,
   closeAllMarginPositions,
@@ -61,8 +57,10 @@ import {
   updateMarginMode,
 } from '@/api/trading'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { privateUserWebSocketUrl, publicMarketWebSocketUrl } from '@/config/app'
-import { formatAmount, formatPrice, normalizeSymbol } from '@/core/format'
+import { publicMarketWebSocketUrl } from '@/config/app'
+import { usePrivateUserStreamLease } from '@/composables/usePrivateUserStreamLease'
+import { normalizeSymbol } from '@/core/format'
+import { normalizeDecimalText, type DecimalText } from '@/core/decimal'
 import {
   classifyMarginOrderBackendBoundaryError,
   createMarginOrderReview,
@@ -71,7 +69,6 @@ import {
 import {
   isFilledMarginPosition,
   isPendingMarginPosition,
-  marginLimitPriceFromBbo,
   preferredMarginOrderType,
 } from '@/core/marginOrder'
 import {
@@ -86,13 +83,28 @@ import {
 import { useModalDialog } from '@/core/modalDialog'
 import { goBackOr } from '@/core/navigation'
 import {
-  clampMarginShortcutAmount,
   marginShortcutAvailable,
-  quantityForBalancePercentage,
+  quantityForBalancePercentagePoints as portion,
   type MarginAmountValidation,
   type MarginLimitPriceValidation,
   validateMarginAmount,
 } from '@/core/tradeForm'
+import {
+  baseQuantityFromQuoteAmount as baseFromQuote,
+  createSpotOrderReviewSnapshot as createSpotReview,
+  createTradeFinancialPresentation as bindMoney,
+  hasPositiveTradeBalance as hasBalance,
+  legacyTradeDisplayNumber as legacyNumber,
+  nonNegativeTradeBoundary as nonNegative,
+  positiveTradeBoundary as positive,
+  quoteAmountFromBaseQuantity as quoteFromBase,
+  resolveTradeEffectivePrice as resolvePrice,
+  resolveTradeLimitPriceFromBook as bboPrice,
+  resolveTradeMarginFinancialBounds as bounds,
+  tradePercentagePointFromText as pointFrom,
+  tradePriceStep as priceStep,
+  type SpotOrderReviewSnapshot,
+} from '@/core/tradeFinancial'
 import { currentIntlLocale } from '@/i18n'
 import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
@@ -120,6 +132,18 @@ const marketFavorites = useMarketFavoritesStore()
 const session = useSessionStore()
 const navigation = useNavigationStore()
 const { t } = useI18n()
+const {
+  formatValue: moneyText,
+  walletAmount,
+  frozenWalletAmount: frozenAmount,
+  formatChangePercent: changeText,
+  formatHourlyInterest: interestLabel,
+  formatMarginRange: marginRangeLabel,
+  formatRatePercent: rateText,
+} = bindMoney({
+  locale: currentIntlLocale,
+  translate: (key, params) => t(key, params),
+})
 const mode = ref<'spot' | 'contract'>(route.query.mode === 'contract' ? 'contract' : 'spot')
 const side = ref<'buy' | 'sell'>('buy')
 const orderType = ref<'limit' | 'market'>('limit')
@@ -166,7 +190,8 @@ const spotOrderTypeDialog = ref<HTMLElement | null>(null)
 const confirmOpen = ref(false)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
-const reviewedMarginOrder = ref<MarginOrderReview | null>(null)
+const spotReview = ref<Readonly<SpotOrderReviewSnapshot> | null>(null)
+const marginReview = ref<MarginOrderReview | null>(null)
 const contractOpenMode = ref<'open' | 'close'>('open')
 const contractWorkspaceTab = ref<'orders' | 'positions' | 'strategy'>('positions')
 const currentPairOnly = ref(true)
@@ -187,18 +212,18 @@ let marginProductsRequestVersion = 0
 let marginSettingRequestVersion = 0
 let tradingBalancesRequestVersion = 0
 let viewActive = true
-let viewMounted = false
 const marginAccountReconciliation = createMarginAccountReconciliationLifecycle({
   sessionKey: () => session.token,
   isContractMode: () => mode.value === 'contract',
   isVisible: () => document.visibilityState !== 'hidden',
   reconcile: reconcileMarginAccount,
 })
-const privateUserStream = createPrivateUserStream({
-  getAccessToken: readAccessToken,
-  getUrl: privateUserWebSocketUrl,
+usePrivateUserStreamLease({
+  topic: 'margin',
+  consumerId: 'trade-margin-account',
+  enabled: () => viewActive && session.isAuthenticated && mode.value === 'contract',
   onOpen: requestPrivateMarginReconciliation,
-  onEvent: handlePrivateUserEvent,
+  onEvent: requestPrivateMarginReconciliation,
 })
 const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
   spotOrderTypeOpen,
@@ -219,9 +244,13 @@ const isFavorite = computed(() => marketFavorites.isFavorite(pairSymbol.value))
 const favoriteSaving = computed(() => marketFavorites.isPending(pairSymbol.value))
 const spotVisibleBalances = computed(() => spotWallets.value.filter((wallet) => (
   [baseAsset.value, quoteAsset.value].includes(wallet.symbol)
-  && wallet.available + wallet.frozen + wallet.locked > 0
+  && wallet.availableText && wallet.frozenText && wallet.lockedText
+  && hasBalance(wallet.availableText ?? wallet.available,
+    wallet.frozenText ?? wallet.frozen, wallet.lockedText ?? wallet.locked)
 )))
-const selectedProduct = computed(() => products.value.find((product) => normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value)))
+const selectedProduct = computed(() => products.value.find((product) => (
+  normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value) && bounds(product).isExact
+)))
 const filledMarginPositions = computed(() => marginPositions.value.filter((position) => (
   !['closed', 'liquidated', 'cancelled', 'canceled'].includes(position.status.toLowerCase())
   && isFilledMarginPosition(position)
@@ -243,23 +272,23 @@ const visiblePendingMarginOrders = computed(() => {
   return pendingMarginOrders.value.filter((position) => position.productId === product.id)
 })
 const currentPrice = computed(() => ticker.value?.lastPrice ?? 0)
-const isLive = computed(() => currentPrice.value > 0 && (!marketStore.error || liveDetailActive.value))
-const selectedOrderType = computed(() => mode.value === 'contract' ? contractOrderType.value : orderType.value)
-const contractOrderTypeLabel = computed(() => {
+const tickerPrice = computed<DecimalText | null>(() => positive(ticker.value?.lastPriceText))
+const isLive = computed(() => tickerPrice.value !== null && (!marketStore.error || liveDetailActive.value))
+const activeType = computed(() => mode.value === 'contract' ? contractOrderType.value : orderType.value)
+const orderTypeText = computed(() => {
   if (contractOrderType.value === 'limit') return t('trade.limitOrderShort')
   if (contractOrderType.value === 'market') return t('trade.marketOrderShort')
   return t('trade.orderTypeUnavailableShort')
 })
-const effectivePrice = computed(() => {
-  if (mode.value === 'contract') {
-    return contractOrderType.value === 'limit' ? Number(contractLimitPrice.value) : currentPrice.value
-  }
-  return orderType.value === 'limit' ? Number(price.value) : currentPrice.value
-})
-const contractPriceValue = computed({
+const orderPrice = computed<DecimalText | null>(() => resolvePrice({
+  orderType: activeType.value,
+  limitPrice: mode.value === 'contract' ? contractLimitPrice.value : price.value,
+  marketPrice: tickerPrice.value,
+}))
+const contractPrice = computed({
   get: () => contractOrderType.value === 'limit'
     ? contractLimitPrice.value
-    : currentPrice.value > 0 ? formatPrice(currentPrice.value) : '',
+    : tickerPrice.value ? moneyText(tickerPrice.value) : '',
   set: (value: string) => {
     if (contractOrderType.value === 'limit') contractLimitPrice.value = value
   },
@@ -268,78 +297,55 @@ const availableAsset = computed(() => {
   if (mode.value === 'contract') return selectedProduct.value?.marginAssetSymbol || quoteAsset.value
   return side.value === 'buy' ? quoteAsset.value : baseAsset.value
 })
-const availableBalance = computed(() => {
+const tradeWallet = computed(() => {
   const wallets = mode.value === 'contract' ? marginWallets.value : spotWallets.value
-  return wallets.find((wallet) => wallet.symbol === availableAsset.value)?.available || 0
+  return wallets.find((wallet) => wallet.symbol === availableAsset.value)
 })
+const availableBalance = computed<DecimalText>(() => nonNegative(tradeWallet.value?.availableText) ?? normalizeDecimalText('0'))
+const marginRange = computed(() => bounds(selectedProduct.value))
+const minMargin = computed(() => marginRange.value.minimum)
+const maxMargin = computed(() => marginRange.value.maximum)
+const exactMargin = computed(() => marginRange.value.isExact)
 const amountValue = computed({
-  get: () => {
-    const value = Number(quantity.value) * effectivePrice.value
-    return Number.isFinite(value) && value > 0 ? String(Number(value.toFixed(8))) : ''
-  },
-  set: (value: string) => {
-    const orderAmount = Number(value)
-    quantity.value = Number.isFinite(orderAmount) && orderAmount > 0 && effectivePrice.value > 0
-      ? String(Number((orderAmount / effectivePrice.value).toFixed(8)))
-      : ''
-  },
+  get: () => quoteFromBase(quantity.value, orderPrice.value) ?? '',
+  set: (value: string) => { quantity.value = baseFromQuote(value, orderPrice.value, 18) ?? '' },
 })
+function spotDraft(): Readonly<SpotOrderReviewSnapshot> | null {
+  return createSpotReview({ symbol: pairSymbol.value, side: side.value, orderType: orderType.value,
+    quantity: quantity.value, limitPrice: price.value, marketPrice: tickerPrice.value })
+}
 function createCurrentMarginOrderReview(idempotencyKey?: string): MarginOrderReview {
   return createMarginOrderReview({
     productId: selectedProduct.value?.id || 0,
     side: side.value,
     marginMode: marginMode.value,
     leverage: leverage.value,
-    marginAmount: Number(quantity.value),
+    marginAmount: quantity.value,
     orderType: contractOrderType.value,
     limitPrice: contractLimitPrice.value,
     pricePrecision: selectedProduct.value?.pricePrecision,
     idempotencyKey,
-    minMargin: selectedProduct.value?.minMargin,
-    maxMargin: selectedProduct.value?.maxMargin,
+    minMargin: selectedProduct.value?.minMarginText ?? selectedProduct.value?.minMargin,
+    maxMargin: selectedProduct.value?.maxMarginText ?? selectedProduct.value?.maxMargin,
     referencePrice: currentPrice.value,
+    referencePriceText: tickerPrice.value,
   })
 }
 
 const marginOrderDraft = computed(() => createCurrentMarginOrderReview())
-const contractLimitPriceValidation = computed(() => marginOrderDraft.value.limitPriceValidation)
-const contractSuggestedLimitPrice = computed(() => marginLimitPriceFromBbo({
-  side: side.value,
-  bids: bids.value,
-  asks: asks.value,
-  latestPrice: currentPrice.value,
-}))
-const contractOrderReview = computed(() => reviewedMarginOrder.value || marginOrderDraft.value)
-const contractNotionalValue = computed(() => contractOrderReview.value.estimatedNotional)
-const contractOrderQuantity = computed(() => contractOrderReview.value.estimatedQuantity)
+const limitValidation = computed(() => marginOrderDraft.value.limitPriceValidation)
+const suggestedLimit = computed(() => bboPrice({ side: side.value,
+  bids: bids.value, asks: asks.value, latestPrice: tickerPrice.value }))
+const contractOrderReview = computed(() => marginReview.value || marginOrderDraft.value)
+const contractNotional = computed(() => contractOrderReview.value.estimatedNotionalText)
+const contractQuantity = computed(() => contractOrderReview.value.estimatedQuantityText)
 const contractShortcutAvailable = computed(() => marginShortcutAvailable(
-  availableBalance.value,
-  selectedProduct.value?.maxMargin,
+  exactMargin.value ? availableBalance.value : normalizeDecimalText('0'),
+  exactMargin.value ? maxMargin.value : undefined,
 ))
-const contractBookPrecision = computed(() => {
-  const precision = selectedProduct.value?.pricePrecision
-  if (precision === null || precision === undefined) return '--'
-  if (precision <= 6) return (10 ** -precision).toFixed(precision)
-  return `1e-${precision}`
-})
-const contractInterestSummary = computed(() => {
-  const rate = selectedProduct.value?.hourlyInterestRate
-  if (rate === undefined || !Number.isFinite(rate)) return '-- / --'
-  return `${(rate * 100).toFixed(4)}% / 1h`
-})
-const marginRangeDescription = computed(() => {
-  const product = selectedProduct.value
-  if (!product) return ''
-  const minimum = formatAmount(product.minMargin, 8)
-  if (product.maxMargin === null) {
-    return t('trade.marginRangeWithoutMaximum', { minimum, asset: availableAsset.value })
-  }
-  return t('trade.marginRangeWithMaximum', {
-    minimum,
-    maximum: formatAmount(product.maxMargin, 8),
-    asset: availableAsset.value,
-  })
-})
+const contractBookPrecision = computed(() => priceStep(selectedProduct.value?.pricePrecision))
+const interestText = computed(() => interestLabel(selectedProduct.value))
+const rangeText = computed(() => marginRangeLabel(selectedProduct.value, availableAsset.value))
 const marginAmountError = computed(() => {
   if (mode.value !== 'contract' || !selectedProduct.value || !quantity.value.trim()) return ''
   return marginAmountValidationMessage(marginOrderDraft.value.marginAmountValidation)
@@ -387,13 +393,13 @@ function setFeedback(message: string, tone: 'success' | 'error' = 'error'): void
 function marginAmountValidationMessage(validation: MarginAmountValidation): string {
   if (validation.error === 'below-minimum') {
     return t('trade.marginBelowMinimum', {
-      minimum: formatAmount(validation.minMargin, 8),
+      minimum: moneyText(validation.minMargin, 8),
       asset: availableAsset.value,
     })
   }
   if (validation.error === 'above-maximum' && validation.maxMargin !== null) {
     return t('trade.marginAboveMaximum', {
-      maximum: formatAmount(validation.maxMargin, 8),
+      maximum: moneyText(validation.maxMargin, 8),
       asset: availableAsset.value,
     })
   }
@@ -620,32 +626,11 @@ async function reconcileMarginAccount(
 
 function requestPrivateMarginReconciliation(): void {
   if (
-    !viewMounted
-    || !viewActive
+    !viewActive
     || !session.token
     || mode.value !== 'contract'
   ) return
   void marginAccountReconciliation.refreshBackground({ queueIfBusy: true })
-}
-
-function handlePrivateUserEvent(event: PrivateUserEvent): void {
-  if (![
-    'margin.position.liquidated',
-    'margin.position.partially_closed',
-    'margin.position.closed',
-  ].includes(event.type)) return
-  requestPrivateMarginReconciliation()
-}
-
-function syncPrivateUserStream(): void {
-  privateUserStream.stop()
-  if (
-    !viewMounted
-    || !viewActive
-    || !session.isAuthenticated
-    || mode.value !== 'contract'
-  ) return
-  privateUserStream.start()
 }
 
 function isCurrentTradingBalancesRequest(
@@ -706,32 +691,28 @@ async function loadTradingBalances(): Promise<void> {
 }
 
 function setQuantity(percent: number): void {
-  const normalizedPercent = Number.isFinite(percent)
-    ? Math.min(100, Math.max(0, percent))
+  const normalizedPercent = Number.isSafeInteger(percent) && percent >= 0 && percent <= 100
+    ? percent
     : 0
   percentage.value = normalizedPercent
-  if (!session.isAuthenticated) {
-    openLogin()
-    return
-  }
-  const nextQuantity = quantityForBalancePercentage({
+  if (!session.isAuthenticated) { openLogin(); return }
+  if (mode.value === 'contract' && !exactMargin.value) { quantity.value = ''; return }
+  const nextQuantity = portion({
     available: availableBalance.value,
-    maximum: mode.value === 'contract' ? selectedProduct.value?.maxMargin : null,
+    maximum: mode.value === 'contract'
+      ? selectedProduct.value?.maxMarginText ?? selectedProduct.value?.maxMargin
+      : null,
     mode: mode.value,
-    percentage: normalizedPercent / 100,
-    price: effectivePrice.value,
+    percentagePoints: normalizedPercent,
+    price: orderPrice.value,
     side: side.value,
   })
-  const roundedQuantity = Number(nextQuantity.toFixed(8))
-  const safeQuantity = mode.value === 'contract'
-    ? clampMarginShortcutAmount(roundedQuantity, availableBalance.value, selectedProduct.value?.maxMargin)
-    : roundedQuantity
-  quantity.value = safeQuantity > 0 ? String(safeQuantity) : ''
+  quantity.value = nextQuantity === '0' ? '' : nextQuantity
 }
 
 function setContractPercentageFromSlider(event: Event): void {
-  const value = Number((event.currentTarget as HTMLInputElement | null)?.value)
-  if (!Number.isFinite(value)) return
+  const value = pointFrom((event.currentTarget as HTMLInputElement | null)?.value)
+  if (value === null) return
   setQuantity(value)
 }
 
@@ -802,8 +783,8 @@ function selectContractOrderType(nextOrderType: MarginOrderType): void {
 
 function fillContractLimitPrice(): void {
   if (contractOrderType.value !== 'limit') return
-  const nextPrice = contractSuggestedLimitPrice.value
-  if (nextPrice !== null) contractLimitPrice.value = String(nextPrice)
+  const nextPrice = suggestedLimit.value
+  if (nextPrice !== null) contractLimitPrice.value = nextPrice
 }
 
 function closeContractSheet(): void {
@@ -1024,17 +1005,19 @@ const marginCloseRisk = computed(() => marginClosePosition.value
   : undefined)
 const marginCloseMarkPrice = computed(() => {
   const riskPrice = marginCloseRisk.value?.markPrice
-  if (Number.isFinite(riskPrice) && Number(riskPrice) > 0) return Number(riskPrice)
+  if (typeof riskPrice === 'number' && Number.isFinite(riskPrice) && riskPrice > 0) return riskPrice
   const marketPrice = marketStore.tickerFor(marginCloseSymbol.value)?.lastPrice
-  return Number.isFinite(marketPrice) && Number(marketPrice) > 0 ? Number(marketPrice) : null
+  return typeof marketPrice === 'number' && Number.isFinite(marketPrice) && marketPrice > 0
+    ? marketPrice
+    : null
 })
 const marginCloseQuantity = computed(() => {
   const value = marginCloseRisk.value?.positionQuantity
-  return Number.isFinite(value) && Number(value) >= 0 ? Number(value) : null
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 })
 const marginCloseEstimatedPnl = computed(() => {
   const value = marginCloseRisk.value?.unrealizedPnl
-  return Number.isFinite(value) ? Number(value) : null
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 })
 
 function resolvePositionRiskDisplayMetrics(position: MarginPosition): MarginPositionRiskMetrics {
@@ -1074,13 +1057,13 @@ function estimatedLiquidationPriceDisplay(position: MarginPosition): string {
       metrics.crossAccountEstimateState === 'estimated'
       && metrics.estimatedLiquidationPrice !== null
     ) {
-      return formatPrice(metrics.estimatedLiquidationPrice)
+      return moneyText(metrics.estimatedLiquidationPrice)
     }
     return t('trade.noStableSingleLiquidationPrice')
   }
   return metrics.estimatedLiquidationPrice === null
     ? '--'
-    : formatPrice(metrics.estimatedLiquidationPrice)
+    : moneyText(metrics.estimatedLiquidationPrice)
 }
 
 function estimatedLiquidationPriceLabel(position: MarginPosition): string {
@@ -1109,7 +1092,7 @@ function crossAccountRiskAssumptionId(position: MarginPosition): string {
 function formatRate(value: number | null | undefined, digits = 2): string {
   return value === null || value === undefined || !Number.isFinite(value)
     ? '--'
-    : `${(value * 100).toFixed(digits)}%`
+    : `${rateText(value, digits)}%`
 }
 
 function liquidationDistanceWidth(position: MarginPosition): string {
@@ -1342,7 +1325,6 @@ async function applyContractMarginMode(nextMode: 'cross' | 'isolated'): Promise<
 
 function reviewOrder(event?: Event): void {
   feedback.value = ''
-  const orderAmount = Number(quantity.value)
   if (spotOrderTypeOpen.value) return
   if (!session.isAuthenticated) {
     openLogin()
@@ -1356,6 +1338,10 @@ function reviewOrder(event?: Event): void {
     setFeedback(t('trade.unavailableContract'))
     return
   }
+  if (mode.value === 'contract' && !exactMargin.value) {
+    setFeedback(t('trade.invalidOrder'))
+    return
+  }
   if (mode.value === 'contract' && !marginOrderDraft.value.marginAmountValidation.isValid) {
     setFeedback(marginAmountValidationMessage(marginOrderDraft.value.marginAmountValidation))
     return
@@ -1367,20 +1353,27 @@ function reviewOrder(event?: Event): void {
   if (
     mode.value === 'contract'
     && contractOrderType.value === 'limit'
-    && !contractLimitPriceValidation.value.isValid
+    && !limitValidation.value.isValid
   ) {
-    setFeedback(marginLimitPriceValidationMessage(contractLimitPriceValidation.value))
+    setFeedback(marginLimitPriceValidationMessage(limitValidation.value))
     return
   }
-  if (!Number.isFinite(orderAmount) || orderAmount <= 0 || !Number.isFinite(effectivePrice.value) || effectivePrice.value <= 0) {
+  const spot = mode.value === 'spot' ? spotDraft() : null
+  const marginSnapshot = mode.value === 'contract'
+    ? createCurrentMarginOrderReview(createMarginOrderIdempotencyKey())
+    : null
+  if (
+    !orderPrice.value
+    || (mode.value === 'spot' && !spot)
+    || (mode.value === 'contract' && (!marginSnapshot || !marginSnapshot.isValid))
+  ) {
     setFeedback(t('trade.invalidOrder'))
     return
   }
   const trigger = event?.currentTarget
   setConfirmReturnFocus(trigger instanceof HTMLElement ? trigger : reviewButton.value)
-  reviewedMarginOrder.value = mode.value === 'contract'
-    ? createCurrentMarginOrderReview(createMarginOrderIdempotencyKey())
-    : null
+  spotReview.value = spot
+  marginReview.value = marginSnapshot
   confirmOpen.value = true
 }
 
@@ -1392,43 +1385,46 @@ function reviewContractOrder(nextSide: 'buy' | 'sell', event?: Event): void {
 function closeConfirm(): void {
   if (submitting.value) return
   confirmOpen.value = false
-  reviewedMarginOrder.value = null
+  spotReview.value = null
+  marginReview.value = null
 }
 
 async function submitOrder(): Promise<void> {
   if (submitting.value) return
   feedback.value = ''
-  const submittedMode = mode.value
-  const review = submittedMode === 'contract' ? reviewedMarginOrder.value : null
-  const orderAmount = review?.request.marginAmount ?? Number(quantity.value)
-  const submittedOrderType = orderType.value
-  const limitPrice = effectivePrice.value
+  const spot = spotReview.value
+  const review = marginReview.value
+  const submittedMode = review ? 'contract' : spot ? 'spot' : mode.value
   if (!session.isAuthenticated) {
     openLogin()
     return
   }
 
   if (submittedMode === 'spot') {
-    if (!isLive.value) {
+    if (!isLive.value || !spot) {
       setFeedback(t('trade.marketUnavailable'))
-      return
-    }
-    if (!Number.isFinite(orderAmount) || orderAmount <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
-      setFeedback(t('trade.invalidOrder'))
       return
     }
   }
 
   if (submittedMode === 'contract') {
     const product = selectedProduct.value
-    if (!review || !product || review.request.productId !== product.id) {
+    const minimum = minMargin.value
+    const maximum = maxMargin.value
+    if (
+      !review
+      || !product
+      || review.request.productId !== product.id
+      || !minimum
+      || maximum === undefined
+    ) {
       setFeedback(t('trade.unavailableContract'))
       return
     }
     const requestMarginValidation = validateMarginAmount({
       amount: review.request.marginAmount,
-      minMargin: product.minMargin,
-      maxMargin: product.maxMargin,
+      minMargin: product.minMarginText ?? product.minMargin,
+      maxMargin: product.maxMarginText ?? product.maxMargin,
     })
     if (!requestMarginValidation.isValid) {
       setFeedback(marginAmountValidationMessage(requestMarginValidation))
@@ -1443,22 +1439,31 @@ async function submitOrder(): Promise<void> {
   submitting.value = true
   try {
     if (submittedMode === 'spot') {
+      if (!spot) throw new TypeError('missing spot order review')
       await placeSpotOrder({
-        symbol: pairSymbol.value,
-        side: side.value,
-        type: submittedOrderType,
-        price: limitPrice,
-        quantity: orderAmount,
+        symbol: spot.symbol,
+        side: spot.side,
+        type: spot.orderType,
+        price: spot.price,
+        quantity: spot.quantity,
       })
     } else {
-      if (!review) return
-      await placeMarginOrder(review.request)
+      if (!review || !review.marginAmountText) return
+      if (review.request.orderType === 'limit' && !review.request.price) {
+        throw new TypeError('invalid margin order decimal')
+      }
+      await placeMarginOrder({
+        ...review.request,
+        marginAmount: review.marginAmountText,
+        price: review.request.price,
+      })
     }
     setFeedback(t('trade.orderSubmitted'), 'success')
     quantity.value = ''
     percentage.value = 0
     confirmOpen.value = false
-    reviewedMarginOrder.value = null
+    spotReview.value = null
+    marginReview.value = null
     await loadTradingBalances()
   } catch (reason) {
     setFeedback(submittedMode === 'contract'
@@ -1482,10 +1487,8 @@ function handleTradeVisibilityChange(): void {
 }
 
 onMounted(async () => {
-  viewMounted = true
   document.addEventListener('visibilitychange', handleTradeVisibilityChange)
   marginAccountReconciliation.startPolling()
-  syncPrivateUserStream()
   await marketStore.refresh()
   if (viewActive) marketStore.startLiveUpdates('trade')
 })
@@ -1537,7 +1540,6 @@ watch(() => selectedProduct.value?.id ?? null, async (productId, previousProduct
 
 watch(() => [mode.value, session.token] as const, (nextContext, previousContext) => {
   marginAccountReconciliation.invalidate()
-  syncPrivateUserStream()
   if (nextContext[1] !== (previousContext?.[1] ?? '')) {
     spotWallets.value = []
     marginWallets.value = []
@@ -1554,13 +1556,13 @@ watch(marginClosePosition, (position) => {
   marginCloseError.value = ''
 })
 
-watch(currentPrice, (value) => {
-  if (!price.value && value > 0) price.value = String(value)
+watch(tickerPrice, (value) => {
+  if (!price.value && value) price.value = value
   if (
     mode.value === 'contract'
     && contractOrderType.value === 'limit'
     && !contractLimitPrice.value.trim()
-    && value > 0
+    && value
   ) {
     fillContractLimitPrice()
   }
@@ -1573,13 +1575,11 @@ watch(submitting, async (busy) => {
 })
 
 onBeforeUnmount(() => {
-  viewMounted = false
   viewActive = false
   marginProductsRequestVersion += 1
   marginSettingRequestVersion += 1
   tradingBalancesRequestVersion += 1
   document.removeEventListener('visibilitychange', handleTradeVisibilityChange)
-  privateUserStream.stop()
   marginAccountReconciliation.stop()
   marketStore.stopLiveUpdates('trade')
   detailStreamSession.stop()
@@ -1606,7 +1606,7 @@ onBeforeUnmount(() => {
               class="numeric"
               :class="(ticker?.changePercent || 0) >= 0 ? 'positive' : 'negative'"
             >
-              {{ ticker ? `${ticker.changePercent >= 0 ? '+' : ''}${ticker.changePercent.toFixed(2)}%` : '--' }}
+              {{ ticker ? changeText(ticker.changePercent) : '--' }}
             </small>
           </span>
           <ChevronDown :size="18" aria-hidden="true" />
@@ -1718,7 +1718,7 @@ onBeforeUnmount(() => {
               {{ t('common.retry') }}
             </button>
             <strong v-else class="numeric">
-              {{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}
+              {{ balancesLoading ? t('trade.loadBalance') : `${moneyText(availableBalance)} ${availableAsset}` }}
               <CirclePlus :size="14" aria-hidden="true" />
             </strong>
           </div>
@@ -1795,8 +1795,8 @@ onBeforeUnmount(() => {
           <div v-else-if="session.isAuthenticated && spotVisibleBalances.length" class="spot-balance-preview">
             <article v-for="wallet in spotVisibleBalances" :key="wallet.symbol">
               <span>{{ wallet.symbol }}</span>
-              <strong class="numeric">{{ formatAmount(wallet.available) }}</strong>
-              <small>{{ t('assets.frozen', { amount: formatAmount(wallet.frozen + wallet.locked) }) }}</small>
+              <strong class="numeric">{{ moneyText(walletAmount(wallet, 'available')) }}</strong>
+              <small>{{ t('assets.frozen', { amount: moneyText(frozenAmount(wallet)) }) }}</small>
             </article>
           </div>
           <div v-else class="spot-account-state">
@@ -1906,9 +1906,9 @@ onBeforeUnmount(() => {
           <div v-if="trades.length" class="spot-recent-trades__rows">
             <div v-for="trade in trades.slice(0, 8)" :key="trade.id" class="spot-recent-trades__row">
               <strong class="numeric" :class="trade.side === 'buy' ? 'positive' : 'negative'">
-                {{ formatPrice(trade.price) }}
+                {{ moneyText(trade.price) }}
               </strong>
-              <span class="numeric">{{ formatAmount(trade.quantity) }}</span>
+              <span class="numeric">{{ moneyText(trade.quantity) }}</span>
               <time class="numeric" :datetime="new Date(trade.time).toISOString()">{{ formatTradeTime(trade.time) }}</time>
             </div>
           </div>
@@ -1954,8 +1954,8 @@ onBeforeUnmount(() => {
                   <ChevronDown :size="14" aria-hidden="true" />
                 </span>
                 <small class="contract-pair-market numeric" :class="(ticker?.changePercent || 0) >= 0 ? 'positive' : 'negative'">
-                  {{ ticker ? formatPrice(currentPrice) : '--' }} ·
-                  {{ ticker ? `${ticker.changePercent >= 0 ? '+' : ''}${ticker.changePercent.toFixed(2)}%` : '--' }}
+                  {{ tickerPrice ? moneyText(tickerPrice) : '--' }} ·
+                  {{ ticker ? changeText(ticker.changePercent) : '--' }}
                 </small>
               </span>
             </button>
@@ -2010,8 +2010,8 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <p class="sr-only">
-            {{ t('marketDetail.high24h') }} {{ ticker ? formatPrice(ticker.highPrice) : t('common.marketUnavailable') }} ·
-            {{ t('marketDetail.low24h') }} {{ ticker ? formatPrice(ticker.lowPrice) : t('common.marketUnavailable') }}
+            {{ t('marketDetail.high24h') }} {{ ticker ? moneyText(ticker.highPrice) : t('common.marketUnavailable') }} ·
+            {{ t('marketDetail.low24h') }} {{ ticker ? moneyText(ticker.lowPrice) : t('common.marketUnavailable') }}
           </p>
         </header>
 
@@ -2025,7 +2025,7 @@ onBeforeUnmount(() => {
           <div class="chart-panel trade-chart-panel">
             <div class="contract-book-status">
               <span>{{ t('trade.hourlyInterestAndCycle') }}</span>
-              <strong class="numeric">{{ contractInterestSummary }}</strong>
+              <strong class="numeric">{{ interestText }}</strong>
             </div>
             <div class="trade-order-book">
               <OrderBookPanel
@@ -2044,7 +2044,7 @@ onBeforeUnmount(() => {
               />
             </div>
             <p class="chart-semantic-summary">
-              {{ pairSymbol }} · {{ ticker ? formatPrice(currentPrice) : t('common.marketUnavailable') }}
+              {{ pairSymbol }} · {{ tickerPrice ? moneyText(tickerPrice) : t('common.marketUnavailable') }}
             </p>
           </div>
 
@@ -2100,22 +2100,22 @@ onBeforeUnmount(() => {
               aria-haspopup="dialog"
               :aria-expanded="contractSheet === 'orderType'"
               aria-controls="contract-orderType-dialog"
-              :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: contractOrderTypeLabel })"
+              :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: orderTypeText })"
               :disabled="settingsSaving || productsLoading || !selectedProduct?.orderTypes.length"
               @click="openContractSheet('orderType')"
             >
-              <span>{{ contractOrderTypeLabel }}</span>
+              <span>{{ orderTypeText }}</span>
               <ChevronDown :size="11" aria-hidden="true" />
             </button>
 
             <div class="contract-price-row">
               <label
                 class="contract-field contract-price-field"
-                :class="{ 'is-invalid': contractOrderType === 'limit' && !contractLimitPriceValidation.isValid }"
+                :class="{ 'is-invalid': contractOrderType === 'limit' && !limitValidation.isValid }"
               >
                 <span>{{ t('trade.priceField', { asset: quoteAsset }) }}</span>
                 <input
-                  v-model="contractPriceValue"
+                  v-model="contractPrice"
                   class="numeric"
                   :placeholder="contractOrderType === 'limit' ? t('trade.pricePlaceholder') : t('trade.marketPrice')"
                   autocomplete="off"
@@ -2123,27 +2123,27 @@ onBeforeUnmount(() => {
                   inputmode="decimal"
                   :spellcheck="false"
                   :readonly="contractOrderType !== 'limit'"
-                  :aria-invalid="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid ? 'true' : 'false'"
-                  :aria-errormessage="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid ? 'contract-limit-price-error' : undefined"
+                  :aria-invalid="contractOrderType === 'limit' && !limitValidation.isValid ? 'true' : 'false'"
+                  :aria-errormessage="contractOrderType === 'limit' && !limitValidation.isValid ? 'contract-limit-price-error' : undefined"
                   @input="clearPercentageSelection"
                 />
               </label>
               <button
                 type="button"
                 :aria-label="t('marketDetail.latestPrice')"
-                :disabled="contractOrderType !== 'limit' || contractSuggestedLimitPrice === null"
+                :disabled="contractOrderType !== 'limit' || suggestedLimit === null"
                 @click="fillContractLimitPrice"
               >
                 {{ t('trade.bestBidOffer') }}
               </button>
             </div>
             <p
-              v-if="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid"
+              v-if="contractOrderType === 'limit' && !limitValidation.isValid"
               id="contract-limit-price-error"
               class="contract-limit-price-error sr-only"
               role="alert"
             >
-              {{ marginLimitPriceValidationMessage(contractLimitPriceValidation) }}
+              {{ marginLimitPriceValidationMessage(limitValidation) }}
             </p>
 
             <label
@@ -2160,7 +2160,7 @@ onBeforeUnmount(() => {
                 inputmode="decimal"
                 placeholder="0"
                 :spellcheck="false"
-                :aria-describedby="marginRangeDescription ? 'contract-margin-range' : undefined"
+                :aria-describedby="rangeText ? 'contract-margin-range' : undefined"
                 :aria-errormessage="marginAmountError ? 'contract-margin-error' : undefined"
                 :aria-invalid="marginAmountError ? 'true' : 'false'"
                 @input="clearPercentageSelection"
@@ -2168,8 +2168,8 @@ onBeforeUnmount(() => {
               <b>{{ availableAsset }}</b>
             </label>
 
-            <div v-if="marginRangeDescription" class="contract-margin-guidance sr-only">
-              <p id="contract-margin-range">{{ marginRangeDescription }}</p>
+            <div v-if="rangeText" class="contract-margin-guidance sr-only">
+              <p id="contract-margin-range">{{ rangeText }}</p>
               <p
                 v-if="marginAmountError"
                 id="contract-margin-error"
@@ -2224,7 +2224,7 @@ onBeforeUnmount(() => {
                 {{ t('common.retry') }}
               </button>
               <button v-else class="numeric" type="button" :disabled="balancesLoading" @click="openAssets">
-                {{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}
+                {{ balancesLoading ? t('trade.loadBalance') : `${moneyText(availableBalance)} ${availableAsset}` }}
                 <CirclePlus v-if="!balancesLoading" :size="11" aria-hidden="true" />
               </button>
             </div>
@@ -2236,8 +2236,8 @@ onBeforeUnmount(() => {
             </div>
 
             <dl class="contract-open-meta contract-open-meta--long">
-              <div><dt>{{ t('trade.openLongAvailable') }}</dt><dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd></div>
-              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(Number(quantity) || 0) }} {{ availableAsset }}</dd></div>
+              <div><dt>{{ t('trade.openLongAvailable') }}</dt><dd class="numeric">{{ moneyText(contractQuantity) }} {{ baseAsset }}</dd></div>
+              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(quantity, 18, '0') }} {{ availableAsset }}</dd></div>
             </dl>
 
             <p
@@ -2253,19 +2253,19 @@ onBeforeUnmount(() => {
               ref="reviewButton"
               class="contract-submit contract-submit--long submit-order"
               type="button"
-              :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
+              :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !limitValidation.isValid)))"
               @click="reviewContractOrder('buy', $event)"
             >
               {{ t('trade.longActionCompact', { leverage: longLeverage }) }}
             </button>
             <dl class="contract-open-meta contract-open-meta--short">
-              <div><dt>{{ t('trade.openShortAvailable') }}</dt><dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd></div>
-              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(Number(quantity) || 0) }} {{ availableAsset }}</dd></div>
+              <div><dt>{{ t('trade.openShortAvailable') }}</dt><dd class="numeric">{{ moneyText(contractQuantity) }} {{ baseAsset }}</dd></div>
+              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(quantity, 18, '0') }} {{ availableAsset }}</dd></div>
             </dl>
             <button
               class="contract-submit contract-submit--short"
               type="button"
-              :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
+              :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !limitValidation.isValid)))"
               @click="reviewContractOrder('sell', $event)"
             >
               {{ t('trade.shortActionCompact', { leverage: shortLeverage }) }}
@@ -2371,19 +2371,19 @@ onBeforeUnmount(() => {
                     <span class="contract-position-badge numeric">{{ position.leverage }}x</span>
                   </div>
                 </div>
-                <div class="contract-position-pnl" :class="(riskForPosition(position)?.unrealizedPnl || 0) >= 0 ? 'positive' : 'negative'">
+                <div class="contract-position-pnl" :class="nonNegative(riskForPosition(position)?.unrealizedPnl ?? 0) !== null ? 'positive' : 'negative'">
                   <small>{{ t('trade.unrealizedPnl') }}</small>
-                  <strong class="numeric">{{ riskForPosition(position) ? formatAmount(riskForPosition(position)!.unrealizedPnl) : '--' }}</strong>
+                  <strong class="numeric">{{ riskForPosition(position) ? moneyText(riskForPosition(position)!.unrealizedPnl) : '--' }}</strong>
                   <span class="numeric">{{ formatRate(riskForPosition(position)?.returnRate) }}</span>
                 </div>
               </header>
 
               <dl class="contract-position-metrics">
-                <div><dt>{{ t('common.quantity') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatAmount(riskForPosition(position)!.positionQuantity) : '--' }}</dd></div>
-                <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(position.marginAmount) }}</dd></div>
+                <div><dt>{{ t('common.quantity') }}</dt><dd class="numeric">{{ riskForPosition(position) ? moneyText(riskForPosition(position)!.positionQuantity) : '--' }}</dd></div>
+                <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(position.marginAmount) }}</dd></div>
                 <div><dt>{{ t('trade.maintenanceMarginRate') }}</dt><dd class="numeric">{{ formatRate(positionRiskDisplayMetrics(position).maintenanceMarginRate) }}</dd></div>
-                <div><dt>{{ t('orders.entryPrice') }}</dt><dd class="numeric">{{ position.entryPrice ? formatPrice(position.entryPrice) : '--' }}</dd></div>
-                <div><dt>{{ t('trade.markPrice') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatPrice(riskForPosition(position)!.markPrice) : '--' }}</dd></div>
+                <div><dt>{{ t('orders.entryPrice') }}</dt><dd class="numeric">{{ position.entryPrice ? moneyText(position.entryPrice) : '--' }}</dd></div>
+                <div><dt>{{ t('trade.markPrice') }}</dt><dd class="numeric">{{ riskForPosition(position) ? moneyText(riskForPosition(position)!.markPrice) : '--' }}</dd></div>
                 <div :aria-describedby="hasCrossAccountRiskSnapshot(position) ? crossAccountRiskAssumptionId(position) : undefined">
                   <dt>{{ estimatedLiquidationPriceLabel(position) }}</dt>
                   <dd class="numeric" :title="estimatedLiquidationPriceDisplay(position)">{{ estimatedLiquidationPriceDisplay(position) }}</dd>
@@ -2451,8 +2451,8 @@ onBeforeUnmount(() => {
                 </span>
               </div>
               <dl>
-                <div><dt>{{ t('trade.marginLimitPrice') }}</dt><dd class="numeric">{{ position.limitPrice || '--' }}</dd></div>
-                <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(position.marginAmount) }} {{ productForPosition(position)?.marginAssetSymbol || availableAsset }}</dd></div>
+                <div><dt>{{ t('trade.marginLimitPrice') }}</dt><dd class="numeric">{{ moneyText(position.limitPrice) }}</dd></div>
+                <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(position.marginAmount) }} {{ productForPosition(position)?.marginAssetSymbol || availableAsset }}</dd></div>
               </dl>
               <button
                 type="button"
@@ -2486,9 +2486,9 @@ onBeforeUnmount(() => {
       :long-leverage="longLeverage"
       :short-leverage="shortLeverage"
       :margin-mode="marginMode"
-      :available-balance="availableBalance"
-      :reference-price="currentPrice"
-      :margin-amount="Number(quantity) || 0"
+      :available-balance="legacyNumber(availableBalance)"
+      :reference-price="legacyNumber(tickerPrice)"
+      :margin-amount="legacyNumber(quantity)"
       :order-type="contractOrderType"
       :saving="settingsSaving"
       :error="settingsError"
@@ -2620,13 +2620,13 @@ onBeforeUnmount(() => {
             <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
             <div><span>{{ t('common.confirm') }}</span><h2>{{ orderButtonLabel }}</h2></div>
           </header>
-          <p>{{ pairSymbol }} · {{ formatAmount(Number(quantity || 0)) }} {{ baseAsset }}</p>
+          <p>{{ spotReview?.symbol }} · {{ moneyText(spotReview?.quantity) }} {{ spotReview?.baseAsset }}</p>
           <div class="confirmation-detail">
-            <span>{{ t('common.price') }} {{ formatPrice(effectivePrice) }} {{ quoteAsset }}</span>
+            <span>{{ t('common.price') }} {{ moneyText(spotReview?.price) }} {{ spotReview?.quoteAsset }}</span>
             <span>
               {{ t('common.amount') }}
-              {{ formatAmount(Number(amountValue) || 0) }}
-              {{ quoteAsset }}
+              {{ moneyText(spotReview?.quoteAmount) }}
+              {{ spotReview?.quoteAsset }}
             </span>
           </div>
           <div class="confirmation-actions">
@@ -2699,7 +2699,7 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="contractOrderReview.request.orderType === 'limit'">
                 <dt>{{ t('trade.marginLimitPrice') }}</dt>
-                <dd class="numeric">{{ formatPrice(Number(contractOrderReview.request.price || 0)) }} {{ quoteAsset }}</dd>
+                <dd class="numeric">{{ moneyText(contractOrderReview.request.price) }} {{ quoteAsset }}</dd>
               </div>
               <div>
                 <dt>{{ t('rootPrototype.marginMode') }}</dt>
@@ -2711,19 +2711,19 @@ onBeforeUnmount(() => {
               </div>
               <div>
                 <dt>{{ t('trade.contractReferencePrice') }}</dt>
-                <dd class="numeric">{{ formatPrice(contractOrderReview.referencePrice) }} {{ quoteAsset }}</dd>
+                <dd class="numeric">{{ moneyText(contractOrderReview.referencePriceText) }} {{ quoteAsset }}</dd>
               </div>
               <div>
                 <dt>{{ t('trade.contractMarginCommitted') }}</dt>
-                <dd class="numeric">{{ formatAmount(contractOrderReview.request.marginAmount) }} {{ availableAsset }}</dd>
+                <dd class="numeric">{{ moneyText(contractOrderReview.request.marginAmount) }} {{ availableAsset }}</dd>
               </div>
               <div>
                 <dt>{{ t('rootPrototype.estimatedNotional') }}</dt>
-                <dd class="numeric">{{ formatAmount(contractNotionalValue) }} {{ availableAsset }}</dd>
+                <dd class="numeric">{{ moneyText(contractNotional) }} {{ availableAsset }}</dd>
               </div>
               <div>
                 <dt>{{ t('trade.contractEstimatedQuantity') }}</dt>
-                <dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd>
+                <dd class="numeric">{{ moneyText(contractQuantity) }} {{ baseAsset }}</dd>
               </div>
             </dl>
 

@@ -15,7 +15,7 @@ const sharedPrototypeCss = [
 
 test('资产页保留真实钱包、行情、资金划转与资金路由合同', () => {
   assert.match(assetsSource, /Promise\.all\(\[[\s\S]*marketStore\.refresh\(\),[\s\S]*fetchWalletAccounts\(\),[\s\S]*fetchMarginWallets\(\),[\s\S]*\]\)/)
-  assert.match(assetsSource, /await transferWalletFunds\(transferAsset\.value, transferFrom\.value, to, transferValue\)/)
+  assert.match(assetsSource, /const requestAmount = transferValueText\.value[\s\S]*await transferWalletFunds\(transferAsset\.value,\s*transferFrom\.value,\s*to,\s*requestAmount\)/)
   assert.match(assetsSource, /const accountsReady = ref\(false\)/)
   assert.match(assetsSource, /const holdingRows = computed<AssetHoldingRow\[\]>/)
   assert.match(assetsSource, /const memberState = computed<'loading' \| 'error' \| 'empty' \| 'holdings'>/)

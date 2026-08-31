@@ -5,20 +5,31 @@ import {
   type MarginLimitPriceValidation,
 } from './tradeForm.ts'
 import type { MarginOrderType } from './types.ts'
+import {
+  decimalDivide,
+  decimalMultiply,
+  decimalTextFromBoundary,
+  decimalTextFromFiniteNumber,
+  normalizeDecimalText,
+  positiveDecimalInput,
+  type DecimalBoundary,
+  type DecimalText,
+} from './decimal.ts'
 
 export interface MarginOrderReviewInput {
   productId: number
   side: 'buy' | 'sell'
   marginMode: 'cross' | 'isolated'
   leverage: number
-  marginAmount: number
+  marginAmount: string
   orderType: MarginOrderType | null
   limitPrice: string
   pricePrecision?: number | null
   idempotencyKey?: string
-  minMargin?: number
-  maxMargin?: number | null
+  minMargin?: DecimalBoundary
+  maxMargin?: DecimalBoundary
   referencePrice: number
+  referencePriceText?: DecimalBoundary
 }
 
 export interface MarginOrderRequest {
@@ -26,81 +37,88 @@ export interface MarginOrderRequest {
   side: 'long' | 'short'
   marginMode: 'cross' | 'isolated'
   leverage: number
-  marginAmount: number
+  marginAmount: DecimalText
   orderType: MarginOrderType
-  price?: string
+  price?: DecimalText
   idempotencyKey?: string
 }
 
 export interface MarginOrderReview {
   isValid: boolean
   referencePrice: number
+  referencePriceText: DecimalText | null
   estimatedNotional: number
+  estimatedNotionalText: DecimalText
   estimatedQuantity: number
+  estimatedQuantityText: DecimalText
   marginAmountValidation: MarginAmountValidation
   limitPriceValidation: MarginLimitPriceValidation
   request: MarginOrderRequest
+  marginAmountText: DecimalText | null
 }
 
 export type MarginOrderBackendBoundaryError = 'below-minimum' | 'above-maximum'
 
-/**
- * Builds the contract review and API input from one set of current form values.
- * The reference ticker, limit intent and idempotency key are copied into one immutable review.
- * A limit price is only a trigger boundary; estimated quantity still uses the frozen live reference.
- */
+/** Freezes exact money text and derives review estimates without using IEEE-754 money math. */
 export function createMarginOrderReview(input: MarginOrderReviewInput): MarginOrderReview {
+  const marginAmountText = positiveDecimalInput(input.marginAmount)
   const marginAmountValidation = validateMarginAmount({
     amount: input.marginAmount,
-    minMargin: input.minMargin ?? 0,
+    minMargin: input.minMargin,
     maxMargin: input.maxMargin,
   })
   const limitPriceValidation = validateMarginLimitPrice({
     price: input.limitPrice,
     pricePrecision: input.pricePrecision,
   })
-  const rawEstimatedNotional = Number.isFinite(input.marginAmount)
-    && input.marginAmount > 0
-    && Number.isFinite(input.leverage)
-    && input.leverage > 0
-    ? input.marginAmount * input.leverage
-    : 0
-  const estimatedNotional = Number.isFinite(rawEstimatedNotional) ? rawEstimatedNotional : 0
-  const rawEstimatedQuantity = estimatedNotional > 0
-    && Number.isFinite(input.referencePrice)
-    && input.referencePrice > 0
-    ? estimatedNotional / input.referencePrice
-    : 0
-  const estimatedQuantity = Number.isFinite(rawEstimatedQuantity) ? rawEstimatedQuantity : 0
+  const referencePriceText = decimalTextFromBoundary(
+    input.referencePriceText ?? input.referencePrice,
+    { allowNegative: false, allowZero: false },
+  )
+  const leverageText = Number.isFinite(input.leverage) && input.leverage > 0
+    ? decimalTextFromFiniteNumber(input.leverage)
+    : null
+  const estimatedNotionalText = marginAmountText && leverageText
+    ? decimalMultiply(marginAmountText, leverageText)
+    : normalizeDecimalText('0')
+  const estimatedQuantityText = referencePriceText && estimatedNotionalText !== '0'
+    ? decimalDivide(estimatedNotionalText, referencePriceText, 18)
+    : normalizeDecimalText('0')
   const request: MarginOrderRequest = {
     productId: input.productId,
     side: input.side === 'buy' ? 'long' : 'short',
     marginMode: input.marginMode,
     leverage: input.leverage,
-    marginAmount: input.marginAmount,
+    marginAmount: marginAmountText || normalizeDecimalText('0'),
     orderType: input.orderType || 'market',
     ...(input.orderType === 'limit' && limitPriceValidation.normalized
       ? { price: limitPriceValidation.normalized }
       : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   }
+  const estimatedNotional = displayNumber(estimatedNotionalText)
+  const estimatedQuantity = displayNumber(estimatedQuantityText)
 
   return {
     isValid: Number.isFinite(input.productId)
       && input.productId > 0
+      && marginAmountText !== null
       && input.orderType !== null
       && marginAmountValidation.isValid
       && (input.orderType !== 'limit' || limitPriceValidation.isValid)
-      && Number.isFinite(input.referencePrice)
-      && input.referencePrice > 0
-      && estimatedNotional > 0
-      && estimatedQuantity > 0,
+      && referencePriceText !== null
+      && estimatedNotionalText !== '0'
+      && estimatedQuantityText !== '0',
     referencePrice: input.referencePrice,
+    referencePriceText,
     estimatedNotional,
+    estimatedNotionalText,
     estimatedQuantity,
+    estimatedQuantityText,
     marginAmountValidation,
     limitPriceValidation,
     request,
+    marginAmountText,
   }
 }
 
@@ -112,4 +130,9 @@ export function classifyMarginOrderBackendBoundaryError(
   if (normalized.includes('margin amount is below product minimum')) return 'below-minimum'
   if (normalized.includes('margin amount exceeds product maximum')) return 'above-maximum'
   return null
+}
+
+function displayNumber(value: DecimalText): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
 }

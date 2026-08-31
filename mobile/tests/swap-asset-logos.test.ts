@@ -65,6 +65,8 @@ test('闪兑交易对适配器执行双方可空 Logo 与 symbol 边界归一化
     toAssetLogoUrl: undefined,
     minAmount: 0.001,
     maxAmount: undefined,
+    minAmountText: '0.001',
+    maxAmountText: undefined,
     feeRate: 0.002,
     enabled: true,
   })
@@ -140,6 +142,8 @@ test('单条后端闪兑配置投影为双向选择，并为反向使用目标�
     toAssetLogoUrl: 'https://cdn.example.test/usdt.png',
     minAmount: 0.001,
     maxAmount: 2,
+    minAmountText: '0.001',
+    maxAmountText: '2',
     feeRate: 0.002,
     enabled: true,
   })
@@ -153,6 +157,8 @@ test('单条后端闪兑配置投影为双向选择，并为反向使用目标�
     toAssetLogoUrl: 'https://cdn.example.test/btc.png',
     minAmount: 10,
     maxAmount: 5000,
+    minAmountText: '10',
+    maxAmountText: '5000',
     feeRate: 0.002,
     enabled: true,
   })
@@ -342,5 +348,5 @@ test('闪兑调换按钮使用方向选择键并清理旧报价反馈', () => {
   assert.match(swapSource, /function swapDirection\(\): void \{[\s\S]*?resolveReverseSwapPair\(pairs\.value, pair\)[\s\S]*?pairSelectionKey\.value = swapPairSelectionKey\(reversed\)[\s\S]*?quote\.value = null[\s\S]*?error\.value = ''[\s\S]*?success\.value = ''/)
   assert.match(swapSource, /@click="swapDirection"/)
   assert.doesNotMatch(swapSource, /const pairId = ref/)
-  assert.match(swapApiSource, /from_asset_id: pair\.fromAssetId,[\s\S]*?to_asset_id: pair\.toAssetId,[\s\S]*?from_amount: String\(amount\)/)
+  assert.match(swapApiSource, /from_asset_id: pair\.fromAssetId,[\s\S]*?to_asset_id: pair\.toAssetId,[\s\S]*?from_amount: normalizeDecimalText\(amount\)/)
 })

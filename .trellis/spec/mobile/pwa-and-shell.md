@@ -1501,3 +1501,88 @@ Required verification includes pure tier tests, spinner source/runtime tests,
 SignalField lifecycle contracts, a production PWA build proving GSAP is split,
 browser constrained/reduced-motion checks, KYC search in both themes, and Assets
 long-number geometry at 320/390/448px.
+
+## Release Lifecycle, Route Accessibility, and Artifact Budget Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changing PWA registration/update/install UI, the root route shell,
+  global motion, build modes, CSP, or release artifacts.
+
+### 2. Signatures
+
+```ts
+runPwaUpdate(options: RunPwaUpdateOptions): Promise<boolean>
+createPwaInstallEligibilitySession(input: PwaInstallEligibilityInput): PwaInstallEligibilitySession
+createRouteAccessibilityCoordinator(input): RouteAccessibilityCoordinator
+
+PWA_UPDATE_TIMEOUT_MS = 15_000
+PWA_INSTALL_SESSION_DELAY_MS = 60_000
+PWA_INSTALL_FREQUENCY_CAP_MS = 7 * 24 * 60 * 60 * 1000
+```
+
+### 3. Contracts
+
+- An update races one 15-second deadline, always releases timers/listeners, and
+  leaves an explicit retry/recovery state after timeout, worker rejection, or
+  controller loss. It never reloads indefinitely.
+- The install prompt is eligible only after the session delay, on a value route,
+  outside standalone mode, with a real deferred install event, and outside the
+  seven-day frequency cap. Dismissal never blocks update status.
+- PWA and Tauri builds are isolated. PWA owns manifest/service-worker/precache;
+  Tauri owns an explicit functional CSP and contains no PWA worker artifact.
+  Large stage art is optimized and excluded from precache.
+- The app shell owns one visible route `<main>`, one localized document title,
+  a polite destination announcement, and a visible-on-focus skip link that
+  focuses `#main-content`. Transition completion must match the current render
+  key before focus/announcement commits.
+- Coarse-phone controls expose at least a 44px hit area without changing the
+  approved painted geometry. Functional busy indicators remain moving in
+  constrained/reduced-motion mode; decorative loops may stop.
+- Source-size, behavior-test, JS/CSS bundle, and generated-artifact budgets are
+  hard release gates, not advisory reports.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|-----------|-------------------|
+| Update exceeds 15 seconds | Unlock UI, preserve retry, no automatic reload loop |
+| No deferred install event or non-value route | Do not display install prompt |
+| PWA worker appears in Tauri output | Fail artifact check |
+| Stage image enters PWA precache | Fail artifact check |
+| Old transition finishes after newer route | Ignore stale completion |
+| Active modal exists during route change | Announce destination; retain modal focus |
+| 320/390/448 viewport | Zero document horizontal overflow |
+| Budget exceeds tracked limit | Fail release gate with measured file/size |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an update times out, the user retries, and the second worker activation
+  succeeds without duplicate listeners or a stuck loading state.
+- Base: route title updates immediately; focus and announcement commit after the
+  matching transition finishes.
+- Bad: cache the multi-megabyte stage image, ship a service worker in Tauri, or
+  remove functional spinner motion together with decorative animation.
+
+### 6. Tests Required
+
+- Unit-test update timeout/retry/controller recovery and install delay, route,
+  standalone, event, dismissal, and frequency-cap decisions.
+- Route tests assert all typed destinations, one main landmark, stale transition
+  rejection, dialog focus preservation, skip-link focus, and localized titles.
+- Artifact tests inspect generated PWA and Tauri directories; budget tests read
+  actual compressed output; behavior quality tests require executable assertions.
+- Ego Browser checks home/trade/seconds/orders/assets/KYC at 320, 390, and 448px.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: an update can hang forever and every page shows install UI.
+await updateServiceWorker(true)
+showInstallPrompt.value = Boolean(deferredPrompt)
+
+// Correct: bounded update plus centralized eligibility.
+await runPwaUpdate({ updateServiceWorker, timeoutMs: PWA_UPDATE_TIMEOUT_MS })
+const install = createPwaInstallEligibilitySession({ routeName, now, storage })
+showInstallPrompt.value = install.evaluate({ deferredPrompt, standalone }).eligible
+```

@@ -36,10 +36,10 @@ test('确认层 Teleport 到 body，且仅 contract 分支渲染专属杠杆面�
 
   assert.match(spotPanel, /v-if="isSpotMode"/)
   assert.match(spotPanel, /class="confirmation-sheet"/)
-  assert.match(spotPanel, /t\('common\.price'\)[\s\S]*?formatPrice\(effectivePrice\)[\s\S]*?quoteAsset/)
-  assert.match(spotPanel, /t\('common\.amount'\)[\s\S]*?formatAmount\(Number\(amountValue\) \|\| 0\)[\s\S]*?quoteAsset/)
+  assert.match(spotPanel, /t\('common\.price'\)[\s\S]*?moneyText\(spotReview\?\.price\)[\s\S]*?spotReview\?\.quoteAsset/)
+  assert.match(spotPanel, /t\('common\.amount'\)[\s\S]*?moneyText\(spotReview\?\.quoteAmount\)[\s\S]*?spotReview\?\.quoteAsset/)
   assert.match(spotPanel, /class="confirmation-actions"[\s\S]*?t\('common\.cancel'\)[\s\S]*?t\('common\.confirm'\)/)
-  assert.doesNotMatch(spotPanel, /contract-order-confirm|contractNotionalValue|contractOrderQuantity/)
+  assert.doesNotMatch(spotPanel, /contract-order-confirm|contractNotional|contractQuantity/)
 
   assert.match(contractPanel, /class="contract-order-confirm"/)
   assert.match(contractPanel, /aria-labelledby="contract-order-confirm-title"/)
@@ -54,14 +54,14 @@ test('杠杆确认明细只组合当前表单、行情、产品设置和后端 L
   assert.match(contractPanel, /:class="contractOrderReview\.request\.side === 'long' \? 'is-long' : 'is-short'"/)
   assert.match(contractPanel, /t\('rootPrototype\.marginMode'\)[\s\S]*?contractOrderReview\.request\.marginMode === 'cross'/)
   assert.match(contractPanel, /t\('rootPrototype\.leverage'\)[\s\S]*?contractOrderReview\.request\.leverage/)
-  assert.match(contractPanel, /t\('trade\.contractReferencePrice'\)[\s\S]*?formatPrice\(contractOrderReview\.referencePrice\)[\s\S]*?quoteAsset/)
-  assert.match(contractPanel, /t\('trade\.contractMarginCommitted'\)[\s\S]*?formatAmount\(contractOrderReview\.request\.marginAmount\)[\s\S]*?availableAsset/)
-  assert.match(contractPanel, /t\('rootPrototype\.estimatedNotional'\)[\s\S]*?formatAmount\(contractNotionalValue\)[\s\S]*?availableAsset/)
-  assert.match(contractPanel, /t\('trade\.contractEstimatedQuantity'\)[\s\S]*?formatAmount\(contractOrderQuantity\)[\s\S]*?baseAsset/)
-  assert.match(tradeSource, /function createCurrentMarginOrderReview\(idempotencyKey\?: string\)[\s\S]*?productId: selectedProduct\.value\?\.id \|\| 0,[\s\S]*?marginAmount: Number\(quantity\.value\),[\s\S]*?orderType: contractOrderType\.value,[\s\S]*?limitPrice: contractLimitPrice\.value,[\s\S]*?referencePrice: currentPrice\.value/)
-  assert.match(tradeSource, /const marginOrderDraft = computed\(\(\) => createCurrentMarginOrderReview\(\)\)[\s\S]*?const contractOrderReview = computed\(\(\) => reviewedMarginOrder\.value \|\| marginOrderDraft\.value\)/)
-  assert.match(tradeSource, /const contractNotionalValue = computed\(\(\) => contractOrderReview\.value\.estimatedNotional\)/)
-  assert.match(tradeSource, /const contractOrderQuantity = computed\(\(\) => contractOrderReview\.value\.estimatedQuantity\)/)
+  assert.match(contractPanel, /t\('trade\.contractReferencePrice'\)[\s\S]*?moneyText\(contractOrderReview\.referencePriceText\)[\s\S]*?quoteAsset/)
+  assert.match(contractPanel, /t\('trade\.contractMarginCommitted'\)[\s\S]*?moneyText\(contractOrderReview\.request\.marginAmount\)[\s\S]*?availableAsset/)
+  assert.match(contractPanel, /t\('rootPrototype\.estimatedNotional'\)[\s\S]*?moneyText\(contractNotional\)[\s\S]*?availableAsset/)
+  assert.match(contractPanel, /t\('trade\.contractEstimatedQuantity'\)[\s\S]*?moneyText\(contractQuantity\)[\s\S]*?baseAsset/)
+  assert.match(tradeSource, /function createCurrentMarginOrderReview\(idempotencyKey\?: string\)[\s\S]*?productId: selectedProduct\.value\?\.id \|\| 0,[\s\S]*?marginAmount: quantity\.value,[\s\S]*?orderType: contractOrderType\.value,[\s\S]*?limitPrice: contractLimitPrice\.value,[\s\S]*?referencePrice: currentPrice\.value/)
+  assert.match(tradeSource, /const marginOrderDraft = computed\(\(\) => createCurrentMarginOrderReview\(\)\)[\s\S]*?const contractOrderReview = computed\(\(\) => marginReview\.value \|\| marginOrderDraft\.value\)/)
+  assert.match(tradeSource, /const contractNotional = computed\(\(\) => contractOrderReview\.value\.estimatedNotionalText\)/)
+  assert.match(tradeSource, /const contractQuantity = computed\(\(\) => contractOrderReview\.value\.estimatedQuantityText\)/)
   assert.doesNotMatch(contractPanel, /\bBTC(?:USDT|\/USDT)?\b|64,?090|99,?900/)
 })
 
@@ -71,7 +71,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     side: 'buy',
     marginMode: 'cross',
     leverage: 7,
-    marginAmount: 0.123456789,
+    marginAmount: '0.123456789',
     orderType: 'market',
     limitPrice: '',
     pricePrecision: 8,
@@ -84,7 +84,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     side: 'long',
     marginMode: 'cross',
     leverage: 7,
-    marginAmount: 0.123456789,
+    marginAmount: '0.123456789',
     orderType: 'market',
   })
   assert.equal(review.estimatedNotional, 0.123456789 * 7)
@@ -96,7 +96,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     side: 'buy',
     marginMode: 'cross',
     leverage: 7,
-    marginAmount: 0.123456789,
+    marginAmount: '0.123456789',
     orderType: 'market',
     limitPrice: '',
     pricePrecision: 8,
@@ -110,7 +110,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     side: 'sell',
     marginMode: 'isolated',
     leverage: 3,
-    marginAmount: 10,
+    marginAmount: '10',
     orderType: 'market',
     limitPrice: '',
     pricePrecision: 8,
@@ -124,7 +124,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     side: 'buy',
     marginMode: 'cross',
     leverage: 7,
-    marginAmount: 10,
+    marginAmount: '10',
     orderType: 'market',
     limitPrice: '',
     pricePrecision: 8,
@@ -138,7 +138,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     side: 'buy',
     marginMode: 'cross',
     leverage: Number.MAX_VALUE,
-    marginAmount: Number.MAX_VALUE,
+    marginAmount: '100000000000000000000',
     orderType: 'market',
     limitPrice: '',
     pricePrecision: 8,
@@ -151,12 +151,12 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
 
 test('重试继续调用同一真实杠杆接口，失败留在面板且提交期间防重与禁关', () => {
   assert.match(submitOrderSource, /if \(submitting\.value\) return/)
-  assert.match(submitOrderSource, /const submittedMode = mode\.value[\s\S]*?const review = submittedMode === 'contract' \? reviewedMarginOrder\.value : null/)
-  assert.match(submitOrderSource, /const submittedOrderType = orderType\.value/)
-  assert.match(submitOrderSource, /if \(submittedMode === 'spot'\) \{\s*if \(!isLive\.value\)[\s\S]*?!Number\.isFinite\(limitPrice\)/)
+  assert.match(submitOrderSource, /const spot = spotReview\.value[\s\S]*?const review = marginReview\.value[\s\S]*?const submittedMode = review \? 'contract' : spot \? 'spot' : mode\.value/)
+  assert.match(submitOrderSource, /type: spot\.orderType/)
+  assert.match(submitOrderSource, /if \(submittedMode === 'spot'\) \{\s*if \(!isLive\.value \|\| !spot\)/)
   assert.equal(submitOrderSource.match(/placeMarginOrder\(/g)?.length, 1)
-  assert.match(submitOrderSource, /review\.request\.productId !== product\.id[\s\S]*?validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?!review\.isValid[\s\S]*?await placeMarginOrder\(review\.request\)/)
-  assert.match(tradeSource, /reviewedMarginOrder\.value = mode\.value === 'contract'[\s\S]*?createCurrentMarginOrderReview\(createMarginOrderIdempotencyKey\(\)\)/)
+  assert.match(submitOrderSource, /review\.request\.productId !== product\.id[\s\S]*?validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?!review\.isValid[\s\S]*?if \(!review \|\| !review\.marginAmountText\) return[\s\S]*?await placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
+  assert.match(tradeSource, /const marginSnapshot = mode\.value === 'contract'[\s\S]*?createCurrentMarginOrderReview\(createMarginOrderIdempotencyKey\(\)\)[\s\S]*?marginReview\.value = marginSnapshot/)
   assert.match(tradingApiSource, /idempotency_key: input\.idempotencyKey \|\| createMarginOrderIdempotencyKey\(\)/)
 
   const failureBranch = submitOrderSource.match(/\} catch \(reason\) \{([\s\S]*?)\} finally \{/)?.[1]

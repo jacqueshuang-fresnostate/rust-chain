@@ -58,6 +58,7 @@ let previousBodyOverflow = ''
 const paymentAccount = computed(() => accounts.value.find((account) => account.assetId === paymentAssetId.value))
 const paymentOptions = computed(() => pendingUnlock.value?.unlockFeeAssetId ? accounts.value.filter((account) => account.assetId === pendingUnlock.value?.unlockFeeAssetId) : accounts.value)
 const paymentAmount = computed(() => pendingUnlock.value?.unlockFeeAmount || 0)
+const paymentAmountText = computed(() => pendingUnlock.value?.unlockFeeAmountText)
 const dialogOpen = computed(() => Boolean(pendingUnlock.value))
 const tabs = computed<Array<{ key: RecordTab; label: string }>>(() => [
   { key: 'subscriptions', label: t('newCoin.tabSubscriptions') },
@@ -131,7 +132,7 @@ function closeFeePayment(): void {
 }
 
 async function payFee(): Promise<void> {
-  if (!pendingUnlock.value || !paymentAssetId.value || paymentAmount.value <= 0) {
+  if (!pendingUnlock.value || !paymentAssetId.value || paymentAmount.value <= 0 || !paymentAmountText.value) {
     error.value = t('newCoin.invalidFeeConfig')
     return
   }
@@ -145,7 +146,7 @@ async function payFee(): Promise<void> {
     await payNewCoinUnlockFee({
       idempotencyKey: pendingUnlock.value.idempotencyKey,
       paymentAssetId: paymentAssetId.value,
-      amount: paymentAmount.value,
+      amount: paymentAmountText.value,
     })
     pendingUnlock.value = null
     success.value = t('newCoin.feePaid')

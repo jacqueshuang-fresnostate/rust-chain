@@ -1,15 +1,38 @@
+import {
+  decimalCompare,
+  decimalDivide,
+  decimalMinimum,
+  decimalMultiply,
+  decimalPortion,
+  decimalTextFromBoundary,
+  decimalTextFromFiniteNumber,
+  decimalTruncate,
+  decimalWithinRange,
+  normalizeDecimalText,
+  positiveDecimalInput,
+  type DecimalBoundary,
+  type DecimalText,
+} from './decimal.ts'
+
 export interface BalancePercentageInput {
-  available: number
-  maximum?: number | null
+  available: DecimalBoundary
+  maximum?: DecimalBoundary
   mode: 'spot' | 'contract'
   percentage: number
-  price: number
+  price: DecimalBoundary
   side: 'buy' | 'sell'
+}
+
+export interface BalancePercentagePointsInput extends Omit<BalancePercentageInput, 'percentage'> {
+  /** Integer 0..100 value from the range control. */
+  percentagePoints: number
 }
 
 export interface MarginProductMarginLimits {
   minMargin: number
   maxMargin: number | null
+  minMarginText: DecimalText
+  maxMarginText: DecimalText | null
 }
 
 export type MarginAmountValidationError = 'invalid' | 'below-minimum' | 'above-maximum'
@@ -17,8 +40,8 @@ export type MarginAmountValidationError = 'invalid' | 'below-minimum' | 'above-m
 export interface MarginAmountValidation {
   isValid: boolean
   error: MarginAmountValidationError | null
-  minMargin: number
-  maxMargin: number | null
+  minMargin: DecimalText
+  maxMargin: DecimalText | null
 }
 
 export type MarginLimitPriceValidationError = 'required' | 'invalid' | 'precision' | 'precision-unavailable'
@@ -26,8 +49,8 @@ export type MarginLimitPriceValidationError = 'required' | 'invalid' | 'precisio
 export interface MarginLimitPriceValidation {
   isValid: boolean
   error: MarginLimitPriceValidationError | null
-  value: number | null
-  normalized: string | null
+  value: DecimalText | null
+  normalized: DecimalText | null
   pricePrecision: number | null
 }
 
@@ -37,101 +60,129 @@ export function validateMarginLimitPrice(input: {
   pricePrecision?: number | null
 }): MarginLimitPriceValidation {
   const draft = input.price.trim()
-  const pricePrecision = Number.isInteger(input.pricePrecision) && Number(input.pricePrecision) >= 0
-    ? Number(input.pricePrecision)
+  const pricePrecision = typeof input.pricePrecision === 'number'
+    && Number.isInteger(input.pricePrecision)
+    && input.pricePrecision >= 0
+    ? input.pricePrecision
     : null
-  if (!draft) {
-    return { isValid: false, error: 'required', value: null, normalized: null, pricePrecision }
-  }
-  // A trailing decimal point is a valid editing state but not a stable API decimal.
-  // Prefix-dot values are canonicalized so `.5` is frozen and sent as `0.5`.
-  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(draft)) {
-    return { isValid: false, error: 'invalid', value: null, normalized: null, pricePrecision }
-  }
-  const normalized = draft.startsWith('.') ? `0${draft}` : draft
-  const value = Number(normalized)
-  if (!Number.isFinite(value) || value <= 0) {
-    return { isValid: false, error: 'invalid', value: null, normalized: null, pricePrecision }
-  }
+  if (!draft) return { isValid: false, error: 'required', value: null, normalized: null, pricePrecision }
+  if (draft.endsWith('.')) return { isValid: false, error: 'invalid', value: null, normalized: null, pricePrecision }
+  const normalized = positiveDecimalInput(draft, 100)
+  if (!normalized) return { isValid: false, error: 'invalid', value: null, normalized: null, pricePrecision }
   if (pricePrecision === null) {
-    return { isValid: false, error: 'precision-unavailable', value, normalized, pricePrecision }
+    return { isValid: false, error: 'precision-unavailable', value: normalized, normalized, pricePrecision }
   }
-  const fractionalDigits = (normalized.split('.')[1] || '').replace(/0+$/, '').length
+  const fractionalDigits = (normalized.split('.')[1] || '').length
   if (fractionalDigits > pricePrecision) {
-    return { isValid: false, error: 'precision', value, normalized, pricePrecision }
+    return { isValid: false, error: 'precision', value: normalized, normalized, pricePrecision }
   }
-  return { isValid: true, error: null, value, normalized, pricePrecision }
+  return { isValid: true, error: null, value: normalized, normalized, pricePrecision }
 }
 
-/**
- * Maps the backend decimal limits without turning a missing maximum into zero.
- * Product configuration guarantees a positive minimum, while a malformed
- * optional maximum is treated the same as an omitted product cap.
- */
+/** Maps exact backend limits while retaining number fields only for legacy display surfaces. */
 export function mapMarginProductMarginLimits(input: {
   min_margin?: unknown
   max_margin?: unknown
 }): MarginProductMarginLimits {
+  const minMarginText = positiveBoundary(input.min_margin) || normalizeDecimalText('0')
+  const maxMarginText = positiveBoundary(input.max_margin)
   return {
-    minMargin: positiveFiniteNumber(input.min_margin) ?? 0,
-    maxMargin: positiveFiniteNumber(input.max_margin),
+    minMargin: legacyDisplayNumber(minMarginText),
+    maxMargin: maxMarginText ? legacyDisplayNumber(maxMarginText) : null,
+    minMarginText,
+    maxMarginText,
   }
 }
 
 /** Returns the real contract shortcut base after applying the product cap. */
-export function marginShortcutAvailable(available: number, maximum?: number | null): number {
-  if (!Number.isFinite(available) || available <= 0) return 0
-  const normalizedMaximum = positiveFiniteNumber(maximum)
-  return normalizedMaximum === null ? available : Math.min(available, normalizedMaximum)
+export function marginShortcutAvailable(
+  available: DecimalBoundary,
+  maximum?: DecimalBoundary,
+): DecimalText {
+  const availableText = positiveBoundary(available)
+  if (!availableText) return normalizeDecimalText('0')
+  const maximumText = positiveBoundary(maximum)
+  return maximumText ? decimalMinimum(availableText, maximumText) || availableText : availableText
 }
 
-/** Keeps display rounding from crossing the wallet or product authority. */
+/** Keeps a derived shortcut from crossing the wallet or product authority. */
 export function clampMarginShortcutAmount(
-  amount: number,
-  available: number,
-  maximum?: number | null,
-): number {
-  if (!Number.isFinite(amount) || amount <= 0) return 0
-  return Math.min(amount, marginShortcutAvailable(available, maximum))
+  amount: DecimalBoundary,
+  available: DecimalBoundary,
+  maximum?: DecimalBoundary,
+): DecimalText {
+  const amountText = positiveBoundary(amount)
+  if (!amountText) return normalizeDecimalText('0')
+  return decimalMinimum(amountText, marginShortcutAvailable(available, maximum)) || normalizeDecimalText('0')
 }
 
-/** One financial boundary used by field feedback, review, and submission. */
+/** One exact financial boundary used by field feedback, review, and submission. */
 export function validateMarginAmount(input: {
-  amount: number
-  minMargin: number
-  maxMargin?: number | null
+  amount: string | DecimalText
+  minMargin: DecimalBoundary
+  maxMargin?: DecimalBoundary
 }): MarginAmountValidation {
-  const minMargin = positiveFiniteNumber(input.minMargin) ?? 0
-  const maxMargin = positiveFiniteNumber(input.maxMargin)
-  if (!Number.isFinite(input.amount) || input.amount <= 0) {
-    return { isValid: false, error: 'invalid', minMargin, maxMargin }
-  }
-  if (input.amount < minMargin) {
+  const amount = positiveDecimalInput(input.amount)
+  const minMargin = positiveBoundary(input.minMargin) || normalizeDecimalText('0')
+  const maxMargin = positiveBoundary(input.maxMargin)
+  if (!amount) return { isValid: false, error: 'invalid', minMargin, maxMargin }
+  if (decimalCompare(amount, minMargin) < 0) {
     return { isValid: false, error: 'below-minimum', minMargin, maxMargin }
   }
-  if (maxMargin !== null && input.amount > maxMargin) {
+  if (maxMargin && decimalCompare(amount, maxMargin) > 0) {
     return { isValid: false, error: 'above-maximum', minMargin, maxMargin }
   }
   return { isValid: true, error: null, minMargin, maxMargin }
 }
 
-export function quantityForBalancePercentage(input: BalancePercentageInput): number {
-  if (!Number.isFinite(input.percentage) || input.percentage <= 0) return 0
-
-  const percentage = Math.min(input.percentage, 1)
+export function quantityForBalancePercentage(input: BalancePercentageInput): DecimalText {
+  if (!Number.isFinite(input.percentage) || input.percentage <= 0) return normalizeDecimalText('0')
+  const ratio = decimalTextFromFiniteNumber(Math.min(input.percentage, 1))
   const available = input.mode === 'contract'
     ? marginShortcutAvailable(input.available, input.maximum)
     : marginShortcutAvailable(input.available)
-  const budget = available * percentage
+  const budget = decimalTruncate(decimalMultiply(available, ratio), 18)
   if (input.mode === 'contract' || input.side === 'sell') return budget
-  if (!Number.isFinite(input.price) || input.price <= 0) return 0
-  return budget / input.price
+  const price = positiveBoundary(input.price)
+  return price ? decimalDivide(budget, price, 18) : normalizeDecimalText('0')
 }
 
-function positiveFiniteNumber(value: unknown): number | null {
-  if (typeof value !== 'number' && typeof value !== 'string') return null
-  const normalized = typeof value === 'string' ? value.trim() : value
-  if (typeof normalized === 'string' && !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return null
-  const parsed = typeof normalized === 'number' ? normalized : Number(normalized)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+/**
+ * Applies an integer UI percentage through bigint DecimalText division. This is
+ * the production form path; the ratio-based overload above remains for older callers.
+ */
+export function quantityForBalancePercentagePoints(
+  input: BalancePercentagePointsInput,
+): DecimalText {
+  if (!Number.isSafeInteger(input.percentagePoints) || input.percentagePoints <= 0) {
+    return normalizeDecimalText('0')
+  }
+  const percentagePoints = Math.min(input.percentagePoints, 100)
+  const available = input.mode === 'contract'
+    ? marginShortcutAvailable(input.available, input.maximum)
+    : marginShortcutAvailable(input.available)
+  const budget = decimalPortion(available, percentagePoints, 100, 18)
+  if (input.mode === 'contract' || input.side === 'sell') return budget
+  const price = positiveBoundary(input.price)
+  return price ? decimalDivide(budget, price, 18) : normalizeDecimalText('0')
+}
+
+export function financialAmountWithin(
+  amount: string,
+  range: { available?: DecimalBoundary; maximum?: DecimalBoundary; minimum?: DecimalBoundary },
+  maxScale = 18,
+): DecimalText | null {
+  const normalized = positiveDecimalInput(amount, maxScale)
+  return decimalWithinRange(normalized, range) ? normalized : null
+}
+
+function positiveBoundary(value: unknown): DecimalText | null {
+  if (typeof value === 'string' && value.trim().startsWith('+')) return null
+  const decimal = decimalTextFromBoundary(value as DecimalBoundary, { allowNegative: false })
+  return decimal && decimalCompare(decimal, normalizeDecimalText('0')) > 0 ? decimal : null
+}
+
+function legacyDisplayNumber(value: DecimalText): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
 }

@@ -5,6 +5,7 @@ import {
   tickerUnsubscriptionFrame,
 } from './marketSocketProtocol.ts'
 import { createInboundSilenceWatchdog } from './webSocketLiveness.ts'
+import type { DecimalText } from '../core/decimal.ts'
 
 const SOCKET_CONNECTING = 0
 const SOCKET_OPEN = 1
@@ -16,6 +17,7 @@ const INBOUND_IDLE_TIMEOUT_MS = 65_000
 export interface TickerUpdate {
   symbol: string
   lastPrice: number
+  lastPriceText?: DecimalText
   highPrice?: number
   lowPrice?: number
   volume?: number
@@ -238,6 +240,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
       const update: TickerUpdate = {
         symbol: normalizeMarketSocketSymbol(frame.symbol),
         lastPrice: frame.lastPrice,
+        ...(frame.lastPriceText === undefined ? {} : { lastPriceText: frame.lastPriceText }),
         ...(frame.highPrice === undefined ? {} : { highPrice: frame.highPrice }),
         ...(frame.lowPrice === undefined ? {} : { lowPrice: frame.lowPrice }),
         ...(frame.volume === undefined ? {} : { volume: frame.volume }),

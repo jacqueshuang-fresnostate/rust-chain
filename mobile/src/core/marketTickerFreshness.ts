@@ -1,8 +1,10 @@
 import type { MarketTicker } from './types.ts'
+import { decimalTextFromBoundary, type DecimalText } from './decimal.ts'
 
 export interface LiveMarketTickerUpdate {
   symbol: string
   lastPrice: number
+  lastPriceText?: DecimalText
   highPrice?: number
   lowPrice?: number
   volume?: number
@@ -28,6 +30,9 @@ export function applyLiveMarketTickerUpdate(
   return {
     ...current,
     lastPrice: update.lastPrice,
+    lastPriceText: update.lastPriceText
+      || decimalTextFromBoundary(update.lastPrice, { allowNegative: false, allowZero: false })
+      || current.lastPriceText,
     openPrice: changePercent !== null && percentDenominator > 0
       ? update.lastPrice / percentDenominator
       : current.openPrice,
@@ -73,6 +78,7 @@ function withLatestTickerSnapshot(
   return {
     ...incoming,
     lastPrice: current.lastPrice,
+    lastPriceText: current.lastPriceText,
     openPrice: current.openPrice,
     highPrice: current.highPrice,
     lowPrice: current.lowPrice,

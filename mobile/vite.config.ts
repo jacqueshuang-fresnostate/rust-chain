@@ -85,8 +85,12 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           cacheId: 'hippo-mobile-shell',
-          globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,webmanifest}'],
-          globIgnores: ['pwa/*.png', 'manifest.webmanifest'],
+          globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,webmanifest,webp}'],
+          globIgnores: [
+            'pwa/*.png',
+            'manifest.webmanifest',
+            '**/signal-theatre-*.webp',
+          ],
           navigateFallback: withBase('index.html'),
           navigateFallbackDenylist: [
             /\/api(?:\/|$)/,

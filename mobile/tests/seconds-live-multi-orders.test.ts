@@ -6,6 +6,7 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const pageHeaderSource = read('../src/components/PageHeader.vue')
 const secondsApiSource = read('../src/api/seconds.ts')
+const secondsFinancialSource = read('../src/core/secondsFinancial.ts')
 const secondsSource = read('../src/views/SecondsView.vue')
 const secondsStyle = secondsSource.match(/<style\s+scoped\s*>([\s\S]*?)<\/style>/)?.[1] || ''
 const selectedPageCss = read('../src/styles/pencil-selected-pages.css')
@@ -60,26 +61,29 @@ test('Seconds 使用内部 ticker 与 1m K 线会话并保留 REST/WS generation
   assert.match(secondsSource, /secondsKlineSession\.isCurrent\(context, symbol, '1m', requestVersion\)/)
   assert.match(secondsSource, /secondsKlineSession\.isCurrentKlineRequest\(request\)/)
   assert.match(secondsSource, /secondsKlineSession\.resolveKlineRequest\(request, nextPoints\)/)
-  assert.match(secondsSource, /const livePrice = liveTickerSnapshots\.value\[normalized\]\?\.lastPrice[\s\S]*?sparklinePoints\.value\.at\(-1\)\?\.close[\s\S]*?marketStore\.tickerFor\(symbol\)\?\.lastPrice/)
-  assert.match(secondsSource, /const selectedChangePercent = computed<number \| null>[\s\S]*?const liveChange = selectedLiveTicker\.value\?\.changePercent\s*if \(Number\.isFinite\(liveChange\)\) return Number\(liveChange\)\s*const snapshotChange = selectedTicker\.value\?\.changePercent/)
+  assert.match(secondsSource, /const latestPrice = computed\(\(\) => exactPriceForSymbol\(selected\.value\?\.symbol \|\| ''\)\)/)
+  assert.match(secondsFinancialSource, /const exactPriceForSymbol = \(symbol: string\): DecimalText \| null => \{[\s\S]*?liveTickerFor\(symbol\)\?\.lastPriceText[\s\S]*?marketTickerFor\(symbol\)\?\.lastPriceText/)
+  assert.match(secondsFinancialSource, /const priceFor = \(symbol: string\): DecimalText \| number \| null => \{[\s\S]*?selectedCandleClose\(\)[\s\S]*?positiveLegacyDisplayNumber/)
+  assert.match(secondsSource, /const selectedChangePercent = computed\(\(\) => displayChangePercent\([\s\S]*?selectedLiveTicker\.value,[\s\S]*?selectedTicker\.value/)
+  assert.match(secondsFinancialSource, /const displayChangePercent = \([\s\S]*?finiteDisplayNumber\(liveTicker\?\.changePercent\)[\s\S]*?finiteDisplayNumber\(snapshotTicker\?\.changePercent\)/)
 
   assert.match(secondsSource, /onBeforeUnmount\(\(\) => \{[\s\S]*?chartRequestVersion \+= 1[\s\S]*?tickerSubscriptionGeneration \+= 1[\s\S]*?secondsKlineSession\.stop\(\)[\s\S]*?stopTickerSubscription\?\.\(\)/)
   assert.doesNotMatch(secondsSource, /https?:\/\/www\.tradingview|<iframe|<script[^>]+src=/i)
 })
 
 test('Seconds 确认层冻结提交快照并让同一次重试复用幂等键', () => {
-  assert.match(secondsSource, /interface SecondsOrderReview \{[\s\S]*?readonly productId: number[\s\S]*?readonly referencePrice: number[\s\S]*?readonly idempotencyKey: string/)
+  assert.match(secondsFinancialSource, /interface SecondsOrderReviewSnapshot \{[\s\S]*?readonly productId: number[\s\S]*?readonly referencePrice: DecimalText \| null[\s\S]*?readonly idempotencyKey: string/)
   assert.match(
     secondsSource,
-    /orderReview\.value = Object\.freeze\(\{[\s\S]*?productId: product\.id,[\s\S]*?durationSeconds: activeCycle\.durationSeconds,[\s\S]*?direction: direction\.value,[\s\S]*?stakeAmount: amountNumber\.value,[\s\S]*?referencePrice: selectedLatestPrice\.value,[\s\S]*?idempotencyKey: createSecondsOrderIdempotencyKey\(\)/,
+    /const review = createReview\(\{[\s\S]*?productId: product\.id,[\s\S]*?durationSeconds: activeCycle\.durationSeconds,[\s\S]*?direction: direction\.value,[\s\S]*?stakeAmount: amount\.value,[\s\S]*?referencePrice: latestPrice\.value,[\s\S]*?idempotencyKey: createSecondsOrderIdempotencyKey\(\)[\s\S]*?orderReview\.value = review/,
   )
-  assert.match(secondsSource, /function isOrderReviewValid\(review: SecondsOrderReview\): boolean \{[\s\S]*?review\.stakeAmount >= currentCycle\.minStake[\s\S]*?review\.stakeAmount <= \(currentAccount\?\.available \|\| 0\)/)
+  assert.match(secondsSource, /function isOrderReviewValid\(review: Readonly<OrderReview>\): boolean \{[\s\S]*?validateStake\(review\.stakeAmount,[\s\S]*?currentStakeValidation\.isValid/)
 
   const submitSource = secondsSource.match(
     /async function submit\(\): Promise<void> \{[\s\S]*?(?=\nasync function reconcileOpenedOrder)/,
   )?.[0] || ''
   assert.match(submitSource, /const review = orderReview\.value[\s\S]*?!review \|\| !isOrderReviewValid\(review\)/)
-  assert.match(submitSource, /productId: review\.productId,[\s\S]*?durationSeconds: review\.durationSeconds,[\s\S]*?direction: review\.direction,[\s\S]*?stakeAmount: review\.stakeAmount,[\s\S]*?idempotencyKey: review\.idempotencyKey,/)
+  assert.match(submitSource, /productId: review\.productId,[\s\S]*?durationSeconds: review\.durationSeconds,[\s\S]*?direction: review\.direction,[\s\S]*?stakeAmount: review\.stakeAmountText,[\s\S]*?idempotencyKey: review\.idempotencyKey,/)
   assert.doesNotMatch(submitSource, /createSecondsOrderIdempotencyKey/)
   assert.match(secondsSource, /v-if="confirmOpen && orderReview"[\s\S]*?orderReview\.symbol[\s\S]*?orderReview\.direction[\s\S]*?orderReview\.stakeAmount[\s\S]*?orderReview\.payoutRate[\s\S]*?orderReview\.referencePrice/)
 
@@ -95,7 +99,7 @@ test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单
   assert.match(secondsSource, /v-for="order in filteredActiveOrders"/)
   assert.match(secondsSource, /:data-active-order-id="order\.id"/)
   assert.match(secondsSource, /<AssetMark[\s\S]*?:src="marketStore\.tickerFor\(order\.symbol\)\?\.baseIconUrl \|\| marketStore\.tickerFor\(order\.symbol\)\?\.iconUrl"/)
-  assert.match(secondsSource, /displayProductSymbol\(order\.symbol\)[\s\S]*?orderCountdown\(order\)[\s\S]*?order\.stakeAmount[\s\S]*?order\.entryPrice[\s\S]*?orderEstimatedProfit\(order\)[\s\S]*?orderProgress\(order\)/)
+  assert.match(secondsSource, /displayProductSymbol\(order\.symbol\)[\s\S]*?orderCountdown\(order\)[\s\S]*?orderMoney\(order\)\.stakeAmount[\s\S]*?orderMoney\(order\)\.entryPrice[\s\S]*?orderProfit\(order\)[\s\S]*?orderProgress\(order\)/)
 
   assert.equal((secondsSource.match(/:disabled="loading \|\| !selected"/g) || []).length, 4)
   assert.match(secondsSource, /:disabled="submitting \|\| loading \|\| !selected"/)
@@ -132,7 +136,7 @@ test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单
   assert.match(secondsSource, /const batch = \[\.\.\.queuedExpiryOrderIds\][\s\S]*?const reconciliation = await reconcilePrivateState\(\)/)
   assert.match(secondsSource, /fetchSecondsOrders\(100\),\s*fetchWalletAccounts\(\)/)
   assert.match(secondsSource, /Date\.now\(\) \+ EXPIRY_RECONCILIATION_RETRY_MS/)
-  assert.match(secondsSource, /fullyLoaded[\s\S]*?&& !activeIds\.has\(orderId\)[\s\S]*?&& !settlementResultTracker\.isTracking\(orderId\)[\s\S]*?expiryRetryAtByOrderId\.delete\(orderId\)/)
+  assert.match(secondsSource, /fullyLoaded[\s\S]*?&& !activeIds\.has\(orderId\)[\s\S]*?&& !resultTracker\.isTracking\(orderId\)[\s\S]*?expiryRetryAtByOrderId\.delete\(orderId\)/)
   assert.match(secondsSource, /queueExpiredOrderReconciliation\(currentTime\.value\)/)
 
   assert.equal(zhCN.seconds.activeOrders, '活动订单')
@@ -142,32 +146,32 @@ test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单
 })
 
 test('Seconds 使用权威结果追踪器、FIFO 队列和 Pencil 模态结算弹窗', () => {
-  assert.match(secondsSource, /const settlementResultTracker = createSecondsSettlementResultTracker\(\)/)
-  assert.match(secondsSource, /const settlementResultQueue = ref<SecondsOrder\[]>\(\[\]\)/)
+  assert.match(secondsSource, /const resultTracker = createSecondsSettlementResultTracker\(\)/)
+  assert.match(secondsSource, /const resultQueue = ref<SecondsOrder\[]>\(\[\]\)/)
   assert.match(
     secondsSource,
-    /function applyReconciledOrders\(nextOrders: readonly SecondsOrder\[]\): void \{[\s\S]*?settlementResultTracker\.reconcile\(nextOrders\)[\s\S]*?enqueueSecondsSettlementResults\([\s\S]*?settlementResultQueue\.value,[\s\S]*?settledResults,[\s\S]*?mergeSecondsOrderReconciliation\(nextOrders, committedOrders\)/,
+    /function applyReconciledOrders\(nextOrders: readonly SecondsOrder\[]\): void \{[\s\S]*?resultTracker\.reconcile\(nextOrders\)[\s\S]*?enqueueSecondsSettlementResults\([\s\S]*?resultQueue\.value,[\s\S]*?settledResults,[\s\S]*?mergeSecondsOrderReconciliation\(nextOrders, committedOrders\)/,
   )
   assert.match(
     secondsSource,
-    /openedOrder = await openSecondsOrder\([\s\S]*?settlementResultTracker\.track\(openedOrder\)[\s\S]*?committedOrdersById\.set\(openedOrder\.id, openedOrder\)/,
+    /openedOrder = await openSecondsOrder\([\s\S]*?resultTracker\.track\(openedOrder\)[\s\S]*?committedOrdersById\.set\(openedOrder\.id, openedOrder\)/,
   )
   assert.match(
     secondsSource,
-    /const currentSettlementPresentation = computed\([\s\S]*?secondsOrderProfitLossPresentation\(currentSettlementResult\.value\)/,
+    /const settlementPnl = computed\([\s\S]*?profitLoss\(settled\.value\)/,
   )
   assert.match(
     secondsSource,
-    /const currentSettlementAmount = computed\([\s\S]*?presentation\.translationKey === 'seconds\.profitAmount' \? '\+' : ''[\s\S]*?formatAmount\(presentation\.amount\)[\s\S]*?order\.stakeAssetSymbol/,
+    /const settlementAmount = computed\([\s\S]*?presentation\.kind === 'profit' \? '\+' : ''[\s\S]*?moneyText\(presentation\.amount\)[\s\S]*?order\.stakeAssetSymbol/,
   )
   assert.match(
     secondsSource,
-    /const currentSettlementRate = computed\([\s\S]*?presentation\.amount \/ order\.stakeAmount[\s\S]*?rate > 0 \? '\+' : ''[\s\S]*?rate\.toFixed\(2\)/,
+    /const settlementRate = computed\([\s\S]*?returnPercent\(presentation\.amount, financials\.stakeAmount\)[\s\S]*?percentText\(rate, currentIntlLocale\(\), 2\)/,
   )
 
   assert.match(
     secondsSource,
-    /function clearSecondsPrivateState\(\): void \{[\s\S]*?orders\.value = \[\][\s\S]*?settlementResultTracker\.reset\(\)[\s\S]*?clearSettlementResultQueue\(\)/,
+    /function clearSecondsPrivateState\(\): void \{[\s\S]*?orders\.value = \[\][\s\S]*?resultTracker\.reset\(\)[\s\S]*?clearSettlementResultQueue\(\)/,
   )
   assert.match(
     secondsSource,
@@ -175,7 +179,7 @@ test('Seconds 使用权威结果追踪器、FIFO 队列和 Pencil 模态结算�
   )
   assert.match(
     secondsSource,
-    /onBeforeUnmount\(\(\) => \{[\s\S]*?settlementResultTracker\.reset\(\)[\s\S]*?clearSettlementResultQueue\(\)/,
+    /onBeforeUnmount\(\(\) => \{[\s\S]*?resultTracker\.reset\(\)[\s\S]*?clearSettlementResultQueue\(\)/,
   )
   assert.match(
     secondsSource,
@@ -202,8 +206,8 @@ test('Seconds 使用权威结果追踪器、FIFO 队列和 Pencil 模态结算�
   const settlementTemplate = secondsSource.match(
     /<Teleport to="body">\s*<Transition name="seconds-result-reveal"[\s\S]*?<\/Teleport>/,
   )?.[0] || ''
-  assert.match(settlementTemplate, /v-if="settlementDialogOpen && currentSettlementResult"[\s\S]*?class="seconds-settlement-layer"/)
-  assert.doesNotMatch(settlementTemplate, /:key="currentSettlementResult\.id"/)
+  assert.match(settlementTemplate, /v-if="settlementDialogOpen && settled"[\s\S]*?class="seconds-settlement-layer"/)
+  assert.doesNotMatch(settlementTemplate, /:key="settled\.id"/)
   assert.match(settlementTemplate, /data-pencil-source="tFcTH FBdqS"/)
   assert.match(settlementTemplate, /@click\.self="advanceSettlementResult"/)
   assert.doesNotMatch(settlementTemplate, /data-app-theme|settlementTheme/)
@@ -213,11 +217,11 @@ test('Seconds 使用权威结果追踪器、FIFO 队列和 Pencil 模态结算�
   assert.match(settlementTemplate, /role="dialog"[\s\S]*?aria-modal="true"/)
   assert.match(settlementTemplate, /@keydown="handleSettlementDialogKeydown"/)
   assert.match(settlementTemplate, /CircleCheckBig[\s\S]*?seconds\.statusSettled[\s\S]*?data-settlement-initial[\s\S]*?<X/)
-  assert.match(settlementTemplate, /BadgeDollarSign[\s\S]*?currentSettlementTitle[\s\S]*?currentSettlementAmount[\s\S]*?currentSettlementRate/)
-  assert.match(settlementTemplate, /currentSettlementResult\.entryPrice !== undefined \? formatPrice\(currentSettlementResult\.entryPrice\) : '--'/)
-  assert.match(settlementTemplate, /currentSettlementResult\.settlementPrice !== undefined \? formatPrice\(currentSettlementResult\.settlementPrice\) : '--'/)
-  assert.match(settlementTemplate, /displayProductSymbol\(currentSettlementResult\.symbol\)[\s\S]*?currentSettlementResult\.direction[\s\S]*?currentSettlementResult\.durationSeconds/)
-  assert.match(settlementTemplate, /settlementResultsRemaining[\s\S]*?remainingSettlementResults/)
+  assert.match(settlementTemplate, /BadgeDollarSign[\s\S]*?settlementTitle[\s\S]*?settlementAmount[\s\S]*?settlementRate/)
+  assert.match(settlementTemplate, /moneyText\(orderMoney\(settled\)\.entryPrice\)/)
+  assert.match(settlementTemplate, /moneyText\(orderMoney\(settled\)\.settlementPrice\)/)
+  assert.match(settlementTemplate, /displayProductSymbol\(settled\.symbol\)[\s\S]*?settled\.direction[\s\S]*?settled\.durationSeconds/)
+  assert.match(settlementTemplate, /settlementResultsRemaining[\s\S]*?remainingResults/)
   assert.match(settlementTemplate, /@click="openHistory"[\s\S]*?seconds\.viewHistory/)
   assert.doesNotMatch(settlementTemplate, /seconds\.continueTrading|latestPrice|Trophy|TrendingDown/)
   assert.match(

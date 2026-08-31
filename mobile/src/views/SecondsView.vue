@@ -36,19 +36,23 @@ import {
 } from '@/api/seconds'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
-import { formatAmount, formatPercent, formatPrice, splitSymbol } from '@/core/format'
+import { formatPercent } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
 import {
   createBottomNavSecondsFallbackTarget,
   isBottomNavigationSecondsEntry,
 } from '@/core/navigation'
 import {
+  isRovingListboxSelectionKey,
+  moveRovingOptionId,
+  stableRovingOptionId,
+  type RovingListboxNavigationKey,
+} from '@/core/rovingListbox'
+import {
   activeSecondsOrders,
   createSecondsSettlementResultTracker,
   enqueueSecondsSettlementResults,
   mergeSecondsOrderReconciliation,
-  secondsOrderEstimatedProfit,
-  secondsOrderProfitLossPresentation,
   secondsOrderProgress,
   secondsOrderRemainingMs,
   secondsOrderStatusPresentation,
@@ -57,7 +61,17 @@ import {
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
 import type { KlinePoint, WalletAccount } from '@/core/types'
-
+import {
+  createSecondsFinancialPresentation as bindFinancial,
+  createSecondsOrderReviewSnapshot as createReview,
+  deriveSecondsReturnRatePercent as returnPercent,
+  formatSecondsPercent as percentText,
+  positiveSecondsBoundary as positive,
+  validateSecondsStake as validateStake,
+  type SecondsFinancialOrderValues as OrderMoney,
+  type SecondsOrderReviewSnapshot as OrderReview,
+} from '@/core/secondsFinancial'
+import { currentIntlLocale } from '@/i18n'
 const session = useSessionStore()
 const marketStore = useMarketStore()
 const router = useRouter()
@@ -81,23 +95,11 @@ const pairPickerOpen = ref(false)
 const pairSearch = ref('')
 const pairPickerDialog = ref<HTMLElement | null>(null)
 const pairPickerTrigger = ref<HTMLButtonElement | null>(null)
-interface SecondsOrderReview {
-  readonly productId: number
-  readonly cycleId: number
-  readonly symbol: string
-  readonly stakeAssetId: number
-  readonly stakeAssetSymbol: string
-  readonly durationSeconds: number
-  readonly payoutRate: number
-  readonly direction: 'up' | 'down'
-  readonly stakeAmount: number
-  readonly referencePrice: number
-  readonly idempotencyKey: string
-}
-const orderReview = ref<SecondsOrderReview | null>(null)
+const activePairProductId = ref<number | null>(null)
+const orderReview = ref<OrderReview | null>(null)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
-const settlementResultQueue = ref<SecondsOrder[]>([])
+const resultQueue = ref<SecondsOrder[]>([])
 const settlementDialogOpen = ref(false)
 const settlementDialog = ref<HTMLElement | null>(null)
 const sparklineCanvas = ref<HTMLCanvasElement | null>(null)
@@ -117,12 +119,44 @@ let privateReconciliationGeneration = 0
 let privateSessionGeneration = 0
 let componentActive = true
 const committedOrdersById = new Map<number, SecondsOrder>()
+const exactMoney = new Map<number, Pick<OrderMoney, 'stakeAmount' | 'payoutRate'>>()
+const {
+  baseSymbol,
+  countdownLabel,
+  cycleHasMaximum,
+  cycleMaximum: cycleMax,
+  cycleMinimum: cycleMin,
+  displayChangePercent,
+  displayProductSymbol,
+  estimatedProfit: orderProfit,
+  exactCyclePayoutRate,
+  exactPriceForSymbol,
+  formatCycleLimit,
+  formatOrderAction,
+  formatPayoutRate: payoutText,
+  formatValue: moneyText,
+  hasExactStakeRange,
+  matchesProductSearch,
+  normalizeProductSymbol,
+  orderFinancials: orderMoney,
+  priceFor,
+  profitLoss,
+  walletAvailable,
+} = bindFinancial({
+  locale: currentIntlLocale,
+  exactByOrderId: exactMoney,
+  normalizeSymbol: normalizeMarketSocketSymbol,
+  liveTickerFor: (symbol) => liveTickerSnapshots.value[normalizeMarketSocketSymbol(symbol)],
+  marketTickerFor: (symbol) => marketStore.tickerFor(symbol),
+  selectedSymbol: () => selected.value?.symbol || '',
+  selectedCandleClose: () => sparklinePoints.value.at(-1)?.close,
+  translate: (key, params) => params ? t(key, params) : t(key),
+})
 const expiryRetryAtByOrderId = new Map<number, number>()
 const queuedExpiryOrderIds = new Set<number>()
 const reconcilingExpiryOrderIds = new Set<number>()
-const settlementResultTracker = createSecondsSettlementResultTracker()
+const resultTracker = createSecondsSettlementResultTracker()
 const EXPIRY_RECONCILIATION_RETRY_MS = 5_000
-
 const cycle = computed<SecondsCycle | undefined>(() => (
   selected.value?.cycles.find((item) => item.id === selectedCycleId.value)
   || selected.value?.cycles[0]
@@ -153,24 +187,17 @@ const nearestSelectedActiveOrder = computed(() => (
 const selectedPairLabel = computed(() => (
   selected.value ? displayProductSymbol(selected.value.symbol) : t('seconds.title')
 ))
-const filteredPairProducts = computed(() => {
-  const query = pairSearch.value.trim().toUpperCase()
-  if (!query) return products.value
-  return products.value.filter((product) => {
-    const pair = splitSymbol(product.symbol)
-    return [product.symbol, displayProductSymbol(product.symbol), pair.base, pair.quote]
-      .some((value) => value.toUpperCase().includes(query))
-  })
-})
+const filteredPairProducts = computed(() => products.value.filter((product) => (
+  matchesProductSearch(product.symbol, pairSearch.value)
+)))
+const filteredPairProductIds = computed(() => filteredPairProducts.value.map((product) => product.id))
 const selectedLiveTicker = computed(() => (
   liveTickerSnapshots.value[normalizeProductSymbol(selected.value?.symbol || '')]
 ))
-const selectedChangePercent = computed<number | null>(() => {
-  const liveChange = selectedLiveTicker.value?.changePercent
-  if (Number.isFinite(liveChange)) return Number(liveChange)
-  const snapshotChange = selectedTicker.value?.changePercent
-  return Number.isFinite(snapshotChange) ? Number(snapshotChange) : null
-})
+const selectedChangePercent = computed(() => displayChangePercent(
+  selectedLiveTicker.value,
+  selectedTicker.value,
+))
 const roundStatusLabel = computed(() => {
   const order = nearestSelectedActiveOrder.value
   if (order) {
@@ -181,49 +208,52 @@ const roundStatusLabel = computed(() => {
   }
   return t('seconds.readyState')
 })
-const currentSettlementResult = computed(() => settlementResultQueue.value[0] || null)
-const currentSettlementPresentation = computed(() => (
-  currentSettlementResult.value
-    ? secondsOrderProfitLossPresentation(currentSettlementResult.value)
+const settled = computed(() => resultQueue.value[0] || null)
+const settlementPnl = computed(() => (
+  settled.value
+    ? profitLoss(settled.value)
     : null
 ))
-const currentSettlementTone = computed<'positive' | 'negative'>(() => (
-  currentSettlementPresentation.value?.translationKey === 'seconds.profitAmount'
+const settlementTone = computed<'positive' | 'negative'>(() => (
+  settlementPnl.value?.kind === 'profit'
     ? 'positive'
     : 'negative'
 ))
-const currentSettlementTitle = computed(() => t(
-  currentSettlementTone.value === 'positive'
+const settlementTitle = computed(() => t(
+  settlementTone.value === 'positive'
     ? 'seconds.settlementProfit'
     : 'seconds.settlementLoss',
 ))
-const currentSettlementAmount = computed(() => {
-  const order = currentSettlementResult.value
-  const presentation = currentSettlementPresentation.value
-  if (!order || presentation?.amount === undefined) return '--'
-  const sign = presentation.translationKey === 'seconds.profitAmount' ? '+' : ''
-  return `${sign}${formatAmount(presentation.amount)} ${order.stakeAssetSymbol}`
+const settlementAmount = computed(() => {
+  const order = settled.value
+  const presentation = settlementPnl.value
+  if (!order || !presentation || presentation.amount === null) return '--'
+  const sign = presentation.kind === 'profit' ? '+' : ''
+  return `${sign}${moneyText(presentation.amount)} ${order.stakeAssetSymbol}`
 })
-const currentSettlementRate = computed(() => {
-  const order = currentSettlementResult.value
-  const presentation = currentSettlementPresentation.value
-  if (!order || presentation?.amount === undefined || order.stakeAmount <= 0) return '--'
-  const rate = (presentation.amount / order.stakeAmount) * 100
-  if (!Number.isFinite(rate)) return '--'
-  return `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%`
+const settlementRate = computed(() => {
+  const order = settled.value
+  const presentation = settlementPnl.value
+  if (!order || !presentation || presentation.amount === null) return '--'
+  const financials = orderMoney(order)
+  if (!financials.stakeAmount) return '--'
+  const rate = returnPercent(presentation.amount, financials.stakeAmount)
+  if (!rate) return '--'
+  const sign = presentation.kind === 'profit' ? '+' : ''
+  return `${sign}${percentText(rate, currentIntlLocale(), 2)}%`
 })
 const currentSettlementAnnouncement = computed(() => {
-  const order = currentSettlementResult.value
+  const order = settled.value
   if (!order) return ''
   return t('seconds.settlementAnnouncement', {
-    title: currentSettlementTitle.value,
-    amount: currentSettlementAmount.value,
+    title: settlementTitle.value,
+    amount: settlementAmount.value,
     symbol: order.symbol,
     direction: t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish'),
     duration: t('seconds.duration', { seconds: order.durationSeconds }),
   })
 })
-const remainingSettlementResults = computed(() => Math.max(0, settlementResultQueue.value.length - 1))
+const remainingResults = computed(() => Math.max(0, resultQueue.value.length - 1))
 const { trapFocus: trapSettlementDialogFocus } = useModalDialog(
   settlementDialogOpen,
   settlementDialog,
@@ -237,19 +267,26 @@ const {
   pairPickerDialog,
   '[data-seconds-pair-search]',
 )
-const amountNumber = computed(() => Number(amount.value || 0))
-const payoutRate = computed(() => cycle.value?.payoutRate || 0)
-const reviewEstimatedProfit = computed(() => (
-  orderReview.value
-    ? orderReview.value.stakeAmount * orderReview.value.payoutRate
-    : 0
+const exactPayoutRate = computed(() => exactCyclePayoutRate(cycle.value))
+// The legacy numeric rate is retained for compatibility presentation only.
+const payoutRateDisplay = computed(() => exactPayoutRate.value ?? cycle.value?.payoutRate ?? null)
+const cycleMinimum = computed(() => cycleMin(cycle.value))
+const cycleMaximum = computed(() => cycleMax(cycle.value))
+const hasExactCycleRange = computed(() => hasExactStakeRange(cycle.value))
+const availableStakeBalance = computed(() => walletAvailable(account.value))
+const reviewProfit = computed(() => (
+  orderReview.value?.estimatedProfit ?? null
 ))
+const stakeValidation = computed(() => validateStake(amount.value, {
+  minimum: cycleMinimum.value,
+  maximum: cycleHasMaximum(cycle.value) ? cycleMaximum.value : undefined,
+  available: availableStakeBalance.value,
+}))
 const valid = computed(() => Boolean(
   cycle.value
-  && Number.isFinite(amountNumber.value)
-  && amountNumber.value >= cycle.value.minStake
-  && (!cycle.value.maxStake || amountNumber.value <= cycle.value.maxStake)
-  && amountNumber.value <= (account.value?.available || 0),
+  && exactPayoutRate.value
+  && hasExactCycleRange.value
+  && stakeValidation.value.isValid,
 ))
 const amountFieldInvalid = computed(() => Boolean(
   session.isAuthenticated
@@ -257,67 +294,23 @@ const amountFieldInvalid = computed(() => Boolean(
   && amount.value
   && !valid.value,
 ))
-const cycleLimitLabel = computed(() => {
-  const activeCycle = cycle.value
-  const asset = selected.value?.stakeAssetSymbol || '--'
-  if (!activeCycle) return '--'
-  if (activeCycle.maxStake) {
-    return t('seconds.cycleLimitRange', {
-      minimum: formatAmount(activeCycle.minStake),
-      maximum: formatAmount(activeCycle.maxStake),
-      asset,
-    })
-  }
-  return t('seconds.cycleLimitMinimum', {
-    minimum: formatAmount(activeCycle.minStake),
-    asset,
-  })
-})
-const orderActionLabel = computed(() => t('seconds.orderAction', {
-  direction: t(direction.value === 'up' ? 'seconds.bullish' : 'seconds.bearish'),
-  amount: Number.isFinite(amountNumber.value) && amountNumber.value > 0
-    ? formatAmount(amountNumber.value)
-    : '--',
-  asset: selected.value?.stakeAssetSymbol || '--',
-}))
+const cycleLimitLabel = computed(() => formatCycleLimit(
+  cycle.value,
+  selected.value?.stakeAssetSymbol || '--',
+))
+const orderActionLabel = computed(() => formatOrderAction(
+  direction.value,
+  stakeValidation.value.stakeAmount,
+  selected.value?.stakeAssetSymbol || '--',
+))
 const homeFallback = createBottomNavSecondsFallbackTarget()
 const preferHomeFallback = computed(() => {
   void router.currentRoute.value.fullPath
   return isBottomNavigationSecondsEntry(router.options.history.state)
 })
 
-function normalizeProductSymbol(value: string): string {
-  return normalizeMarketSocketSymbol(value)
-}
-
-function displayProductSymbol(value: string): string {
-  const pair = splitSymbol(value)
-  return pair.base && pair.quote ? `${pair.base}/${pair.quote}` : value
-}
-
-function baseSymbol(value: string): string {
-  return splitSymbol(value).base || value
-}
-
-function countdownLabel(milliseconds: number): string {
-  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-}
-
-function latestPriceForSymbol(symbol: string): number {
-  const normalized = normalizeProductSymbol(symbol)
-  const livePrice = liveTickerSnapshots.value[normalized]?.lastPrice
-  if (Number.isFinite(livePrice) && livePrice > 0) return livePrice
-  if (normalized === normalizeProductSymbol(selected.value?.symbol || '')) {
-    const candlePrice = sparklinePoints.value.at(-1)?.close
-    if (Number.isFinite(candlePrice) && Number(candlePrice) > 0) return Number(candlePrice)
-  }
-  return marketStore.tickerFor(symbol)?.lastPrice || 0
-}
-
-const selectedLatestPrice = computed(() => latestPriceForSymbol(selected.value?.symbol || ''))
+const latestPrice = computed(() => exactPriceForSymbol(selected.value?.symbol || ''))
+const latestDisplayPrice = computed(() => priceFor(selected.value?.symbol || ''))
 
 function orderCountdown(order: SecondsOrder): string {
   return countdownLabel(secondsOrderRemainingMs(order, currentTime.value))
@@ -325,10 +318,6 @@ function orderCountdown(order: SecondsOrder): string {
 
 function orderProgress(order: SecondsOrder): number {
   return secondsOrderProgress(order, currentTime.value)
-}
-
-function orderEstimatedProfit(order: SecondsOrder): number {
-  return secondsOrderEstimatedProfit(order)
 }
 
 const secondsKlineSession = createMarketDetailStreamSession({
@@ -364,7 +353,7 @@ function replaceTickerSubscription(): void {
       !componentActive
       || generation !== tickerSubscriptionGeneration
       || !acceptedSymbols.has(update.symbol)
-      || update.lastPrice <= 0
+      || !positive(update.lastPriceText)
     ) {
       return
     }
@@ -509,8 +498,8 @@ function initializeSparkline(): void {
 }
 
 function advanceSettlementResult(): void {
-  settlementResultQueue.value = settlementResultQueue.value.slice(1)
-  if (!settlementResultQueue.value.length) {
+  resultQueue.value = resultQueue.value.slice(1)
+  if (!resultQueue.value.length) {
     settlementDialogOpen.value = false
     return
   }
@@ -521,7 +510,7 @@ function advanceSettlementResult(): void {
 
 function clearSettlementResultQueue(): void {
   settlementDialogOpen.value = false
-  settlementResultQueue.value = []
+  resultQueue.value = []
 }
 
 function handleSettlementDialogKeydown(event: KeyboardEvent): void {
@@ -537,6 +526,11 @@ function openHistory(): void {
 function openPairPicker(): void {
   if (confirmOpen.value || settlementDialogOpen.value) return
   pairSearch.value = ''
+  activePairProductId.value = stableRovingOptionId(
+    products.value.map((product) => product.id),
+    activePairProductId.value,
+    selected.value?.id ?? null,
+  )
   setPairPickerReturnFocus(pairPickerTrigger.value)
   pairPickerOpen.value = true
 }
@@ -546,6 +540,44 @@ function closePairPicker(): void {
 }
 
 function handlePairPickerKeydown(event: KeyboardEvent): void {
+  const target = event.target instanceof HTMLElement ? event.target : null
+  const option = target?.closest<HTMLElement>('[data-seconds-pair-option-id]') ?? null
+  const isSearch = target?.matches('[data-seconds-pair-search]') ?? false
+  const navigationKeys = new Set<string>(['ArrowDown', 'ArrowUp', 'Home', 'End'])
+
+  if (navigationKeys.has(event.key) && !(isSearch && (event.key === 'Home' || event.key === 'End'))) {
+    event.preventDefault()
+    // Resolve the DOM identifier against an existing product instead of parsing arbitrary text.
+    const focusedId = option
+      ? filteredPairProducts.value.find((item) => (
+        String(item.id) === option.dataset.secondsPairOptionId
+      ))?.id ?? null
+      : null
+    const currentId = focusedId ?? activePairProductId.value
+    const nextId = moveRovingOptionId(
+      filteredPairProductIds.value,
+      currentId,
+      event.key as RovingListboxNavigationKey,
+    )
+    activePairProductId.value = nextId
+    if (nextId !== null) {
+      void nextTick(() => {
+        pairPickerDialog.value
+          ?.querySelector<HTMLElement>(`[data-seconds-pair-option-id="${nextId}"]`)
+          ?.focus()
+      })
+    }
+    return
+  }
+
+  if (option && isRovingListboxSelectionKey(event.key, event.code)) {
+    event.preventDefault()
+    const product = filteredPairProducts.value.find((item) => (
+      String(item.id) === option.dataset.secondsPairOptionId
+    ))
+    if (product) choosePairProduct(product)
+    return
+  }
   trapPairPickerFocus(event, closePairPicker)
 }
 
@@ -554,10 +586,11 @@ function clearSecondsPrivateState(): void {
   orders.value = []
   accounts.value = []
   committedOrdersById.clear()
+  exactMoney.clear()
   expiryRetryAtByOrderId.clear()
   queuedExpiryOrderIds.clear()
   reconcilingExpiryOrderIds.clear()
-  settlementResultTracker.reset()
+  resultTracker.reset()
   clearSettlementResultQueue()
 }
 
@@ -581,7 +614,7 @@ async function load(): Promise<void> {
     if (selected.value) {
       const stillAvailable = selected.value.cycles.some((item) => item.id === selectedCycleId.value)
       if (!stillAvailable) selectedCycleId.value = selected.value.cycles[0]?.id || 0
-      if (!amount.value) amount.value = String(cycle.value?.minStake || '')
+      if (!amount.value) amount.value = cycleMin(cycle.value) ?? ''
       void loadSparkline(selected.value.symbol)
     } else {
       void loadSparkline('')
@@ -652,10 +685,10 @@ async function reconcilePrivateState(): Promise<PrivateReconciliationResult> {
 
 function applyReconciledOrders(nextOrders: readonly SecondsOrder[]): void {
   // Consume the raw server snapshot before locally committed creates are merged.
-  const settledResults = settlementResultTracker.reconcile(nextOrders)
+  const settledResults = resultTracker.reconcile(nextOrders)
   if (settledResults.length) {
-    settlementResultQueue.value = enqueueSecondsSettlementResults(
-      settlementResultQueue.value,
+    resultQueue.value = enqueueSecondsSettlementResults(
+      resultQueue.value,
       settledResults,
     )
   }
@@ -698,7 +731,7 @@ async function reconcileExpiredOrders(): Promise<void> {
     if (
       fullyLoaded
       && !activeIds.has(orderId)
-      && !settlementResultTracker.isTracking(orderId)
+      && !resultTracker.isTracking(orderId)
     ) {
       expiryRetryAtByOrderId.delete(orderId)
     }
@@ -711,7 +744,7 @@ function selectProduct(product: SecondsProduct): void {
   selected.value = product
   selectedCycleId.value = product.cycles[0]?.id || 0
   direction.value = 'up'
-  amount.value = String(product.cycles[0]?.minStake || '')
+  amount.value = cycleMin(product.cycles[0]) ?? ''
   error.value = ''
   void loadSparkline(product.symbol)
 }
@@ -723,7 +756,7 @@ function choosePairProduct(product: SecondsProduct): void {
 
 function selectCycle(cycleId: number): void {
   selectedCycleId.value = cycleId
-  amount.value = String(cycle.value?.minStake || '')
+  amount.value = cycleMin(cycle.value) ?? ''
   error.value = ''
 }
 
@@ -732,8 +765,8 @@ function setDirection(nextDirection: 'up' | 'down'): void {
   error.value = ''
 }
 
-function setAmount(value: string | number): void {
-  amount.value = String(value)
+function setAmount(value: string): void {
+  amount.value = value
   error.value = ''
 }
 
@@ -744,24 +777,33 @@ function reviewOrder(): void {
   }
   const product = selected.value
   const activeCycle = cycle.value
-  if (!product || !activeCycle || !valid.value) {
+  const activePayoutRate = exactPayoutRate.value
+  if (!product || !activeCycle || !activePayoutRate || !valid.value) {
     error.value = t('seconds.invalidAmount')
     return
   }
   error.value = ''
-  orderReview.value = Object.freeze({
+  const review = createReview({
     productId: product.id,
     cycleId: activeCycle.id,
     symbol: product.symbol,
     stakeAssetId: product.stakeAssetId,
     stakeAssetSymbol: product.stakeAssetSymbol,
     durationSeconds: activeCycle.durationSeconds,
-    payoutRate: activeCycle.payoutRate,
     direction: direction.value,
-    stakeAmount: amountNumber.value,
-    referencePrice: selectedLatestPrice.value,
+    stakeAmount: amount.value,
+    minimumStake: cycleMinimum.value,
+    maximumStake: cycleHasMaximum(activeCycle) ? cycleMaximum.value : undefined,
+    available: availableStakeBalance.value,
+    payoutRate: activePayoutRate,
+    referencePrice: latestPrice.value,
     idempotencyKey: createSecondsOrderIdempotencyKey(),
   })
+  if (!review) {
+    error.value = t('seconds.invalidAmount')
+    return
+  }
+  orderReview.value = review
   confirmOpen.value = true
 }
 
@@ -771,18 +813,23 @@ function closeConfirm(): void {
   orderReview.value = null
 }
 
-function isOrderReviewValid(review: SecondsOrderReview): boolean {
+function isOrderReviewValid(review: Readonly<OrderReview>): boolean {
   const product = products.value.find((item) => item.id === review.productId)
   const currentCycle = product?.cycles.find((item) => item.id === review.cycleId)
   const currentAccount = accounts.value.find((item) => item.assetId === review.stakeAssetId)
+  const currentPayoutRate = exactCyclePayoutRate(currentCycle)
+  const currentStakeValidation = validateStake(review.stakeAmount, {
+    minimum: cycleMin(currentCycle),
+    maximum: cycleHasMaximum(currentCycle) ? cycleMax(currentCycle) : undefined,
+    available: walletAvailable(currentAccount),
+  })
   return Boolean(
     product
     && currentCycle
+    && hasExactStakeRange(currentCycle)
+    && currentPayoutRate === review.payoutRate
     && currentCycle.durationSeconds === review.durationSeconds
-    && Number.isFinite(review.stakeAmount)
-    && review.stakeAmount >= currentCycle.minStake
-    && (!currentCycle.maxStake || review.stakeAmount <= currentCycle.maxStake)
-    && review.stakeAmount <= (currentAccount?.available || 0),
+    && currentStakeValidation.isValid,
   )
 }
 
@@ -815,12 +862,16 @@ async function submit(): Promise<void> {
       productId: review.productId,
       durationSeconds: review.durationSeconds,
       direction: review.direction,
-      stakeAmount: review.stakeAmount,
+      stakeAmount: review.stakeAmountText,
       idempotencyKey: review.idempotencyKey,
     })
     if (!isCurrentSecondsMutationSession(mutationSessionGeneration)) return
     // The create response is the earliest authoritative active-order observation.
-    settlementResultTracker.track(openedOrder)
+    exactMoney.set(openedOrder.id, {
+      stakeAmount: review.stakeAmount,
+      payoutRate: review.payoutRate,
+    })
+    resultTracker.track(openedOrder)
     committedOrdersById.set(openedOrder.id, openedOrder)
     orders.value = upsertSecondsOrder(orders.value, openedOrder)
     amount.value = ''
@@ -876,6 +927,14 @@ function trapDialogFocus(event: KeyboardEvent): void {
   }
 }
 
+watch([filteredPairProductIds, () => selected.value?.id ?? null], ([optionIds, selectedId]) => {
+  activePairProductId.value = stableRovingOptionId(
+    optionIds,
+    activePairProductId.value,
+    selectedId,
+  )
+}, { flush: 'sync' })
+
 watch(() => session.isAuthenticated, (authenticated) => {
   privateSessionGeneration += 1
   if (authenticated) return
@@ -903,7 +962,7 @@ watch(confirmOpen, async (open) => {
   returnFocus = null
 })
 
-watch([currentSettlementResult, confirmOpen, pairPickerOpen], async ([result, confirmationOpen, pickerOpen]) => {
+watch([settled, confirmOpen, pairPickerOpen], async ([result, confirmationOpen, pickerOpen]) => {
   if (!result || confirmationOpen || pickerOpen) {
     settlementDialogOpen.value = false
     return
@@ -911,7 +970,7 @@ watch([currentSettlementResult, confirmOpen, pairPickerOpen], async ([result, co
   if (settlementDialogOpen.value) return
   // Let the confirmation dialog restore scroll and focus before the settlement dialog acquires them.
   await nextTick()
-  if (currentSettlementResult.value && !confirmOpen.value && !pairPickerOpen.value) {
+  if (settled.value && !confirmOpen.value && !pairPickerOpen.value) {
     settlementDialogOpen.value = true
   }
 }, { immediate: true })
@@ -946,7 +1005,8 @@ onBeforeUnmount(() => {
   reconcilingExpiryOrderIds.clear()
   expiryRetryAtByOrderId.clear()
   committedOrdersById.clear()
-  settlementResultTracker.reset()
+  exactMoney.clear()
+  resultTracker.reset()
   clearSettlementResultQueue()
   if (clockTimer) clearInterval(clockTimer)
   chartResizeObserver?.disconnect()
@@ -1015,26 +1075,26 @@ onBeforeUnmount(() => {
               <b class="numeric">{{ selected ? roundStatusLabel : loading ? t('seconds.loading') : t('seconds.readyState') }}</b>
             </span>
             <span class="seconds-return-rate numeric">
-              {{ cycle ? t('seconds.returnRate', { rate: (payoutRate * 100).toFixed(0) }) : '--' }}
+              {{ cycle ? t('seconds.returnRate', { rate: payoutText(payoutRateDisplay, 0) }) : '--' }}
             </span>
           </div>
 
           <div class="seconds-price-panel">
-            <strong class="numeric">{{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}</strong>
+            <strong class="numeric">{{ latestDisplayPrice ? moneyText(latestDisplayPrice) : '--' }}</strong>
             <div class="seconds-price-meta">
               <span class="numeric">
                 {{ selectedChangePercent === null ? '--' : formatPercent(selectedChangePercent) }} ·
                 {{ t('seconds.referencePrice') }}
-                {{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}
+                {{ latestDisplayPrice ? moneyText(latestDisplayPrice) : '--' }}
               </span>
             </div>
             <span
               class="seconds-live-state"
-              :data-state="selectedLiveTicker ? 'live' : selectedLatestPrice > 0 ? 'snapshot' : 'unavailable'"
+              :data-state="selectedLiveTicker ? 'live' : latestDisplayPrice ? 'snapshot' : 'unavailable'"
             >
               {{ selectedLiveTicker
                 ? t('common.liveData')
-                : selectedLatestPrice > 0
+                : latestDisplayPrice
                   ? t('seconds.marketSnapshot')
                   : t('common.marketUnavailable') }}
             </span>
@@ -1098,9 +1158,9 @@ onBeforeUnmount(() => {
               <small id="seconds-balance-hint" class="sr-only">
                 {{ selected && session.isAuthenticated && account
                   ? t('seconds.balanceMinimum', {
-                    available: formatAmount(account.available),
+                    available: moneyText(walletAvailable(account)),
                     asset: selected.stakeAssetSymbol,
-                    minimum: formatAmount(cycle?.minStake || 0),
+                    minimum: moneyText(cycleMin(cycle), 18, '0'),
                   })
                   : t('seconds.loginDescription') }}
               </small>
@@ -1238,15 +1298,19 @@ onBeforeUnmount(() => {
               <dl>
                 <div>
                   <dt>{{ t('seconds.stakeAmount') }}</dt>
-                  <dd class="numeric">{{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }}</dd>
+                  <dd class="numeric">{{ moneyText(orderMoney(order).stakeAmount) }} {{ order.stakeAssetSymbol }}</dd>
                 </div>
                 <div>
                   <dt>{{ t('orders.entryPrice') }}</dt>
-                  <dd class="numeric">{{ order.entryPrice !== undefined ? formatPrice(order.entryPrice) : '--' }}</dd>
+                  <dd class="numeric">{{ moneyText(orderMoney(order).entryPrice) }}</dd>
                 </div>
                 <div>
                   <dt>{{ t('seconds.estimatedProfit') }}</dt>
-                  <dd class="numeric">+{{ formatAmount(orderEstimatedProfit(order)) }} {{ order.stakeAssetSymbol }}</dd>
+                  <dd class="numeric">
+                    {{ orderProfit(order)
+                      ? `+${moneyText(orderProfit(order))} ${order.stakeAssetSymbol}`
+                      : '--' }}
+                  </dd>
                 </div>
               </dl>
               <div class="seconds-active-progress" aria-hidden="true">
@@ -1318,14 +1382,17 @@ onBeforeUnmount(() => {
               role="listbox"
               :aria-label="t('seconds.pairPickerProductsLabel')"
             >
-              <button
+              <div
                 v-for="product in filteredPairProducts"
                 :key="product.id"
+                :id="`seconds-pair-option-${product.id}`"
                 class="seconds-pair-picker__row"
                 :class="{ 'is-selected': selected?.id === product.id }"
-                type="button"
                 role="option"
                 :aria-selected="selected?.id === product.id"
+                :tabindex="activePairProductId === product.id ? 0 : -1"
+                :data-seconds-pair-option-id="product.id"
+                @focus="activePairProductId = product.id"
                 @click="choosePairProduct(product)"
               >
                 <AssetMark
@@ -1336,8 +1403,8 @@ onBeforeUnmount(() => {
                 />
                 <strong class="numeric">{{ displayProductSymbol(product.symbol) }}</strong>
                 <span class="seconds-pair-picker__price numeric">
-                  {{ latestPriceForSymbol(product.symbol) > 0
-                    ? formatPrice(latestPriceForSymbol(product.symbol))
+                  {{ priceFor(product.symbol)
+                    ? moneyText(priceFor(product.symbol))
                     : '--' }}
                 </span>
                 <Check
@@ -1346,7 +1413,7 @@ onBeforeUnmount(() => {
                   :stroke-width="2.2"
                   aria-hidden="true"
                 />
-              </button>
+              </div>
 
               <p v-if="loading" class="seconds-pair-picker__state" role="status">
                 <LoaderCircle :size="18" class="spin" aria-hidden="true" />
@@ -1400,18 +1467,18 @@ onBeforeUnmount(() => {
           <div class="seconds-dialog__body">
             <p id="seconds-confirm-summary">
               {{ orderReview.symbol }} · {{ t(orderReview.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }} ·
-              {{ formatAmount(orderReview.stakeAmount) }} {{ orderReview.stakeAssetSymbol }}
+              {{ moneyText(orderReview.stakeAmount) }} {{ orderReview.stakeAssetSymbol }}
             </p>
 
             <dl class="confirmation-detail">
               <div><dt>{{ t('seconds.direction') }}</dt><dd>{{ t(orderReview.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd></div>
               <div><dt>{{ t('seconds.term') }}</dt><dd>{{ t('seconds.duration', { seconds: orderReview.durationSeconds }) }}</dd></div>
-              <div><dt>{{ t('seconds.stakeAmount') }}</dt><dd>{{ formatAmount(orderReview.stakeAmount) }} {{ orderReview.stakeAssetSymbol }}</dd></div>
+              <div><dt>{{ t('seconds.stakeAmount') }}</dt><dd>{{ moneyText(orderReview.stakeAmount) }} {{ orderReview.stakeAssetSymbol }}</dd></div>
               <div>
                 <dt>{{ t('seconds.payoutRate') }}</dt>
-                <dd>{{ (orderReview.payoutRate * 100).toFixed(2) }}% · +{{ formatAmount(reviewEstimatedProfit) }} {{ orderReview.stakeAssetSymbol }}</dd>
+                <dd>{{ payoutText(orderReview.payoutRate, 2) }}% · +{{ moneyText(reviewProfit) }} {{ orderReview.stakeAssetSymbol }}</dd>
               </div>
-              <div><dt>{{ t('marketDetail.latestPrice') }}</dt><dd>{{ orderReview.referencePrice > 0 ? formatPrice(orderReview.referencePrice) : '--' }}</dd></div>
+              <div><dt>{{ t('marketDetail.latestPrice') }}</dt><dd>{{ moneyText(orderReview.referencePrice) }}</dd></div>
             </dl>
 
             <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
@@ -1438,7 +1505,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <Transition name="seconds-result-reveal" mode="out-in">
         <aside
-          v-if="settlementDialogOpen && currentSettlementResult"
+          v-if="settlementDialogOpen && settled"
           class="seconds-settlement-layer"
           data-pencil-source="tFcTH FBdqS"
           @click.self="advanceSettlementResult"
@@ -1449,13 +1516,13 @@ onBeforeUnmount(() => {
           <article
             ref="settlementDialog"
             class="seconds-settlement-card"
-            :data-tone="currentSettlementTone"
-            :data-direction="currentSettlementResult.direction"
+            :data-tone="settlementTone"
+            :data-direction="settled.direction"
             data-settlement-source="orders-api"
             role="dialog"
             aria-modal="true"
-            :aria-labelledby="`seconds-settlement-title-${currentSettlementResult.id}`"
-            :aria-describedby="`seconds-settlement-note-${currentSettlementResult.id}`"
+            :aria-labelledby="`seconds-settlement-title-${settled.id}`"
+            :aria-describedby="`seconds-settlement-note-${settled.id}`"
             tabindex="-1"
             @keydown="handleSettlementDialogKeydown"
           >
@@ -1482,12 +1549,12 @@ onBeforeUnmount(() => {
               <span class="seconds-settlement-card__result-icon" aria-hidden="true">
                 <BadgeDollarSign :size="34" :stroke-width="1.75" />
               </span>
-              <strong :id="`seconds-settlement-title-${currentSettlementResult.id}`">
-                {{ currentSettlementTitle }}
+              <strong :id="`seconds-settlement-title-${settled.id}`">
+                {{ settlementTitle }}
               </strong>
-              <b class="seconds-settlement-card__amount numeric">{{ currentSettlementAmount }}</b>
+              <b class="seconds-settlement-card__amount numeric">{{ settlementAmount }}</b>
               <span class="seconds-settlement-card__rate">
-                {{ t('seconds.settlementReturnRate', { rate: currentSettlementRate }) }}
+                {{ t('seconds.settlementReturnRate', { rate: settlementRate }) }}
               </span>
             </section>
 
@@ -1495,7 +1562,7 @@ onBeforeUnmount(() => {
               <span class="seconds-settlement-card__price">
                 <small>{{ t('seconds.settlementEntryPrice') }}</small>
                 <strong class="numeric">
-                  {{ currentSettlementResult.entryPrice !== undefined ? formatPrice(currentSettlementResult.entryPrice) : '--' }}
+                  {{ moneyText(orderMoney(settled).entryPrice) }}
                 </strong>
               </span>
               <span class="seconds-settlement-card__price-arrow" aria-hidden="true">
@@ -1504,7 +1571,7 @@ onBeforeUnmount(() => {
               <span class="seconds-settlement-card__price seconds-settlement-card__price--settled">
                 <small>{{ t('seconds.settlementPrice') }}</small>
                 <strong class="numeric">
-                  {{ currentSettlementResult.settlementPrice !== undefined ? formatPrice(currentSettlementResult.settlementPrice) : '--' }}
+                  {{ moneyText(orderMoney(settled).settlementPrice) }}
                 </strong>
               </span>
             </section>
@@ -1512,33 +1579,33 @@ onBeforeUnmount(() => {
             <dl class="seconds-settlement-card__summary" :aria-label="t('seconds.settlementResultDetails')">
               <div>
                 <dt>{{ t('seconds.settlementPair') }}</dt>
-                <dd>{{ displayProductSymbol(currentSettlementResult.symbol) }}</dd>
+                <dd>{{ displayProductSymbol(settled.symbol) }}</dd>
               </div>
               <div>
                 <dt>{{ t('seconds.settlementDirection') }}</dt>
-                <dd>{{ t(currentSettlementResult.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd>
+                <dd>{{ t(settled.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd>
               </div>
               <div>
                 <dt>{{ t('seconds.settlementCycle') }}</dt>
-                <dd>{{ t('seconds.historyDuration', { seconds: currentSettlementResult.durationSeconds }) }}</dd>
+                <dd>{{ t('seconds.historyDuration', { seconds: settled.durationSeconds }) }}</dd>
               </div>
             </dl>
 
             <p
-              :id="`seconds-settlement-note-${currentSettlementResult.id}`"
+              :id="`seconds-settlement-note-${settled.id}`"
               class="seconds-settlement-card__note"
             >
               <Info :size="17" :stroke-width="1.8" aria-hidden="true" />
               <span>
                 {{ t('seconds.settlementAutoSummary', {
-                  amount: formatAmount(currentSettlementResult.stakeAmount),
-                  asset: currentSettlementResult.stakeAssetSymbol,
+                  amount: moneyText(orderMoney(settled).stakeAmount),
+                  asset: settled.stakeAssetSymbol,
                 }) }}
               </span>
             </p>
 
-            <p v-if="remainingSettlementResults" class="sr-only">
-              {{ t('seconds.settlementResultsRemaining', { count: remainingSettlementResults }) }}
+            <p v-if="remainingResults" class="sr-only">
+              {{ t('seconds.settlementResultsRemaining', { count: remainingResults }) }}
             </p>
 
             <div class="seconds-settlement-card__actions">

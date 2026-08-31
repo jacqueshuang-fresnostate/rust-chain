@@ -1,16 +1,19 @@
 import axios from 'axios'
 import { client, requestUrl } from './client'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
-import { mapMarginProductMarginLimits } from '@/core/tradeForm'
 import { parseMarginOrderTypes } from '@/core/marginOrder'
 import {
   mapMarginCrossAccountRisk,
-  parseMarginRiskNumber,
   type MarginCrossAccountRisk,
 } from '@/core/marginRiskMetrics'
 import { mapMarginUserLeverageSetting } from '@/core/marginLeverage'
 import type { MarginOrderType, MarginProduct, WalletAccount } from '@/core/types'
 import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
+import {
+  normalizeDecimalText,
+  requiredDecimalText,
+  type DecimalText,
+} from '@/core/decimal'
 import {
   createReferenceRequestKey,
   referenceRequestRegistry,
@@ -18,6 +21,18 @@ import {
 } from './requestCache'
 
 const spotOrderIdempotencyKeys = new RetryStableIdempotencyKeys('mobile-spot')
+
+const FINANCIAL_DECIMAL_CONSTRAINTS = {
+  maxIntegerDigits: 20,
+  maxScale: 18,
+} as const
+
+export class TradingFinancialContractError extends TypeError {
+  constructor(field: string) {
+    super(`invalid trading financial ${field}`)
+    this.name = 'TradingFinancialContractError'
+  }
+}
 
 export type {
   MarginCrossAccountPriceAssumption,
@@ -28,8 +43,8 @@ export interface SpotOrderInput {
   symbol: string
   side: 'buy' | 'sell'
   type: 'limit' | 'market'
-  price?: number
-  quantity: number
+  price?: DecimalText
+  quantity: DecimalText
 }
 
 export interface MarginOrderInput {
@@ -37,9 +52,9 @@ export interface MarginOrderInput {
   side: 'long' | 'short'
   marginMode: 'cross' | 'isolated'
   leverage: number
-  marginAmount: number
+  marginAmount: DecimalText
   orderType: MarginOrderType
-  price?: string
+  price?: DecimalText
   idempotencyKey?: string
 }
 
@@ -90,6 +105,9 @@ export interface SpotOrder {
   price: number
   quantity: number
   filledQuantity: number
+  priceText: DecimalText | null
+  quantityText: DecimalText
+  filledQuantityText: DecimalText
   status: string
   createdAt?: number
 }
@@ -104,20 +122,39 @@ export interface MarginPosition {
   marginAmount: number
   notionalAmount: number
   borrowedAmount: number
+  marginAmountText: DecimalText
+  notionalAmountText: DecimalText
+  borrowedAmountText: DecimalText
   leverage: number
   orderType: MarginOrderType
   entryPrice: number | null
+  entryPriceText: DecimalText | null
   /** Preserve the backend DECIMAL text so a pending order's exact trigger intent is not rounded by JS. */
-  limitPrice: string | null
+  limitPrice: DecimalText | null
+  limitPriceText: DecimalText | null
   realizedPnl: number
   interestAmount: number
+  realizedPnlText: DecimalText | null
+  interestAmountText: DecimalText
   status: string
 }
 
 export interface MarginWallets {
-  wallets: WalletAccount[]
+  wallets: MarginWalletAccount[]
   positions: MarginPosition[]
   crossAccounts: MarginCrossAccount[]
+}
+
+export interface MarginWalletAccount extends WalletAccount {
+  availableText: DecimalText
+  frozenText: DecimalText
+  lockedText: DecimalText
+  maxTransferableToSpot: number
+  maxTransferableToSpotText: DecimalText
+  transferRiskEquity: number | null
+  transferRiskEquityText: DecimalText | null
+  transferRiskMaintenanceMargin: number | null
+  transferRiskMaintenanceMarginText: DecimalText | null
 }
 
 export interface MarginCrossAccount {
@@ -128,6 +165,31 @@ export interface MarginCrossAccount {
   interestAmount: number
   maintenanceMargin: number
   marginRatio: number | null
+  equityText: DecimalText
+  unrealizedPnlText: DecimalText
+  interestAmountText: DecimalText
+  maintenanceMarginText: DecimalText
+  marginRatioText: DecimalText | null
+}
+
+export interface MarginProductFinancialAuthority extends MarginProduct {
+  minMarginText: DecimalText
+  maxMarginText: DecimalText | null
+  maintenanceMarginRateText: DecimalText
+  hourlyInterestRateText: DecimalText
+}
+
+export interface MarginCrossAccountRiskFinancialAuthority extends MarginCrossAccountRisk {
+  equityText: DecimalText
+  maintenanceMarginText: DecimalText
+  liquidationBufferText: DecimalText
+  marginRatioText: DecimalText | null
+  unrealizedPnlText: DecimalText
+  interestAmountText: DecimalText
+  netQuantityText: DecimalText
+  grossQuantityText: DecimalText
+  conditionalLiquidationPriceText: DecimalText | null
+  conditionalLiquidationDistanceRateText: DecimalText | null
 }
 
 export interface MarginPositionRisk {
@@ -150,9 +212,23 @@ export interface MarginPositionRisk {
   marginRatio: number | null
   estimatedLiquidationPrice: number | null
   liquidationDistanceRate: number | null
+  marginAmountText: DecimalText
+  notionalAmountText: DecimalText
+  interestAmountText: DecimalText
+  entryPriceText: DecimalText
+  markPriceText: DecimalText
+  maintenanceMarginRateText: DecimalText
+  unrealizedPnlText: DecimalText
+  equityText: DecimalText
+  maintenanceMarginText: DecimalText
+  positionQuantityText: DecimalText
+  returnRateText: DecimalText | null
+  marginRatioText: DecimalText | null
+  estimatedLiquidationPriceText: DecimalText | null
+  liquidationDistanceRateText: DecimalText | null
   shouldLiquidate: boolean
   observedAt?: number
-  crossAccountRisk?: MarginCrossAccountRisk
+  crossAccountRisk?: MarginCrossAccountRiskFinancialAuthority
 }
 
 export interface MarginBatchActionFailure {
@@ -166,6 +242,22 @@ export interface MarginBatchActionResult {
   failures: MarginBatchActionFailure[]
 }
 
+export interface SpotCancelAllOptions {
+  pairId?: string
+  signal?: AbortSignal
+}
+
+export interface SpotCancelAllFailure {
+  id: string
+  code: string
+  message: string
+}
+
+export interface SpotCancelAllResult {
+  orders: SpotOrder[]
+  failures: SpotCancelAllFailure[]
+}
+
 export interface MarginCloseInput {
   percentage: number
   idempotencyKey: string
@@ -176,12 +268,18 @@ export async function placeSpotOrder(input: SpotOrderInput): Promise<void> {
     pair_id: normalizeSymbol(input.symbol).replace(/(USDT|USDC|BTC|ETH|USD)$/, '-$1'),
     side: input.side,
     order_type: input.type,
-    quantity: String(input.quantity),
+    quantity: normalizeDecimalText(input.quantity),
   }
+  if (!input.price) {
+    throw new TradingFinancialContractError(
+      input.type === 'limit' ? 'spot order price' : 'spot order reference_price',
+    )
+  }
+  const requestPrice = normalizeDecimalText(input.price)
   if (input.type === 'limit') {
-    businessIntent.price = String(input.price || 0)
+    businessIntent.price = requestPrice
   } else {
-    businessIntent.reference_price = String(input.price || 0)
+    businessIntent.reference_price = requestPrice
   }
   const intent = canonicalRequestIntent(businessIntent)
   const idempotencyKey = spotOrderIdempotencyKeys.acquire(intent)
@@ -192,7 +290,12 @@ export async function placeSpotOrder(input: SpotOrderInput): Promise<void> {
   spotOrderIdempotencyKeys.complete(intent, idempotencyKey)
 }
 
-export async function fetchSpotOrders(symbol?: string, status?: string, limit = 30): Promise<SpotOrder[]> {
+export async function fetchSpotOrders(
+  symbol?: string,
+  status?: string,
+  limit = 30,
+  signal?: AbortSignal,
+): Promise<SpotOrder[]> {
   const pair = symbol ? splitSymbol(symbol) : undefined
   const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(requestUrl('/spot/orders'), {
     params: {
@@ -200,42 +303,90 @@ export async function fetchSpotOrders(symbol?: string, status?: string, limit = 
       status,
       limit,
     },
+    signal,
   })
-  return (response.data.orders || []).map((order) => ({
+  return (response.data.orders || []).map(mapSpotOrder)
+}
+
+function mapSpotOrder(order: Record<string, unknown>): SpotOrder {
+  const priceText = nullableTradingDecimal(order.price ?? order.average_price, 'spot order price', {
+    allowNegative: false,
+  })
+  const quantityText = tradingDecimal(order.quantity, 'spot order quantity', {
+    allowNegative: false,
+  })
+  const filledQuantityText = tradingDecimal(order.filled_quantity, 'spot order filled_quantity', {
+    allowNegative: false,
+  })
+  return {
     id: String(order.id),
     symbol: String(order.pair_id || order.symbol || ''),
     side: String(order.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy',
     orderType: String(order.order_type || 'limit'),
-    price: asNumber(order.price ?? order.average_price),
-    quantity: asNumber(order.quantity),
-    filledQuantity: asNumber(order.filled_quantity),
+    price: priceText ? decimalDisplayNumber(priceText, 'spot order price') : Number.NaN,
+    quantity: decimalDisplayNumber(quantityText, 'spot order quantity'),
+    filledQuantity: decimalDisplayNumber(filledQuantityText, 'spot order filled_quantity'),
+    priceText,
+    quantityText,
+    filledQuantityText,
     status: String(order.status || 'pending'),
     createdAt: normalizeTimestamp(order.created_at),
-  }))
+  }
 }
 
 export async function cancelSpotOrder(orderId: string): Promise<void> {
   await client.delete(requestUrl(`/spot/orders/${encodeURIComponent(orderId)}`))
 }
 
-export async function fetchOpenSpotOrders(limit = 30): Promise<SpotOrder[]> {
-  const pages = await Promise.all(['pending', 'open', 'partially_filled'].map((status) => fetchSpotOrders(undefined, status, limit)))
+export async function fetchOpenSpotOrders(limit = 30, signal?: AbortSignal): Promise<SpotOrder[]> {
+  const pages = await Promise.all(['pending', 'open', 'partially_filled'].map(
+    (status) => fetchSpotOrders(undefined, status, limit, signal),
+  ))
   return uniqueSpotOrders(pages.flat())
 }
 
-export async function fetchSpotOrderHistory(limit = 30): Promise<SpotOrder[]> {
-  const pages = await Promise.all(['filled', 'cancelled', 'rejected'].map((status) => fetchSpotOrders(undefined, status, limit)))
+export async function fetchSpotOrderHistory(limit = 30, signal?: AbortSignal): Promise<SpotOrder[]> {
+  const pages = await Promise.all(['filled', 'cancelled', 'rejected'].map(
+    (status) => fetchSpotOrders(undefined, status, limit, signal),
+  ))
   return uniqueSpotOrders(pages.flat())
 }
 
-export async function cancelAllSpotOrders(orderIds: string[]): Promise<void> {
-  // 后端暂未提供现货批量撤单端点，移动端按当前委托逐笔撤销。
-  const results = await Promise.allSettled(orderIds.map((orderId) => cancelSpotOrder(orderId)))
-  const rejected = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
-  if (rejected) throw rejected.reason
+export async function cancelAllSpotOrders(
+  options: SpotCancelAllOptions = {},
+): Promise<SpotCancelAllResult> {
+  const response = await client.delete<{
+    orders?: unknown
+    failures?: unknown
+  }>(requestUrl('/spot/orders'), {
+    params: { pair_id: options.pairId?.trim() || undefined },
+    signal: options.signal,
+  })
+  if (!Array.isArray(response.data.orders) || !Array.isArray(response.data.failures)) {
+    throw new Error('Spot batch-cancel response is malformed')
+  }
+  return {
+    orders: response.data.orders.map((order) => {
+      if (!order || typeof order !== 'object' || Array.isArray(order)) {
+        throw new Error('Spot batch-cancel order is malformed')
+      }
+      return mapSpotOrder(order as Record<string, unknown>)
+    }),
+    failures: response.data.failures.map((failure) => {
+      if (!failure || typeof failure !== 'object' || Array.isArray(failure)) {
+        throw new Error('Spot batch-cancel failure is malformed')
+      }
+      const row = failure as Record<string, unknown>
+      return {
+        id: String(row.id || '').trim(),
+        code: String(row.code || '').trim(),
+        message: String(row.message || '').trim(),
+      }
+    }),
+  }
 }
 
-export async function fetchMarginProducts(options: ReferenceRequestOptions = {}): Promise<MarginProduct[]> {
+export async function fetchMarginProducts(options: ReferenceRequestOptions = {}): Promise<MarginProductFinancialAuthority[]> {
   const url = requestUrl('/margin/products')
   // 产品能力目录不含用户仓位或钱包数据，因此公开缓存键不需要 token。
   return referenceRequestRegistry.request(createReferenceRequestKey(url), 60_000, async () => {
@@ -245,7 +396,24 @@ export async function fetchMarginProducts(options: ReferenceRequestOptions = {})
       const pair = splitSymbol(product.symbol)
       const modes = resolveMarginModes(response.data.capabilities?.margin_modes, product.margin_modes, product.margin_mode)
       const levels = parseLeverage(product.leverage_levels, product.max_leverage)
-      const marginLimits = mapMarginProductMarginLimits(product)
+      const minMarginText = tradingDecimal(product.min_margin, 'margin product min_margin', {
+        allowNegative: false,
+        allowZero: false,
+      })
+      const maxMarginText = nullableTradingDecimal(product.max_margin, 'margin product max_margin', {
+        allowNegative: false,
+        allowZero: false,
+      })
+      const maintenanceMarginRateText = tradingDecimal(
+        product.maintenance_margin_rate,
+        'margin product maintenance_margin_rate',
+        { allowNegative: false },
+      )
+      const hourlyInterestRateText = tradingDecimal(
+        product.hourly_interest_rate,
+        'margin product hourly_interest_rate',
+        { allowNegative: false },
+      )
       return {
         id: product.id,
         pairId: asNumber(product.pair_id),
@@ -259,10 +427,14 @@ export async function fetchMarginProducts(options: ReferenceRequestOptions = {})
         pricePrecision: nonNegativeInteger(product.price_precision),
         leverageLevels: levels,
         maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
-        minMargin: marginLimits.minMargin,
-        maxMargin: marginLimits.maxMargin,
-        maintenanceMarginRate: parseMarginRiskNumber(product.maintenance_margin_rate),
-        hourlyInterestRate: asNumber(product.hourly_interest_rate),
+        minMargin: decimalDisplayNumber(minMarginText, 'margin product min_margin'),
+        maxMargin: nullableDecimalDisplayNumber(maxMarginText),
+        minMarginText,
+        maxMarginText,
+        maintenanceMarginRate: decimalDisplayNumber(maintenanceMarginRateText, 'margin product maintenance_margin_rate'),
+        maintenanceMarginRateText,
+        hourlyInterestRate: decimalDisplayNumber(hourlyInterestRateText, 'margin product hourly_interest_rate'),
+        hourlyInterestRateText,
         takeProfitStopLossSupported: response.data.capabilities?.take_profit_stop_loss === true,
         strategyOrdersSupported: response.data.capabilities?.strategy_orders === true,
         bulkCloseSupported: response.data.capabilities?.bulk_close === true,
@@ -278,12 +450,12 @@ export async function placeMarginOrder(input: MarginOrderInput): Promise<void> {
     direction: input.side,
     order_type: input.orderType,
     margin_mode: input.marginMode,
-    margin_amount: String(input.marginAmount),
+    margin_amount: normalizeDecimalText(input.marginAmount),
     leverage: String(input.leverage),
     idempotency_key: input.idempotencyKey || createMarginOrderIdempotencyKey(),
   }
   if (input.orderType === 'limit') {
-    const price = input.price?.trim()
+    const price = input.price ? normalizeDecimalText(input.price) : undefined
     if (!price) throw new TypeError('margin limit order requires a frozen price')
     payload.price = price
   }
@@ -294,9 +466,14 @@ export function createMarginOrderIdempotencyKey(): string {
   return createIdempotencyKey('mobile-margin')
 }
 
-export async function fetchMarginPositions(status?: string, limit = 30): Promise<MarginPosition[]> {
+export async function fetchMarginPositions(
+  status?: string,
+  limit = 30,
+  signal?: AbortSignal,
+): Promise<MarginPosition[]> {
   const response = await client.get<{ positions?: Array<Record<string, unknown>> }>(requestUrl('/margin/positions'), {
     params: { status, limit },
+    signal,
   })
   return (response.data.positions || []).map(mapMarginPosition)
 }
@@ -307,26 +484,15 @@ export async function fetchMarginWallets(): Promise<MarginWallets> {
     positions?: Array<Record<string, unknown>>
     cross_accounts?: Array<Record<string, unknown>>
   }>(requestUrl('/margin/wallets'))
+  if (!Array.isArray(response.data.wallets)
+    || !Array.isArray(response.data.positions)
+    || !Array.isArray(response.data.cross_accounts)) {
+    throw new TradingFinancialContractError('margin wallets envelope')
+  }
   return {
-    wallets: (response.data.wallets || []).map((wallet) => ({
-      assetId: asNumber(wallet.asset_id),
-      symbol: String(wallet.asset_symbol || '').toUpperCase(),
-      logoUrl: String(wallet.logo_url || '').trim() || undefined,
-      marginTransferEnabled: wallet.margin_transfer_enabled !== false,
-      available: asNumber(wallet.available),
-      frozen: asNumber(wallet.frozen),
-      locked: asNumber(wallet.locked),
-    })),
-    positions: (response.data.positions || []).map(mapMarginPosition),
-    crossAccounts: (response.data.cross_accounts || []).map((account) => ({
-      marginAssetId: asNumber(account.margin_asset),
-      status: String(account.status || ''),
-      equity: asNumber(account.equity),
-      unrealizedPnl: asNumber(account.unrealized_pnl),
-      interestAmount: asNumber(account.interest_amount),
-      maintenanceMargin: asNumber(account.maintenance_margin),
-      marginRatio: optionalNumber(account.margin_ratio),
-    })),
+    wallets: response.data.wallets.map(mapMarginWallet),
+    positions: response.data.positions.map(mapMarginPosition),
+    crossAccounts: response.data.cross_accounts.map(mapMarginCrossAccount),
   }
 }
 
@@ -340,30 +506,67 @@ export async function fetchMarginPositionRisk(positionId: string): Promise<Margi
   const response = await client.get<{ risk?: Record<string, unknown> }>(
     requestUrl(`/margin/positions/${encodeURIComponent(positionId)}/risk`),
   )
-  const risk = response.data.risk || {}
+  if (!response.data.risk) throw new TradingFinancialContractError('position risk')
+  const risk = response.data.risk
+  const marginAmountText = nonNegativeTradingDecimal(risk.margin_amount, 'position risk margin_amount')
+  const notionalAmountText = nonNegativeTradingDecimal(risk.notional_amount, 'position risk notional_amount')
+  const interestAmountText = nonNegativeTradingDecimal(risk.interest_amount, 'position risk interest_amount')
+  const entryPriceText = nonNegativeTradingDecimal(risk.entry_price, 'position risk entry_price')
+  const markPriceText = nonNegativeTradingDecimal(risk.mark_price, 'position risk mark_price')
+  const maintenanceMarginRateText = nonNegativeTradingDecimal(risk.maintenance_margin_rate, 'position risk maintenance_margin_rate')
+  const unrealizedPnlText = tradingDecimal(risk.unrealized_pnl ?? risk.realized_pnl, 'position risk unrealized_pnl')
+  const equityText = tradingDecimal(risk.equity, 'position risk equity')
+  const maintenanceMarginText = nonNegativeTradingDecimal(risk.maintenance_margin, 'position risk maintenance_margin')
+  const positionQuantityText = nonNegativeTradingDecimal(risk.position_quantity, 'position risk position_quantity')
+  const returnRateText = nullableTradingDecimal(risk.return_rate, 'position risk return_rate')
+  const marginRatioText = nullableTradingDecimal(risk.margin_ratio, 'position risk margin_ratio')
+  const estimatedLiquidationPriceText = nullableTradingDecimal(
+    risk.estimated_liquidation_price,
+    'position risk estimated_liquidation_price',
+    { allowNegative: false, allowZero: false },
+  )
+  const liquidationDistanceRateText = nullableTradingDecimal(
+    risk.liquidation_distance_rate,
+    'position risk liquidation_distance_rate',
+    { allowNegative: false },
+  )
   return {
     positionId: String(risk.position_id ?? positionId),
     pairId: asNumber(risk.pair_id),
     symbol: String(risk.symbol || ''),
     marginAssetId: asNumber(risk.margin_asset),
     direction: String(risk.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
-    marginAmount: asNumber(risk.margin_amount),
-    notionalAmount: asNumber(risk.notional_amount),
-    interestAmount: asNumber(risk.interest_amount),
-    entryPrice: asNumber(risk.entry_price),
-    markPrice: asNumber(risk.mark_price),
-    maintenanceMarginRate: parseMarginRiskNumber(risk.maintenance_margin_rate),
-    unrealizedPnl: asNumber(risk.unrealized_pnl ?? risk.realized_pnl),
-    equity: asNumber(risk.equity),
-    maintenanceMargin: asNumber(risk.maintenance_margin),
-    positionQuantity: asNumber(risk.position_quantity),
-    returnRate: optionalNumber(risk.return_rate),
-    marginRatio: optionalNumber(risk.margin_ratio),
-    estimatedLiquidationPrice: parseMarginRiskNumber(risk.estimated_liquidation_price),
-    liquidationDistanceRate: optionalNumber(risk.liquidation_distance_rate),
+    marginAmount: decimalDisplayNumber(marginAmountText, 'position risk margin_amount'),
+    notionalAmount: decimalDisplayNumber(notionalAmountText, 'position risk notional_amount'),
+    interestAmount: decimalDisplayNumber(interestAmountText, 'position risk interest_amount'),
+    entryPrice: decimalDisplayNumber(entryPriceText, 'position risk entry_price'),
+    markPrice: decimalDisplayNumber(markPriceText, 'position risk mark_price'),
+    maintenanceMarginRate: decimalDisplayNumber(maintenanceMarginRateText, 'position risk maintenance_margin_rate'),
+    unrealizedPnl: decimalDisplayNumber(unrealizedPnlText, 'position risk unrealized_pnl'),
+    equity: decimalDisplayNumber(equityText, 'position risk equity'),
+    maintenanceMargin: decimalDisplayNumber(maintenanceMarginText, 'position risk maintenance_margin'),
+    positionQuantity: decimalDisplayNumber(positionQuantityText, 'position risk position_quantity'),
+    returnRate: nullableDecimalDisplayNumber(returnRateText),
+    marginRatio: nullableDecimalDisplayNumber(marginRatioText),
+    estimatedLiquidationPrice: nullableDecimalDisplayNumber(estimatedLiquidationPriceText),
+    liquidationDistanceRate: nullableDecimalDisplayNumber(liquidationDistanceRateText),
+    marginAmountText,
+    notionalAmountText,
+    interestAmountText,
+    entryPriceText,
+    markPriceText,
+    maintenanceMarginRateText,
+    unrealizedPnlText,
+    equityText,
+    maintenanceMarginText,
+    positionQuantityText,
+    returnRateText,
+    marginRatioText,
+    estimatedLiquidationPriceText,
+    liquidationDistanceRateText,
     shouldLiquidate: risk.should_liquidate === true,
     observedAt: normalizeTimestamp(risk.observed_at),
-    crossAccountRisk: mapMarginCrossAccountRisk(risk.cross_account_risk),
+    crossAccountRisk: mapStrictMarginCrossAccountRisk(risk.cross_account_risk),
   }
 }
 
@@ -489,6 +692,19 @@ function normalizeTimestamp(value: unknown): number | undefined {
 }
 
 function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
+  const marginAmountText = nonNegativeTradingDecimal(position.margin_amount, 'margin position margin_amount')
+  const notionalAmountText = nonNegativeTradingDecimal(position.notional_amount, 'margin position notional_amount')
+  const borrowedAmountText = nonNegativeTradingDecimal(position.borrowed_amount, 'margin position borrowed_amount')
+  const entryPriceText = nullableTradingDecimal(position.entry_price, 'margin position entry_price', {
+    allowNegative: false,
+    allowZero: false,
+  })
+  const limitPriceText = nullableTradingDecimal(position.limit_price, 'margin position limit_price', {
+    allowNegative: false,
+    allowZero: false,
+  })
+  const realizedPnlText = nullableTradingDecimal(position.realized_pnl, 'margin position realized_pnl')
+  const interestAmountText = nonNegativeTradingDecimal(position.interest_amount, 'margin position interest_amount')
   return {
     id: String(position.id),
     productId: asNumber(position.product_id),
@@ -496,15 +712,22 @@ function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
     marginAssetId: asNumber(position.margin_asset),
     direction: String(position.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
     marginMode: String(position.margin_mode || 'isolated').toLowerCase() === 'cross' ? 'cross' : 'isolated',
-    marginAmount: requiredMarginRiskNumber(position.margin_amount),
-    notionalAmount: requiredMarginRiskNumber(position.notional_amount),
-    borrowedAmount: asNumber(position.borrowed_amount),
+    marginAmount: decimalDisplayNumber(marginAmountText, 'margin position margin_amount'),
+    notionalAmount: decimalDisplayNumber(notionalAmountText, 'margin position notional_amount'),
+    borrowedAmount: decimalDisplayNumber(borrowedAmountText, 'margin position borrowed_amount'),
+    marginAmountText,
+    notionalAmountText,
+    borrowedAmountText,
     leverage: asNumber(position.leverage, 1),
     orderType: String(position.order_type || '').trim().toLowerCase() === 'limit' ? 'limit' : 'market',
-    entryPrice: parseMarginRiskNumber(position.entry_price),
-    limitPrice: optionalDecimalString(position.limit_price),
-    realizedPnl: asNumber(position.realized_pnl),
-    interestAmount: requiredMarginRiskNumber(position.interest_amount),
+    entryPrice: nullableDecimalDisplayNumber(entryPriceText),
+    entryPriceText,
+    limitPrice: limitPriceText,
+    limitPriceText,
+    realizedPnl: realizedPnlText ? decimalDisplayNumber(realizedPnlText, 'margin position realized_pnl') : Number.NaN,
+    interestAmount: decimalDisplayNumber(interestAmountText, 'margin position interest_amount'),
+    realizedPnlText,
+    interestAmountText,
     status: String(position.status || 'open'),
   }
 }
@@ -523,24 +746,6 @@ function mapMarginBatchAction(payload: {
   }
 }
 
-function optionalNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null
-  const parsed = asNumber(value, Number.NaN)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function requiredMarginRiskNumber(value: unknown): number {
-  // 必填回退参数异常时保留非有限哨兵，交由展示公式拒绝，不能静默制造为零。
-  return parseMarginRiskNumber(value) ?? Number.NaN
-}
-
-function optionalDecimalString(value: unknown): string | null {
-  if (value === null || value === undefined || value === '') return null
-  const normalized = String(value).trim()
-  if (!normalized || !Number.isFinite(Number(normalized))) return null
-  return normalized
-}
-
 function nonNegativeInteger(value: unknown): number | null {
   const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
   return typeof parsed === 'number' && Number.isInteger(parsed) && parsed >= 0 ? parsed : null
@@ -549,4 +754,142 @@ function nonNegativeInteger(value: unknown): number | null {
 function uniqueSpotOrders(orders: SpotOrder[]): SpotOrder[] {
   return [...new Map(orders.map((order) => [order.id, order])).values()]
     .sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
+}
+
+function mapMarginWallet(wallet: Record<string, unknown>): MarginWalletAccount {
+  const availableText = nonNegativeTradingDecimal(wallet.available, 'margin wallet available')
+  const frozenText = nonNegativeTradingDecimal(wallet.frozen, 'margin wallet frozen')
+  const lockedText = nonNegativeTradingDecimal(wallet.locked, 'margin wallet locked')
+  const maxTransferableToSpotText = nonNegativeTradingDecimal(
+    wallet.max_transferable_to_spot,
+    'margin wallet max_transferable_to_spot',
+  )
+  const transferRiskEquityText = nullableTradingDecimal(
+    wallet.transfer_risk_equity,
+    'margin wallet transfer_risk_equity',
+  )
+  const transferRiskMaintenanceMarginText = nullableTradingDecimal(
+    wallet.transfer_risk_maintenance_margin,
+    'margin wallet transfer_risk_maintenance_margin',
+    { allowNegative: false },
+  )
+  return {
+    assetId: asNumber(wallet.asset_id),
+    symbol: String(wallet.asset_symbol || '').toUpperCase(),
+    logoUrl: String(wallet.logo_url || '').trim() || undefined,
+    marginTransferEnabled: wallet.margin_transfer_enabled !== false,
+    available: decimalDisplayNumber(availableText, 'margin wallet available'),
+    frozen: decimalDisplayNumber(frozenText, 'margin wallet frozen'),
+    locked: decimalDisplayNumber(lockedText, 'margin wallet locked'),
+    availableText,
+    frozenText,
+    lockedText,
+    maxTransferableToSpot: decimalDisplayNumber(maxTransferableToSpotText, 'margin wallet max_transferable_to_spot'),
+    maxTransferableToSpotText,
+    transferRiskEquity: nullableDecimalDisplayNumber(transferRiskEquityText),
+    transferRiskEquityText,
+    transferRiskMaintenanceMargin: nullableDecimalDisplayNumber(transferRiskMaintenanceMarginText),
+    transferRiskMaintenanceMarginText,
+  }
+}
+
+function mapMarginCrossAccount(account: Record<string, unknown>): MarginCrossAccount {
+  const equityText = tradingDecimal(account.equity, 'margin cross account equity')
+  const unrealizedPnlText = tradingDecimal(account.unrealized_pnl, 'margin cross account unrealized_pnl')
+  const interestAmountText = nonNegativeTradingDecimal(account.interest_amount, 'margin cross account interest_amount')
+  const maintenanceMarginText = nonNegativeTradingDecimal(account.maintenance_margin, 'margin cross account maintenance_margin')
+  const marginRatioText = nullableTradingDecimal(account.margin_ratio, 'margin cross account margin_ratio')
+  return {
+    marginAssetId: asNumber(account.margin_asset),
+    status: String(account.status || ''),
+    equity: decimalDisplayNumber(equityText, 'margin cross account equity'),
+    unrealizedPnl: decimalDisplayNumber(unrealizedPnlText, 'margin cross account unrealized_pnl'),
+    interestAmount: decimalDisplayNumber(interestAmountText, 'margin cross account interest_amount'),
+    maintenanceMargin: decimalDisplayNumber(maintenanceMarginText, 'margin cross account maintenance_margin'),
+    marginRatio: nullableDecimalDisplayNumber(marginRatioText),
+    equityText,
+    unrealizedPnlText,
+    interestAmountText,
+    maintenanceMarginText,
+    marginRatioText,
+  }
+}
+
+function mapStrictMarginCrossAccountRisk(value: unknown): MarginCrossAccountRiskFinancialAuthority | undefined {
+  if (value === null || value === undefined) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new TradingFinancialContractError('cross account risk')
+  }
+  const risk = value as Record<string, unknown>
+  const equityText = tradingDecimal(risk.equity, 'cross account risk equity')
+  const maintenanceMarginText = nonNegativeTradingDecimal(risk.maintenance_margin, 'cross account risk maintenance_margin')
+  const liquidationBufferText = tradingDecimal(risk.liquidation_buffer, 'cross account risk liquidation_buffer')
+  const marginRatioText = nullableTradingDecimal(risk.margin_ratio, 'cross account risk margin_ratio')
+  const unrealizedPnlText = tradingDecimal(risk.unrealized_pnl, 'cross account risk unrealized_pnl')
+  const interestAmountText = nonNegativeTradingDecimal(risk.interest_amount, 'cross account risk interest_amount')
+  const netQuantityText = tradingDecimal(risk.net_quantity, 'cross account risk net_quantity')
+  const grossQuantityText = nonNegativeTradingDecimal(risk.gross_quantity, 'cross account risk gross_quantity')
+  const conditionalLiquidationPriceText = nullableTradingDecimal(
+    risk.conditional_liquidation_price,
+    'cross account risk conditional_liquidation_price',
+    { allowNegative: false, allowZero: false },
+  )
+  const conditionalLiquidationDistanceRateText = nullableTradingDecimal(
+    risk.conditional_liquidation_distance_rate,
+    'cross account risk conditional_liquidation_distance_rate',
+    { allowNegative: false },
+  )
+  const mapped = mapMarginCrossAccountRisk(risk)
+  if (!mapped) throw new TradingFinancialContractError('cross account risk')
+  return {
+    ...mapped,
+    equityText,
+    maintenanceMarginText,
+    liquidationBufferText,
+    marginRatioText,
+    unrealizedPnlText,
+    interestAmountText,
+    netQuantityText,
+    grossQuantityText,
+    conditionalLiquidationPriceText,
+    conditionalLiquidationDistanceRateText,
+  }
+}
+
+function tradingDecimal(
+  value: unknown,
+  field: string,
+  constraints: { allowNegative?: boolean; allowZero?: boolean } = {},
+): DecimalText {
+  try {
+    return requiredDecimalText(value, field, 'trading financial response', {
+      ...FINANCIAL_DECIMAL_CONSTRAINTS,
+      ...constraints,
+    })
+  } catch {
+    throw new TradingFinancialContractError(field)
+  }
+}
+
+function nonNegativeTradingDecimal(value: unknown, field: string): DecimalText {
+  return tradingDecimal(value, field, { allowNegative: false })
+}
+
+function nullableTradingDecimal(
+  value: unknown,
+  field: string,
+  constraints: { allowNegative?: boolean; allowZero?: boolean } = {},
+): DecimalText | null {
+  if (value === null || value === undefined) return null
+  return tradingDecimal(value, field, constraints)
+}
+
+function decimalDisplayNumber(value: DecimalText, field: string): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new TradingFinancialContractError(field)
+  return parsed
+}
+
+function nullableDecimalDisplayNumber(value: DecimalText | null): number | null {
+  return value ? decimalDisplayNumber(value, 'decimal display value') : null
 }

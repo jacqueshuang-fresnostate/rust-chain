@@ -22,9 +22,10 @@ test('v16 现货与合约保留独立路由、实时报价、盘口和真实下�
   assert.match(tradeSource, /<OrderBookPanel/)
   assert.match(tradeSource, /fetchWalletAccounts\(\)/)
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
-  assert.match(tradeSource, /quantityForBalancePercentage\(\{/)
+  assert.match(tradeSource, /quantityForBalancePercentagePoints as portion/)
+  assert.match(tradeSource, /const nextQuantity = portion\(\{/)
   assert.match(tradeSource, /await placeSpotOrder\(\{/)
-  assert.match(tradeSource, /await placeMarginOrder\(review\.request\)/)
+  assert.match(tradeSource, /await placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
   assert.match(tradeSource, /watch\(\(\) => route\.query\.mode/)
   assert.doesNotMatch(tradeSource, /class="trade-category"/)
   assert.doesNotMatch(tradeSource, /selectTradeMode/)
@@ -37,28 +38,28 @@ test('余额百分比严格使用真实可用额并区分现货买卖与合约�
     percentage: .25,
     price: 50,
     side: 'buy',
-  }), 5)
+  }), '5')
   assert.equal(quantityForBalancePercentage({
     available: 8,
     mode: 'spot',
     percentage: .5,
     price: 50,
     side: 'sell',
-  }), 4)
+  }), '4')
   assert.equal(quantityForBalancePercentage({
     available: 600,
     mode: 'contract',
     percentage: 2,
     price: 0,
     side: 'buy',
-  }), 600)
+  }), '600')
   assert.equal(quantityForBalancePercentage({
     available: Number.POSITIVE_INFINITY,
     mode: 'spot',
     percentage: .5,
     price: 50,
     side: 'buy',
-  }), 0)
+  }), '0')
 })
 
 test('秒合约显示真实参考价、预计收益、确认与后端返回订单记录且不叠加成功提示', () => {
@@ -66,13 +67,13 @@ test('秒合约显示真实参考价、预计收益、确认与后端返回订�
   assert.match(secondsSource, /session\.isAuthenticated\s*\? Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)\s*:\s*Promise\.resolve\(null\)/)
   assert.match(secondsSource, /function reviewOrder\(\): void \{\s*if \(!session\.isAuthenticated\)/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
-  assert.match(secondsSource, /orderReview\.value\.stakeAmount \* orderReview\.value\.payoutRate/)
+  assert.match(secondsSource, /orderReview\.value\?\.estimatedProfit \?\? null/)
   assert.match(secondsSource, /openedOrder = await openSecondsOrder\(\{/)
   assert.match(secondsSource, /orders\.value = upsertSecondsOrder\(orders\.value, openedOrder\)/)
   assert.match(secondsSource, /v-for="order in filteredActiveOrders"/)
   assert.match(secondsSource, /:data-active-order-list="activeOrderFilter"/)
-  assert.match(secondsSource, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
-  assert.match(secondsSource, /return secondsOrderEstimatedProfit\(order\)/)
+  assert.match(secondsSource, /moneyText\(orderMoney\(order\)\.entryPrice\)/)
+  assert.match(secondsSource, /estimatedProfit: orderProfit/)
   assert.match(secondsSource, /:data-seconds-market="selected \? 'live' : loading \? 'loading' : 'empty'"/)
   assert.doesNotMatch(secondsSource, /data-session-feedback="created"|seconds-message--success/)
   assert.match(secondsSource, /t\('marketDetail\.latestPrice'\)/)
@@ -97,7 +98,7 @@ test('行情详情与订单中心保持真实数据、二级操作面和危险�
   assert.match(ordersSource, /document\.body\.style\.overflow = 'hidden'/)
   assert.match(ordersSource, /data-dialog-cancel/)
   assert.match(ordersSource, /await cancelSpotOrder\(order\.id\)/)
-  assert.match(ordersSource, /await cancelAllSpotOrders\(spotOrders\.value\.map\(\(order\) => order\.id\)\)/)
+  assert.match(ordersSource, /const result = await cancelAllSpotOrders\(\)[\s\S]*const committed = commitSpotCancelAllResult\(spotOrders\.value, result\)[\s\S]*const outcome = committed\.outcome/)
   assert.match(ordersSource, /await cancelAllMarginPositions\(\)/)
   assert.match(ordersSource, /await closeAllMarginPositions\(\)/)
 })

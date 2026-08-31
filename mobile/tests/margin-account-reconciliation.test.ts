@@ -20,17 +20,17 @@ test('杠杆账户后台对账单飞执行并按访客、现货和隐藏状态�
   let contractMode = false
   let visible = true
   let reconcileCount = 0
-  let scheduledCallback: (() => void) | null = null
+  const scheduled = { callback: null as (() => void) | null }
   const cleared: unknown[] = []
   const scheduler: MarginAccountReconciliationScheduler = {
     setInterval(callback, delay) {
       assert.equal(delay, MARGIN_ACCOUNT_RECONCILIATION_INTERVAL_MS)
-      scheduledCallback = callback
+      scheduled.callback = callback
       return 41
     },
     clearInterval(handle) {
       cleared.push(handle)
-      scheduledCallback = null
+      scheduled.callback = null
     },
   }
   const lifecycle = createMarginAccountReconciliationLifecycle({
@@ -45,20 +45,20 @@ test('杠杆账户后台对账单飞执行并按访客、现货和隐藏状态�
 
   lifecycle.startPolling()
   lifecycle.startPolling()
-  assert.ok(scheduledCallback)
+  assert.ok(scheduled.callback)
 
-  scheduledCallback?.()
+  scheduled.callback?.()
   await tick()
   assert.equal(reconcileCount, 0)
 
   sessionKey = 'TOKEN_A'
-  scheduledCallback?.()
+  scheduled.callback?.()
   await tick()
   assert.equal(reconcileCount, 0)
 
   contractMode = true
   visible = false
-  scheduledCallback?.()
+  scheduled.callback?.()
   await tick()
   assert.equal(reconcileCount, 0)
 

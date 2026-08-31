@@ -11,6 +11,7 @@ const lightweightChartSource = source('../src/components/LightweightMarketChart.
 const chartUtilitySource = source('../src/core/marketChart.ts')
 const bookSource = source('../src/components/OrderBookPanel.vue')
 const tradeSource = source('../src/views/TradeView.vue')
+const secondsFinancialSource = source('../src/core/secondsFinancial.ts')
 const modalDialogSource = source('../src/core/modalDialog.ts')
 const parityCss = source('../src/styles/prototype-parity.css')
 const prototypeCss = source('../src/styles/prototype-base.css')
@@ -38,11 +39,12 @@ test('现货和合约工作台保留真实数据链路并提供完整下单面',
   assert.match(tradeSource, /v-model="price"/)
   assert.match(tradeSource, /v-model="quantity"/)
   assert.match(tradeSource, /const amountValue = computed\(\{/)
-  assert.match(tradeSource, /v-if="isSpotMode"[\s\S]*?class="confirmation-sheet"[\s\S]*?formatAmount\(Number\(amountValue\) \|\| 0\)/)
-  assert.match(tradeSource, /class="contract-order-confirm"[\s\S]*?formatAmount\(contractNotionalValue\)[\s\S]*?formatAmount\(contractOrderQuantity\)/)
+  assert.match(tradeSource, /v-if="isSpotMode"[\s\S]*?class="confirmation-sheet"[\s\S]*?moneyText\(spotReview\?\.quoteAmount\)/)
+  assert.match(tradeSource, /class="contract-order-confirm"[\s\S]*?moneyText\(contractNotional\)[\s\S]*?moneyText\(contractQuantity\)/)
   assert.match(tradeSource, /fetchWalletAccounts\(\)/)
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
-  assert.match(tradeSource, /quantityForBalancePercentage\(\{/)
+  assert.match(tradeSource, /quantityForBalancePercentagePoints as portion/)
+  assert.match(tradeSource, /const nextQuantity = portion\(\{/)
   assert.doesNotMatch(tradeSource, /const quoteBudget = 100 \* percent/)
   assert.doesNotMatch(tradeSource, /\|\| products\.value\[0\]/)
   assert.match(tradeSource, /class="contract-percentage__input"[\s\S]*?type="range"/)
@@ -61,7 +63,9 @@ test('秒合约保持独立真实产品工作台和市场参考价', () => {
   assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
   assert.match(secondsSource, /session\.isAuthenticated\s*\? Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)\s*:\s*Promise\.resolve\(null\)/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
-  assert.match(secondsSource, /selectedLatestPrice > 0 \? formatPrice\(selectedLatestPrice\) : '--'/)
+  assert.match(secondsSource, /const latestDisplayPrice = computed\(\(\) => priceFor\(selected\.value\?\.symbol \|\| ''\)\)/)
+  assert.match(secondsSource, /latestDisplayPrice \? moneyText\(latestDisplayPrice\) : '--'/)
+  assert.match(secondsFinancialSource, /const exactPriceForSymbol = \(symbol: string\): DecimalText \| null/)
   assert.match(secondsSource, /class="seconds-trading-operation"/)
   assert.match(secondsSource, /class="seconds-price-panel"/)
   assert.match(secondsSource, /class="seconds-micro-chart"/)
@@ -123,28 +127,28 @@ test('百分比数量使用真实可用余额并区分现货买卖与保证金�
     percentage: .25,
     price: 50,
     side: 'buy',
-  }), 5)
+  }), '5')
   assert.equal(quantityForBalancePercentage({
     available: 8,
     mode: 'spot',
     percentage: .5,
     price: 50,
     side: 'sell',
-  }), 4)
+  }), '4')
   assert.equal(quantityForBalancePercentage({
     available: 600,
     mode: 'contract',
     percentage: .5,
     price: 50,
     side: 'buy',
-  }), 300)
+  }), '300')
   assert.equal(quantityForBalancePercentage({
     available: 600,
     mode: 'spot',
     percentage: .5,
     price: 0,
     side: 'buy',
-  }), 0)
+  }), '0')
 })
 
 test('订单中心展示 Pencil 双层分类、访客状态和紧凑真实数据面', () => {
@@ -156,7 +160,7 @@ test('订单中心展示 Pencil 双层分类、访客状态和紧凑真实数据
   assert.match(ordersSource, /class="pencil-segmented orders-state-tabs"/)
   assert.match(ordersSource, /class="orders-row"/)
   assert.match(ordersSource, /class="orders-row orders-row--history"/)
-  assert.match(ordersSource, /await cancelAllSpotOrders\(spotOrders\.value\.map\(\(order\) => order\.id\)\)/)
+  assert.match(ordersSource, /const result = await cancelAllSpotOrders\(\)[\s\S]*const committed = commitSpotCancelAllResult\(spotOrders\.value, result\)[\s\S]*const outcome = committed\.outcome/)
   assert.match(ordersSource, /await cancelAllMarginPositions\(\)/)
   assert.match(ordersSource, /await closeAllMarginPositions\(\)/)
   assert.match(ordersSource, /route\.query\.tab === 'positions'/)

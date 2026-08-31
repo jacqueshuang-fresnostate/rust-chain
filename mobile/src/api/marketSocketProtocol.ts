@@ -1,4 +1,25 @@
 import type { KlinePoint, OrderBookLevel, TradePrint } from '../core/types.ts'
+import {
+  decimalCompare,
+  decimalTextFromBoundary,
+  normalizeDecimalText,
+  requiredDecimalText,
+  type DecimalText,
+} from '../core/decimal.ts'
+
+const MARKET_DEPTH_DECIMAL_CONSTRAINTS = {
+  allowNegative: false,
+  allowZero: false,
+  maxIntegerDigits: 20,
+  maxScale: 18,
+} as const
+
+export class MarketDepthContractError extends TypeError {
+  constructor(field: string) {
+    super(`invalid market depth ${field}`)
+    this.name = 'MarketDepthContractError'
+  }
+}
 
 export const DEFAULT_MARKET_KLINE_LIMIT = 160
 export const MARKET_KLINE_INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const
@@ -13,6 +34,7 @@ export type MarketSocketFrame =
       type: 'ticker'
       symbol: string
       lastPrice: number
+      lastPriceText?: DecimalText
       highPrice?: number
       lowPrice?: number
       volume?: number
@@ -158,12 +180,15 @@ export function mapMarketDepthSnapshot(
   payload: { bids?: unknown; asks?: unknown },
   limit = 12,
 ): { bids: OrderBookLevel[]; asks: OrderBookLevel[] } {
+  if (!Array.isArray(payload.bids) || !Array.isArray(payload.asks)) {
+    throw new MarketDepthContractError('snapshot')
+  }
   const normalizedLimit = normalizeLimit(limit, 12)
   return {
-    bids: mapDepthLevels(payload.bids)
+    bids: mapDepthLevels(payload.bids, 'bids')
       .sort((left, right) => right.price - left.price)
       .slice(0, normalizedLimit),
-    asks: mapDepthLevels(payload.asks)
+    asks: mapDepthLevels(payload.asks, 'asks')
       .sort((left, right) => left.price - right.price)
       .slice(0, normalizedLimit),
   }
@@ -251,9 +276,6 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
 
     const symbol = payload.symbol
     if (Array.isArray(payload.bids) && Array.isArray(payload.asks)) {
-      if (!hasOnlyValidDepthLevels(payload.bids) || !hasOnlyValidDepthLevels(payload.asks)) {
-        return null
-      }
       const snapshot = mapMarketDepthSnapshot(payload)
       const observedAt = optionalTimestamp(payload.observed_at)
       if (observedAt === null) return null
@@ -293,8 +315,9 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
       return { type: 'trade', symbol, trade }
     }
 
+    const lastPriceText = positiveDecimalText(payload.last_price)
     const lastPrice = positiveNumber(payload.last_price)
-    if (lastPrice === null) return null
+    if (lastPrice === null || !lastPriceText) return null
     const highPrice = optionalPositiveNumber(payload.high_24h)
     const lowPrice = optionalPositiveNumber(payload.low_24h)
     const volume = optionalNonNegativeNumber(payload.volume_24h)
@@ -311,6 +334,7 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
       type: 'ticker',
       symbol,
       lastPrice,
+      lastPriceText,
       ...(highPrice === undefined ? {} : { highPrice }),
       ...(lowPrice === undefined ? {} : { lowPrice }),
       ...(volume === undefined ? {} : { volume }),
@@ -322,23 +346,18 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
   }
 }
 
-function mapDepthLevels(rows: unknown): OrderBookLevel[] {
-  if (!Array.isArray(rows)) return []
-  return rows
-    .map((row) => {
-      if (!isRecord(row)) return null
-      const price = positiveNumber(row.price)
-      const quantity = positiveNumber(row.quantity ?? row.amount)
-      return price === null || quantity === null ? null : { price, quantity }
-    })
-    .filter((row): row is OrderBookLevel => row !== null)
-}
-
-function hasOnlyValidDepthLevels(rows: unknown[]): boolean {
-  return rows.every((row) => {
-    if (!isRecord(row)) return false
-    return positiveNumber(row.price) !== null
-      && positiveNumber(row.quantity ?? row.amount) !== null
+function mapDepthLevels(rows: unknown[], side: 'bids' | 'asks'): OrderBookLevel[] {
+  return rows.map((row, index) => {
+    if (!isRecord(row)) throw new MarketDepthContractError(`${side}[${index}]`)
+    const priceText = requiredDepthDecimal(row.price, `${side}[${index}].price`)
+    const quantitySource = row.quantity === undefined ? row.amount : row.quantity
+    const quantityText = requiredDepthDecimal(quantitySource, `${side}[${index}].quantity`)
+    return {
+      price: decimalDisplayNumber(priceText, `${side}[${index}].price`),
+      quantity: decimalDisplayNumber(quantityText, `${side}[${index}].quantity`),
+      priceText,
+      quantityText,
+    }
   })
 }
 
@@ -421,7 +440,8 @@ function optionalFiniteNumber(value: unknown): number | null | undefined {
 }
 
 function isPositiveDecimalString(value: unknown): boolean {
-  return isDecimalString(value) && Number(value) > 0
+  const decimal = positiveDecimalText(value)
+  return typeof value === 'string' && decimal !== null
 }
 
 function isNonNegativeDecimalString(value: unknown): boolean {
@@ -432,6 +452,25 @@ function isDecimalString(value: unknown): value is string {
   if (typeof value !== 'string' || value !== value.trim() || !value) return false
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return false
   return Number.isFinite(Number(value))
+}
+
+function positiveDecimalText(value: unknown): DecimalText | null {
+  const decimal = decimalTextFromBoundary(value as string | number, { allowNegative: false })
+  return decimal && decimalCompare(decimal, normalizeDecimalText('0')) > 0 ? decimal : null
+}
+
+function requiredDepthDecimal(value: unknown, field: string): DecimalText {
+  try {
+    return requiredDecimalText(value, field, 'market depth', MARKET_DEPTH_DECIMAL_CONSTRAINTS)
+  } catch {
+    throw new MarketDepthContractError(field)
+  }
+}
+
+function decimalDisplayNumber(value: DecimalText, field: string): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new MarketDepthContractError(field)
+  return parsed
 }
 
 function isUnixMillisecondTimestamp(value: unknown): value is number {

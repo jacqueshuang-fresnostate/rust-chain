@@ -32,7 +32,6 @@ import {
   fetchReturnHistory,
   fetchTodayReturn,
   fetchWalletAccounts,
-  isCompleteTodayReturn,
   RETURN_HISTORY_PERIODS,
   type ReturnHistory,
   type ReturnHistoryPeriodDays,
@@ -42,6 +41,8 @@ import {
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { buildHomeMarketBrief } from '@/core/homeMarketBrief'
 import { buildReturnHistoryGeometry } from '@/core/returnHistoryGeometry'
+import { formatDecimalText, decimalSign, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { resolveTodayReturnPresentation } from '@/core/todayReturnPresentation'
 import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useNavigationStore } from '@/stores/navigation'
@@ -136,38 +137,23 @@ const displayedAssetAmount = computed(() => (
     : '--'
 ))
 
-const displayedTodayReturnAmount = computed(() => {
-  if (!assetVisible.value) return '••••'
-  const value = todayReturn.value
-  if (todayReturnState.value !== 'complete' || !isCompleteTodayReturn(value)) return '--'
-  const sign = value.amount > 0 ? '+' : ''
-  return `${sign}${formatAmount(value.amount)} ${value.reportingAsset}`
-})
-
-const displayedTodayReturnDetail = computed(() => {
-  if (!assetVisible.value) return '••••'
-  const value = todayReturn.value
-  if (todayReturnState.value === 'complete' && isCompleteTodayReturn(value)) {
-    return formatPercent(value.rate * 100)
-  }
-  if (todayReturnState.value === 'loading') return t('home.todayReturnLoading')
-  if (todayReturnState.value === 'partial') {
-    const assets = value?.missingPriceAssets.join(', ')
-    return assets
-      ? t('home.todayReturnPartial', { assets })
-      : t('home.todayReturnPartialUnknown')
-  }
-  if (todayReturnState.value === 'error') return t('home.todayReturnUnavailable')
-  return '--'
-})
-
-const todayReturnTone = computed(() => {
-  const value = todayReturn.value
-  if (!assetVisible.value || todayReturnState.value !== 'complete' || !isCompleteTodayReturn(value)) return ''
-  if (value.amount > 0) return 'positive'
-  if (value.amount < 0) return 'negative'
-  return ''
-})
+const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
+  visible: assetVisible.value,
+  state: todayReturnState.value,
+  value: todayReturn.value,
+  locale: locale.value === 'en' ? 'en-US' : 'zh-CN',
+  amountMask: '••••',
+  detailMask: '••••',
+  messages: {
+    loading: t('home.todayReturnLoading'),
+    partial: (assets) => t('home.todayReturnPartial', { assets }),
+    partialUnknown: t('home.todayReturnPartialUnknown'),
+    error: t('home.todayReturnUnavailable'),
+  },
+}))
+const displayedTodayReturnAmount = computed(() => todayReturnPresentation.value.amount)
+const displayedTodayReturnDetail = computed(() => todayReturnPresentation.value.detail)
+const todayReturnTone = computed(() => todayReturnPresentation.value.tone)
 
 const portfolioGeometry = computed(() => {
   if (!assetVisible.value || returnHistoryState.value !== 'complete' || !returnHistory.value) {
@@ -192,7 +178,7 @@ const returnHistoryChartLabel = computed(() => {
   }
   return t('home.returnHistoryChartSummary', {
     days: value.periodDays,
-    amount: formatSignedReturnAmount(value.summary.amount ?? 0),
+    amount: formatSignedReturnAmount(value.summary.amount),
     asset: value.reportingAsset,
   })
 })
@@ -205,8 +191,13 @@ const accessibleReturnHistoryPoints = computed(() => {
   return value.points
 })
 
-function formatSignedReturnAmount(value: number): string {
-  return `${value > 0 ? '+' : ''}${formatAmount(value)}`
+function formatSignedReturnAmount(value: DecimalText | null | undefined): string {
+  const decimal = value ?? normalizeDecimalText('0')
+  return `${decimalSign(decimal) > 0 ? '+' : ''}${formatDecimalText(
+    decimal,
+    locale.value === 'en' ? 'en-US' : 'zh-CN',
+    { maximumFractionDigits: 18 },
+  )}`
 }
 
 function formatReturnHistoryDay(dayStartAt: number): string {
@@ -505,8 +496,8 @@ watch(() => session.token, () => {
             <tbody>
               <tr v-for="point in accessibleReturnHistoryPoints" :key="point.dayStartAt">
                 <th scope="row">{{ formatReturnHistoryDay(point.dayStartAt) }}</th>
-                <td>{{ formatSignedReturnAmount(point.amount ?? 0) }} USDT</td>
-                <td>{{ formatSignedReturnAmount(point.cumulativeAmount ?? 0) }} USDT</td>
+                <td>{{ formatSignedReturnAmount(point.amount) }} USDT</td>
+                <td>{{ formatSignedReturnAmount(point.cumulativeAmount) }} USDT</td>
               </tr>
             </tbody>
           </table>

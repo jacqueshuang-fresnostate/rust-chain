@@ -17,11 +17,12 @@
 Run from `mobile/` after navigation, localization, or shared UI changes:
 
 ```bash
-npm run type-check
-npm test
-npm run build:pwa
-npm run build:tauri
+npm run release:gate
 ```
+
+The gate includes production/test type checks, all behavior tests, isolated PWA
+and Tauri builds, generated-artifact assertions, bundle budgets, source-size
+budgets, and critical-test quality checks.
 
 For changes that affect Tauri startup or dependencies, also build Android and iOS targets:
 
