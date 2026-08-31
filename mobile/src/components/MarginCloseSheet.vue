@@ -432,7 +432,7 @@ function requestConfirm(): void {
   z-index: 1;
 }
 
-:global(html[data-theme='dark']) .margin-close-sheet {
+:global(html[data-theme='dark'] .margin-close-sheet) {
   --close-sheet-page: #0b0f0d;
   --close-sheet-field: #181e1a;
   --close-sheet-text: #f5f7f6;

@@ -32,3 +32,16 @@ fn seconds_contract_settlement_scan_limit_matches_settlement_limit() {
     assert_eq!(seconds_contract_settlement_scan_limit(100), 100);
     assert_eq!(seconds_contract_settlement_scan_limit(500), 100);
 }
+
+#[test]
+fn seconds_contract_snapshot_wait_is_bounded() {
+    assert_eq!(normalize_max_snapshot_wait_seconds(0), 1);
+    assert_eq!(
+        normalize_max_snapshot_wait_seconds(DEFAULT_MAX_SNAPSHOT_WAIT_SECONDS),
+        DEFAULT_MAX_SNAPSHOT_WAIT_SECONDS
+    );
+    assert_eq!(
+        normalize_max_snapshot_wait_seconds(MAX_CONFIGURED_SNAPSHOT_WAIT_SECONDS + 1),
+        MAX_CONFIGURED_SNAPSHOT_WAIT_SECONDS
+    );
+}

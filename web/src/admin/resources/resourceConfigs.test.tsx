@@ -2176,7 +2176,8 @@ describe('resourceConfigs create actions', () => {
     expect(JSON.parse(String(request?.body))).toEqual({
       asset_id: 12,
       amount: '25.5',
-      reason: 'manual recharge'
+      reason: 'manual recharge',
+      idempotency_key: expect.stringMatching(/^admin-recharge-/)
     });
     expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/users')).toHaveLength(2);
   });

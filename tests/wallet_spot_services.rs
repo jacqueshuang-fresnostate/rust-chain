@@ -1,9 +1,8 @@
 use bigdecimal::BigDecimal;
 use exchange_api::modules::{
     spot::{
-        CancelSpotOrderCommand, CreateSpotOrderCommand, FillSpotOrderCommand, NewOrder, OrderSide,
-        OrderStatus, OrderType, SpotOrder, SpotRepository, SpotService, SpotServiceError,
-        TradingPairRule,
+        CancelSpotOrderCommand, FillSpotOrderCommand, OrderSide, OrderStatus, OrderType, SpotOrder,
+        SpotRepository, SpotService, SpotServiceError,
     },
     wallet::{
         BalanceBucket, FreezeBalanceCommand, LedgerBatch, LedgerMetadata, LockPosition,
@@ -90,23 +89,13 @@ impl WalletRepository for FakeWalletRepository {
 
 #[derive(Clone)]
 struct FakeSpotRepository {
-    pair: TradingPairRule,
     orders: HashMap<String, SpotOrder>,
-    next_order_id: String,
 }
 
 impl FakeSpotRepository {
     fn new() -> Self {
         Self {
-            pair: TradingPairRule {
-                pair_id: "BTC-USDT".to_owned(),
-                price_precision: 2,
-                quantity_precision: 4,
-                min_order_value: dec("10"),
-                enabled: true,
-            },
             orders: HashMap::new(),
-            next_order_id: "order-1".to_owned(),
         }
     }
 
@@ -117,37 +106,6 @@ impl FakeSpotRepository {
 }
 
 impl SpotRepository for FakeSpotRepository {
-    fn load_pair_rule(&mut self, pair_id: &str) -> Result<TradingPairRule, SpotServiceError> {
-        if self.pair.pair_id == pair_id {
-            Ok(self.pair.clone())
-        } else {
-            Err(SpotServiceError::Repository(
-                "missing trading pair".to_owned(),
-            ))
-        }
-    }
-
-    fn insert_order(
-        &mut self,
-        new_order: NewOrder,
-        _idempotency_key: Option<&str>,
-    ) -> Result<SpotOrder, SpotServiceError> {
-        let order = SpotOrder {
-            id: self.next_order_id.clone(),
-            user_id: new_order.user_id,
-            pair_id: new_order.pair_id,
-            side: new_order.side,
-            order_type: new_order.order_type,
-            price: new_order.price,
-            trigger_price: new_order.trigger_price,
-            quantity: new_order.quantity,
-            filled_quantity: new_order.filled_quantity,
-            status: new_order.status,
-        };
-        self.orders.insert(order.id.clone(), order.clone());
-        Ok(order)
-    }
-
     fn load_order(&mut self, order_id: &str) -> Result<SpotOrder, SpotServiceError> {
         self.orders
             .get(order_id)
@@ -237,37 +195,6 @@ fn lock_position_creation_locks_available_balance_and_persists_positions() {
     assert_eq!(account.available, dec("20"));
     assert_eq!(account.locked, dec("30"));
     assert_eq!(repo.ledger.len(), 2);
-}
-
-#[test]
-fn spot_create_limit_buy_order_freezes_quote_asset_before_insert() {
-    let spot_repo = FakeSpotRepository::new();
-    let wallet_repo =
-        FakeWalletRepository::default().with_account(account("user-1", "USDT", "100", "0"));
-    let mut service = SpotService::new(spot_repo, wallet_repo);
-
-    let order = service
-        .create_order(CreateSpotOrderCommand {
-            user_id: "user-1".to_owned(),
-            pair_id: "BTC-USDT".to_owned(),
-            base_asset_id: "BTC".to_owned(),
-            quote_asset_id: "USDT".to_owned(),
-            side: OrderSide::Buy,
-            order_type: OrderType::Limit,
-            price: Some(dec("10")),
-            trigger_price: None,
-            quantity: dec("2"),
-            reference_price: None,
-            idempotency_key: Some("client-order-1".to_owned()),
-            wallet_ledger: ledger("spot_freeze", "spot_order", "client-order-1"),
-        })
-        .unwrap();
-
-    let (_spot_repo, wallet_repo) = service.into_repositories();
-    let quote = wallet_repo.account("user-1", "USDT");
-    assert_eq!(order.status, OrderStatus::Pending);
-    assert_eq!(quote.available, dec("80"));
-    assert_eq!(quote.frozen, dec("20"));
 }
 
 #[test]

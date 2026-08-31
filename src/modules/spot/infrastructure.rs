@@ -20,6 +20,7 @@ pub(crate) use order_repository::{
     SqlxSpotOrderCancelRepository, insert_spot_liquidity_buy_order_in_tx,
     insert_spot_liquidity_sell_order_in_tx, insert_spot_order_in_tx,
     load_spot_order_by_idempotency_key, lock_spot_fill_orders_in_order, lock_spot_order_by_db_id,
+    store_spot_order_idempotency_response_in_tx,
 };
 pub use read_models::MySqlSpotRepository;
 pub(crate) use read_models::{

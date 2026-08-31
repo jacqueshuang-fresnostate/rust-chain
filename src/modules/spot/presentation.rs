@@ -17,7 +17,7 @@ pub(crate) struct CreateSpotOrderRequest {
     pub(crate) trigger_price: Option<BigDecimal>,
     pub(crate) quantity: BigDecimal,
     pub(crate) reference_price: Option<BigDecimal>,
-    pub(crate) idempotency_key: Option<String>,
+    pub(crate) idempotency_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,7 +77,7 @@ pub(crate) struct AdminSpotTradesQuery {
     pub(crate) offset: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SpotOrderResponse {
     pub(crate) id: String,
     pub(crate) user_id: String,

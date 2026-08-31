@@ -164,21 +164,24 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   margins, and keeps `pointer-events: none`. Only each visible status card and
   its controls restore pointer events; the component must not lock body scroll
   or prevent the page outside a card from receiving pointer input.
-- The Seconds settlement result is likewise a body-Teleported non-modal island,
-  not a dialog or backdrop. Its fixed root starts below the 60px Seconds
-  `PageHeader`, stays within the 448px application canvas, keeps
-  `pointer-events: none`, and restores pointer events only on the visible card.
-  It never locks body scroll or blocks the order form outside its own bounds.
-- The result card uses a semantic positive/negative glass double surface and
-  Lucide icons. It shows the API order pair, direction, duration, signed net
-  profit/loss plus settlement asset, and remaining FIFO count. Close, Continue,
-  and History targets are at least 44px; 320px may stack actions. Reduced motion
-  removes the reveal translation, blur, and transition.
-- Because the result island Teleports outside `.seconds-page`, its root owns
-  local surface, elevated, text, semantic, line, focus, and shadow aliases that
-  resolve only to the existing global `:root` theme tokens. It contains no
-  literal hex/RGB palette or duplicate theme state; `html[data-theme]` updates
-  those inherited tokens in place without remounting or replaying a queued result.
+- The Seconds settlement result is a body-Teleported modal dialog matching the
+  selected Pencil frames `tFcTH` and `FBdqS`. Its fixed root covers the viewport,
+  owns the light/dark backdrop, locks body scrolling through `useModalDialog`,
+  traps focus, closes with Escape or backdrop selection, and restores focus.
+- At 390×920 the dialog is 358×541 at x=16/y=176 with a 24px radius, 20/20/18
+  padding, and 14px vertical gaps. The child geometry is status 34px, result
+  176px, price comparison 68px, order summary 64px, note 39px, and History
+  action 52px. The visible Close surface is 34px inside a 44px touch target.
+- The dialog uses Lucide `CircleCheckBig`, `BadgeDollarSign`, `ArrowRight`,
+  `Info`, `History`, and `X`. It renders only authoritative final-order fields:
+  signed net profit/loss and percentage, entry and settlement prices, pair,
+  direction, cycle, stake amount, and settlement asset. Market/K-line fallbacks
+  must never replace missing settlement prices.
+- Because the modal Teleports outside `.seconds-page`,
+  `pencil-selected-pages.css` owns its exact Pencil light/dark palette on the
+  `data-pencil-source="tFcTH FBdqS"` boundary. Theme changes update those CSS
+  variables in place without remounting or replaying a queued result. Reduced
+  motion removes the reveal transition while preserving final geometry.
 - Each PWA state uses the same double-bezel structure: an outer
   `.pwa-status__card` supplies semantic ambient light and an inner
   `.pwa-status__panel` supplies the translucent, blurred surface and inset
@@ -392,19 +395,22 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   plain decimal field with a 44px BBO action: long uses best ask, short uses best
   bid, and only an absent side falls back to the latest ticker. Invalid or
   over-precision input has a visible localized error and cannot open review.
-- The selected margin main frame is measured at 390px: a safe-area-aware 58px
-  sticky header, a 460px module with `14 / 202 / 10 / 150 / 14` horizontal
-  geometry, a 450px order console/book, and a 44px local workspace tab row.
+- The selected margin main frame is measured at 390px against the currently
+  selected Pencil modules `IpirH/mcfEf`: a safe-area-aware 58px sticky header,
+  a 500px module with `14 / 202 / 10 / 150 / 14` horizontal geometry, a 490px
+  order console/book, and a 44px local workspace tab row.
   Header order is back, backend Logo plus pair/status/live quote, chart, and
   more; favorite lives in the more menu rather than consuming header width.
   The 390px geometry is exact, while widths above 390px keep the 202px form
   column and let the live book consume the remaining space; widths below 360px
   use the dedicated compact columns rather than clipping either side.
 - The 202px margin console follows the selected absolute track: open/close
-  `top 0 / h30`, settings `36 / 32`, price+BBO `74 / 56`, margin `136 / 46`,
-  percentage `188 / 32`, available `226 / 13`, TP/SL `245 / 16`, long summary
-  `267 / 28`, long action `301 / 42`, short summary `349 / 28`, and short action
-  `383 / 42`. The parallel 150px book renders six asks, latest price, seven
+  `top 0 / h30`; two equal margin-mode/leverage triggers `36 / 38` with a 6px
+  gutter; the independent order-type trigger `80 / 40`; price+BBO `126 / 54`;
+  margin `186 / 48`; percentage `240 / 32`; available `278 / 13`; TP/SL
+  `297 / 16`; long summary `319 / 28`; long action `353 / 42`; short summary
+  `401 / 28`; and short action `435 / 42`. The parallel 150px book renders six
+  asks, latest price, seven
   bids, B/S ratio, and precision using the existing live detail session. The
   ratio derives both sides from the rendered live levels, keeps their rounded
   sum at `100%`, and uses a compact two-row composition: semantic B/S values
@@ -856,12 +862,14 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   spot branch and the dedicated contract branch; contract additionally asserts
   real Logo/pair/direction/settings/form-derived values, in-panel API failure,
   busy dismissal lock, warm risk notice, and reduced-motion ownership.
-- Margin Pencil parity: assert `cjzfi/p6GfgT`, the exact 390px header/module/
-  console/book/tab geometry above, six asks/seven bids, five slider stops, and
-  backend Logo/rate/capability/risk bindings. Lock the 138x56 price and 202x46
-  margin shells, two-row 9px-label/17px-or-15px-value hierarchy, transparent
-  idle border, shell-only focus ring, 12px visible slider dots inside 44px hit
-  targets, hidden percentage labels, and leverage-bearing long/short copy. At
+- Margin Pencil parity: assert `cjzfi/p6GfgT` plus selected module provenance
+  `IpirH/mcfEf`, the exact 390px header/module/console/book/tab geometry above,
+  six asks/seven bids, one continuous slider, and backend
+  Logo/rate/capability/risk bindings. Lock the two 98x38 settings triggers,
+  independent 202x40 order-type trigger, 138x54 price and 202x48 margin shells,
+  two-row 9px-label/17px-or-15px-value hierarchy, transparent idle border,
+  shell-only focus ring, one continuous thumb inside a 44px hit target, visible
+  percentage value, and leverage-bearing long/short copy. At
   320x720, 390x920, and 448x900 in both themes assert zero document overflow,
   sticky header z-index 70, visible long/short actions, reduced-motion scroll
   behavior, and no fabricated order, strategy, balance, or risk values.
@@ -1371,6 +1379,53 @@ resolveRootRouteKey('seconds', undefined) // null: raised secondary action
   dismissal and duplicate drags.
 - Preserve bottom safe area, reduced-motion fallback, both color themes, Lucide
   icons, and zero horizontal overflow at 320x720, 390x844, and 448x900.
+- Because the sheet Teleports outside the scoped component ancestry, its dark
+  override must compile to the full global descendant selector
+  `html[data-theme='dark'] .margin-close-sheet`. A regression test must inspect
+  `vue/compiler-sfc` output; matching only the source selector is insufficient,
+  because partial `:global()` syntax can collapse the override onto bare `html`
+  and let the sheet's local light variables win the cascade.
+
+## Directional Margin Leverage Sheet Contract
+
+- The authenticated leverage trigger opens the body-Teleported sheet mapped
+  from the current Pencil dark frame `NTiiS` and light frame `CulR4`. It edits
+  independent future-order defaults for long and short; opening, stepping,
+  choosing a shortcut, or paging the shortcut window never mutates an existing
+  position or sends a request.
+- Keep the 390×920 reference geometry exact: the sheet starts at `y=80`, is
+  390×840 with 24px top corners and `18px 20px 16px` padding; Header is 350×34,
+  and the fixed bottom confirmation action is 350×52 with a 26px radius. The
+  middle row alone scrolls on short viewports while Header/action remain visible.
+- Each direction owns a 16px label, a 350×64 stepper, 42×42 visual plus/minus
+  controls, a 52px numeric value with a 22px `x`, and a 350×46/r23 shortcut
+  rail. Pseudo hit areas expand the 34px close, 42px step buttons, 38px pills,
+  and 32px more icon to at least 44px without changing the Pencil face geometry.
+- Normalize the backend product's `leverageLevels` to unique positive ascending
+  values. Plus/minus moves only to adjacent real levels. Each direction shows a
+  current-centered window of at most six real levels; the more control pages
+  that window and never invents Pencil sample levels or changes the selection.
+- Opening/reopening initializes both drafts from the current saved settings.
+  Backdrop, close, and Escape discard drafts. Confirm emits both values in one
+  guarded request; success updates both defaults and closes, while failure keeps
+  the sheet and both exact drafts for retry. Busy state blocks dismissal and
+  duplicate mutation; focus remains trapped and returns to the leverage trigger.
+- Max-open preview may use current margin-wallet available, selected leverage,
+  and positive live reference price. Required margin mirrors the current real
+  form amount. A local liquidation preview is allowed only for isolated mode
+  using the same entry/leverage/maintenance-rate equation as backend position
+  risk; cross mode or missing inputs renders `--`. Pencil sample balances and
+  prices are never production fallbacks.
+- Light roles are page `#FFFFFF`, field/step `#F0F2F1`, line `#D8DEDA`, text
+  `#111512`, submit `#087A16`; dark roles are page `#0B0F0D`, field `#181E1A`,
+  step `#202723`, line `#364039`, text `#F5F7F6`, submit `#16A765`. Long is
+  `#14C982`, short is `#FF3E73` in both themes.
+- At 320, 390, and 448px the sheet has zero horizontal overflow, honors dynamic
+  viewport and bottom safe-area insets, and keeps normal/reduced-motion behavior.
+  Because it Teleports outside component ancestry, dark variables must compile
+  to the full global descendant selector
+  `html[data-theme='dark'] .contract-sheet--leverage`; source-text matching alone
+  is not sufficient regression coverage.
 
 ## Runtime Performance, Functional Motion, and Dense Account UI Contract
 

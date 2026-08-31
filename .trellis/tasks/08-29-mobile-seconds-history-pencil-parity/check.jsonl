@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile quality gate and package scope"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Selected Pencil page geometry, theme ownership, responsive and accessibility contracts"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Seconds API DTO and authoritative history data boundaries"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Safe back navigation and i18n contracts"}
+{"file": ".trellis/tasks/08-29-mobile-seconds-history-pencil-parity/research/pencil-seconds-history.md", "reason": "Measured selected Pencil light/dark frame source of truth"}

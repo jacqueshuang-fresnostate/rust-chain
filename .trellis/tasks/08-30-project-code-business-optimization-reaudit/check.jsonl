@@ -1,0 +1,26 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层审查和报告编排总入口"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "按请求到持久化、异步和客户端恢复追踪业务闭环"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "识别共享边界、重复实现与兼容 facade"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Rust 后端规范总入口"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "模块边界、依赖方向和结构热点基线"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "事务、迁移、约束与数据一致性基线"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "公共错误与内部错误边界"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试和质量门禁基线"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志、可观测性和模板缺口基线"}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "实时提示、恢复和多实例语义"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "金额精度、钱包和流水一致性合同"}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "会话、刷新与撤销合同"}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Docker、迁移器和部署边界"}
+{"file": ".trellis/spec/admin/index.md", "reason": "管理后台结构和质量基线"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "管理后台 UI/资源边界"}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile/PWA/Tauri 规范入口"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Mobile API 与实时恢复合同"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "PWA/Tauri 交付和壳层边界"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/baseline-and-p0-verification.md", "reason": "当前基线、CI 限制与历史 P0 状态映射"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/historical-p1-p2-status.md", "reason": "历史 P1/P2 当前状态映射与去重建议"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/backend-core-finance.md", "reason": "认证、钱包、充提、现货、杠杆、闪兑和账务研究"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/backend-product-business.md", "reason": "秒合约、借贷、理财、预测、新币、返佣、客服和合成行情研究"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/admin-pc-cross-layer.md", "reason": "Admin/PC 跨层契约、风险展示、实时与交付研究"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/delivery-security-quality.md", "reason": "供应链、CI、容器、Secret、可观测性、灾备和治理研究"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/data-async-realtime.md", "reason": "数据库、MQ、worker、行情时间、WS、迁移与灾备研究"}
+{"file": ".trellis/tasks/08-30-project-code-business-optimization-reaudit/research/mobile-cross-layer.md", "reason": "Mobile API、Decimal、实时恢复、结构、测试与交付研究"}

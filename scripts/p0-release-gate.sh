@@ -5,6 +5,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+echo "[P0 gate] Source integrity"
+python3 scripts/source_integrity_gate.py
+
+echo "[P0 gate] Source integrity scanner tests"
+python3 -B -m unittest tests.test_source_integrity_gate
+
 echo "[P0 gate] Rust formatting"
 cargo fmt --all -- --check
 
@@ -22,6 +28,7 @@ npm --prefix web test
 echo "[P0 gate] PC frontend"
 npm --prefix pc run type-check
 npm --prefix pc run test:margin
+npm --prefix pc run build
 
 echo "[P0 gate] Mobile frontend"
 npm --prefix mobile run type-check

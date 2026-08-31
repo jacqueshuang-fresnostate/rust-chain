@@ -1,4 +1,5 @@
 import { client, readAccessToken, requestUrl } from './client'
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
 import {
   createReferenceRequestKey,
   referenceRequestRegistry,
@@ -27,12 +28,15 @@ import {
   type WalletLedgerCategory,
   type WalletLedgerPage,
 } from '@/core/walletLedger'
+
 import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from '@/core/types'
 import {
   isWithdrawalDecimalString,
   withdrawalQuoteAmountsAreConsistent,
   type WithdrawalFeeTier,
 } from '@/core/withdrawalQuote'
+
+const walletTransferIdempotencyKeys = new RetryStableIdempotencyKeys('mobile-transfer')
 
 export {
   calculateWithdrawalFee,
@@ -571,13 +575,19 @@ export async function fetchQuickRechargeOrders(limit = 20): Promise<QuickRecharg
 
 export async function transferWalletFunds(assetSymbol: string, from: 'spot' | 'margin', to: 'spot' | 'margin', amount: number): Promise<WalletTransferResult> {
   const symbol = assetSymbol.toUpperCase()
-  const response = await client.post<BackendWalletTransferResponse>(requestUrl('/margin/transfers'), {
+  const businessIntent = {
     asset_symbol: symbol,
     from,
     to,
     amount: String(amount),
-    idempotency_key: createWalletMutationIdempotencyKey('mobile-transfer'),
+  }
+  const intent = canonicalRequestIntent(businessIntent)
+  const idempotencyKey = walletTransferIdempotencyKeys.acquire(intent)
+  const response = await client.post<BackendWalletTransferResponse>(requestUrl('/margin/transfers'), {
+    ...businessIntent,
+    idempotency_key: idempotencyKey,
   })
+  walletTransferIdempotencyKeys.complete(intent, idempotencyKey)
   return {
     transferId: response.data.transfer_id,
     spotWallet: mapTransferWallet(response.data.spot_wallet, symbol),
@@ -593,12 +603,6 @@ function mapTransferWallet(wallet: BackendWalletTransferAccount, symbol: string)
     frozen: asNumber(wallet.frozen),
     locked: asNumber(wallet.locked),
   }
-}
-
-function createWalletMutationIdempotencyKey(scope: string): string {
-  const randomPart = globalThis.crypto?.randomUUID?.()
-    ?? Math.random().toString(36).slice(2)
-  return `${scope}-${Date.now()}-${randomPart}`
 }
 
 function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeOrder {

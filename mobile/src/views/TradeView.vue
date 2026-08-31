@@ -128,7 +128,11 @@ const contractOrderType = ref<MarginOrderType | null>(null)
 const contractLimitPrice = ref('')
 const quantity = ref('')
 const percentage = ref<number | null>(0)
-const leverage = ref(5)
+const longLeverage = ref(5)
+const shortLeverage = ref(5)
+const leverage = computed(() => (
+  side.value === 'buy' ? longLeverage.value : shortLeverage.value
+))
 const marginMode = ref<'cross' | 'isolated'>('isolated')
 const products = ref<MarginProduct[]>([])
 const spotWallets = ref<WalletAccount[]>([])
@@ -534,7 +538,9 @@ async function loadMarginProducts(options: { preserveExistingOnError?: boolean }
 
 function applyMarginProductDefaults(product: MarginProduct): void {
   const levels = product.leverageLevels.length ? product.leverageLevels : [product.maxLeverage || 1]
-  leverage.value = levels.includes(5) ? 5 : levels[0] || 1
+  const defaultLeverage = levels.includes(5) ? 5 : levels[0] || 1
+  longLeverage.value = defaultLeverage
+  shortLeverage.value = defaultLeverage
   marginMode.value = product.marginModes.includes(product.marginMode)
     ? product.marginMode
     : product.marginModes[0] || 'isolated'
@@ -553,8 +559,13 @@ async function syncMarginSetting(product: MarginProduct): Promise<void> {
       || selectedProduct.value?.id !== product.id
       || mode.value !== 'contract'
     ) return
-    if (setting.leverage && product.leverageLevels.includes(setting.leverage)) {
-      leverage.value = setting.leverage
+    const nextLongLeverage = setting.longLeverage
+    const nextShortLeverage = setting.shortLeverage
+    if (nextLongLeverage !== null && product.leverageLevels.includes(nextLongLeverage)) {
+      longLeverage.value = nextLongLeverage
+    }
+    if (nextShortLeverage !== null && product.leverageLevels.includes(nextShortLeverage)) {
+      shortLeverage.value = nextShortLeverage
     }
     if (setting.marginMode && product.marginModes.includes(setting.marginMode)) {
       marginMode.value = setting.marginMode
@@ -1248,7 +1259,7 @@ async function performBulkClose(): Promise<void> {
   }
 }
 
-async function applyContractLeverage(nextLeverage: number): Promise<void> {
+async function applyContractLeverage(nextLongLeverage: number, nextShortLeverage: number): Promise<void> {
   const product = selectedProduct.value
   if (!product) {
     setFeedback(t('trade.unavailableContract'))
@@ -1258,19 +1269,40 @@ async function applyContractLeverage(nextLeverage: number): Promise<void> {
     openLogin()
     return
   }
-  if (!product.leverageLevels.includes(nextLeverage)) {
+  if (
+    !product.leverageLevels.includes(nextLongLeverage)
+    || !product.leverageLevels.includes(nextShortLeverage)
+  ) {
     settingsError.value = t('trade.invalidLeverageSelection')
     return
   }
+  const requestVersion = ++marginSettingRequestVersion
+  const requestSessionKey = session.token
   settingsSaving.value = true
   settingsError.value = ''
   feedback.value = ''
   try {
-    await updateMarginLeverage(product.id, nextLeverage)
-    leverage.value = nextLeverage
+    await updateMarginLeverage(product.id, {
+      longLeverage: nextLongLeverage,
+      shortLeverage: nextShortLeverage,
+    })
+    if (
+      requestVersion !== marginSettingRequestVersion
+      || session.token !== requestSessionKey
+      || mode.value !== 'contract'
+      || selectedProduct.value?.id !== product.id
+    ) return
+    longLeverage.value = nextLongLeverage
+    shortLeverage.value = nextShortLeverage
     contractSheet.value = null
     setFeedback(t('trade.leverageChanged'), 'success')
   } catch (reason) {
+    if (
+      requestVersion !== marginSettingRequestVersion
+      || session.token !== requestSessionKey
+      || mode.value !== 'contract'
+      || selectedProduct.value?.id !== product.id
+    ) return
     settingsError.value = apiErrorMessage(reason, t('trade.leverageChangeFailed'))
     setFeedback(settingsError.value)
   } finally {
@@ -1985,6 +2017,7 @@ onBeforeUnmount(() => {
 
         <section
           class="contract-pencil-module"
+          data-pencil-module-source="IpirH mcfEf"
           data-instrument-plate="market-and-order"
           :data-live-detail="liveDetailActive ? 'stream' : 'snapshot'"
           :data-market-data-panel="marketDataPanel"
@@ -2045,7 +2078,7 @@ onBeforeUnmount(() => {
                 @click="openContractSheet('marginMode')"
               >
                 <span>{{ t(marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</span>
-                <ChevronDown :size="12" aria-hidden="true" />
+                <ChevronDown :size="11" aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -2056,23 +2089,24 @@ onBeforeUnmount(() => {
                 @click="openContractSheet('leverage')"
               >
                 <span class="numeric">{{ leverage }}x</span>
-                <ChevronDown :size="12" aria-hidden="true" />
-              </button>
-              <button
-                class="contract-order-type"
-                type="button"
-                :class="{ active: contractOrderType !== null }"
-                aria-haspopup="dialog"
-                :aria-expanded="contractSheet === 'orderType'"
-                aria-controls="contract-orderType-dialog"
-                :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: contractOrderTypeLabel })"
-                :disabled="settingsSaving || productsLoading || !selectedProduct?.orderTypes.length"
-                @click="openContractSheet('orderType')"
-              >
-                <span>{{ contractOrderTypeLabel }}</span>
-                <ChevronDown :size="12" aria-hidden="true" />
+                <ChevronDown :size="11" aria-hidden="true" />
               </button>
             </div>
+
+            <button
+              class="contract-order-type"
+              type="button"
+              :class="{ active: contractOrderType !== null }"
+              aria-haspopup="dialog"
+              :aria-expanded="contractSheet === 'orderType'"
+              aria-controls="contract-orderType-dialog"
+              :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: contractOrderTypeLabel })"
+              :disabled="settingsSaving || productsLoading || !selectedProduct?.orderTypes.length"
+              @click="openContractSheet('orderType')"
+            >
+              <span>{{ contractOrderTypeLabel }}</span>
+              <ChevronDown :size="11" aria-hidden="true" />
+            </button>
 
             <div class="contract-price-row">
               <label
@@ -2222,7 +2256,7 @@ onBeforeUnmount(() => {
               :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('buy', $event)"
             >
-              {{ t('trade.longActionCompact', { leverage }) }}
+              {{ t('trade.longActionCompact', { leverage: longLeverage }) }}
             </button>
             <dl class="contract-open-meta contract-open-meta--short">
               <div><dt>{{ t('trade.openShortAvailable') }}</dt><dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd></div>
@@ -2234,7 +2268,7 @@ onBeforeUnmount(() => {
               :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('sell', $event)"
             >
-              {{ t('trade.shortActionCompact', { leverage }) }}
+              {{ t('trade.shortActionCompact', { leverage: shortLeverage }) }}
             </button>
           </div>
         </section>
@@ -2449,8 +2483,12 @@ onBeforeUnmount(() => {
       :pair-symbol="pairSymbol"
       :product="selectedProduct"
       :products="products"
-      :leverage="leverage"
+      :long-leverage="longLeverage"
+      :short-leverage="shortLeverage"
       :margin-mode="marginMode"
+      :available-balance="availableBalance"
+      :reference-price="currentPrice"
+      :margin-amount="Number(quantity) || 0"
       :order-type="contractOrderType"
       :saving="settingsSaving"
       :error="settingsError"
@@ -4848,7 +4886,7 @@ html[data-theme='dark'] .contract-trade {
   display: grid;
   gap: 10px;
   grid-template-columns: 202px minmax(150px, 1fr);
-  height: 460px;
+  height: 500px;
   min-width: 0;
   overflow: hidden;
   padding: 2px 14px 8px;
@@ -4859,7 +4897,7 @@ html[data-theme='dark'] .contract-trade {
   border: 0;
   grid-column: 1;
   grid-row: 1;
-  height: 450px;
+  height: 490px;
   min-width: 0;
   padding: 0;
   position: relative;
@@ -4901,9 +4939,9 @@ html[data-theme='dark'] .contract-trade {
 
 .contract-mode-row {
   display: grid;
-  gap: 5px;
-  grid-template-columns: 54px 48px minmax(0, 1fr);
-  height: 32px;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 38px;
   left: 0;
   position: absolute;
   right: 0;
@@ -4918,13 +4956,13 @@ html[data-theme='dark'] .contract-trade {
   border-radius: 7px;
   color: var(--contract-text);
   display: flex;
-  font-size: 10px;
-  gap: 2px;
-  height: 32px;
-  justify-content: center;
-  min-height: 32px;
+  font-size: 11px;
+  gap: 8px;
+  height: 38px;
+  justify-content: space-between;
+  min-height: 38px;
   min-width: 0;
-  padding: 0 5px;
+  padding: 0 11px;
 }
 
 .contract-mode-row button[aria-expanded='true'],
@@ -4941,32 +4979,38 @@ html[data-theme='dark'] .contract-trade {
 
 .contract-mode-row span,
 .contract-order-type span {
-  font-size: 10px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .contract-order-type {
+  height: 40px;
+  left: 0;
+  min-height: 40px;
+  position: absolute;
+  right: 0;
+  top: 80px;
   width: 100%;
 }
 
 .contract-order-type > span {
   flex: 1;
-  text-align: center;
+  text-align: left;
 }
 
 .contract-price-row {
   display: grid;
   gap: 6px;
   grid-template-columns: minmax(0, 138px) 58px;
-  height: 56px;
+  height: 54px;
   left: 0;
   min-width: 0;
   position: absolute;
   right: 0;
-  top: 74px;
+  top: 126px;
 }
 
 .contract-price-row > button {
@@ -4977,7 +5021,7 @@ html[data-theme='dark'] .contract-trade {
   font-family: var(--font-geist-sans), var(--font-family), sans-serif;
   font-size: 12px;
   font-weight: 650;
-  height: 56px;
+  height: 54px;
   min-width: 0;
   padding: 0 4px;
 }
@@ -5040,7 +5084,7 @@ html[data-theme='dark'] .contract-trade {
   align-content: center;
   gap: 3px;
   grid-template-rows: 13px 22px;
-  height: 56px;
+  height: 54px;
   padding: 7px 10px;
 }
 
@@ -5056,12 +5100,12 @@ html[data-theme='dark'] .contract-trade {
   column-gap: 6px;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: 13px 20px;
-  height: 46px;
+  height: 48px;
   left: 0;
-  padding: 5px 10px 4px;
+  padding: 6px 11px;
   position: absolute;
   right: 0;
-  top: 136px;
+  top: 186px;
 }
 
 .contract-amount-field input {
@@ -5077,7 +5121,8 @@ html[data-theme='dark'] .contract-trade {
   align-self: center;
   color: var(--contract-muted);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 600;
   grid-column: 2;
   grid-row: 1 / span 2;
 }
@@ -5087,7 +5132,7 @@ html[data-theme='dark'] .contract-trade {
   left: 0;
   position: absolute;
   right: 0;
-  top: 188px;
+  top: 240px;
 }
 
 .contract-percentage__slider {
@@ -5236,7 +5281,7 @@ html[data-theme='dark'] .contract-trade {
   left: 0;
   position: absolute;
   right: 0;
-  top: 226px;
+  top: 278px;
 }
 
 .contract-available-row button {
@@ -5267,7 +5312,7 @@ html[data-theme='dark'] .contract-trade {
   left: 0;
   position: absolute;
   right: 0;
-  top: 245px;
+  top: 297px;
 }
 
 .contract-tpsl > span {
@@ -5293,8 +5338,8 @@ html[data-theme='dark'] .contract-trade {
   right: 0;
 }
 
-.contract-open-meta--long { top: 267px; }
-.contract-open-meta--short { top: 349px; }
+.contract-open-meta--long { top: 319px; }
+.contract-open-meta--short { top: 401px; }
 
 .contract-open-meta > div {
   align-items: center;
@@ -5338,13 +5383,13 @@ html[data-theme='dark'] .contract-trade {
   background: var(--contract-accent);
   color: #07130e;
   min-height: 42px;
-  top: 301px;
+  top: 353px;
 }
 
 .contract-submit--short {
   background: var(--contract-negative);
   color: #fff;
-  top: 383px;
+  top: 435px;
 }
 
 .contract-submit:disabled {
@@ -5360,13 +5405,13 @@ html[data-theme='dark'] .contract-trade {
   left: 2px;
   line-height: 10px;
   margin: 0;
-  max-height: 20px;
+  max-height: 10px;
   overflow: hidden;
   overflow-wrap: anywhere;
   position: absolute;
   right: 2px;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
 .contract-trade .trade-chart-panel {
@@ -5376,7 +5421,7 @@ html[data-theme='dark'] .contract-trade {
   flex-direction: column;
   grid-column: 2;
   grid-row: 1;
-  height: 450px;
+  height: 490px;
   min-width: 0;
   overflow: hidden;
 }
@@ -5415,8 +5460,8 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-mini-book {
-  height: 424px;
-  min-height: 424px;
+  height: 464px;
+  min-height: 464px;
 }
 
 .contract-mini-book :deep(.order-book__mini-header) {
@@ -5489,7 +5534,7 @@ html[data-theme='dark'] .contract-trade {
   padding-inline: 1px;
 }
 .contract-mini-book :deep(.order-book__mini-precision-value) { background: var(--contract-surface-soft); }
-.contract-mini-book :deep(.order-book__mini-state) { height: 398px; }
+.contract-mini-book :deep(.order-book__mini-state) { height: 438px; }
 
 .contract-position-tabs {
   align-items: center;
@@ -5882,7 +5927,6 @@ html[data-theme='dark'] .contract-trade {
     grid-template-columns: minmax(0, 1fr) 132px;
     padding-inline: 12px;
   }
-  .contract-mode-row { grid-template-columns: 48px 42px minmax(0, 1fr); }
   .contract-price-row { grid-template-columns: minmax(0, 1fr) 48px; }
   .contract-mode-row button,
   .contract-order-type { padding-inline: 3px; }

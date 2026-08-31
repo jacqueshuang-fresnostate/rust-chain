@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Run the complete Mobile quality gate after the field layout change."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify selected geometry, theme cascade, focus, safe-area and 320-448px behavior."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify data ownership, modal triggers, amount semantics and order payload remain unchanged."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check no duplicate modal or validation path was introduced."}
+{"file":".trellis/tasks/08-23-mobile-margin-selected-field-layout-parity/research/pencil-selected-field-spec.md","reason":"Compare source and runtime computed geometry against IpirH/mcfEf."}

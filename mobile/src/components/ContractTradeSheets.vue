@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Info, Search, Star, TriangleAlert, X } from 'lucide-vue-next'
+import { Check, ChevronRight, Info, Minus, Plus, Search, Star, X } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
-import { formatPrice, normalizeSymbol, splitSymbol } from '@/core/format'
+import { formatAmount, formatPrice, normalizeSymbol, splitSymbol } from '@/core/format'
+import {
+  createMarginLeveragePreview,
+  marginLeverageWindow,
+  marginLeverageWindowStart,
+  nextMarginLeverageWindowStart,
+  normalizeMarginLeverageLevels,
+  stepMarginLeverage,
+  type MarginLeverageDirection,
+} from '@/core/marginLeverage'
 import { useModalDialog } from '@/core/modalDialog'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useMarketStore } from '@/stores/market'
@@ -18,8 +27,12 @@ const props = defineProps<{
   pairSymbol: string
   product?: MarginProduct
   products: MarginProduct[]
-  leverage: number
+  longLeverage: number
+  shortLeverage: number
   marginMode: MarginMode
+  availableBalance: number
+  referencePrice: number
+  marginAmount: number
   orderType: MarginOrderType | null
   saving: boolean
   error?: string
@@ -30,7 +43,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   selectPair: [symbol: string]
-  applyLeverage: [leverage: number]
+  applyLeverage: [longLeverage: number, shortLeverage: number]
   applyMarginMode: [mode: MarginMode]
   selectOrderType: [orderType: MarginOrderType]
   retryProducts: []
@@ -42,35 +55,37 @@ const marketFavorites = useMarketFavoritesStore()
 const dialog = ref<HTMLElement | null>(null)
 const searchQuery = ref('')
 const pairFilter = ref<PairFilter>('all')
-const draftLeverage = ref(props.leverage)
+const draftLongLeverage = ref(props.longLeverage)
+const draftShortLeverage = ref(props.shortLeverage)
+const longWindowStart = ref(0)
+const shortWindowStart = ref(0)
 const draftMarginMode = ref<MarginMode>(props.marginMode)
 const dialogOpen = computed(() => props.open !== null)
 const { trapFocus } = useModalDialog(dialogOpen, dialog, '[data-dialog-initial]')
 
 const compactPair = computed(() => props.pairSymbol.replace(/[\/_-]/g, '').toUpperCase())
 const selectedPair = computed(() => splitSymbol(props.pairSymbol))
-const leverageLevels = computed(() => {
-  const configured = props.product?.leverageLevels || []
-  return [...new Set(configured.filter((level) => Number.isFinite(level) && level > 0))].sort((left, right) => left - right)
-})
-const leverageIndex = computed({
-  get: () => Math.max(0, leverageLevels.value.indexOf(draftLeverage.value)),
-  set: (index: number) => {
-    const next = leverageLevels.value[Math.max(0, Math.min(Math.round(index), leverageLevels.value.length - 1))]
-    if (next) draftLeverage.value = next
-  },
-})
-const leverageProgress = computed(() => {
-  const maximumIndex = leverageLevels.value.length - 1
-  return maximumIndex > 0 ? (leverageIndex.value / maximumIndex) * 100 : 0
-})
-const quickLeverageLevels = computed(() => {
-  const levels = leverageLevels.value
-  if (levels.length <= 6) return levels
-  return [...new Set(Array.from({ length: 6 }, (_, index) => (
-    levels[Math.round((index / 5) * (levels.length - 1))]
-  )))]
-})
+const leverageLevels = computed(() => normalizeMarginLeverageLevels(props.product?.leverageLevels || []))
+const longQuickLeverageLevels = computed(() => marginLeverageWindow(leverageLevels.value, longWindowStart.value))
+const shortQuickLeverageLevels = computed(() => marginLeverageWindow(leverageLevels.value, shortWindowStart.value))
+const longPreview = computed(() => createMarginLeveragePreview({
+  availableBalance: props.availableBalance,
+  referencePrice: props.referencePrice,
+  marginAmount: props.marginAmount,
+  leverage: draftLongLeverage.value,
+  maintenanceMarginRate: props.product?.maintenanceMarginRate,
+  marginMode: props.marginMode,
+  direction: 'long',
+}))
+const shortPreview = computed(() => createMarginLeveragePreview({
+  availableBalance: props.availableBalance,
+  referencePrice: props.referencePrice,
+  marginAmount: props.marginAmount,
+  leverage: draftShortLeverage.value,
+  maintenanceMarginRate: props.product?.maintenanceMarginRate,
+  marginMode: props.marginMode,
+  direction: 'short',
+}))
 const supportedMarginModes = computed<MarginMode[]>(() => {
   const modes = props.product?.marginModes || []
   return modes
@@ -87,7 +102,6 @@ const pairRows = computed(() => props.products.map((product) => {
     normalized: normalizeSymbol(product.symbol),
   }
 }))
-const sliderMarkLevels = computed(() => quickLeverageLevels.value)
 const mainstreamSymbols = computed(() => new Set(
   [...pairRows.value]
     .sort((left, right) => (right.ticker?.volume || 0) - (left.ticker?.volume || 0))
@@ -112,9 +126,7 @@ watch(() => props.open, (open) => {
     pairFilter.value = 'all'
   }
   if (open === 'leverage') {
-    draftLeverage.value = leverageLevels.value.includes(props.leverage)
-      ? props.leverage
-      : leverageLevels.value[0] || props.leverage
+    resetLeverageDrafts()
   }
   if (open === 'marginMode') {
     draftMarginMode.value = supportedMarginModes.value.includes(props.marginMode)
@@ -124,9 +136,7 @@ watch(() => props.open, (open) => {
 })
 
 watch(() => props.product?.id, () => {
-  draftLeverage.value = leverageLevels.value.includes(props.leverage)
-    ? props.leverage
-    : leverageLevels.value[0] || props.leverage
+  resetLeverageDrafts()
   draftMarginMode.value = supportedMarginModes.value.includes(props.marginMode)
     ? props.marginMode
     : supportedMarginModes.value[0] || props.marginMode
@@ -146,9 +156,79 @@ function selectPair(symbol: string): void {
 }
 
 function applyLeverage(): void {
-  if (!props.saving && leverageLevels.value.includes(draftLeverage.value)) {
-    emit('applyLeverage', draftLeverage.value)
+  if (
+    !props.saving
+    && leverageLevels.value.includes(draftLongLeverage.value)
+    && leverageLevels.value.includes(draftShortLeverage.value)
+  ) {
+    emit('applyLeverage', draftLongLeverage.value, draftShortLeverage.value)
   }
+}
+
+function resetLeverageDrafts(): void {
+  const firstLevel = leverageLevels.value[0]
+  draftLongLeverage.value = leverageLevels.value.includes(props.longLeverage)
+    ? props.longLeverage
+    : firstLevel || props.longLeverage
+  draftShortLeverage.value = leverageLevels.value.includes(props.shortLeverage)
+    ? props.shortLeverage
+    : firstLevel || props.shortLeverage
+  longWindowStart.value = marginLeverageWindowStart(leverageLevels.value, draftLongLeverage.value)
+  shortWindowStart.value = marginLeverageWindowStart(leverageLevels.value, draftShortLeverage.value)
+}
+
+function draftFor(direction: MarginLeverageDirection): number {
+  return direction === 'long' ? draftLongLeverage.value : draftShortLeverage.value
+}
+
+function setLeverage(direction: MarginLeverageDirection, leverage: number): void {
+  if (props.saving || !leverageLevels.value.includes(leverage)) return
+  if (direction === 'long') {
+    draftLongLeverage.value = leverage
+    longWindowStart.value = marginLeverageWindowStart(leverageLevels.value, leverage)
+    return
+  }
+  draftShortLeverage.value = leverage
+  shortWindowStart.value = marginLeverageWindowStart(leverageLevels.value, leverage)
+}
+
+function stepLeverage(direction: MarginLeverageDirection, step: -1 | 1): void {
+  setLeverage(direction, stepMarginLeverage(leverageLevels.value, draftFor(direction), step))
+}
+
+function canStepLeverage(direction: MarginLeverageDirection, step: -1 | 1): boolean {
+  return stepMarginLeverage(leverageLevels.value, draftFor(direction), step) !== draftFor(direction)
+}
+
+function showMoreLeverages(direction: MarginLeverageDirection): void {
+  if (props.saving) return
+  if (direction === 'long') {
+    longWindowStart.value = nextMarginLeverageWindowStart(leverageLevels.value, longWindowStart.value)
+    return
+  }
+  shortWindowStart.value = nextMarginLeverageWindowStart(leverageLevels.value, shortWindowStart.value)
+}
+
+function formattedMaximumOpen(direction: MarginLeverageDirection): string {
+  const value = direction === 'long'
+    ? longPreview.value.maximumOpenQuantity
+    : shortPreview.value.maximumOpenQuantity
+  return value === null ? '--' : `${formatAmount(value, 6)} ${selectedPair.value.base}`
+}
+
+function formattedRequiredMargin(direction: MarginLeverageDirection): string {
+  const value = direction === 'long'
+    ? longPreview.value.requiredMargin
+    : shortPreview.value.requiredMargin
+  const asset = props.product?.marginAssetSymbol || selectedPair.value.quote
+  return value === null ? '--' : `${formatAmount(value, 6)} ${asset}`
+}
+
+function formattedLiquidationPrice(direction: MarginLeverageDirection): string {
+  const value = direction === 'long'
+    ? longPreview.value.estimatedLiquidationPrice
+    : shortPreview.value.estimatedLiquidationPrice
+  return value === null ? '--' : `${formatPrice(value)} ${selectedPair.value.quote}`
 }
 
 function applyMarginMode(): void {
@@ -186,7 +266,7 @@ function orderTypeDescription(orderType: MarginOrderType): string {
       v-if="open"
       class="contract-sheet-layer"
       :data-contract-sheet="open"
-      data-pencil-source="f0L8yf R8t0p aNuw6 PKAcD Crw8v YuKtQ"
+      data-pencil-source="f0L8yf R8t0p aNuw6 PKAcD Crw8v YuKtQ NTiiS CulR4"
     >
       <button
         class="contract-sheet-overlay"
@@ -209,7 +289,7 @@ function orderTypeDescription(orderType: MarginOrderType): string {
         tabindex="-1"
         @keydown="handleKeydown"
       >
-        <span class="contract-sheet__grab" aria-hidden="true" />
+        <span v-if="open !== 'leverage'" class="contract-sheet__grab" aria-hidden="true" />
 
         <template v-if="open === 'orderType'">
           <header class="contract-sheet__header">
@@ -254,66 +334,137 @@ function orderTypeDescription(orderType: MarginOrderType): string {
 
         <template v-else-if="open === 'leverage'">
           <header class="contract-sheet__header">
-            <div>
-              <h2 id="contract-leverage-title">{{ t('trade.leverageSheetTitle') }}</h2>
-            </div>
+            <h2 id="contract-leverage-title">{{ t('trade.leverageSheetTitle') }}</h2>
             <button data-dialog-initial class="contract-sheet__close" type="button" :disabled="saving" :aria-label="t('common.close')" @click="requestClose">
               <X :size="18" aria-hidden="true" />
             </button>
           </header>
 
           <div class="contract-sheet__scroll contract-leverage-body">
-            <section class="contract-leverage-card" :aria-label="t('trade.currentLeverage')">
-              <div class="contract-leverage-current-row">
-                <span>{{ t('trade.currentLeverage') }}</span>
-                <strong class="numeric">{{ draftLeverage }}x</strong>
+            <section class="contract-leverage-direction contract-leverage-direction--long" :aria-label="t('trade.longLeverage')">
+              <h3>{{ t('trade.longLeverage') }}</h3>
+
+              <div class="contract-leverage-stepper">
+                <button
+                  class="contract-leverage-step"
+                  type="button"
+                  :disabled="saving || !canStepLeverage('long', -1)"
+                  :aria-label="t('trade.decreaseLongLeverage')"
+                  @click="stepLeverage('long', -1)"
+                >
+                  <Minus :size="24" aria-hidden="true" />
+                </button>
+                <span class="contract-leverage-value numeric contract-leverage-value--long" :aria-label="t('trade.currentLongLeverage', { leverage: draftLongLeverage.toFixed(2) })">
+                  <strong>{{ draftLongLeverage.toFixed(2) }}</strong><small>x</small>
+                </span>
+                <button
+                  class="contract-leverage-step"
+                  type="button"
+                  :disabled="saving || !canStepLeverage('long', 1)"
+                  :aria-label="t('trade.increaseLongLeverage')"
+                  @click="stepLeverage('long', 1)"
+                >
+                  <Plus :size="24" aria-hidden="true" />
+                </button>
               </div>
-              <input
-                v-if="leverageLevels.length"
-                v-model.number="leverageIndex"
-                class="contract-leverage-slider"
-                type="range"
-                min="0"
-                :max="Math.max(0, leverageLevels.length - 1)"
-                step="1"
-                :style="{ '--leverage-progress': `${leverageProgress}%` }"
-                :aria-label="t('trade.leverageSheetTitle')"
-              />
-              <div class="contract-leverage-range" aria-hidden="true">
-                <span v-for="level in sliderMarkLevels" :key="`mark-${level}`">{{ level }}x</span>
+
+              <div class="contract-leverage-window" role="group" :aria-label="t('trade.longLeverageQuickOptions')">
+                <button
+                  v-for="level in longQuickLeverageLevels"
+                  :key="`long-${level}`"
+                  class="contract-leverage-option"
+                  type="button"
+                  :class="{ active: draftLongLeverage === level }"
+                  :aria-pressed="draftLongLeverage === level"
+                  :disabled="saving"
+                  @click="setLeverage('long', level)"
+                >
+                  <span class="numeric">{{ level }}x</span>
+                </button>
+                <button
+                  v-if="leverageLevels.length > 6"
+                  class="contract-leverage-more"
+                  type="button"
+                  :disabled="saving"
+                  :aria-label="t('trade.moreLeverageOptions')"
+                  @click="showMoreLeverages('long')"
+                >
+                  <ChevronRight :size="22" aria-hidden="true" />
+                </button>
               </div>
+
+              <dl class="contract-leverage-info">
+                <div><dt>{{ t('trade.leverageMaxOpenAfterAdjust') }}</dt><dd class="numeric">{{ formattedMaximumOpen('long') }}</dd></div>
+                <div><dt>{{ t('trade.requiredMarginAfterAdjust') }}</dt><dd class="numeric">{{ formattedRequiredMargin('long') }}</dd></div>
+                <div><dt>{{ t('trade.estimatedLiquidationPrice') }}</dt><dd class="numeric">{{ formattedLiquidationPrice('long') }}</dd></div>
+              </dl>
+
+              <p class="contract-leverage-risk">{{ t('trade.leverageFutureOrdersOnly') }}</p>
             </section>
 
-            <div class="contract-leverage-quick" role="group" :aria-label="t('trade.leverageQuickOptions')">
-              <button
-                v-for="level in quickLeverageLevels"
-                :key="level"
-                type="button"
-                :class="{ active: draftLeverage === level }"
-                :aria-pressed="draftLeverage === level"
-                @click="draftLeverage = level"
-              >
-                <span class="numeric">{{ level }}x</span>
-              </button>
-            </div>
+            <section class="contract-leverage-direction contract-leverage-direction--short" :aria-label="t('trade.shortLeverage')">
+              <h3>{{ t('trade.shortLeverage') }}</h3>
 
-            <div class="contract-scope-row">
-              <span class="contract-scope-row__copy">
-                <strong>{{ t('trade.applyBothDirections') }}</strong>
-                <small>{{ t('trade.applyBothDirectionsHint', { pair: compactPair }) }}</small>
-              </span>
-              <span class="contract-scope-toggle" aria-hidden="true"><i /></span>
-            </div>
+              <div class="contract-leverage-stepper">
+                <button
+                  class="contract-leverage-step"
+                  type="button"
+                  :disabled="saving || !canStepLeverage('short', -1)"
+                  :aria-label="t('trade.decreaseShortLeverage')"
+                  @click="stepLeverage('short', -1)"
+                >
+                  <Minus :size="24" aria-hidden="true" />
+                </button>
+                <span class="contract-leverage-value numeric contract-leverage-value--short" :aria-label="t('trade.currentShortLeverage', { leverage: draftShortLeverage.toFixed(2) })">
+                  <strong>{{ draftShortLeverage.toFixed(2) }}</strong><small>x</small>
+                </span>
+                <button
+                  class="contract-leverage-step"
+                  type="button"
+                  :disabled="saving || !canStepLeverage('short', 1)"
+                  :aria-label="t('trade.increaseShortLeverage')"
+                  @click="stepLeverage('short', 1)"
+                >
+                  <Plus :size="24" aria-hidden="true" />
+                </button>
+              </div>
 
-            <aside class="contract-sheet-notice">
-              <TriangleAlert :size="15" aria-hidden="true" />
-              <span>{{ t('trade.leverageRiskDescription') }}</span>
-            </aside>
+              <div class="contract-leverage-window" role="group" :aria-label="t('trade.shortLeverageQuickOptions')">
+                <button
+                  v-for="level in shortQuickLeverageLevels"
+                  :key="`short-${level}`"
+                  class="contract-leverage-option"
+                  type="button"
+                  :class="{ active: draftShortLeverage === level }"
+                  :aria-pressed="draftShortLeverage === level"
+                  :disabled="saving"
+                  @click="setLeverage('short', level)"
+                >
+                  <span class="numeric">{{ level }}x</span>
+                </button>
+                <button
+                  v-if="leverageLevels.length > 6"
+                  class="contract-leverage-more"
+                  type="button"
+                  :disabled="saving"
+                  :aria-label="t('trade.moreLeverageOptions')"
+                  @click="showMoreLeverages('short')"
+                >
+                  <ChevronRight :size="22" aria-hidden="true" />
+                </button>
+              </div>
+
+              <dl class="contract-leverage-info contract-leverage-info--short">
+                <div><dt>{{ t('trade.leverageMaxOpenAfterAdjust') }}</dt><dd class="numeric">{{ formattedMaximumOpen('short') }}</dd></div>
+                <div><dt>{{ t('trade.requiredMarginAfterAdjust') }}</dt><dd class="numeric">{{ formattedRequiredMargin('short') }}</dd></div>
+              </dl>
+            </section>
+
+            <p v-if="error" class="contract-sheet__error" role="alert">{{ error }}</p>
           </div>
 
-          <p v-if="error" class="contract-sheet__error" role="alert">{{ error }}</p>
           <button class="contract-sheet__submit" type="button" :disabled="saving || !leverageLevels.length" @click="applyLeverage">
-            {{ saving ? t('common.saving') : t('trade.confirmLeverage', { leverage: draftLeverage }) }}
+            {{ saving ? t('common.saving') : t('common.confirm') }}
           </button>
         </template>
 
@@ -507,7 +658,68 @@ html[data-theme='dark'] .contract-sheet {
 }
 
 .contract-sheet--leverage {
-  height: min(500px, calc(100dvh - max(12px, env(safe-area-inset-top))));
+  --leverage-sheet-page: #ffffff;
+  --leverage-sheet-field: #f0f2f1;
+  --leverage-sheet-step: #f0f2f1;
+  --leverage-sheet-line: #d8deda;
+  --leverage-sheet-text: #111512;
+  --leverage-sheet-muted: #8b928e;
+  --leverage-sheet-long: #14c982;
+  --leverage-sheet-short: #ff3e73;
+  --leverage-sheet-submit: #087a16;
+  background: var(--leverage-sheet-page);
+  border-radius: 24px 24px 0 0;
+  border-top: 0;
+  color: var(--leverage-sheet-text);
+  grid-template-rows: 34px minmax(0, 1fr) 52px;
+  height: min(840px, calc(100dvh - max(12px, env(safe-area-inset-top))));
+  padding: 18px 20px calc(16px + env(safe-area-inset-bottom));
+  row-gap: 14px;
+}
+
+:global(html[data-theme='dark'] .contract-sheet--leverage) {
+  --leverage-sheet-page: #0b0f0d;
+  --leverage-sheet-field: #181e1a;
+  --leverage-sheet-step: #202723;
+  --leverage-sheet-line: #364039;
+  --leverage-sheet-text: #f5f7f6;
+  --leverage-sheet-muted: #87918c;
+  --leverage-sheet-long: #14c982;
+  --leverage-sheet-short: #ff3e73;
+  --leverage-sheet-submit: #16a765;
+  box-shadow: 0 -6px 20px rgb(0 0 0 / 45%);
+}
+
+.contract-sheet--leverage .contract-sheet__header {
+  height: 34px;
+}
+
+.contract-sheet--leverage .contract-sheet__header h2 {
+  color: var(--leverage-sheet-text);
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  line-height: 1.45;
+}
+
+.contract-sheet--leverage .contract-sheet__close {
+  color: var(--leverage-sheet-muted);
+  height: 34px;
+  margin: 0;
+  min-height: 34px;
+  width: 34px;
+}
+
+.contract-sheet--leverage .contract-sheet__close::before {
+  background: var(--leverage-sheet-field);
+  inset: 0;
+}
+
+.contract-sheet--leverage .contract-sheet__close::after {
+  content: '';
+  inset: -5px;
+  position: absolute;
 }
 
 .contract-sheet--marginMode {
@@ -615,7 +827,6 @@ html[data-theme='dark'] .contract-sheet {
   display: none;
 }
 
-.contract-leverage-body,
 .contract-mode-body {
   align-content: start;
   display: grid;
@@ -630,180 +841,221 @@ html[data-theme='dark'] .contract-sheet {
 }
 
 .contract-leverage-body {
-  height: 279px;
+  color: var(--leverage-sheet-text);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 0;
 }
 
 .contract-mode-body {
   height: 185px;
 }
 
-.contract-leverage-card {
-  background: var(--sheet-canvas);
-  border: 1px solid var(--sheet-line);
-  border-radius: 12px;
-  display: grid;
-  gap: 12px;
-  height: 126px;
-  padding: 14px 16px;
-}
-
-.contract-leverage-current-row {
+.contract-leverage-direction {
   align-items: center;
   display: flex;
-  justify-content: space-between;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 11px;
   min-width: 0;
-}
-
-.contract-leverage-current-row > span {
-  color: var(--sheet-muted);
-  font-size: 12px;
-  font-weight: 550;
-}
-
-.contract-leverage-current-row > strong {
-  color: var(--sheet-accent-strong);
-  font-size: 26px;
-  font-weight: 750;
-  line-height: 1;
-}
-
-.contract-leverage-slider {
-  --leverage-progress: 0%;
-  appearance: none;
-  background: linear-gradient(
-    90deg,
-    var(--sheet-accent) var(--leverage-progress),
-    var(--sheet-line) var(--leverage-progress)
-  ) center / calc(100% - 4px) 4px no-repeat;
-  border-radius: 999px;
-  height: 44px;
-  margin: -8px 0;
-  outline: 0;
   width: 100%;
 }
 
-.contract-leverage-slider::-webkit-slider-thumb {
-  appearance: none;
-  background: var(--sheet-page);
-  border: 4px solid var(--sheet-accent);
-  border-radius: 50%;
-  box-shadow: 0 2px 6px rgb(7 17 13 / 18%);
-  height: 18px;
-  width: 18px;
+.contract-leverage-direction h3 {
+  color: var(--leverage-sheet-muted);
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.25;
+  margin: 0;
 }
 
-.contract-leverage-slider::-moz-range-thumb {
-  background: var(--sheet-page);
-  border: 4px solid var(--sheet-accent);
-  border-radius: 50%;
-  box-shadow: 0 2px 6px rgb(7 17 13 / 18%);
-  height: 10px;
-  width: 10px;
-}
-
-.contract-leverage-range {
+.contract-leverage-stepper {
   align-items: center;
-  color: var(--sheet-muted);
   display: flex;
-  font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 9px;
-  font-weight: 550;
+  height: 64px;
   justify-content: space-between;
+  min-width: 0;
+  padding: 0 28px;
+  width: 100%;
 }
 
-.contract-leverage-quick {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  height: 34px;
+.contract-leverage-step {
+  align-items: center;
+  background: var(--leverage-sheet-step);
+  border: 0;
+  border-radius: 10px;
+  color: var(--leverage-sheet-muted);
+  display: inline-flex;
+  flex: 0 0 42px;
+  height: 42px;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0;
+  position: relative;
+  width: 42px;
 }
 
-.contract-leverage-quick button {
+.contract-leverage-step::after {
+  content: '';
+  inset: -1px;
+  position: absolute;
+}
+
+.contract-leverage-step:disabled {
+  cursor: default;
+  opacity: .42;
+}
+
+.contract-leverage-value {
+  align-items: flex-end;
+  display: inline-flex;
+  gap: 7px;
+  justify-content: center;
+  min-width: 132px;
+}
+
+.contract-leverage-value strong {
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 52px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+  line-height: 1;
+}
+
+.contract-leverage-value small {
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding-bottom: 3px;
+}
+
+.contract-leverage-value--long {
+  color: var(--leverage-sheet-long);
+}
+
+.contract-leverage-value--short {
+  color: var(--leverage-sheet-short);
+}
+
+.contract-leverage-window {
+  align-items: center;
+  background: var(--leverage-sheet-page);
+  border: 1px solid var(--leverage-sheet-line);
+  display: flex;
+  gap: 2px;
+  height: 46px;
+  border-radius: 23px;
+  min-width: 0;
+  padding: 4px;
+  width: 100%;
+}
+
+.contract-leverage-option,
+.contract-leverage-more {
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--sheet-text);
-  display: flex;
-  font-size: 11px;
-  font-weight: 550;
-  height: 44px;
+  border-radius: 19px;
+  color: var(--leverage-sheet-text);
+  display: inline-flex;
+  height: 38px;
   justify-content: center;
-  margin-block: -5px;
   min-width: 0;
-  padding: 0 2px;
+  padding: 0;
   position: relative;
-  z-index: 0;
 }
 
-.contract-leverage-quick button::before {
-  background: var(--sheet-canvas);
-  border: 1px solid var(--sheet-line);
-  border-radius: 8px;
+.contract-leverage-option {
+  flex: 1 1 0;
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.contract-leverage-option.active {
+  background: var(--leverage-sheet-text);
+  color: var(--leverage-sheet-page);
+  font-weight: 600;
+}
+
+.contract-leverage-more {
+  flex: 0 0 32px;
+  width: 32px;
+}
+
+.contract-leverage-option::after,
+.contract-leverage-more::after {
   content: '';
-  inset: 5px 0;
+  inset: -3px 0;
   position: absolute;
-  z-index: -1;
 }
 
-.contract-leverage-quick button.active {
-  color: var(--sheet-accent-strong);
-  font-weight: 700;
+.contract-leverage-more::after {
+  inset-inline: -6px;
 }
 
-.contract-leverage-quick button.active::before {
-  background: var(--sheet-accent-soft);
-  border-color: var(--sheet-accent);
-}
-
-.contract-scope-row {
-  align-items: center;
-  border: 1px solid var(--sheet-line);
-  border-radius: 10px;
+.contract-leverage-info {
+  background: var(--leverage-sheet-field);
+  border-radius: 14px;
   display: flex;
-  height: 44px;
-  justify-content: space-between;
-  padding: 0 12px;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  min-height: 103px;
+  padding: 14px;
+  width: 100%;
 }
 
-.contract-scope-row__copy {
-  display: grid;
-  gap: 2px;
+.contract-leverage-info--short {
+  min-height: 75px;
+}
+
+.contract-leverage-info > div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 19px;
   min-width: 0;
 }
 
-.contract-scope-row strong {
-  font-size: 12px;
-  font-weight: 650;
+.contract-leverage-info dt,
+.contract-leverage-info dd {
+  font-family: Inter, var(--font-geist), sans-serif;
+  line-height: 19px;
+  margin: 0;
 }
 
-.contract-scope-row small {
-  color: var(--sheet-muted);
-  font-size: 9px;
-  font-weight: 450;
-  line-height: 1.2;
+.contract-leverage-info dt {
+  color: var(--leverage-sheet-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.contract-leverage-info dd {
+  color: var(--leverage-sheet-text);
+  font-size: 14px;
+  font-weight: 500;
   overflow: hidden;
+  padding-left: 12px;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.contract-scope-toggle {
-  background: var(--sheet-accent);
-  border-radius: 11px;
-  display: block;
-  flex: 0 0 auto;
-  height: 22px;
-  position: relative;
-  width: 38px;
-}
-
-.contract-scope-toggle i {
-  background: #ffffff;
-  border-radius: 50%;
-  height: 16px;
-  position: absolute;
-  right: 4px;
-  top: 3px;
-  width: 16px;
+.contract-leverage-risk {
+  color: var(--leverage-sheet-short);
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  margin: 0;
+  min-height: 38px;
+  overflow-wrap: anywhere;
+  width: 100%;
 }
 
 .contract-sheet-notice {
@@ -855,6 +1107,21 @@ html[data-theme='dark'] .contract-sheet {
   margin: 0;
   padding: 0 16px;
   width: 100%;
+}
+
+.contract-sheet--leverage .contract-sheet__submit {
+  background: var(--leverage-sheet-submit);
+  color: #ffffff;
+  font-family: Inter, var(--font-geist), sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  height: 52px;
+  border-radius: 26px;
+}
+
+.contract-sheet--leverage .contract-sheet__submit:disabled {
+  cursor: default;
+  opacity: .5;
 }
 
 .contract-mode-options {
@@ -1149,13 +1416,26 @@ html[data-theme='dark'] .contract-sheet {
 }
 
 .contract-sheet__close:focus-visible,
-.contract-leverage-quick button:focus-visible {
+.contract-leverage-step:focus-visible,
+.contract-leverage-option:focus-visible,
+.contract-leverage-more:focus-visible {
   outline: 0;
 }
 
-.contract-sheet__close:focus-visible::before,
-.contract-leverage-quick button:focus-visible::before {
+.contract-sheet__close:focus-visible::before {
   box-shadow: 0 0 0 2px var(--sheet-accent);
+}
+
+.contract-leverage-step:focus-visible,
+.contract-leverage-option:focus-visible,
+.contract-leverage-more:focus-visible {
+  box-shadow: 0 0 0 2px var(--leverage-sheet-long);
+}
+
+.contract-leverage-direction--short .contract-leverage-step:focus-visible,
+.contract-leverage-direction--short .contract-leverage-option:focus-visible,
+.contract-leverage-direction--short .contract-leverage-more:focus-visible {
+  box-shadow: 0 0 0 2px var(--leverage-sheet-short);
 }
 
 @media (max-width: 820px) {
@@ -1170,6 +1450,10 @@ html[data-theme='dark'] .contract-sheet {
     padding-inline: 12px;
   }
 
+  .contract-sheet--leverage {
+    padding-inline: 12px;
+  }
+
   .contract-leverage-body,
   .contract-mode-body {
     height: auto;
@@ -1179,16 +1463,16 @@ html[data-theme='dark'] .contract-sheet {
     height: auto;
   }
 
-  .contract-leverage-quick {
-    gap: 4px;
+  .contract-leverage-stepper {
+    padding-inline: 12px;
   }
 
-  .contract-leverage-quick button {
-    font-size: 9px;
+  .contract-leverage-option {
+    font-size: 13px;
   }
 
-  .contract-scope-row {
-    padding-inline: 9px;
+  .contract-leverage-info {
+    padding-inline: 12px;
   }
 
   .contract-pair-row {

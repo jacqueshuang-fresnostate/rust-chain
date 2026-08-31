@@ -42,6 +42,30 @@ pub(super) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
     })
 }
 
+/// 为钱包划转生成用户作用域的稳定 SHA-256 指纹，覆盖解析后资产、归一化方向与精确金额。
+pub(crate) fn margin_transfer_request_fingerprint(
+    user_id: u64,
+    asset_id: u64,
+    from_account: &str,
+    to_account: &str,
+    amount: &BigDecimal,
+) -> String {
+    let fields = [
+        "margin_wallet_transfer_v1".to_owned(),
+        user_id.to_string(),
+        asset_id.to_string(),
+        from_account.trim().to_owned(),
+        to_account.trim().to_owned(),
+        amount.normalized().to_plain_string(),
+    ];
+    let mut digest = sha2::Sha256::default();
+    for field in fields {
+        sha2::Digest::update(&mut digest, (field.len() as u64).to_be_bytes());
+        sha2::Digest::update(&mut digest, field.as_bytes());
+    }
+    hex::encode(sha2::Digest::finalize(digest))
+}
+
 /// 保证金费率最多保留八位小数，超过该精度的产品配置必须拒绝。
 pub(super) const MARGIN_RATE_MAX_SCALE: i64 = 8;
 /// 保证金费率整数部分最多十位，约束后台配置与数据库列容量一致。

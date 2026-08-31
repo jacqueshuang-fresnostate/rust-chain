@@ -1,12 +1,12 @@
 //! 权威行情 ingestion 基础设施。
 //!
-//! 仅接收已由 provider 适配器归一化且通过领域校验的快照，按原顺序写 Redis 与 Mongo；
-//! ticker/depth 缓存成功后才尝试触发现货订单，且只有被 CAS 接受的 ticker 才会触发杠杆限价单；
+//! 仅接收已由 provider 适配器归一化且通过领域校验的快照；外部行情写 Redis/Mongo，
+//! synthetic ticker 则必须先在 MySQL 持锁复核租约并归档，随后才允许写 Redis，最后尝试触发现货与杠杆订单；
 //! 任一订单成交失败都不回滚已落地行情。
 //!
 //! 落地目标分三处：Redis 承载实时权威快照，Mongo 的 `market_klines_<SYMBOL>` 集合承载 K 线历史，
-//! MySQL 侧不写行情，只在缓存写入成功后被动触发现货与杠杆限价单成交。
-//! 写入顺序固定为「先缓存后历史」，且由缓存的原子时序门禁做总闸：ticker 比较 `observed_at`，
+//! MySQL `market_price_ticks` 承载可供事件时间结算的 ticker 归档。
+//! 写入由缓存的原子时序门禁做总闸：ticker 比较 `observed_at`，
 //! K 线比较 `(open_time, observed_at)`，被判为陈旧的快照直接短路，不会继续写 Mongo、不触发撮合、不广播。
 //! Redis 与 Mongo 不在同一事务内，Mongo 失败时已写入的 Redis 快照不会回滚，下一次推送会自然修复；
 //! Mongo 侧另有一层基于 `updated_at` 的时序过滤和唯一键竞态处理，防止 Redis 判定之后仍被并发写者倒退。
@@ -21,8 +21,8 @@ use crate::{
         events::{EventBroadcastHub, EventBroadcastMessage},
         margin::application::execute_triggered_margin_limit_orders_with_hub as execute_triggered_margin_limit_orders,
         market::{
-            KlineUpsertKey, MarketDepthSnapshot, MarketKlineSnapshot, MarketTickerSnapshot,
-            ValidatedMarketSymbol,
+            KlineUpsertKey, MarketDataProvider, MarketDepthSnapshot, MarketKlineSnapshot,
+            MarketTickerSnapshot, ValidatedMarketSymbol,
             infrastructure::{
                 MarketCacheError, MarketCacheWriteOutcome, MarketDepthCacheEntry,
                 MarketKlineCacheEntry, MarketTickerCacheEntry, RedisMarketCache,
@@ -36,7 +36,8 @@ use axum::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use mongodb::bson::{DateTime as BsonDateTime, Document, doc};
-use sqlx::{MySql, Pool};
+use sha2::Digest;
+use sqlx::{MySql, Pool, Transaction};
 
 #[async_trait]
 pub trait MarketIngestionSink: Clone + Send + Sync + 'static {
@@ -55,14 +56,15 @@ pub trait MarketIngestionSink: Clone + Send + Sync + 'static {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyntheticIngestionOutcome {
     Accepted,
+    ReplayedIdentical,
     RejectedStale,
 }
 
 impl SyntheticIngestionOutcome {
-    /// 返回本次快照是否成为 Redis 权威值；worker 仅可在 true 时广播并推进检查点。
-    /// 返回 false 说明有更新的快照已经落地，属于并发下的预期分支，重试只会再次被拒。
+    /// 返回本次 synthetic 快照是否已有可重放的 Redis 载荷且 MySQL 归档已完整。
+    /// 首次接受和同载荷回放都可让 worker 继续；只有 stale/冲突分支必须停止后续检查点。
     pub fn is_accepted(self) -> bool {
-        matches!(self, Self::Accepted)
+        matches!(self, Self::Accepted | Self::ReplayedIdentical)
     }
 }
 
@@ -72,9 +74,84 @@ impl From<MarketCacheWriteOutcome> for SyntheticIngestionOutcome {
     fn from(value: MarketCacheWriteOutcome) -> Self {
         match value {
             MarketCacheWriteOutcome::Accepted => Self::Accepted,
+            MarketCacheWriteOutcome::ReplayedIdentical => Self::ReplayedIdentical,
             MarketCacheWriteOutcome::RejectedStale => Self::RejectedStale,
         }
     }
+}
+
+/// synthetic ticker 归档所需的策略运行证据；调用方只能传入本轮实际持有的 owner 与版本。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyntheticTickerProvenance {
+    strategy_id: u64,
+    active_version: u32,
+    lease_owner: String,
+}
+
+impl SyntheticTickerProvenance {
+    /// 构造一份候选归档证据；真实性不在内存中信任，归档事务会持锁重新核对数据库当前值。
+    pub fn new(strategy_id: u64, active_version: u32, lease_owner: impl Into<String>) -> Self {
+        Self {
+            strategy_id,
+            active_version,
+            lease_owner: lease_owner.into(),
+        }
+    }
+
+    /// 返回策略主键，用于锁定唯一的 `strategy_runs` 行。
+    pub fn strategy_id(&self) -> u64 {
+        self.strategy_id
+    }
+
+    /// 返回生成快照时的活跃版本，同时作为历史 ticker 的 generation。
+    pub fn active_version(&self) -> u32 {
+        self.active_version
+    }
+
+    /// 返回本轮租约 owner；归档前必须与持锁查到的运行行完全一致。
+    pub fn lease_owner(&self) -> &str {
+        &self.lease_owner
+    }
+
+    /// 以策略与版本生成稳定来源版本文本，重启和回放得到相同值。
+    pub fn source_version(&self) -> String {
+        format!("strategy:{}:v{}", self.strategy_id, self.active_version)
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SyntheticTickerLeaseRow {
+    symbol: String,
+    pair_status: String,
+    market_type: String,
+    strategy_status: String,
+    start_time: DateTime<Utc>,
+    end_time: DateTime<Utc>,
+    active_version: i32,
+    run_status: String,
+    lease_owner: Option<String>,
+    lease_expires_at: Option<DateTime<Utc>>,
+    last_tick_at: Option<DateTime<Utc>>,
+    database_now: DateTime<Utc>,
+}
+
+#[derive(Debug, PartialEq, Eq, sqlx::FromRow)]
+struct SyntheticTickerArchiveRow {
+    event_key: String,
+    symbol: String,
+    price: BigDecimal,
+    source: String,
+    observed_at: DateTime<Utc>,
+    generation: u64,
+    source_version: String,
+    strategy_id: Option<u64>,
+    strategy_version: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyntheticTickerArchiveOutcome {
+    Inserted,
+    AlreadyArchived,
 }
 
 #[derive(Clone)]
@@ -111,9 +188,8 @@ impl MarketIngestionService {
             .with_broadcast_hub(state.event_broadcast_hub.clone()))
     }
 
-    /// 注入可选 MySQL 池，供 ticker/depth 触发现货限价单、accepted ticker 触发杠杆限价单；不测试连接或立即执行 SQL。
-    /// 传入 `None` 会让整条撮合触发链保持关闭，行情照常落地但不会有任何限价单被激活，
-    /// 这也是纯行情采集进程的预期形态，因此缺少 MySQL 不会被当作配置错误。
+    /// 注入可选 MySQL 池，供外部 ticker/depth 触发限价单，也供 synthetic ticker 复核租约并归档历史；不测试连接或立即执行 SQL。
+    /// 传入 `None` 时外部行情仍可按纯采集进程语义落地，但 synthetic ticker 会 fail closed，不允许跳过 MySQL 结算历史。
     pub fn with_mysql(mut self, mysql: Option<Pool<MySql>>) -> Self {
         self.mysql = mysql;
         self
@@ -127,9 +203,15 @@ impl MarketIngestionService {
         self
     }
 
-    /// 将供应商 ticker 快照写入 Redis 权威缓存，只在 CAS 接受后尝试触发现货与杠杆限价单。
-    /// 快照必须已由 provider adapter 校验交易对、价格与时间；缓存失败时不得触发订单，成交失败只告警且不撤销已写行情。
+    /// 将外部供应商 ticker 快照写入 Redis 权威缓存，只在 CAS 接受后尝试触发现货与杠杆限价单。
+    /// 快照必须已由 provider adapter 校验交易对、价格与时间；Strategy 来源在此显式拒绝，必须走带租约证据与 MySQL 归档的专用入口。
+    /// 缓存失败时不得触发订单，成交失败只告警且不撤销已写行情。
     pub async fn ingest_ticker(&self, snapshot: &MarketTickerSnapshot) -> AppResult<()> {
+        if snapshot.provider() == MarketDataProvider::Strategy {
+            return Err(AppError::Validation(
+                "strategy ticker must use provenance-aware synthetic ingestion".to_owned(),
+            ));
+        }
         let entry = MarketTickerCacheEntry::from_snapshot(snapshot)
             .map_err(|error| AppError::Validation(error.to_string()))?;
         let outcome = self
@@ -146,15 +228,22 @@ impl MarketIngestionService {
         Ok(())
     }
 
-    /// 为 synthetic ticker 执行 Redis `observed_at` 原子 CAS；只有 accepted 才触发现货/杠杆订单并按统一事件合同广播。
-    /// 与 [`Self::ingest_ticker`] 的区别是这里把写入结论回传给调用方，并在接受后追加一次实时广播，
-    /// 使策略行情与第三方 feed 走同一套 WebSocket 事件格式，订阅端无需区分数据出处。
-    /// 副作用顺序固定为「先缓存、再撮合、后广播」，撮合失败只告警而不阻断广播，广播失败则整体返回错误。
-    /// stale/rejected 作为正常结果返回，Redis 保持更新值且本调用不广播，worker 也必须据此停止检查点推进。
+    /// 为 synthetic ticker 先在短 MySQL 事务持锁复核策略租约并幂等归档历史，再执行 Redis `observed_at` 原子 CAS。
+    /// 过期 owner、旧版本和非法事件时间在接触 Redis 前即被拒绝，因此不会留下无合法归档的实时 ticker。
+    /// MySQL 已提交后 Redis 短暂失败时，同事件重试会命中归档并补齐缓存；不重放已归档事件的资金触发或广播。
+    /// 归档固定写入 `source=strategy`、活跃版本 generation、稳定 source_version 与 SHA-256 event_key，唯一冲突只有字段全等才按回放成功。
+    /// 现货/杠杆触发器和 WebSocket 广播均排在归档事务提交之后；既有归档的重放不重复执行这些副作用。
     pub async fn ingest_and_publish_synthetic_ticker(
         &self,
         snapshot: &MarketTickerSnapshot,
+        provenance: &SyntheticTickerProvenance,
     ) -> AppResult<SyntheticIngestionOutcome> {
+        let mysql = self.mysql.as_ref().ok_or_else(|| {
+            AppError::Internal(
+                "mysql is required for synthetic ticker provenance archive".to_owned(),
+            )
+        })?;
+        let archive_outcome = archive_synthetic_ticker(mysql, snapshot, provenance).await?;
         let entry = MarketTickerCacheEntry::from_snapshot(snapshot)
             .map_err(|error| AppError::Validation(error.to_string()))?;
         let outcome = self
@@ -162,15 +251,25 @@ impl MarketIngestionService {
             .save_ticker_if_fresh(entry)
             .await
             .map_err(market_cache_error)?;
-        if !outcome.is_accepted() {
+        if outcome == MarketCacheWriteOutcome::RejectedStale {
             return Ok(SyntheticIngestionOutcome::RejectedStale);
         }
-        self.trigger_spot_limit_orders(snapshot.symbol(), snapshot.last_price(), "ticker")
-            .await;
-        self.trigger_margin_limit_orders(snapshot.symbol(), snapshot.last_price())
-            .await;
-        self.publish(MarketFeedEvent::from_ticker_snapshot(snapshot)?)?;
-        Ok(SyntheticIngestionOutcome::Accepted)
+        if archive_outcome == SyntheticTickerArchiveOutcome::Inserted {
+            self.trigger_spot_limit_orders(snapshot.symbol(), snapshot.last_price(), "ticker")
+                .await;
+            self.trigger_margin_limit_orders(snapshot.symbol(), snapshot.last_price())
+                .await;
+            self.publish(MarketFeedEvent::from_ticker_snapshot(snapshot)?)?;
+        }
+        Ok(
+            if outcome == MarketCacheWriteOutcome::Accepted
+                && archive_outcome == SyntheticTickerArchiveOutcome::Inserted
+            {
+                SyntheticIngestionOutcome::Accepted
+            } else {
+                SyntheticIngestionOutcome::ReplayedIdentical
+            },
+        )
     }
 
     /// 兼容现有内部调用名并委托 synthetic 时序摄取；返回值显式要求调用方处理拒写。
@@ -178,8 +277,10 @@ impl MarketIngestionService {
     pub async fn ingest_and_publish_ticker(
         &self,
         snapshot: &MarketTickerSnapshot,
+        provenance: &SyntheticTickerProvenance,
     ) -> AppResult<SyntheticIngestionOutcome> {
-        self.ingest_and_publish_synthetic_ticker(snapshot).await
+        self.ingest_and_publish_synthetic_ticker(snapshot, provenance)
+            .await
     }
 
     /// 写入深度快照，并在存在卖一价时把它作为现货触发价候选；深度解析或缓存失败时不触发订单。
@@ -353,6 +454,253 @@ impl MarketIngestionService {
             );
         }
     }
+}
+
+/// 在短事务中锁定策略运行行，复核 owner、版本、状态和租约后幂等追加 synthetic ticker 历史。
+/// 事务内不访问 Redis、Mongo、撮合或广播，使行锁持有时间只覆盖一次复核和一次归档写入。
+async fn archive_synthetic_ticker(
+    pool: &Pool<MySql>,
+    snapshot: &MarketTickerSnapshot,
+    provenance: &SyntheticTickerProvenance,
+) -> AppResult<SyntheticTickerArchiveOutcome> {
+    if snapshot.provider() != MarketDataProvider::Strategy {
+        return Err(AppError::Validation(
+            "synthetic ticker archive requires strategy provider".to_owned(),
+        ));
+    }
+    if provenance.strategy_id() == 0
+        || provenance.active_version() == 0
+        || provenance.lease_owner().trim().is_empty()
+    {
+        return Err(AppError::Validation(
+            "synthetic ticker provenance is incomplete".to_owned(),
+        ));
+    }
+    if snapshot.last_price() <= &BigDecimal::from(0) {
+        return Err(AppError::Validation(
+            "synthetic ticker archive price must be positive".to_owned(),
+        ));
+    }
+    let symbol = ValidatedMarketSymbol::from_raw(snapshot.symbol())
+        .map_err(|error| AppError::Validation(error.to_string()))?
+        .as_str()
+        .to_owned();
+    let strategy_version = i32::try_from(provenance.active_version()).map_err(|_| {
+        AppError::Validation("synthetic strategy version exceeds database range".to_owned())
+    })?;
+    // Redis ticker 合同以毫秒序列化事件时间；归档使用同一精度，确保逐字节回放总是命中同一时间槽。
+    let observed_at =
+        DateTime::<Utc>::from_timestamp_millis(snapshot.observed_at().timestamp_millis())
+            .ok_or_else(|| {
+                AppError::Validation("synthetic ticker event time is invalid".to_owned())
+            })?;
+    let source_version = provenance.source_version();
+    let canonical = format!(
+        "strategy|{}|{}|{}|{}|{}",
+        symbol,
+        observed_at.timestamp_micros(),
+        snapshot.last_price().normalized(),
+        provenance.active_version(),
+        source_version
+    );
+    let event_key = hex::encode(sha2::Sha256::digest(canonical.as_bytes()));
+    let expected_archive = SyntheticTickerArchiveRow {
+        event_key: event_key.clone(),
+        symbol: symbol.clone(),
+        price: snapshot.last_price().clone(),
+        source: "strategy".to_owned(),
+        observed_at,
+        generation: u64::from(provenance.active_version()),
+        source_version: source_version.clone(),
+        strategy_id: Some(provenance.strategy_id()),
+        strategy_version: Some(strategy_version),
+    };
+
+    let mut tx = pool.begin().await?;
+    let lease = sqlx::query_as::<_, SyntheticTickerLeaseRow>(
+        r#"SELECT pairs.symbol,
+                  pairs.status AS pair_status,
+                  pairs.market_type,
+                  strategies.status AS strategy_status,
+                  strategies.start_time,
+                  strategies.end_time,
+                  runs.active_version,
+                  runs.run_status,
+                  runs.lease_owner,
+                  runs.lease_expires_at,
+                  runs.last_tick_at,
+                  CURRENT_TIMESTAMP(6) AS database_now
+           FROM market_strategies strategies
+           INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id
+           INNER JOIN strategy_runs runs ON runs.strategy_id = strategies.id
+           INNER JOIN strategy_versions versions
+                   ON versions.strategy_id = runs.strategy_id
+                  AND versions.version = runs.active_version
+           WHERE strategies.id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(provenance.strategy_id())
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(stale_synthetic_provenance_conflict)?;
+
+    let lease_symbol = ValidatedMarketSymbol::from_raw(&lease.symbol)
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    let lease_is_current = lease.strategy_status == "active"
+        && lease.pair_status == "active"
+        && matches!(lease.market_type.as_str(), "strategy" | "internal")
+        && matches!(lease.run_status.as_str(), "running" | "live")
+        && lease.active_version == strategy_version
+        && lease.lease_owner.as_deref() == Some(provenance.lease_owner())
+        && lease
+            .lease_expires_at
+            .is_some_and(|expires_at| expires_at > lease.database_now)
+        && lease.start_time <= lease.database_now
+        && lease.end_time > lease.database_now
+        && lease_symbol.as_str() == symbol;
+    if !lease_is_current {
+        return Err(stale_synthetic_provenance_conflict());
+    }
+    let event_time_is_valid = lease.start_time <= observed_at
+        && lease.end_time > observed_at
+        && observed_at <= lease.database_now
+        && lease
+            .last_tick_at
+            .is_none_or(|last_tick_at| last_tick_at <= observed_at);
+    if !event_time_is_valid {
+        return Err(AppError::Conflict(
+            "synthetic ticker event time is outside current strategy bounds or regressed checkpoint"
+                .to_owned(),
+        ));
+    }
+
+    if let Some(existing) =
+        load_latest_synthetic_ticker_archive(&mut tx, provenance.strategy_id()).await?
+    {
+        if existing.observed_at > observed_at {
+            return Err(AppError::Conflict(
+                "synthetic ticker event time regressed behind archived history".to_owned(),
+            ));
+        }
+        if existing.observed_at == observed_at {
+            if synthetic_ticker_archive_matches(&existing, &expected_archive) {
+                tx.commit().await?;
+                return Ok(SyntheticTickerArchiveOutcome::AlreadyArchived);
+            }
+            return Err(AppError::Conflict(
+                "synthetic ticker archive conflicts with an existing event payload".to_owned(),
+            ));
+        }
+    }
+
+    let insert = sqlx::query(
+        r#"INSERT INTO market_price_ticks
+           (event_key, symbol, price, source, observed_at, generation, source_version,
+            strategy_id, strategy_version)
+           VALUES (?, ?, ?, 'strategy', ?, ?, ?, ?, ?)"#,
+    )
+    .bind(&event_key)
+    .bind(&symbol)
+    .bind(snapshot.last_price())
+    .bind(observed_at.naive_utc())
+    .bind(u64::from(provenance.active_version()))
+    .bind(&source_version)
+    .bind(provenance.strategy_id())
+    .bind(strategy_version)
+    .execute(&mut *tx)
+    .await;
+    let archive_outcome = match insert {
+        Ok(_) => SyntheticTickerArchiveOutcome::Inserted,
+        Err(error) if is_mysql_duplicate_key(&error) => {
+            let existing = load_synthetic_ticker_archive_by_event_key(&mut tx, &event_key)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Conflict(
+                        "synthetic ticker archive uniqueness conflict has no matching row"
+                            .to_owned(),
+                    )
+                })?;
+            if !synthetic_ticker_archive_matches(&existing, &expected_archive) {
+                return Err(AppError::Conflict(
+                    "synthetic ticker archive conflicts with an existing event payload".to_owned(),
+                ));
+            }
+            SyntheticTickerArchiveOutcome::AlreadyArchived
+        }
+        Err(error) => return Err(AppError::Database(error)),
+    };
+    tx.commit().await?;
+    Ok(archive_outcome)
+}
+
+/// 读取该策略已归档的最新事件；策略运行行已被同一事务锁定，因此可以安全防止重启或 Redis 丢数据后的时间倒退。
+async fn load_latest_synthetic_ticker_archive(
+    tx: &mut Transaction<'_, MySql>,
+    strategy_id: u64,
+) -> AppResult<Option<SyntheticTickerArchiveRow>> {
+    sqlx::query_as::<_, SyntheticTickerArchiveRow>(
+        r#"SELECT event_key, symbol, price, source, observed_at, generation,
+                  source_version, strategy_id, strategy_version
+           FROM market_price_ticks
+           WHERE strategy_id = ?
+           ORDER BY observed_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(strategy_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+/// 插入只在 event_key 全局唯一约束竞态时才走该查询，只有全部归档字段一致才可以按幂等回放处理。
+async fn load_synthetic_ticker_archive_by_event_key(
+    tx: &mut Transaction<'_, MySql>,
+    event_key: &str,
+) -> AppResult<Option<SyntheticTickerArchiveRow>> {
+    sqlx::query_as::<_, SyntheticTickerArchiveRow>(
+        r#"SELECT event_key, symbol, price, source, observed_at, generation,
+                  source_version, strategy_id, strategy_version
+           FROM market_price_ticks
+           WHERE event_key = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(event_key)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+/// 逐字段核对冲突行；只有事件键、价格、时间与全部策略来源证据完全一致才视为幂等回放。
+fn synthetic_ticker_archive_matches(
+    existing: &SyntheticTickerArchiveRow,
+    expected: &SyntheticTickerArchiveRow,
+) -> bool {
+    existing.event_key == expected.event_key
+        && existing.symbol == expected.symbol
+        && existing.price.normalized() == expected.price.normalized()
+        && existing.source == expected.source
+        && existing.observed_at == expected.observed_at
+        && existing.generation == expected.generation
+        && existing.source_version == expected.source_version
+        && existing.strategy_id == expected.strategy_id
+        && existing.strategy_version == expected.strategy_version
+}
+
+/// 统一生成策略运行证据已变更的冲突错误，防止调用方将过期 owner 当作可重试的存储故障。
+fn stale_synthetic_provenance_conflict() -> AppError {
+    AppError::Conflict(
+        "synthetic strategy owner, version, status, or lease changed before archive".to_owned(),
+    )
+}
+
+/// 识别 MySQL 唯一键冲突，其他数据库错误不参与幂等回放判定。
+fn is_mysql_duplicate_key(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|database_error| database_error.code().as_deref() == Some("1062"))
 }
 
 #[async_trait]

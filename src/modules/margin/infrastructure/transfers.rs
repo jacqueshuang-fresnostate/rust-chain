@@ -42,6 +42,8 @@ pub(crate) struct MarginTransferRecord {
     pub(crate) to_account: String,
     /// 首次划转的金额，重放时必须完全相等才认定为同一笔请求。
     pub(crate) amount: BigDecimal,
+    /// 新划转的规范请求指纹；历史行可空并回落字段核对。
+    pub(crate) request_fingerprint: Option<String>,
 }
 
 /// 同一事务按 spot→margin 顺序取得的两侧钱包快照；风险闸门必须基于其中锁定的 margin available。
@@ -320,11 +322,13 @@ pub(crate) async fn insert_margin_transfer(
     to_account: &str,
     amount: &BigDecimal,
     idempotency_key: &str,
+    request_fingerprint: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"INSERT INTO margin_transfers
-           (transfer_id, user_id, asset_id, from_account, to_account, amount, idempotency_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+           (transfer_id, user_id, asset_id, from_account, to_account, amount, idempotency_key,
+            request_fingerprint)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(transfer_id)
     .bind(user_id)
@@ -333,6 +337,7 @@ pub(crate) async fn insert_margin_transfer(
     .bind(to_account)
     .bind(amount)
     .bind(idempotency_key)
+    .bind(request_fingerprint)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -349,7 +354,7 @@ pub(crate) async fn load_margin_transfer_by_idempotency_key(
     idempotency_key: &str,
 ) -> AppResult<Option<MarginTransferRecord>> {
     sqlx::query_as::<_, MarginTransferRecord>(
-        r#"SELECT transfer_id, asset_id, from_account, to_account, amount
+        r#"SELECT transfer_id, asset_id, from_account, to_account, amount, request_fingerprint
            FROM margin_transfers
            WHERE user_id = ? AND idempotency_key = ?
            LIMIT 1"#,

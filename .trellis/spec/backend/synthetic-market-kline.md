@@ -281,12 +281,13 @@ admin-authenticated.
   candle extremes toward the final close; volume accumulates by observed
   seconds. Observations within the same second are equal, and second 59 equals
   the deterministic closed 1m candle exactly.
-- Realtime calls the existing `MarketIngestionService` in this order:
-  `ingest_and_publish_kline`, then `ingest_and_publish_ticker`, then checkpoint
-  update. K-line ingestion writes Redis then Mongo and publishes the existing
-  K-line event only after storage succeeds. Ticker ingestion writes Redis,
-  retains the existing spot limit-order trigger side effect, and publishes the
-  existing ticker event. There is no new cache or WebSocket protocol.
+- Realtime first sends the ticker through the provenance-aware ingestion gate,
+  then writes any online minute close/aggregate and the current forming K-line,
+  and advances the checkpoint last. Ticker ingestion locks and validates the
+  MySQL lease/version fence and commits the append-only event-time archive
+  before Redis CAS, financial triggers, or broadcast. K-line ingestion writes
+  Redis then Mongo and publishes only after storage succeeds. There is no new
+  cache or WebSocket protocol.
 - Ticker `last_price` equals the forming 1m close from the same plan. The 24h
   open/high/low/volume/change values combine the current forming candle with
   up to the preceding 1,440 stored 1m candles.
@@ -706,3 +707,46 @@ insert_market_strategy_version_in_tx(
 
 The correct path keeps settings explicit, deterministic, copy-on-write,
 auditable, and identical across realtime generation, preview, and recovery.
+
+## Scenario: Strategy Ticker Event-time Archive
+
+### 1. Scope / Trigger
+
+- Trigger: accepting a realtime synthetic ticker that can drive orders, positions, WebSocket subscribers, or seconds-contract settlement.
+- Applies to the synthetic worker, Redis ticker CAS, MySQL price history, and strategy lease/version fence.
+
+### 2. Signatures
+
+```text
+source = strategy
+generation = strategy_runs.active_version
+source_version = strategy:{strategy_id}:v{active_version}
+event_key = SHA-256(source + symbol + observed_at + normalized price + generation + source_version)
+```
+
+### 3. Contracts
+
+- Before touching Redis, a short MySQL transaction locks the strategy run, revalidates lease owner, active version, runnable status, event time, and unexpired lease, and commits the idempotent archive.
+- Accepted synthetic ticker snapshots append to `market_price_ticks`; duplicate event keys are successful idempotent replays.
+- The archive preserves provider event time and normalized price. It does not derive settlement evidence from Mongo candles or processing time.
+- Financial triggers and WebSocket broadcast happen only after the authoritative archive commits.
+- If MySQL committed but Redis failed, retrying the byte-for-byte same timestamp and payload reuses the one archive row and repairs the cache. It does not replay financial triggers or broadcast for an already archived event. A same-time different payload remains rejected as a conflict/stale write.
+- Expired owner, old version, stale timestamp, invalid price, or missing MySQL authority cannot publish a financial ticker.
+- Redis/Mongo remain read/performance stores; MySQL append-only ticks are the seconds-settlement evidence store.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Current owner/version and archive commit | Trigger and broadcast after commit |
+| Duplicate event key | Idempotent success, one history row |
+| Archive committed, Redis failed, exact replay | Reuse one archive row and repair Redis without duplicate financial/broadcast effects |
+| Same event time with different payload | Reject; never overwrite history |
+| Old generation, expired/missing lease, or invalid event time | Reject before Redis/archive-derived publication |
+| MySQL authority unavailable | Fail closed; no financial trigger or broadcast |
+
+### 5. Tests Required
+
+- Cover normal archive, exact duplicate replay, same-time conflict, expired lease, old version, and deterministic event identity.
+- Inject post-archive Redis failure and prove exact retry keeps one archive row and repairs Redis; expired/old/future provenance must leave no Redis ticker.
+- Assert spot/margin triggers and WebSocket broadcast are not called before a successful archive.

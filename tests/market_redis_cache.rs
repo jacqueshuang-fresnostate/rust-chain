@@ -112,7 +112,7 @@ async fn redis_market_cache_stores_ticker_depth_and_kline_json() -> Result<(), B
 }
 
 #[tokio::test]
-async fn redis_ticker_compare_and_set_rejects_older_and_equal_observations()
+async fn redis_ticker_compare_and_set_replays_identical_and_rejects_conflicting_equal_observations()
 -> Result<(), Box<dyn Error>> {
     let Some(redis_url) = env_or_skip("REDIS_URL") else {
         return Ok(());
@@ -145,10 +145,17 @@ async fn redis_ticker_compare_and_set_rejects_older_and_equal_observations()
 
     assert_eq!(
         cache
-            .save_ticker_if_fresh(newer)
+            .save_ticker_if_fresh(newer.clone())
             .await
             .map_err(|error| format!("newer ticker CAS failed: {error}"))?,
         MarketCacheWriteOutcome::Accepted
+    );
+    assert_eq!(
+        cache
+            .save_ticker_if_fresh(newer)
+            .await
+            .map_err(|error| format!("identical ticker replay failed: {error}"))?,
+        MarketCacheWriteOutcome::ReplayedIdentical
     );
     assert_eq!(
         cache

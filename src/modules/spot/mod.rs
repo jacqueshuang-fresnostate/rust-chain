@@ -25,6 +25,4 @@ pub use domain::{
 };
 pub use infrastructure::MySqlSpotRepository;
 pub use repository::SpotRepository;
-pub use service::{
-    CancelSpotOrderCommand, CreateSpotOrderCommand, FillSpotOrderCommand, SpotService,
-};
+pub use service::{CancelSpotOrderCommand, FillSpotOrderCommand, SpotService};

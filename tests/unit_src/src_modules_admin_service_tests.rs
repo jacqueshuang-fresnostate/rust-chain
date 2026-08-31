@@ -32,6 +32,19 @@ fn validation_message(result: AppResult<()>) -> String {
 }
 
 #[test]
+fn admin_recharge_fingerprint_normalizes_decimal_and_reason() {
+    let first = admin_recharge_request_fingerprint(3, 7, 11, &decimal("25.5000"), " support ");
+    let equivalent = admin_recharge_request_fingerprint(3, 7, 11, &decimal("25.5"), "support");
+    let changed = admin_recharge_request_fingerprint(3, 8, 11, &decimal("25.5"), "support");
+
+    assert_eq!(first, equivalent);
+    assert_ne!(first, changed);
+    assert_eq!(first.len(), 64);
+    assert!(normalize_admin_recharge_idempotency_key("   ").is_err());
+    assert!(normalize_admin_recharge_idempotency_key(&"x".repeat(129)).is_err());
+}
+
+#[test]
 fn new_coin_unlock_fee_rate_must_fit_persisted_precision() {
     let request = UpdateNewCoinUnlockFeeRuleRequest {
         unlock_fee_enabled: true,

@@ -32,3 +32,5 @@ pub use trigger_limit_orders::execute_triggered_margin_limit_orders_with_hub;
 
 #[cfg(test)]
 pub(crate) use product_config::margin_trading_capabilities;
+#[cfg(test)]
+pub(crate) use support::margin_transfer_request_fingerprint;

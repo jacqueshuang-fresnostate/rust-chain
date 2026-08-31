@@ -502,6 +502,25 @@ Backend ownership, persistence, and exact-agent authorization remain defined by
 - Loading and empty states use `aria-live`; failures use `role="alert"`.
 - Honor `prefers-reduced-motion`.
 
+## Administrator Wallet Recharge Command
+
+### 1. Scope / Trigger
+
+- Trigger: confirming an administrator-initiated user wallet recharge or retrying an uncertain response.
+
+### 2. Contract
+
+- Opening a fresh confirmation creates one client idempotency key and freezes user, asset, normalized amount, and trimmed reason with that key.
+- Loading state, timeout, dropped response, and explicit retry reuse the same key. Editing any frozen field creates a new logical confirmation and key.
+- The request always submits `idempotency_key`; there is no legacy no-key fallback.
+- Same command replay shows the original successful result. HTTP 409 means the key was reused with different parameters and must be shown as a conflict, not retried automatically.
+- Success closes the confirmation and refreshes authoritative wallet/user data once. A client never optimistically adds the recharge amount.
+
+### 3. Tests Required
+
+- Resource action tests prove one key per confirmation, reuse after an uncertain response, a new key after intent editing, and 409 conflict presentation.
+- The UI tests assert amount is transmitted as a decimal string and reason trimming matches the backend fingerprint contract.
+
 ## Required Tests
 
 - `ResizableTable`: a custom handle for every declared leaf, no Semi native

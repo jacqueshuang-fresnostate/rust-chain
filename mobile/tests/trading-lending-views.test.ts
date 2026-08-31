@@ -15,7 +15,7 @@ test('交易页保留现货、合约和 mode 路由合同', () => {
   assert.match(tradeSource, /await placeSpotOrder\(\{\s*symbol: pairSymbol\.value,\s*side: side\.value,\s*type: submittedOrderType,\s*price: limitPrice,\s*quantity: orderAmount,/)
   assert.match(tradeSource, /createMarginOrderReview\(\{\s*productId: selectedProduct\.value\?\.id \|\| 0,\s*side: side\.value,\s*marginMode: marginMode\.value,\s*leverage: leverage\.value,\s*marginAmount: Number\(quantity\.value\),/)
   assert.match(tradeSource, /await placeMarginOrder\(review\.request\)/)
-  assert.match(tradeSource, /await updateMarginLeverage\(product\.id, nextLeverage\)/)
+  assert.match(tradeSource, /await updateMarginLeverage\(product\.id, \{[\s\S]*?longLeverage: nextLongLeverage,[\s\S]*?shortLeverage: nextShortLeverage,/)
   assert.match(tradeSource, /watch\(\(\) => route\.query\.mode/)
   assert.match(tradeSource, /navigation\.rememberTradeMode\(mode\.value\)/)
   assert.match(tradeSource, /mode\.value !== 'contract' \|\| !session\.token/)

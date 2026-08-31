@@ -25,7 +25,7 @@ use crate::{
         MarketDataProvider, MarketKlineSnapshot, MarketKlineValues, MarketTickerSnapshot,
         MarketTickerValues, SyntheticCandle, SyntheticKlineInterval, SyntheticMarketConfig,
         SyntheticMarketNode, SyntheticStrategySnapshot, ValidatedMarketSymbol,
-        adapters::{MarketIngestionService, SyntheticIngestionOutcome},
+        adapters::{MarketIngestionService, SyntheticIngestionOutcome, SyntheticTickerProvenance},
         aggregate_1m_candles, synthetic_config_from_snapshot, synthetic_execution_mode_from_code,
         synthetic_target_type_from_code,
     },
@@ -192,7 +192,7 @@ async fn run_once_for_owner(
 }
 
 /// 读取 active strategy/internal 策略的最新版本快照，逐项竞争短租约并仅发布当前分钟 ticker 与 1m K 线。
-/// 每项按“租约→版本/节点解析→历史窗口读取→K 线 ingestion/广播→ticker ingestion/广播→检查点”执行；
+/// 每项按“租约→版本/节点解析→历史窗口读取→ticker 归档/Redis/广播→K 线 ingestion/广播→检查点”执行；
 /// 单策略失败会写 `error_message` 后继续，跨 Redis/Mongo/MySQL 不伪造事务，重试依赖槽位 upsert 收敛。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
@@ -273,7 +273,8 @@ async fn run_once_with_runtime(
 
 /// 处理一个已抢到租约的策略：解析节点与版本快照、读取 24 小时 1m 历史，再生成本分钟的统一发布计划。
 /// ticker 是整轮的提交门，它的 Redis 时序 CAS 一旦拒写就直接返回冲突，本轮不会写任何 K 线、
-/// 不触发现货限价单，也不推进检查点；只有 ticker 落地后才依次补写上一分钟闭合蜡烛、高周期聚合与当前形成中 1m。
+/// 不触发现货限价单，也不推进检查点；ticker 还必须在短 MySQL 事务中持锁复核租约并归档成功，
+/// 之后才依次补写上一分钟闭合蜡烛、高周期聚合与当前形成中 1m。
 /// 每个副作用之前都重新核对租约的 owner、运行状态与 `active_version`，被抢走租约的旧实例会在这里被拦下。
 /// 跨 MySQL、Mongo、Redis 没有事务，中途失败会留下部分写入，依靠同槽 upsert 与时序 CAS 在后续轮次收敛。
 #[allow(clippy::too_many_arguments)]
@@ -295,8 +296,10 @@ async fn process_leased_strategy(
     let history = load_ticker_history(mongo, &config.symbol, open_time).await?;
     let plan = build_realtime_plan(row.strategy_id, &config, observed_at, &history)?;
     ensure_current_lease(pool, &plan, owner, observed_at).await?;
+    let ticker_provenance =
+        SyntheticTickerProvenance::new(plan.strategy_id(), plan.version(), owner);
     if ingestion
-        .ingest_and_publish_synthetic_ticker(plan.ticker())
+        .ingest_and_publish_synthetic_ticker(plan.ticker(), &ticker_provenance)
         .await?
         == SyntheticIngestionOutcome::RejectedStale
     {

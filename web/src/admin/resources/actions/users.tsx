@@ -1,11 +1,12 @@
 import { Button, Card, SideSheet, Space, Toast } from '@douyinfe/semi-ui';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminReferenceSelect, isReferenceSelectable, useAdminReferenceOptions } from '../../referenceOptions';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminPasswordInput, AdminTextInput } from '../../../shared/SemiFormControls';
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from '../../../shared/idempotency';
 import {
   AssetSelect,
   AssetStatusSelect,
@@ -84,6 +85,7 @@ async function openUserAssets(userId: string, helpers: RowActionHelpers) {
 function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; userId: string }) {
   const [recharge, setRecharge] = useState(initialUserRecharge);
   const [visible, setVisible] = useState(false);
+  const idempotencyKeys = useRef(new RetryStableIdempotencyKeys('admin-recharge'));
   const { assetLoading, assetOptions } = useAssetOptions();
 
   return (
@@ -103,16 +105,26 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
               disabled={!isUserRechargeSubmittable(recharge)}
               title="确认用户充值"
               onConfirm={async (reason) => {
+                const businessIntent = {
+                  user_id: requiredPositiveInteger(userId, '用户ID'),
+                  asset_id: requiredPositiveInteger(recharge.assetId, '充值资产'),
+                  amount: requiredString(recharge.amount, '充值金额'),
+                  reason: reason.trim()
+                };
+                const intent = canonicalRequestIntent(businessIntent);
+                const idempotencyKey = idempotencyKeys.current.acquire(intent);
                 await submitAction('用户充值', () =>
                   apiRequest(`/admin/api/v1/users/${userId}/recharge`, {
                     method: 'POST',
                     body: JSON.stringify({
-                      asset_id: requiredPositiveInteger(recharge.assetId, '充值资产'),
-                      amount: requiredString(recharge.amount, '充值金额'),
-                      reason
+                      asset_id: businessIntent.asset_id,
+                      amount: businessIntent.amount,
+                      reason: businessIntent.reason,
+                      idempotency_key: idempotencyKey
                     })
                   })
                 );
+                idempotencyKeys.current.complete(intent, idempotencyKey);
                 setVisible(false);
                 setRecharge(initialUserRecharge);
                 helpers.reload();

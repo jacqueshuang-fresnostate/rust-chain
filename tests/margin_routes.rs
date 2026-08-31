@@ -26,6 +26,20 @@ use uuid::Uuid;
 
 mod support;
 
+const INVALID_USER_LEVERAGE_PAYLOADS: [&str; 11] = [
+    r#"{"leverage":"3.00000000","long_leverage":"4.00000000","short_leverage":"2.00000000"}"#,
+    r#"{"long_leverage":"4.00000000"}"#,
+    r#"{"short_leverage":"2.00000000"}"#,
+    r#"{}"#,
+    r#"{"leverage":null}"#,
+    r#"{"leverage":null,"long_leverage":null,"short_leverage":null}"#,
+    r#"{"long_leverage":null,"short_leverage":"2.00000000"}"#,
+    r#"{"long_leverage":"4.00000000","short_leverage":null}"#,
+    r#"{"leverage":"3.00000000","long_leverage":null}"#,
+    r#"{"leverage":"0.00000000"}"#,
+    r#"{"long_leverage":"4.00000000","short_leverage":"-2.00000000"}"#,
+];
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -413,6 +427,41 @@ async fn margin_open_requires_fresh_ticker_before_wallet_or_position_mutation()
 }
 
 #[tokio::test]
+async fn margin_directional_leverage_rejects_invalid_shapes_before_mysql()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let unreachable_pool = MySqlPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(25))
+        .connect_lazy("mysql://test:test@127.0.0.1:9/unreachable")?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(unreachable_pool));
+
+    for invalid_body in INVALID_USER_LEVERAGE_PAYLOADS {
+        let rejected = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri("/margin/settings/1/leverage")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(invalid_body))
+                    .unwrap(),
+            )
+            .await?;
+        let rejected_status = rejected.status();
+        let rejected_payload = body_json(rejected).await?;
+        assert_eq!(
+            rejected_status,
+            StatusCode::BAD_REQUEST,
+            "payload: {rejected_payload}"
+        );
+        assert_eq!(rejected_payload["code"], "VALIDATION_ERROR");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
 -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
@@ -439,6 +488,12 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
         .bind(decimal("100.000000000000000000"))
         .execute(&mut *tx)
         .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(other_user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
@@ -452,7 +507,7 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
     let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let transfer_key = format!("margin-transfer-{}", Uuid::now_v7().simple());
 
-    let to_margin = app
+    let missing_key = app
         .clone()
         .oneshot(
             Request::builder()
@@ -461,17 +516,50 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"asset_id":{quote_asset},"from":"spot","to":"margin","amount":"30.000000000000000000","idempotency_key":"  {transfer_key}  "}}"#
+                    r#"{{"asset_id":{quote_asset},"from":"spot","to":"margin","amount":"30.000000000000000000"}}"#
                 )))
                 .unwrap(),
         )
         .await?;
-    let to_margin_status = to_margin.status();
-    let to_margin_payload = body_json(to_margin).await?;
-    assert_eq!(
-        to_margin_status,
-        StatusCode::OK,
-        "payload: {to_margin_payload}"
+    assert_eq!(missing_key.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let transfer_body = format!(
+        r#"{{"asset_id":{quote_asset},"from":"spot","to":"margin","amount":"30.000000000000000000","idempotency_key":"  {transfer_key}  "}}"#
+    );
+    let mut concurrent = tokio::task::JoinSet::new();
+    for _ in 0..20 {
+        let request_app = app.clone();
+        let request_token = token.clone();
+        let request_body = transfer_body.clone();
+        concurrent.spawn(async move {
+            request_app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/margin/transfers")
+                        .header("authorization", format!("Bearer {request_token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(request_body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+    }
+    let mut concurrent_payloads = Vec::new();
+    while let Some(response) = concurrent.join_next().await {
+        let response = response?;
+        let status = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status, StatusCode::OK, "payload: {payload}");
+        concurrent_payloads.push(payload);
+    }
+    assert_eq!(concurrent_payloads.len(), 20);
+    let to_margin_payload = concurrent_payloads[0].clone();
+    assert!(
+        concurrent_payloads
+            .iter()
+            .all(|payload| payload == &to_margin_payload)
     );
     assert_eq!(
         to_margin_payload["spot_wallet"]["available"],
@@ -486,6 +574,31 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
         .unwrap()
         .to_owned();
     Uuid::parse_str(&original_transfer_id)?;
+
+    let other_user_transfer = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/transfers")
+                .header("authorization", format!("Bearer {other_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(transfer_body))
+                .unwrap(),
+        )
+        .await?;
+    let other_user_status = other_user_transfer.status();
+    let other_user_payload = body_json(other_user_transfer).await?;
+    assert_eq!(
+        other_user_status,
+        StatusCode::OK,
+        "payload: {other_user_payload}"
+    );
+    assert_ne!(other_user_payload["transfer_id"], original_transfer_id);
+    assert_eq!(
+        other_user_payload["spot_wallet"]["available"],
+        "70.000000000000000000"
+    );
 
     sqlx::query("UPDATE assets SET margin_transfer_enabled = FALSE WHERE id = ?")
         .bind(quote_asset)
@@ -524,7 +637,8 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"asset_symbol":"{quote_symbol}","from":"margin","to":"spot","amount":"5.000000000000000000"}}"#
+                    r#"{{"asset_symbol":"{quote_symbol}","from":"margin","to":"spot","amount":"5.000000000000000000","idempotency_key":"margin-out-{}"}}"#,
+                    Uuid::now_v7().simple()
                 )))
                 .unwrap(),
         )
@@ -619,12 +733,44 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"asset_id":{quote_asset},"from":"margin","to":"spot","amount":"50.000000000000000000"}}"#
+                    r#"{{"asset_id":{quote_asset},"from":"margin","to":"spot","amount":"50.000000000000000000","idempotency_key":"margin-insufficient-{}"}}"#,
+                    Uuid::now_v7().simple()
                 )))
                 .unwrap(),
         )
         .await?;
     assert_eq!(insufficient.status(), StatusCode::BAD_REQUEST);
+
+    for invalid_body in INVALID_USER_LEVERAGE_PAYLOADS {
+        let rejected = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/margin/settings/{product_id}/leverage"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(invalid_body))
+                    .unwrap(),
+            )
+            .await?;
+        let rejected_status = rejected.status();
+        let rejected_payload = body_json(rejected).await?;
+        assert_eq!(
+            rejected_status,
+            StatusCode::BAD_REQUEST,
+            "payload: {rejected_payload}"
+        );
+        assert_eq!(rejected_payload["code"], "VALIDATION_ERROR");
+    }
+    let (setting_count_before_valid_patch,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM margin_user_settings WHERE user_id = ? AND product_id = ?",
+    )
+    .bind(user_id)
+    .bind(product_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(setting_count_before_valid_patch, 0);
 
     let leverage = app
         .clone()
@@ -638,7 +784,75 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
                 .unwrap(),
         )
         .await?;
-    assert_eq!(leverage.status(), StatusCode::OK);
+    let leverage_status = leverage.status();
+    let leverage_payload = body_json(leverage).await?;
+    assert_eq!(
+        leverage_status,
+        StatusCode::OK,
+        "payload: {leverage_payload}"
+    );
+    assert_eq!(leverage_payload["leverage"], "3.00000000");
+    assert_eq!(leverage_payload["long_leverage"], "3.00000000");
+    assert_eq!(leverage_payload["short_leverage"], "3.00000000");
+
+    let invalid_directional = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/margin/settings/{product_id}/leverage"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"long_leverage":"4.00000000","short_leverage":"7.00000000"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_directional_status = invalid_directional.status();
+    let invalid_directional_payload = body_json(invalid_directional).await?;
+    assert_eq!(
+        invalid_directional_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {invalid_directional_payload}"
+    );
+    assert_eq!(invalid_directional_payload["code"], "VALIDATION_ERROR");
+    let persisted_after_invalid: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT leverage, long_leverage, short_leverage FROM margin_user_settings WHERE user_id = ? AND product_id = ?",
+    )
+    .bind(user_id)
+    .bind(product_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(persisted_after_invalid.0, decimal("3.00000000"));
+    assert_eq!(persisted_after_invalid.1, decimal("3.00000000"));
+    assert_eq!(persisted_after_invalid.2, decimal("3.00000000"));
+
+    let directional = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/margin/settings/{product_id}/leverage"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"long_leverage":"4.00000000","short_leverage":"2.00000000"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let directional_status = directional.status();
+    let directional_payload = body_json(directional).await?;
+    assert_eq!(
+        directional_status,
+        StatusCode::OK,
+        "payload: {directional_payload}"
+    );
+    assert_eq!(directional_payload["leverage"], "4.00000000");
+    assert_eq!(directional_payload["long_leverage"], "4.00000000");
+    assert_eq!(directional_payload["short_leverage"], "2.00000000");
+
     let mode = app
         .clone()
         .oneshot(
@@ -651,7 +865,12 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
                 .unwrap(),
         )
         .await?;
-    assert_eq!(mode.status(), StatusCode::OK);
+    let mode_status = mode.status();
+    let mode_payload = body_json(mode).await?;
+    assert_eq!(mode_status, StatusCode::OK, "payload: {mode_payload}");
+    assert_eq!(mode_payload["leverage"], "4.00000000");
+    assert_eq!(mode_payload["long_leverage"], "4.00000000");
+    assert_eq!(mode_payload["short_leverage"], "2.00000000");
 
     let get_setting = app
         .clone()
@@ -668,7 +887,9 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
     assert_eq!(get_status, StatusCode::OK, "payload: {setting}");
     assert_eq!(setting["product_id"], product_id);
     assert_eq!(setting["margin_mode"], "isolated");
-    assert_eq!(setting["leverage"], "3.00000000");
+    assert_eq!(setting["leverage"], "4.00000000");
+    assert_eq!(setting["long_leverage"], "4.00000000");
+    assert_eq!(setting["short_leverage"], "2.00000000");
 
     let other_setting = app
         .clone()
@@ -703,6 +924,9 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
     let cross_payload = body_json(cross).await?;
     assert_eq!(cross_status, StatusCode::OK, "payload: {cross_payload}");
     assert_eq!(cross_payload["margin_mode"], "cross");
+    assert_eq!(cross_payload["leverage"], "4.00000000");
+    assert_eq!(cross_payload["long_leverage"], "4.00000000");
+    assert_eq!(cross_payload["short_leverage"], "2.00000000");
 
     let (spot_available,): (BigDecimal,) =
         sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
@@ -734,11 +958,43 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
             .bind(user_id)
             .fetch_one(&pool)
             .await?;
+    let (original_transfer_rows,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM margin_transfers WHERE user_id = ? AND transfer_id = ?",
+    )
+    .bind(user_id)
+    .bind(&original_transfer_id)
+    .fetch_one(&pool)
+    .await?;
+    let (original_spot_ledgers,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ? AND ref_type = 'margin_transfer' AND ref_id = ?",
+    )
+    .bind(user_id)
+    .bind(&original_transfer_id)
+    .fetch_one(&pool)
+    .await?;
+    let (original_margin_ledgers,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM margin_wallet_ledger WHERE user_id = ? AND ref_type = 'margin_transfer' AND ref_id = ?",
+    )
+    .bind(user_id)
+    .bind(&original_transfer_id)
+    .fetch_one(&pool)
+    .await?;
     assert_eq!(spot_available, decimal("75.000000000000000000"));
     assert_eq!(margin_available, decimal("25.000000000000000000"));
     assert_eq!(spot_ledger_count, 2);
     assert_eq!(margin_ledger_count, 2);
     assert_eq!(transfer_count, 2);
+    assert_eq!(original_transfer_rows, 1);
+    assert_eq!(original_spot_ledgers, 1);
+    assert_eq!(original_margin_ledgers, 1);
+    let (fingerprint_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM margin_transfers WHERE user_id IN (?, ?) AND request_fingerprint IS NOT NULL",
+    )
+    .bind(user_id)
+    .bind(other_user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(fingerprint_count, 3);
     Ok(())
 }
 

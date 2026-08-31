@@ -15,10 +15,11 @@ use super::{
         SecondsContractProductResponse,
     },
     repository::{
-        SecondsContractAdminOrderFilter, SecondsContractOrderInsert, SecondsContractProductRow,
-        SecondsContractProductRuleRow, SecondsContractProductWrite,
-        SecondsContractSettlementPriceRow, SecondsContractWalletLedgerWrite,
-        SecondsContractWalletRow,
+        SecondsContractAdminOrderFilter, SecondsContractMarketFeedCoverage,
+        SecondsContractOrderInsert, SecondsContractProductRow, SecondsContractProductRuleRow,
+        SecondsContractProductWrite, SecondsContractSettlementExceptionWrite,
+        SecondsContractSettlementPairCapability, SecondsContractSettlementPriceRow,
+        SecondsContractWalletLedgerWrite, SecondsContractWalletRow,
     },
     service::{NormalizedSecondsContractProductCycle, optional_string},
 };
@@ -220,6 +221,85 @@ pub(crate) async fn ensure_pair_exists(
         return Err(AppError::NotFound);
     }
     Ok(())
+}
+
+/// 读取产品激活与开仓共用的交易对符号、状态和 `market_type`。
+/// 该查询在调用方事务中锁定交易对，直到产品激活或开仓资金事务提交，防止检查后并发切换状态或来源类型。
+/// 交易对不存在时返回 `NotFound`，禁止调用方将未知类型降级成外部行情。
+pub(crate) async fn load_settlement_pair_capability(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+) -> AppResult<SecondsContractSettlementPairCapability> {
+    let row = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT symbol, status, market_type FROM trading_pairs WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(pair_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    Ok(SecondsContractSettlementPairCapability {
+        symbol: row.0,
+        status: row.1,
+        market_type: row.2,
+    })
+}
+
+/// 判定 strategy/internal 交易对是否存在当前可运行的活跃策略与精确版本。
+/// 条件同时要求策略 active、数据库当前时间在策略区间内、run 为 running/live，
+/// 租约 owner 非空且未过期，并能按 `active_version` 连到 `strategy_versions`；命中行会锁到调用方事务结束，
+/// 防止能力检查把仅有配置但没有实时归档 worker 的策略当成可结算。
+/// 任一缺失都返回 false，不使用草稿或旧版本充数。
+pub(crate) async fn runnable_strategy_settlement_history_exists(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+) -> AppResult<bool> {
+    let strategy_id = sqlx::query_scalar::<_, u64>(
+        r#"SELECT runs.strategy_id
+           FROM market_strategies strategies
+           INNER JOIN strategy_runs runs ON runs.strategy_id = strategies.id
+           INNER JOIN strategy_versions versions
+                   ON versions.strategy_id = runs.strategy_id
+                  AND versions.version = runs.active_version
+           WHERE strategies.pair_id = ?
+             AND strategies.status = 'active'
+             AND strategies.start_time <= CURRENT_TIMESTAMP(6)
+             AND strategies.end_time > CURRENT_TIMESTAMP(6)
+             AND runs.run_status IN ('running', 'live')
+             AND runs.lease_owner IS NOT NULL
+             AND CHAR_LENGTH(TRIM(runs.lease_owner)) > 0
+             AND runs.lease_expires_at > CURRENT_TIMESTAMP(6)
+           ORDER BY strategies.id
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(pair_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(strategy_id.is_some())
+}
+
+/// 读取全部已启用 `market_feed_configs` 覆盖集合，仅把 JSON 数组解析为仓储契约。
+/// 符号归一化、provider 是否为运行时支持项属于纯业务判定，由上层共享能力门禁完成。
+/// 命中的已启用配置锁到调用方事务结束；非法 JSON 或字段类型错误则使整个检查失败，禁止忽略坏配置后继续。
+pub(crate) async fn load_enabled_market_feed_coverages(
+    tx: &mut Transaction<'_, MySql>,
+) -> AppResult<Vec<SecondsContractMarketFeedCoverage>> {
+    let rows = sqlx::query_as::<_, (SqlxJson<Vec<String>>, SqlxJson<Vec<String>>)>(
+        r#"SELECT symbols_json, providers_json
+           FROM market_feed_configs
+           WHERE enabled = TRUE
+           ORDER BY id
+           FOR UPDATE"#,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(symbols, providers)| SecondsContractMarketFeedCoverage {
+            symbols: symbols.0,
+            providers: providers.0,
+        })
+        .collect())
 }
 
 /// 在管理事务内确认作为质押币种的资产存在，避免产品指向不存在的资产导致下单时无法定位钱包。
@@ -451,9 +531,9 @@ pub(crate) async fn replace_product_cycles(
 }
 
 /// 读取指定用户的秒合约订单历史，用户编号来自鉴权上下文并强制写入 WHERE 条件，查询绝不跨用户返回记录。
-/// 结果同时包含未到期的持仓单与已结算单，按创建时间倒序，并以订单主键倒序作为同一时刻的稳定次级排序。
+/// 结果同时包含持仓、已结算和等待人工审核的订单，按创建时间倒序，并以订单主键倒序作为同一时刻的稳定次级排序。
 /// `email` 字段固定选为 NULL，用户侧接口不需要也不应回显账号邮箱。
-/// 只读走连接池、不加锁不入事务，返回的 `settlement_price` 与 `result` 对未到期订单为空，
+/// 只读走连接池、不加锁不入事务，返回的 `settlement_price` 与 `result` 对持仓或人工审核订单为空，
 /// 本函数不触发任何结算动作。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
@@ -932,6 +1012,50 @@ pub(crate) async fn mark_order_settled(
     Ok(())
 }
 
+/// 在已持有订单行锁的事务内，把超过最大快照等待时长的 opened 订单一次性转为 `manual_review`。
+/// 状态更新同时把失败码、检测时间与最后查找窗口写回订单，并向独立异常表追加一条证据。
+/// 两步共用调用方事务；任一步失败都会回滚。本函数不读写钱包、资金流水或结算价。
+pub(crate) async fn move_order_to_manual_review(
+    tx: &mut Transaction<'_, MySql>,
+    exception: &SecondsContractSettlementExceptionWrite,
+) -> AppResult<()> {
+    let update = sqlx::query(
+        r#"UPDATE seconds_contract_orders
+           SET status = 'manual_review',
+               settlement_failure_code = ?,
+               settlement_failed_at = ?,
+               settlement_window_start = ?,
+               settlement_window_end = ?,
+               next_settlement_attempt_at = NULL
+           WHERE id = ? AND status = 'opened'"#,
+    )
+    .bind(exception.failure_code)
+    .bind(exception.detected_at.naive_utc())
+    .bind(exception.window_start.naive_utc())
+    .bind(exception.window_end.naive_utc())
+    .bind(exception.order_id)
+    .execute(&mut **tx)
+    .await?;
+    if update.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "seconds contract order changed before manual review transition".to_owned(),
+        ));
+    }
+    sqlx::query(
+        r#"INSERT INTO seconds_contract_settlement_exceptions
+           (order_id, failure_code, detected_at, window_start, window_end)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(exception.order_id)
+    .bind(exception.failure_code)
+    .bind(exception.detected_at.naive_utc())
+    .bind(exception.window_start.naive_utc())
+    .bind(exception.window_end.naive_utc())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// 读取当前数据库时间，供人工结算与本地到期边界统一使用；调用方不能用应用进程时钟替代。
 pub(crate) async fn database_now(tx: &mut Transaction<'_, MySql>) -> AppResult<DateTime<Utc>> {
     let now = sqlx::query_scalar::<_, chrono::NaiveDateTime>("SELECT CURRENT_TIMESTAMP(6)")
@@ -942,7 +1066,8 @@ pub(crate) async fn database_now(tx: &mut Transaction<'_, MySql>) -> AppResult<D
 
 /// 选择到期事件窗口 `[expires_at, expires_at + 5s)` 内第一条不可变 ticker。
 /// 排序先按事件时间，再按固定供应商优先级、源版本和主键，处理早晚不会改变选择结果。
-/// 窗口内没有历史行时返回 `None`，调用方必须保持 pending，禁止读取 Redis 最新价兜底。
+/// 锁定读使 MySQL 在转人工审核的竞态中使用当前已提交视图；空窗口的间隙锁也会保证超时转移与迟到归档具有唯一顺序。
+/// 窗口内没有历史行时返回 `None`，调用方必须保持 pending 或按上限转人工审核，禁止读取 Redis 最新价兜底。
 pub(crate) async fn select_settlement_price_snapshot(
     tx: &mut Transaction<'_, MySql>,
     symbol: &str,
@@ -964,7 +1089,8 @@ pub(crate) async fn select_settlement_price_snapshot(
                     END ASC,
                     source_version ASC,
                     id ASC
-           LIMIT 1"#,
+           LIMIT 1
+           FOR UPDATE"#,
     )
     .bind(symbol)
     .bind(expires_at.naive_utc())

@@ -1050,6 +1050,8 @@ saved user settings authoritative across reloads and pair changes.
 ```ts
 interface MarginUserSetting {
   leverage: number | null
+  longLeverage: number | null
+  shortLeverage: number | null
   marginMode: 'cross' | 'isolated' | null
 }
 
@@ -1061,7 +1063,10 @@ interface MarginOrderCapabilities {
 }
 
 fetchMarginSetting(productId: number): Promise<MarginUserSetting>
-updateMarginLeverage(productId: number, leverage: number): Promise<void>
+updateMarginLeverage(
+  productId: number,
+  leverage: number | { longLeverage: number; shortLeverage: number },
+): Promise<void>
 updateMarginMode(
   productId: number,
   mode: 'cross' | 'isolated',
@@ -1086,20 +1091,31 @@ closeAllMarginPositions(productId?: number): Promise<MarginBatchActionResult>
 ```
 
 The selected production surfaces are `cjzfi/p6GfgT` for the main contract
-workspace and `f0L8yf/R8t0p`, `aNuw6/PKAcD`, `Crw8v/YuKtQ` for leverage,
-margin mode, and pair selection. The mock status bar in those frames is native
-OS chrome and is not rendered by the web application.
+workspace, `NTiiS/CulR4` for the current directional-leverage sheet, and
+`aNuw6/PKAcD`, `Crw8v/YuKtQ` for margin mode and pair selection. The prior
+`f0L8yf/R8t0p` leverage pair remains declared as historical source metadata but
+must not override the current dual-direction structure. The mock status bar in
+those frames is native OS chrome and is not rendered by the web application.
 
 ### 3. Contracts
 
-- `GET /margin/settings/:product_id` is protected and returns nullable
-  `leverage` and `margin_mode`. A valid saved value overrides the product
-  default only when it still exists in that product's `leverageLevels` or
-  `marginModes` capability set.
+- `GET /margin/settings/:product_id` is protected and returns nullable legacy
+  `leverage`, directional `long_leverage` / `short_leverage`, and `margin_mode`.
+  Each recognized saved value overrides the product default only when it still
+  exists in that product's exact `leverageLevels` or `marginModes` set.
 - A missing setting row is HTTP 404 and maps to `{ leverage: null,
-  marginMode: null }`; every other HTTP/network failure remains observable.
-- Leverage and mode mutations use only the two setting PATCH endpoints. Local
-  state changes after a successful response, never optimistically before it.
+  longLeverage: null, shortLeverage: null, marginMode: null }`; every other
+  HTTP/network failure remains observable. Against an older response that lacks
+  directional fields, both directions fall back to the valid legacy value.
+- The current Mobile client atomically PATCHes both directional values. It keeps
+  the numeric legacy adapter overload only for older call sites; it never issues
+  a partial directional request. Local state changes after a successful
+  response, never optimistically before it, and a failed request keeps both
+  drafts visible for explicit retry.
+- `TradeView` owns `longLeverage` and `shortLeverage`; the active order/review
+  leverage is derived from `side` (`buy -> long`, `sell -> short`). Opening a
+  review freezes that direction's current setting so later side/settings changes
+  cannot rewrite the confirmed request.
 - The pair sheet renders only real `/margin/products` rows and Market Store
   tickers. Missing ticker image, price, or change remains an asset-letter
   fallback or `--`; no Pencil sample value is copied into production.
@@ -1115,9 +1131,10 @@ OS chrome and is not rendered by the web application.
   exact product/capability is available; leverage and margin-mode sheets remain
   protected because they persist a user setting. The amount input and
   contract percentage range remains margin amount, not base quantity or notional.
-- The selected input visual contract uses one outer field shell and a two-row
-  information hierarchy. Price is 138x56 with a 9px `价格 (QUOTE)` label and a
-  17px/22px numeric value; margin is 202x46 with a 9px `保证金 (ASSET)` label,
+- The selected input visual contract from `IpirH/mcfEf` uses one outer field
+  shell and a two-row information hierarchy. Price is 138x54 with a 9px
+  `价格 (QUOTE)` label and a 17px/22px numeric value; margin is 202x48 with a
+  9px `保证金 (ASSET)` label,
   a 15px/20px numeric value, and a trailing settlement asset. Idle shells use
   a transparent 1px border; `:focus-within` owns the complete accent ring while
   the nested input keeps border, outline, and box-shadow at zero. Percentage
@@ -1166,11 +1183,14 @@ OS chrome and is not rendered by the web application.
   The submitting guard blocks duplicate calls and every dismissal path until
   the in-flight call settles.
 - At 390px, the production frame after removing the mock OS status bar keeps a
-  58px Header, a 460px module, the exact `14 + 202 + 10 + 150 + 14` horizontal
-  track, 450px console/book columns, six asks/seven bids, and a 44px position
-  rail. The left console uses Pencil's absolute vertical tracks while visible
-  dots may stay 12px inside 44px accessible hit areas. At 448px only the book
-  expands; at 320px the console and book contract without document overflow.
+  58px Header, a 500px module, the exact `14 + 202 + 10 + 150 + 14` horizontal
+  track, 490px console/book columns, six asks/seven bids, and a 44px position
+  rail. The left console uses Pencil's `IpirH/mcfEf` absolute vertical tracks:
+  margin mode and leverage share a 98/6/98 row, order type owns a separate
+  202x40 row, price owns 138/6/58 at 54px, and margin owns 202x48. The
+  continuous slider keeps one thumb inside a 44px accessible hit area. At
+  448px only the book expands; at 320px the console and book contract without
+  document overflow.
 - The positions tab renders the count of the currently visible filled-position
   collection. Each position card keeps the Pencil action order `TP/SL`,
   `Close`, `Market close all`. The ordinary `Close` action opens the selected
@@ -1192,10 +1212,11 @@ OS chrome and is not rendered by the web application.
   request handler. The three card actions are independent equal-width controls
   with a 10px gap, 12px radius, 44px hit area, 42px inset visual face, and no
   horizontal overflow at 320px in either theme.
-- The leverage, mode, and pair sheets are 500px, 446px, and 620px high and
-  start-align their content tracks. Do not stretch their confirmation actions
-  to the sheet bottom. At 340px and below, wrapped notices use intrinsic height
-  and move the action down without overlap.
+- The directional-leverage, mode, order-type, and pair sheets are 840px, 446px,
+  338px, and 620px high at their full reference sizes. Directional leverage
+  pins its Header and 52px confirmation action while only the middle row
+  scrolls; mode and pair keep their start-aligned content tracks. At 340px and
+  below, wrapped notices use intrinsic height without overlapping an action.
 
 ### 4. Validation & Error Matrix
 

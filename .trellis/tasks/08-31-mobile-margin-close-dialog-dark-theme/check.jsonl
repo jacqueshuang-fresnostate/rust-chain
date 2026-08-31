@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "复核明暗主题、Teleport、业务不变和质量门禁"}
+{"file": ".trellis/tasks/08-31-mobile-margin-close-dialog-dark-theme/research/scoped-teleport-dark-theme.md", "reason": "复核编译产物不再退化为裸 html 规则"}

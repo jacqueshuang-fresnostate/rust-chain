@@ -1,9 +1,9 @@
 //! 秒合约事件时点结算 worker。
 //!
 //! 结算价格只从 MySQL 的 append-only `market_price_ticks` 历史读取。明确规则是选择
-//! `[expires_at, expires_at + 5s)` 内按事件时间排序的第一条 ticker；窗口关闭前或历史缺失时订单
-//! 保持 `opened` 并重试，绝不使用处理时 Redis 最新价。选中的行主键、来源、观察时间、generation
-//! 与源版本和订单终态在同一事务固化，因此准时处理、延迟处理和人工重放都复用同一快照。
+//! `[expires_at, expires_at + 5s)` 内按事件时间排序的第一条 ticker；窗口关闭前保持 `opened`，历史缺失则在可配置上限内重试。
+//! 超过上限仍无快照时，订单与一条追加式异常证据原子转入 `manual_review`，绝不使用处理时 Redis 最新价、猜测价格或修改钱包。
+//! 选中的行主键、来源、观察时间、generation 与源版本和订单终态在同一事务固化，处理时机与重启不改变选价。
 
 use crate::{
     error::{AppError, AppResult},
@@ -11,7 +11,9 @@ use crate::{
         events::{EventBroadcastHub, EventBroadcastMessage},
         seconds_contract::{
             infrastructure,
-            repository::SecondsContractWalletLedgerWrite,
+            repository::{
+                SecondsContractSettlementExceptionWrite, SecondsContractWalletLedgerWrite,
+            },
             service::{
                 SETTLEMENT_PRICE_WINDOW_SECONDS as EVENT_PRICE_WINDOW_SECONDS,
                 seconds_contract_payout_amount, settlement_result_from_prices,
@@ -32,6 +34,12 @@ use tracing::{error, info, warn};
 /// 事件时点价格窗口长度；右边界不包含在可选集合中。
 pub const SETTLEMENT_PRICE_WINDOW_SECONDS: i64 = EVENT_PRICE_WINDOW_SECONDS;
 
+/// 缺少事件时间快照时默认最多等待五分钟，超时后转人工审核。
+pub const DEFAULT_MAX_SNAPSHOT_WAIT_SECONDS: u64 = 300;
+
+const MAX_CONFIGURED_SNAPSHOT_WAIT_SECONDS: u64 = 86_400;
+const MISSING_SETTLEMENT_SNAPSHOT_FAILURE_CODE: &str = "missing_settlement_snapshot";
+
 /// 秒合约结算 worker 的无状态入口。
 pub struct SecondsContractSettlementWorker;
 
@@ -44,6 +52,8 @@ pub struct SecondsContractSettlementWorkerConfig {
     pub interval_seconds: u64,
     /// 单轮订单上限。
     pub batch_limit: u32,
+    /// 事件窗口关闭后继续等待历史快照的最大秒数。
+    pub max_snapshot_wait_seconds: u64,
 }
 
 impl SecondsContractSettlementWorkerConfig {
@@ -53,6 +63,10 @@ impl SecondsContractSettlementWorkerConfig {
             enabled: env_bool("SECONDS_CONTRACT_SETTLEMENT_ENABLED", true),
             interval_seconds: env_u64("SECONDS_CONTRACT_SETTLEMENT_INTERVAL_SECONDS", 5),
             batch_limit: env_u32("SECONDS_CONTRACT_SETTLEMENT_BATCH_LIMIT", 100),
+            max_snapshot_wait_seconds: normalize_max_snapshot_wait_seconds(env_u64(
+                "SECONDS_CONTRACT_SETTLEMENT_MAX_SNAPSHOT_WAIT_SECONDS",
+                DEFAULT_MAX_SNAPSHOT_WAIT_SECONDS,
+            )),
         }
     }
 }
@@ -80,6 +94,8 @@ pub struct SecondsContractSettlementSummary {
     pub skipped: u32,
     /// 数据或资金异常数量。
     pub failed: u32,
+    /// 因快照缺失超过最大等待时长而首次转入人工审核的数量。
+    pub manual_review: u32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -110,6 +126,7 @@ pub struct SecondsContractSettlementEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SettlementOutcome {
     Settled(Box<SecondsContractSettlementEvent>),
+    ManualReview,
     Pending,
     Skipped,
 }
@@ -133,7 +150,16 @@ pub async fn run_once(
         AppError::Internal("mysql pool is required for seconds contract settlement".to_owned())
     })?;
     let now = database_now(pool).await?;
-    run_once_with_broadcast(pool, state.event_broadcast_hub.as_ref(), now, limit).await
+    let max_snapshot_wait_seconds =
+        SecondsContractSettlementWorkerConfig::from_env().max_snapshot_wait_seconds;
+    run_once_with_broadcast_and_max_wait(
+        pool,
+        state.event_broadcast_hub.as_ref(),
+        now,
+        limit,
+        max_snapshot_wait_seconds,
+    )
+    .await
 }
 
 /// 在显式 MySQL 池上执行一轮，供集成测试和独立调度复用。
@@ -142,7 +168,25 @@ pub async fn run_once_with_pool(
     now: DateTime<Utc>,
     limit: u32,
 ) -> AppResult<SecondsContractSettlementSummary> {
-    run_once_with_broadcast(pool, None, now, limit).await
+    run_once_with_pool_and_max_wait(pool, now, limit, DEFAULT_MAX_SNAPSHOT_WAIT_SECONDS).await
+}
+
+/// 在显式 MySQL 池上使用调用方指定的快照最大等待时长执行一轮，供边界与重启集成测试使用。
+/// 等待时长夹在 1 秒到 24 小时之间，避免误配为 0 导致窗口一关闭就大量转人工审核。
+pub async fn run_once_with_pool_and_max_wait(
+    pool: &Pool<MySql>,
+    now: DateTime<Utc>,
+    limit: u32,
+    max_snapshot_wait_seconds: u64,
+) -> AppResult<SecondsContractSettlementSummary> {
+    run_once_with_broadcast_and_max_wait(
+        pool,
+        None,
+        now,
+        limit,
+        normalize_max_snapshot_wait_seconds(max_snapshot_wait_seconds),
+    )
+    .await
 }
 
 /// 兼容旧测试装配签名；Redis 参数被刻意忽略，不能成为结算价格来源。
@@ -156,12 +200,24 @@ pub async fn run_once_with_dependencies(
     run_once_with_pool(pool, now, limit).await
 }
 
-/// 扫描并逐单结算；每单独立事务，缺历史仅退避，不改变订单状态或资金。
+/// 扫描并逐单结算；每单独立事务，缺历史在默认上限内退避，超龄则转人工审核且不改变资金。
 pub async fn run_once_with_broadcast(
     pool: &Pool<MySql>,
     hub: Option<&EventBroadcastHub>,
     now: DateTime<Utc>,
     limit: u32,
+) -> AppResult<SecondsContractSettlementSummary> {
+    run_once_with_broadcast_and_max_wait(pool, hub, now, limit, DEFAULT_MAX_SNAPSHOT_WAIT_SECONDS)
+        .await
+}
+
+/// 扫描并逐单结算；每单独立事务，缺历史在上限内退避，超龄则原子转人工审核。
+async fn run_once_with_broadcast_and_max_wait(
+    pool: &Pool<MySql>,
+    hub: Option<&EventBroadcastHub>,
+    now: DateTime<Utc>,
+    limit: u32,
+    max_snapshot_wait_seconds: u64,
 ) -> AppResult<SecondsContractSettlementSummary> {
     let settlement_limit = seconds_contract_settlement_limit(limit);
     let rows = fetch_due_orders(pool, now, seconds_contract_settlement_scan_limit(limit)).await?;
@@ -172,11 +228,12 @@ pub async fn run_once_with_broadcast(
             break;
         }
         summary.scanned += 1;
-        match settle_order_by_id(pool, row.order_id, now).await {
+        match settle_order_by_id(pool, row.order_id, now, max_snapshot_wait_seconds).await {
             Ok(SettlementOutcome::Settled(event)) => {
                 summary.settled += 1;
                 publish_settlement_event(hub, &event);
             }
+            Ok(SettlementOutcome::ManualReview) => summary.manual_review += 1,
             Ok(SettlementOutcome::Pending) => {
                 summary.skipped += 1;
                 reschedule_settlement_attempt(pool, row.order_id, now).await?;
@@ -201,6 +258,7 @@ pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> App
             Ok(summary) => info!(
                 scanned = summary.scanned,
                 settled = summary.settled,
+                manual_review = summary.manual_review,
                 skipped = summary.skipped,
                 failed = summary.failed,
                 "秒合约事件时点结算周期完成"
@@ -260,6 +318,7 @@ async fn settle_order_by_id(
     pool: &Pool<MySql>,
     order_id: u64,
     processing_time: DateTime<Utc>,
+    max_snapshot_wait_seconds: u64,
 ) -> AppResult<SettlementOutcome> {
     let mut tx = pool.begin().await?;
     let order = match infrastructure::lock_order_by_id(&mut tx, order_id).await {
@@ -288,6 +347,34 @@ async fn settle_order_by_id(
         infrastructure::select_settlement_price_snapshot(&mut tx, &order.symbol, order.expires_at)
             .await?
     else {
+        let max_wait =
+            chrono::TimeDelta::seconds(i64::try_from(max_snapshot_wait_seconds).map_err(|_| {
+                AppError::Validation(
+                    "seconds contract snapshot wait exceeds supported range".to_owned(),
+                )
+            })?);
+        let manual_review_at = window_closes_at
+            .checked_add_signed(max_wait)
+            .ok_or_else(|| {
+                AppError::Validation(
+                    "seconds contract manual review deadline is outside valid range".to_owned(),
+                )
+            })?;
+        if processing_time >= manual_review_at {
+            infrastructure::move_order_to_manual_review(
+                &mut tx,
+                &SecondsContractSettlementExceptionWrite {
+                    order_id: order.id,
+                    failure_code: MISSING_SETTLEMENT_SNAPSHOT_FAILURE_CODE,
+                    detected_at: processing_time,
+                    window_start: order.expires_at,
+                    window_end: window_closes_at,
+                },
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(SettlementOutcome::ManualReview);
+        }
         tx.rollback().await?;
         return Ok(SettlementOutcome::Pending);
     };
@@ -382,6 +469,10 @@ fn seconds_contract_settlement_limit(limit: u32) -> u32 {
 
 fn seconds_contract_settlement_scan_limit(limit: u32) -> u32 {
     seconds_contract_settlement_limit(limit)
+}
+
+fn normalize_max_snapshot_wait_seconds(value: u64) -> u64 {
+    value.clamp(1, MAX_CONFIGURED_SNAPSHOT_WAIT_SECONDS)
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

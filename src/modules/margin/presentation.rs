@@ -6,8 +6,17 @@
 use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sqlx::types::Json as SqlxJson;
+
+/// 保留 JSON 字段的“缺省”与“显式 null”差异，供二选一请求在应用层严格校验载荷形状。
+fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
 
 /// margin 列表查询参数。
 #[derive(Debug, Deserialize)]
@@ -92,12 +101,20 @@ pub(crate) struct TransferMarginFundsRequest {
     pub(crate) from: String,
     pub(crate) to: String,
     pub(crate) amount: BigDecimal,
-    pub(crate) idempotency_key: Option<String>,
+    pub(crate) idempotency_key: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateUserLeverageRequest {
-    pub(crate) leverage: BigDecimal,
+    /// 历史单倍数字段；出现时方向字段必须全部缺省。
+    #[serde(default, deserialize_with = "double_option")]
+    pub(crate) leverage: Option<Option<BigDecimal>>,
+    /// 做多默认倍数；新格式中必须与 `short_leverage` 成对出现且非 null。
+    #[serde(default, deserialize_with = "double_option")]
+    pub(crate) long_leverage: Option<Option<BigDecimal>>,
+    /// 做空默认倍数；新格式中必须与 `long_leverage` 成对出现且非 null。
+    #[serde(default, deserialize_with = "double_option")]
+    pub(crate) short_leverage: Option<Option<BigDecimal>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,7 +291,12 @@ pub(crate) struct MarginWalletAccountSnapshot {
 pub(crate) struct MarginUserSettingResponse {
     pub(crate) product_id: u64,
     pub(crate) margin_mode: Option<String>,
+    /// 兼容旧客户端的单倍数，始终与 `long_leverage` 同值。
     pub(crate) leverage: Option<BigDecimal>,
+    /// 后续做多开仓使用的用户默认倍数。
+    pub(crate) long_leverage: Option<BigDecimal>,
+    /// 后续做空开仓使用的用户默认倍数。
+    pub(crate) short_leverage: Option<BigDecimal>,
 }
 
 #[derive(Debug, Serialize)]

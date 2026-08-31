@@ -10,12 +10,13 @@ use crate::{
             infrastructure::{
                 freeze_wallet_for_inserted_order_in_tx, insert_spot_order_in_tx,
                 latest_spot_market_price, load_spot_pair_db_id, spot_order_reservation_in_tx,
+                store_spot_order_idempotency_response_in_tx,
             },
             presentation::{CreateSpotOrderRequest, SpotOrderResponse, SpotTradeResponse},
             service::{
-                ensure_market_price_within_reference, limit_order_reaches_execution_price,
-                map_spot_error, normalize_idempotency_key,
-                publish_spot_created_private_events_if_needed,
+                SpotOrderRequestIdentity, ensure_market_price_within_reference,
+                limit_order_reaches_execution_price, map_spot_error, normalize_idempotency_key,
+                publish_spot_created_private_events_if_needed, spot_order_request_fingerprint,
                 stop_limit_order_reaches_execution_price,
             },
         },
@@ -42,11 +43,16 @@ pub(crate) async fn create_spot_order_with_events(
     redis: Option<&ConnectionManager>,
     hub: Option<&crate::modules::events::EventBroadcastHub>,
     user_id: u64,
-    request: CreateSpotOrderRequest,
+    mut request: CreateSpotOrderRequest,
 ) -> AppResult<SpotOrderResponse> {
     // 创建现货订单时同时处理幂等重放、撮合触发、下单提交与事件发布，避免路由层承担编排。
+    request.idempotency_key = normalize_idempotency_key(&request.idempotency_key)?;
+    request.pair_id = request.pair_id.trim().to_ascii_uppercase();
+    let request_fingerprint = spot_order_request_fingerprint(user_id, &request);
     let repository = MySqlSpotRepository::new(pool.clone());
-    if let Some(existing) = replay_spot_order_for_idempotency_key(pool, user_id, &request).await? {
+    if let Some(existing) =
+        replay_spot_order_for_idempotency_key(pool, user_id, &request, &request_fingerprint).await?
+    {
         return Ok(existing);
     }
 
@@ -72,7 +78,8 @@ pub(crate) async fn create_spot_order_with_events(
                     insert_triggered_buy_order_freeze_and_execute(
                         pool,
                         new_order,
-                        request.idempotency_key.as_deref(),
+                        &request.idempotency_key,
+                        &request_fingerprint,
                         request.price.as_ref(),
                         request.reference_price.as_ref(),
                         execution_price,
@@ -83,7 +90,8 @@ pub(crate) async fn create_spot_order_with_events(
                     insert_triggered_sell_order_freeze_and_execute(
                         pool,
                         new_order,
-                        request.idempotency_key.as_deref(),
+                        &request.idempotency_key,
+                        &request_fingerprint,
                         request.price.as_ref(),
                         request.reference_price.as_ref(),
                         execution_price,
@@ -95,7 +103,8 @@ pub(crate) async fn create_spot_order_with_events(
             let (order, is_new_order) = insert_order_and_freeze_wallet(
                 pool,
                 new_order,
-                request.idempotency_key.as_deref(),
+                &request.idempotency_key,
+                &request_fingerprint,
                 request.price.as_ref(),
                 request.reference_price.as_ref(),
             )
@@ -280,7 +289,8 @@ async fn resolve_market_execution_price(
 pub(crate) async fn insert_order_and_freeze_wallet(
     pool: &Pool<MySql>,
     new_order: NewOrder,
-    idempotency_key: Option<&str>,
+    idempotency_key: &str,
+    request_fingerprint: &str,
     request_price: Option<&BigDecimal>,
     reference_price: Option<&BigDecimal>,
 ) -> AppResult<(SpotOrder, bool)> {
@@ -291,15 +301,20 @@ pub(crate) async fn insert_order_and_freeze_wallet(
         &mut tx,
         new_order,
         pair_db_id,
-        normalize_idempotency_key(idempotency_key),
-        request_price,
-        reference_price,
+        SpotOrderRequestIdentity {
+            idempotency_key: Some(idempotency_key),
+            request_fingerprint: Some(request_fingerprint),
+            request_price,
+            request_reference_price: reference_price,
+        },
         &reservation,
     )
     .await?;
     if is_new_order {
         // 下单记录与钱包冻结必须同事务提交，避免订单可见但资金未锁定。
         freeze_wallet_for_inserted_order_in_tx(&mut tx, &order, &reservation).await?;
+        let response = SpotOrderResponse::from(order.clone());
+        store_spot_order_idempotency_response_in_tx(&mut tx, &order.id, &response).await?;
     }
     tx.commit().await?;
     Ok((order, is_new_order))

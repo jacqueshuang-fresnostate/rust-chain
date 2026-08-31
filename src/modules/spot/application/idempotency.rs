@@ -7,39 +7,31 @@ use crate::{
         infrastructure::load_spot_order_by_idempotency_key,
         presentation::{CreateSpotOrderRequest, SpotOrderResponse},
         service::{
-            SpotOrderIdempotencyCheck, ensure_spot_order_idempotency_matches,
-            normalize_idempotency_key,
+            SpotOrderIdempotencyCheck, ensure_spot_order_request_fingerprint_matches,
+            spot_order_idempotency_response,
         },
         spot_reservation_amount,
     },
 };
 use sqlx::{MySql, Pool};
 
-/// 在建单前按幂等键查找可安全重放的现货订单；键缺失或空白时返回 `None` 并允许继续创建。
-/// 命中记录必须属于同一认证用户，且交易对、方向、类型、价格/触发价、数量、请求参考价与预期预留额完全兼容，否则返回冲突。
+/// 在建单前按用户与幂等键查找可安全重放的现货订单。
+/// 新记录直接核对稳定指纹，历史空指纹记录才逐字段比对；命中后返回首次响应快照。
 /// 该路径只读且不拥有事务或锁，不重新读取 Redis 执行价、不冻结钱包、不追加流水或事件；并发唯一键竞态仍由插入事务兜底。
 pub(crate) async fn replay_spot_order_for_idempotency_key(
     pool: &Pool<MySql>,
     user_id: u64,
     request: &CreateSpotOrderRequest,
+    request_fingerprint: &str,
 ) -> AppResult<Option<SpotOrderResponse>> {
-    let Some(idempotency_key) = normalize_idempotency_key(request.idempotency_key.as_deref())
+    let Some(order) =
+        load_spot_order_by_idempotency_key(pool, user_id, &request.idempotency_key).await?
     else {
         return Ok(None);
     };
-    let existing = load_spot_order_by_idempotency_key(pool, idempotency_key).await?;
-
-    match existing {
-        Some(order) if order.user_id == user_id => {
-            let expected = spot_order_idempotency_check_for_request(request);
-            ensure_spot_order_idempotency_matches(&order, &expected)?;
-            Ok(Some(order.into()))
-        }
-        Some(_) => Err(crate::error::AppError::Conflict(
-            "spot order idempotency key belongs to another user".to_owned(),
-        )),
-        None => Ok(None),
-    }
+    let expected = spot_order_idempotency_check_for_request(request);
+    ensure_spot_order_request_fingerprint_matches(&order, request_fingerprint, &expected)?;
+    Ok(Some(spot_order_idempotency_response(order)?))
 }
 fn spot_order_idempotency_check_for_request(
     request: &CreateSpotOrderRequest,

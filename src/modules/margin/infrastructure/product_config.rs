@@ -93,38 +93,53 @@ pub(crate) async fn lock_active_product_setting_rule(
     Ok(product)
 }
 
-/// 在调用方事务内按用户和产品写入杠杆或模式设置，保留未提供字段。
+/// 在调用方事务内按用户和产品写入双方向杠杆或模式设置，保留未提供字段。
 /// 唯一键使重复设置覆盖同一记录；失败由应用层回滚产品锁和本次变更。
 ///
-/// 两个业务字段都是 Option，ON DUPLICATE KEY UPDATE 用 COALESCE 保留旧值，
-/// 因此只改倍数的请求不会把已保存的模式抹成 NULL，只改模式的请求同理不影响倍数。
-/// 首次插入时未提供的那一侧落为 NULL，读取方会把它当作「未设置」并回落到产品默认值。
+/// 方向倍数参数要么整组缺省，要么同时带做多与做空；适配器把兼容 `leverage` 与做多值一次绑定，
+/// 从结构上防止调用方只更新三列中的一部分。ON DUPLICATE KEY UPDATE 用 COALESCE 保留整组未提供值，
+/// 因此只改模式不会覆盖任何倍数列，只改倍数也不会抹掉模式。
+/// 首次只设模式时三个倍数列均为 NULL，读取方把它们视为未设置。
 /// 依赖 (user_id, product_id) 唯一键实现幂等覆盖，重复提交同样的设置不会产生第二行记录。
 pub(crate) async fn upsert_user_margin_setting(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     product_id: u64,
     margin_mode: Option<&str>,
-    leverage: Option<&BigDecimal>,
+    directional_leverage: Option<(&BigDecimal, &BigDecimal)>,
 ) -> AppResult<()> {
+    let (leverage, long_leverage, short_leverage) = match directional_leverage {
+        Some((long_leverage, short_leverage)) => (
+            Some(long_leverage),
+            Some(long_leverage),
+            Some(short_leverage),
+        ),
+        None => (None, None, None),
+    };
     sqlx::query(
-        r#"INSERT INTO margin_user_settings (user_id, product_id, margin_mode, leverage)
-           VALUES (?, ?, ?, ?)
+        r#"INSERT INTO margin_user_settings
+             (user_id, product_id, margin_mode, leverage, long_leverage, short_leverage)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              margin_mode = COALESCE(VALUES(margin_mode), margin_mode),
-             leverage = COALESCE(VALUES(leverage), leverage)"#,
+             leverage = COALESCE(VALUES(leverage), leverage),
+             long_leverage = COALESCE(VALUES(long_leverage), long_leverage),
+             short_leverage = COALESCE(VALUES(short_leverage), short_leverage)"#,
     )
     .bind(user_id)
     .bind(product_id)
     .bind(margin_mode)
     .bind(leverage)
+    .bind(long_leverage)
+    .bind(short_leverage)
     .execute(&mut **tx)
     .await?;
     Ok(())
 }
 
 /// 在调用方事务内回读刚写入的用户设置，用于把落库结果原样返回给客户端而不是回显请求值。
-/// 只查用户设置表，不联产品表，因此两个字段保持数据库里的可空语义，NULL 表示该维度未设置。
+/// 只查用户设置表，不联产品表；方向列为 NULL 时兼容回落旧 `leverage`，三列均空才表示未设置。
+/// 响应组装始终以做多值生成 legacy 字段，即使遇到手工造成的历史漂移也不向旧客户端暴露不同值。
 /// 记录缺失返回 NotFound；在写入后立即调用的场景下不应出现，出现即说明同事务写入未生效。
 /// 不加行锁也不修改任何配置，产品行的锁由调用方在更早的步骤持有。
 pub(crate) async fn load_user_margin_setting(
@@ -132,23 +147,24 @@ pub(crate) async fn load_user_margin_setting(
     user_id: u64,
     product_id: u64,
 ) -> AppResult<MarginUserSettingResponse> {
-    sqlx::query_as::<_, (Option<String>, Option<BigDecimal>)>(
-        "SELECT margin_mode, leverage FROM margin_user_settings WHERE user_id = ? AND product_id = ? LIMIT 1",
+    sqlx::query_as::<_, (Option<String>, Option<BigDecimal>, Option<BigDecimal>)>(
+        r#"SELECT margin_mode,
+                  COALESCE(long_leverage, leverage),
+                  COALESCE(short_leverage, leverage)
+           FROM margin_user_settings
+           WHERE user_id = ? AND product_id = ?
+           LIMIT 1"#,
     )
     .bind(user_id)
     .bind(product_id)
     .fetch_optional(&mut **tx)
     .await?
-    .map(|(margin_mode, leverage)| MarginUserSettingResponse {
-        product_id,
-        margin_mode,
-        leverage,
-    })
+    .map(|row| margin_user_setting_response(product_id, row))
     .ok_or(AppError::NotFound)
 }
 
 /// 直接走连接池只读加载用户设置，供 GET 查询使用，不开事务也不占用任何行锁。
-/// SQL 与事务内版本完全一致，同样只查设置表：不校验产品是否存在或启用，
+/// SQL 与事务内版本完全一致，同样读取双方向列并在缺失时回落 legacy 值：不校验产品是否存在或启用，
 /// 因此产品被停用后用户仍能读回此前保存的模式与倍数，是否可用由开仓路径另行判定。
 /// 用户从未在该产品上设置过时返回 NotFound，调用方据此回落到产品默认配置。
 pub(crate) async fn load_user_margin_setting_from_pool(
@@ -156,19 +172,39 @@ pub(crate) async fn load_user_margin_setting_from_pool(
     user_id: u64,
     product_id: u64,
 ) -> AppResult<MarginUserSettingResponse> {
-    sqlx::query_as::<_, (Option<String>, Option<BigDecimal>)>(
-        "SELECT margin_mode, leverage FROM margin_user_settings WHERE user_id = ? AND product_id = ? LIMIT 1",
+    sqlx::query_as::<_, (Option<String>, Option<BigDecimal>, Option<BigDecimal>)>(
+        r#"SELECT margin_mode,
+                  COALESCE(long_leverage, leverage),
+                  COALESCE(short_leverage, leverage)
+           FROM margin_user_settings
+           WHERE user_id = ? AND product_id = ?
+           LIMIT 1"#,
     )
     .bind(user_id)
     .bind(product_id)
     .fetch_optional(pool)
     .await?
-    .map(|(margin_mode, leverage)| MarginUserSettingResponse {
+    .map(|row| margin_user_setting_response(product_id, row))
+    .ok_or(AppError::NotFound)
+}
+
+/// 把用户设置查询行组装为对外响应，legacy `leverage` 固定复制做多值。
+/// 做多值只在此处克隆一次，做多、做空的可空语义保持不变。
+fn margin_user_setting_response(
+    product_id: u64,
+    (margin_mode, long_leverage, short_leverage): (
+        Option<String>,
+        Option<BigDecimal>,
+        Option<BigDecimal>,
+    ),
+) -> MarginUserSettingResponse {
+    MarginUserSettingResponse {
         product_id,
         margin_mode,
-        leverage,
-    })
-    .ok_or(AppError::NotFound)
+        leverage: long_leverage.clone(),
+        long_leverage,
+        short_leverage,
+    }
 }
 
 /// 按主键读取杠杆产品完整配置，内联交易对与资产表补齐交易对符号和保证金币种符号。

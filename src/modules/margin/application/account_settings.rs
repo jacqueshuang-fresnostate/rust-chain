@@ -8,7 +8,7 @@
 
 use super::support::{
     decimal_matches_string, ensure_supported_user_margin_mode, is_duplicate_key_error,
-    normalized_margin_mode, validate_positive_decimal,
+    margin_transfer_request_fingerprint, normalized_margin_mode, validate_positive_decimal,
 };
 use crate::{
     error::{AppError, AppResult},
@@ -51,7 +51,7 @@ use uuid::Uuid;
 /// 同键同请求重放原划转编号及余额快照且不再动账；同键异参冲突，提交后无外部副作用。
 ///
 /// 账户名做了兼容处理：`swap` 与 `margin` 都归一为杠杆账户，同名互转直接判为参数非法。
-/// 幂等键可以省略，省略时服务端用 UUIDv7 生成一个，这种请求天然不具备重放能力。
+/// 幂等键必须由客户端提供，空白或超界在解析资产和动账前拒绝。
 /// 资产可用 `asset_id` 或 `asset_symbol` 任一方式指定，解析时要求资产处于 active，
 /// 新的现货转杠杆还要求资产开启 `margin_transfer_enabled`；关闭开关只阻止新增转入，
 /// 不影响已有杠杆余额转回现货，也不影响在开关变化前已经成功请求的幂等重放。
@@ -124,6 +124,8 @@ pub(crate) async fn transfer_margin_funds(
             asset.precision_scale, asset.id
         )));
     }
+    let request_fingerprint =
+        margin_transfer_request_fingerprint(user_id, asset.id, &from, &to, &amount);
     // 先占用用户幂等键，再触碰两侧钱包；任一后续步骤失败时同事务整体回滚。
     match insert_margin_transfer(
         &mut tx,
@@ -134,6 +136,7 @@ pub(crate) async fn transfer_margin_funds(
         &to,
         &amount,
         &idempotency_key,
+        &request_fingerprint,
     )
     .await
     {
@@ -490,11 +493,18 @@ async fn replay_margin_transfer_if_present(
     };
     let requested_asset_id =
         resolve_transfer_asset_id_for_replay(pool, request_asset_id, request_asset_symbol).await?;
-    if existing.asset_id != requested_asset_id
-        || existing.from_account != from
-        || existing.to_account != to
-        || existing.amount != *amount
-    {
+    let request_fingerprint =
+        margin_transfer_request_fingerprint(user_id, requested_asset_id, from, to, amount);
+    let matches = existing.request_fingerprint.as_deref().map_or_else(
+        || {
+            existing.asset_id == requested_asset_id
+                && existing.from_account == from
+                && existing.to_account == to
+                && existing.amount == *amount
+        },
+        |existing_fingerprint| existing_fingerprint == request_fingerprint,
+    );
+    if !matches {
         return Err(AppError::Conflict(
             "margin transfer idempotency_key was already used with different parameters".to_owned(),
         ));
@@ -515,27 +525,36 @@ async fn replay_margin_transfer_if_present(
     }))
 }
 
-/// 在事务内锁定启用产品，验证杠杆属于配置档位后保存用户设置并回读结果。
-/// 产品锁定、设置写入和回读同事务提交；失败回滚且不涉及钱包余额或外部事件。
+/// 解析旧单倍数或新双方向载荷，在开事务前拒绝混合、部分、null 或非正数形状。
+/// 事务内锁定启用产品，要求做多与做空倍数分别精确命中同一份配置档位。
+/// 三列在单次 UPSERT 中原子写入，其中兼容 `leverage` 始终取做多值；任一校验失败都不产生设置写入。
 pub(crate) async fn update_user_leverage(
     pool: &Pool<MySql>,
     user_id: u64,
     product_id: u64,
     request: UpdateUserLeverageRequest,
 ) -> AppResult<MarginUserSettingResponse> {
-    validate_positive_decimal(&request.leverage, "leverage")?;
+    let (long_leverage, short_leverage) = validated_requested_leverages(request)?;
     let mut tx = pool.begin().await?;
     let product = lock_active_product_setting_rule(&mut tx, product_id).await?;
-    validate_product_leverage(&request.leverage, &product)?;
-    upsert_user_margin_setting(&mut tx, user_id, product_id, None, Some(&request.leverage)).await?;
+    validate_product_leverage(&long_leverage, &product)?;
+    validate_product_leverage(&short_leverage, &product)?;
+    upsert_user_margin_setting(
+        &mut tx,
+        user_id,
+        product_id,
+        None,
+        Some((&long_leverage, &short_leverage)),
+    )
+    .await?;
     let setting = load_user_margin_setting(&mut tx, user_id, product_id).await?;
     tx.commit().await?;
     Ok(setting)
 }
 
-/// 读取用户在指定杠杆产品上已保存的保证金模式与倍数，直接走连接池不开事务、不加行锁。
+/// 读取用户在指定杠杆产品上已保存的保证金模式与双方向倍数，直接走连接池不开事务、不加行锁。
 /// 用户从未在该产品上设置过时返回 NotFound，调用方应据此回落到产品自身的默认模式和档位。
-/// 两个字段在表里各自可空，因为只改倍数或只改模式的请求不会覆盖对方未提供的值。
+/// 模式和倍数组各自可空，因为只改倍数或只改模式的请求不会覆盖另一维度。
 pub(crate) async fn get_user_margin_setting(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -560,6 +579,33 @@ pub(crate) async fn update_user_margin_mode(
     tx.commit().await?;
     Ok(setting)
 }
+
+/// 把互斥的 HTTP 载荷归一成“做多、做空”两个完整值，并在任何数据库连接或写入前完成形状与正数校验。
+/// 旧格式把单值复制给两个方向；新格式必须同时给出两个非 null 值。
+/// 双层 Option 保留了显式 null 的存在性，所以 null 不会被误当成缺省字段而绕过混合格式检查。
+fn validated_requested_leverages(
+    request: UpdateUserLeverageRequest,
+) -> AppResult<(BigDecimal, BigDecimal)> {
+    match (
+        request.leverage,
+        request.long_leverage,
+        request.short_leverage,
+    ) {
+        (Some(Some(leverage)), None, None) => {
+            validate_positive_decimal(&leverage, "leverage")?;
+            Ok((leverage.clone(), leverage))
+        }
+        (None, Some(Some(long_leverage)), Some(Some(short_leverage))) => {
+            validate_positive_decimal(&long_leverage, "long_leverage")?;
+            validate_positive_decimal(&short_leverage, "short_leverage")?;
+            Ok((long_leverage, short_leverage))
+        }
+        _ => Err(AppError::Validation(
+            "provide either leverage or both long_leverage and short_leverage".to_owned(),
+        )),
+    }
+}
+
 /// 要求用户设置的默认杠杆精确命中产品的某个配置档位，与开仓时的档位校验口径完全一致。
 /// 逐档把存储字符串解析回十进制精确比较，解析失败的档位跳过，一档不中即返回参数错误。
 /// 这里用的是设置路径锁定的产品规则快照，因此并发改配不会让校验依据在中途变化。
@@ -618,23 +664,17 @@ fn normalized_margin_account(value: &str) -> AppResult<String> {
     }
 }
 
-/// 归一化划转幂等键：完全不传时由服务端生成 UUIDv7，传了则必须非空且不超过一百二十八个字符。
-/// 长度按 Unicode 字符数统计，与开仓幂等键按字节数限制两百五十五的口径不同，两者上限互不通用。
-/// 注意「不传」和「传空串」被区别对待：前者放行并自动补键，后者判为参数非法，
-/// 这样能挡住客户端把未初始化的空字符串当键提交、导致同一个键被多笔不同划转共用的情况。
-fn normalize_transfer_idempotency_key(value: Option<String>) -> AppResult<String> {
-    let Some(value) = value else {
-        return Ok(Uuid::now_v7().to_string());
-    };
+/// 归一化客户端划转幂等键：裁剪后必须非空且不超过 128 字节。
+fn normalize_transfer_idempotency_key(value: String) -> AppResult<String> {
     let value = value.trim();
     if value.is_empty() {
         return Err(AppError::Validation(
             "margin transfer idempotency_key must not be empty".to_owned(),
         ));
     }
-    if value.chars().count() > 128 {
+    if value.len() > 128 {
         return Err(AppError::Validation(
-            "margin transfer idempotency_key must not exceed 128 characters".to_owned(),
+            "margin transfer idempotency_key must not exceed 128 bytes".to_owned(),
         ));
     }
     Ok(value.to_owned())

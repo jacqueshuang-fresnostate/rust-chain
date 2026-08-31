@@ -6,7 +6,7 @@
 
 use super::*;
 
-/// 校验后台人工充值必须指定资产、正数金额和非空原因，避免事务启动后才发现请求无效。
+/// 校验后台人工充值必须指定资产、正数金额、非空原因和有界幂等键，避免事务启动后才发现请求无效。
 /// 不在此处查询用户/资产或修改钱包；余额、流水与管理员审计由应用事务原子写入。
 pub(crate) fn validate_admin_user_recharge(request: &AdminUserRechargeRequest) -> AppResult<()> {
     if request.asset_id == 0 {
@@ -16,7 +16,48 @@ pub(crate) fn validate_admin_user_recharge(request: &AdminUserRechargeRequest) -
         return Err(AppError::Validation("amount must be positive".to_owned()));
     }
     required_admin_audit_reason(request.reason.clone())?;
+    normalize_admin_recharge_idempotency_key(&request.idempotency_key)?;
     Ok(())
+}
+
+/// 将人工充值幂等键裁剪为持久化值；空白或超过 128 字节在任何资金事务前拒绝。
+pub(crate) fn normalize_admin_recharge_idempotency_key(value: &str) -> AppResult<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(AppError::Validation(
+            "admin recharge idempotency_key is required".to_owned(),
+        ));
+    }
+    if value.len() > 128 {
+        return Err(AppError::Validation(
+            "admin recharge idempotency_key must not exceed 128 bytes".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+/// 为人工充值生成稳定 SHA-256 请求指纹；主体、目标、资产、规范金额和裁剪后原因全部入参。
+pub(crate) fn admin_recharge_request_fingerprint(
+    admin_id: u64,
+    user_id: u64,
+    asset_id: u64,
+    amount: &BigDecimal,
+    reason: &str,
+) -> String {
+    let fields = [
+        "admin_wallet_recharge_v1".to_owned(),
+        admin_id.to_string(),
+        user_id.to_string(),
+        asset_id.to_string(),
+        amount.normalized().to_plain_string(),
+        reason.trim().to_owned(),
+    ];
+    let mut digest = sha2::Sha256::default();
+    for field in fields {
+        sha2::Digest::update(&mut digest, (field.len() as u64).to_be_bytes());
+        sha2::Digest::update(&mut digest, field.as_bytes());
+    }
+    hex::encode(sha2::Digest::finalize(digest))
 }
 
 /// 校验后台创建用户至少提供邮箱或手机号，并复核初始状态、语言和密码请求字段。

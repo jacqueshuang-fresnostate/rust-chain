@@ -9,26 +9,12 @@ use crate::{
 };
 use axum::async_trait;
 use bigdecimal::BigDecimal;
+use serde_json::Value;
 
 /// 同步风格的现货订单持久化端口，让领域与用例代码不直接依赖 SQLx 或任何具体存储。
-/// 四个方法都取 `&mut self`，实现方可以据此持有一个进行中的事务或连接。
+/// 两个方法都取 `&mut self`，实现方可以据此持有一个进行中的事务或连接。
+/// 新建订单必须经过异步 application/infrastructure 的强幂等事务路径，本端口故意不暴露建单方法。
 pub trait SpotRepository {
-    /// 按交易对标识加载下单校验所需的精度、最小下单额和启停状态。
-    /// 交易对不存在或不可用时应返回错误而不是给出一份放行一切的默认规则。
-    fn load_pair_rule(
-        &mut self,
-        pair_id: &str,
-    ) -> Result<crate::modules::spot::TradingPairRule, crate::modules::spot::SpotServiceError>;
-
-    /// 落库一个已通过领域校验的新订单并回填主键，返回已持久化的订单实体。
-    /// `idempotency_key` 非空时实现方须保证同键重复插入不会产生第二笔订单，
-    /// 冲突时应回读既有订单或返回错误，绝不能静默新建导致重复冻结资金。
-    fn insert_order(
-        &mut self,
-        new_order: crate::modules::spot::NewOrder,
-        idempotency_key: Option<&str>,
-    ) -> Result<crate::modules::spot::SpotOrder, crate::modules::spot::SpotServiceError>;
-
     /// 按订单主键读回完整订单实体，供撤单和成交推进前重新确认当前状态与已成交量。
     /// 该端口不带用户维度约束，越权检查由调用方在拿到实体后自行比对归属。
     /// 订单不存在时返回错误，不得用零值实体代替，否则会让上层误判为可操作订单。
@@ -94,6 +80,12 @@ pub(crate) struct SpotIdempotentOrderRecord {
     pub(crate) request_reference_price: Option<BigDecimal>,
     /// 首次请求携带的委托价原值，与订单落库价格分开保存以覆盖服务端做过归一化的情形。
     pub(crate) request_price: Option<BigDecimal>,
+    /// 新客户请求的规范 SHA-256 指纹；历史订单保留空值并回落逐字段核对。
+    pub(crate) request_fingerprint: Option<String>,
+    /// 首次 INSERT 的服务端尝试标识；用于在 `CLIENT_FOUND_ROWS` 下可靠区分胜者与重放者。
+    pub(crate) idempotency_attempt_token: Option<String>,
+    /// 首次建单返回的不可变 JSON 快照，避免重放泄漏之后的订单状态。
+    pub(crate) idempotency_response_json: Option<Value>,
 }
 
 /// 异步撤单持久化端口，要求可克隆且跨线程安全，便于在 axum 处理器之间共享同一实现。

@@ -173,3 +173,58 @@ for order_id in order_ids {
 - Unit tests for buy/sell trigger predicates requiring both trigger and limit prices.
 - Adapter tests confirming PC `STOP_LIMIT` maps to backend `stop_limit` with `trigger_price`.
 - Existing limit and market order tests must continue to pass.
+
+## Scenario: Client-scoped Order Idempotency
+
+### 1. Scope / Trigger
+
+- Trigger: creating any market, limit, or stop-limit spot order, changing the create-order DTO, or changing retry behavior in PC/Mobile clients.
+- Applies before wallet reservation, order insert, matching, or trigger creation.
+
+### 2. Signatures
+
+```text
+POST /api/v1/spot/orders
+required body field: idempotency_key: nonblank bounded string
+scope: (user_id, idempotency_key)
+fingerprint: SHA-256(canonical complete order intent)
+```
+
+### 3. Contracts
+
+- The client creates one key for one logical confirmation and reuses it after timeout, dropped response, or explicit retry.
+- The server never generates a fallback key for a financial command.
+- Canonical intent includes pair, side, type, normalized quantity, normalized optional price, normalized optional stop price, and every field that changes reservation or execution behavior.
+- Same user/key/fingerprint returns the first stored order response and causes no second reservation, order, trade, or ledger entry.
+- Same user/key with a different fingerprint returns HTTP 409. Different users may reuse the same key string.
+- Database uniqueness is user-scoped. Historical NULL keys remain read-compatible and are not rewritten as invented client identities; all new API requests require a key.
+- Order insert, request fingerprint, wallet reservation, and associated financial rows commit in one transaction.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Missing, blank, or overlong key | 4xx before any financial mutation |
+| Same user/key and identical canonical request | Replay first response |
+| Same user/key and different request | 409 Conflict |
+| Different users use the same key text | Independent orders |
+| Twenty concurrent identical requests | One order and one reservation effect |
+
+### 5. Tests Required
+
+- MySQL route tests cover missing key, exact replay, changed parameter conflict, different-user reuse, and twenty concurrent requests.
+- Tests assert the final wallet values and counts of orders, reservations/ledger entries, and trades where matching is enabled.
+- Client contract tests prove retry reuses the frozen key and editing the order intent creates a new logical confirmation.
+
+### 6. Wrong vs Correct
+
+```rust
+// Wrong: absence silently disables idempotency.
+let key = request.idempotency_key.filter(|value| !value.trim().is_empty());
+```
+
+```rust
+// Correct: normalize, require, fingerprint, then let the database receipt arbitrate concurrency.
+let key = require_idempotency_key(&request.idempotency_key)?;
+let fingerprint = fingerprint_spot_order(&canonical_intent)?;
+```

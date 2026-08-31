@@ -187,3 +187,87 @@ if margin_limit_order_is_triggered(direction, limit_price, accepted_ticker)? {
 ```
 
 Settlement follows the recorded funding scope, and unsupported risk semantics fail explicitly.
+
+## Scenario: Margin Wallet Transfer Idempotency
+
+### 1. Scope / Trigger
+
+- Trigger: transferring funds between the shared spot wallet and a margin wallet.
+- Applies before wallet locks, risk validation, balance changes, and ledger insertion.
+
+### 2. Signatures
+
+```text
+required request field: idempotency_key
+scope: (user_id, idempotency_key)
+fingerprint: SHA-256(asset_id + direction + normalized amount + normalized margin mode/account scope)
+```
+
+### 3. Contracts
+
+- Missing, blank, or overlong keys are rejected before opening a financial transaction; the backend never replaces them with UUIDs.
+- The transfer request row is the durable command receipt. It stores the canonical request fingerprint and the first committed result snapshots.
+- Same user/key/fingerprint replays the first result without locking or moving funds again.
+- Same user/key with different asset, direction, amount, mode, or account scope returns 409.
+- Different users may reuse the same key string.
+- Receipt, both wallet mutations, paired ledger entries, post-transfer risk validation, and response snapshots commit atomically.
+- The client freezes one key with the confirmed intent and reuses it after an uncertain response; editing any transfer parameter starts a new intent.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Missing key | 4xx, no receipt or wallet mutation |
+| Same key and identical intent | Exact response replay |
+| Same key and changed amount/direction/scope | 409 Conflict |
+| Twenty concurrent same-key requests | One receipt and one paired transfer |
+| Commit succeeds but response is lost | Retry reconstructs first committed result |
+
+### 5. Tests Required
+
+- MySQL tests cover missing key, replay, conflict, cross-user reuse, and at least twenty concurrent identical requests.
+- Assert one transfer receipt, exactly one debit/credit pair, and unchanged final risk invariants.
+- Client contract tests assert an uncertain retry reuses the same key.
+
+## Scenario: Directional User Leverage Settings
+
+### 1. Scope / Trigger
+
+- Trigger: migrating, reading, or updating one user's default leverage for a margin product.
+- The setting applies only to later order drafts/opens. It never rewrites leverage, notional, collateral, or liquidation state on an existing position.
+
+### 2. Signatures
+
+```text
+migration columns: long_leverage DECIMAL(18,8) NULL, short_leverage DECIMAL(18,8) NULL
+legacy PATCH: { "leverage": DECIMAL }
+directional PATCH: { "long_leverage": DECIMAL, "short_leverage": DECIMAL }
+GET/PATCH response: product_id, margin_mode, leverage, long_leverage, short_leverage
+```
+
+### 3. Contracts
+
+- The additive migration backfills both directional columns from every non-null legacy `leverage` value and adds independent positive-or-null checks. Existing migration files remain immutable.
+- PATCH accepts exactly one payload shape. Legacy input sets `leverage`, `long_leverage`, and `short_leverage` to the same value. Directional input requires both values and stores legacy `leverage = long_leverage`.
+- Mixed legacy/directional fields, either missing directional peer, an empty object, and explicit null values return `VALIDATION_ERROR` before a settings transaction or write begins.
+- Both normalized values must be positive and independently match an exact decimal entry in the locked active product's single `leverage_levels` list. No rounding, nearest-level selection, or direction-specific synthetic level list is permitted.
+- Product locking, validation against that product version, the one-row three-column upsert, readback, and commit share one transaction. If either direction is unsupported, none of the three leverage columns changes.
+- A mode-only update preserves all three leverage columns. A leverage-only update preserves `margin_mode`.
+- GET and both PATCH responses expose all three leverage fields. The compatibility `leverage` response is always derived from the stored/fallback long value so old clients remain consistent.
+- Rows and lookups remain scoped by `(user_id, product_id)`; one user's request cannot create, read, or overwrite another user's setting.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Legacy value exactly matches a product level | All three leverage columns become that value |
+| Both directional values match product levels | Long/short persist independently; legacy equals long |
+| Mixed, partial, empty, or null-bearing shape | `VALIDATION_ERROR`, no setting write |
+| Either value is non-positive or absent from levels | `VALIDATION_ERROR`, previous row remains unchanged |
+| Mode-only update after directional leverage | Mode changes; all leverage values remain unchanged |
+
+### 5. Tests Required
+
+- Migration tests execute the exact `0120` SQL against a legacy fixture and assert nullable `DECIMAL(18,8)` metadata, exact backfill, and both positive checks.
+- Route round-trip tests cover legacy and directional PATCH, GET readback, legacy-long synchronization, invalid-shape pre-write rejection, one-invalid-side atomic rollback, mode preservation, and user isolation.
+- When MySQL is unavailable, integration branches may skip explicitly, but the migration contract and route target must still compile.

@@ -193,22 +193,6 @@ fn publish_spot_fill_private_event(
 }
 
 #[derive(Debug, Clone)]
-pub struct CreateSpotOrderCommand {
-    pub user_id: String,
-    pub pair_id: String,
-    pub base_asset_id: String,
-    pub quote_asset_id: String,
-    pub side: OrderSide,
-    pub order_type: OrderType,
-    pub price: Option<BigDecimal>,
-    pub trigger_price: Option<BigDecimal>,
-    pub quantity: BigDecimal,
-    pub reference_price: Option<BigDecimal>,
-    pub idempotency_key: Option<String>,
-    pub wallet_ledger: crate::modules::wallet::LedgerMetadata,
-}
-
-#[derive(Debug, Clone)]
 pub struct CancelSpotOrderCommand {
     pub order_id: String,
     pub base_asset_id: String,
@@ -250,83 +234,6 @@ impl<S, W> SpotService<S, W> {
 }
 
 impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
-    /// 依据交易对规则构造订单并同步冻结对应钱包保留额，随后交给仓储持久化订单。
-    /// 调用方必须提供与订单类型匹配的价格/参考价、有效数量和稳定幂等键；买单冻结报价资产，卖单冻结基础资产。
-    /// 钱包冻结与订单插入必须由具体仓储组合在同一外层事务或等价原子边界内执行，失败不得留下无订单冻结。
-    /// 本服务只返回仓储的幂等结果，不发布成交或订单事件。
-    pub fn create_order(
-        &mut self,
-        command: CreateSpotOrderCommand,
-    ) -> Result<crate::modules::spot::SpotOrder, crate::modules::spot::SpotServiceError> {
-        let pair = self.spot_repository.load_pair_rule(&command.pair_id)?;
-
-        let new_order = match command.order_type {
-            OrderType::Limit => crate::modules::spot::create_limit_order(
-                command.user_id.clone(),
-                command.side,
-                command.price.clone().ok_or(
-                    crate::modules::spot::SpotServiceError::MissingPriceForWalletReservation,
-                )?,
-                command.quantity.clone(),
-                &pair,
-            )?,
-            OrderType::Market => crate::modules::spot::create_market_order(
-                command.user_id.clone(),
-                command.side,
-                command.quantity.clone(),
-                command.reference_price.clone().ok_or(
-                    crate::modules::spot::SpotServiceError::MissingReferencePriceForMarketOrder,
-                )?,
-                &pair,
-            )?,
-            OrderType::StopLimit => crate::modules::spot::create_stop_limit_order(
-                command.user_id.clone(),
-                command.side,
-                command.trigger_price.clone().ok_or(
-                    crate::modules::spot::SpotServiceError::MissingTriggerPriceForStopLimitOrder,
-                )?,
-                command.price.clone().ok_or(
-                    crate::modules::spot::SpotServiceError::MissingPriceForWalletReservation,
-                )?,
-                command.quantity.clone(),
-                &pair,
-            )?,
-        };
-
-        let reservation_price =
-            command
-                .price
-                .or(command.reference_price)
-                .ok_or(match command.order_type {
-                    OrderType::Limit => {
-                        crate::modules::spot::SpotServiceError::MissingPriceForWalletReservation
-                    }
-                    OrderType::Market => {
-                        crate::modules::spot::SpotServiceError::MissingReferencePriceForMarketOrder
-                    }
-                    OrderType::StopLimit => {
-                        crate::modules::spot::SpotServiceError::MissingPriceForWalletReservation
-                    }
-                })?;
-        let reserve_amount =
-            spot_reservation_amount(command.side, &reservation_price, &command.quantity);
-        let reserve_asset_id = spot_reserve_asset_id(
-            command.side,
-            &command.base_asset_id,
-            &command.quote_asset_id,
-        );
-        self.wallet_service
-            .freeze(crate::modules::wallet::FreezeBalanceCommand {
-                user_id: command.user_id,
-                asset_id: reserve_asset_id.to_owned(),
-                amount: reserve_amount,
-                ledger: command.wallet_ledger,
-            })?;
-
-        self.spot_repository
-            .insert_order(new_order, command.idempotency_key.as_deref())
-    }
-
     /// 处理现货订单取消状态迁移的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
     /// 仓储错误或状态冲突直接返回；调用方决定事务提交，失败后不得继续资金写入或事件发布。
     pub fn cancel_order(
@@ -416,10 +323,67 @@ pub(crate) struct SpotOrderReservation {
     pub(crate) amount: BigDecimal,
 }
 
+/// 建单事务需要持久化的客户端请求身份；把键、指纹和原始价格快照作为一个整体传给仓储。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SpotOrderRequestIdentity<'a> {
+    pub(crate) idempotency_key: Option<&'a str>,
+    pub(crate) request_fingerprint: Option<&'a str>,
+    pub(crate) request_price: Option<&'a BigDecimal>,
+    pub(crate) request_reference_price: Option<&'a BigDecimal>,
+}
+
 /// 按现货合同规范化幂等键，集中复用输入边界、状态机或金额精度规则。
-/// 裁剪并校验幂等键长度；空值或超长键不得占用唯一约束或触发资金写入。
-pub(crate) fn normalize_idempotency_key(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
+/// 裁剪后必须非空且不超过 128 字节；非法键在查行情、风控或冻结资金前失败。
+pub(crate) fn normalize_idempotency_key(value: &str) -> AppResult<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(AppError::Validation(
+            "spot order idempotency_key is required".to_owned(),
+        ));
+    }
+    if value.len() > 128 {
+        return Err(AppError::Validation(
+            "spot order idempotency_key must not exceed 128 bytes".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+/// 现货建单指纹覆盖认证用户与客户送入的全部业务字段，Decimal 先去无意义尾零。
+pub(crate) fn spot_order_request_fingerprint(
+    user_id: u64,
+    request: &crate::modules::spot::presentation::CreateSpotOrderRequest,
+) -> String {
+    let fields = [
+        "spot_order_create_v1".to_owned(),
+        user_id.to_string(),
+        request.pair_id.trim().to_ascii_uppercase(),
+        match request.side {
+            OrderSide::Buy => "buy".to_owned(),
+            OrderSide::Sell => "sell".to_owned(),
+        },
+        match request.order_type {
+            OrderType::Limit => "limit".to_owned(),
+            OrderType::Market => "market".to_owned(),
+            OrderType::StopLimit => "stop_limit".to_owned(),
+        },
+        canonical_optional_spot_decimal(request.price.as_ref()),
+        canonical_optional_spot_decimal(request.trigger_price.as_ref()),
+        request.quantity.normalized().to_plain_string(),
+        canonical_optional_spot_decimal(request.reference_price.as_ref()),
+    ];
+    let mut digest = sha2::Sha256::default();
+    for field in fields {
+        sha2::Digest::update(&mut digest, (field.len() as u64).to_be_bytes());
+        sha2::Digest::update(&mut digest, field.as_bytes());
+    }
+    hex::encode(sha2::Digest::finalize(digest))
+}
+
+fn canonical_optional_spot_decimal(value: Option<&BigDecimal>) -> String {
+    value
+        .map(|value| value.normalized().to_plain_string())
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 /// 处理现货订单幂等请求的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
@@ -480,6 +444,35 @@ pub(crate) fn ensure_spot_order_idempotency_matches(
     }
 }
 
+/// 新订单以指纹为唯一比对依据；存量空指纹订单才使用旧字段快照兼容重放。
+pub(crate) fn ensure_spot_order_request_fingerprint_matches(
+    existing: &SpotIdempotentOrderRecord,
+    expected_fingerprint: &str,
+    legacy_expected: &SpotOrderIdempotencyCheck,
+) -> AppResult<()> {
+    if let Some(existing_fingerprint) = existing.request_fingerprint.as_deref() {
+        if existing_fingerprint == expected_fingerprint {
+            return Ok(());
+        }
+        return Err(AppError::Conflict(
+            "spot order idempotency key was used with a different request".to_owned(),
+        ));
+    }
+    ensure_spot_order_idempotency_matches(existing, legacy_expected)
+}
+
+/// 优先解析首次建单响应；历史无快照订单继续以行字段构建兼容结果。
+pub(crate) fn spot_order_idempotency_response(
+    existing: SpotIdempotentOrderRecord,
+) -> AppResult<SpotOrderResponse> {
+    if let Some(snapshot) = existing.idempotency_response_json.clone() {
+        return serde_json::from_value(snapshot).map_err(|error| {
+            AppError::Internal(format!("decode spot order idempotency snapshot: {error}"))
+        });
+    }
+    Ok(existing.into())
+}
+
 /// 按现货合同校验现货订单幂等请求，集中复用输入边界、状态机或金额精度规则。
 /// 插入竞态后的既有订单必须与新建请求和预留额一致，否则返回冲突。
 pub(crate) fn ensure_spot_order_idempotency_matches_insert(
@@ -488,6 +481,7 @@ pub(crate) fn ensure_spot_order_idempotency_matches_insert(
     request_price: Option<&BigDecimal>,
     reference_price: Option<&BigDecimal>,
     reservation: &SpotOrderReservation,
+    request_fingerprint: Option<&str>,
 ) -> AppResult<()> {
     let expected = spot_order_idempotency_check_for_insert(
         new_order,
@@ -495,7 +489,11 @@ pub(crate) fn ensure_spot_order_idempotency_matches_insert(
         reference_price,
         &reservation.amount,
     );
-    ensure_spot_order_idempotency_matches(existing, &expected)
+    if let Some(request_fingerprint) = request_fingerprint {
+        ensure_spot_order_request_fingerprint_matches(existing, request_fingerprint, &expected)
+    } else {
+        ensure_spot_order_idempotency_matches(existing, &expected)
+    }
 }
 
 /// 处理现货成交订单锁序的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
@@ -899,3 +897,7 @@ fn request_price_matches(
         },
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_spot_service_tests.rs"]
+mod tests;

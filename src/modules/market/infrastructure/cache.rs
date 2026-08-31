@@ -8,7 +8,9 @@
 //! 所有 key 都不设 TTL，行情靠持续覆盖保持新鲜，因此消费端只能依据载荷里的 `observed_at` 判断是否陈旧。
 //! ticker 与 K 线的覆盖走 Lua 脚本做原子防倒退：ticker 比较 `observed_at`，K 线先比 `open_time` 再比 `observed_at`，
 //! 后者的时序另存在伴随 key `market:kline-sequence:<SYMBOL>:<INTERVAL>`，以免改动对外 JSON 合同。
-//! 被判定为陈旧的写入返回 `RejectedStale` 而非报错，调用方必须据此中止广播、撮合和检查点推进等派生副作用。
+//! ticker 在时间相同且序列化载荷逐字节相同时返回 `ReplayedIdentical`，
+//! 仅用于修复先写 Redis 后写 MySQL 失败的归档；同时间不同载荷和更旧载荷仍返回 `RejectedStale`。
+//! 被判定为陈旧的写入不是错误，调用方必须据此中止广播、撮合和检查点推进等派生副作用。
 //! depth 没有防倒退保护，采用直接覆盖，因为盘口本身就是可丢弃的瞬时数据。
 
 use crate::{
@@ -125,7 +127,7 @@ impl MarketTickerCacheEntry {
     }
 
     /// 返回 provider 侧的观察时间，它既序列化进 JSON 供消费端判断陈旧，也作为原子写入脚本的比较基准。
-    /// 脚本要求新值严格大于缓存中的旧值，时间相等会被判为重复推送而拒写。
+    /// 时间相等时只有完整 JSON 载荷逐字节相同才会被标记为可修复回放，任何字段差异都拒写。
     pub fn observed_at(&self) -> DateTime<Utc> {
         self.observed_at
     }
@@ -386,10 +388,12 @@ pub fn market_kline_redis_key(symbol: &str, interval: &str) -> String {
     format!("market:kline:{}:{}", sanitize_symbol(symbol), interval)
 }
 
-/// Redis 权威快照写入结果；`RejectedStale` 表示缓存保持了时间更新的值，调用方必须停止派生副作用。
+/// Redis 权威快照写入结果；`ReplayedIdentical` 表示 ticker 时间与载荷完全相同，可继续修复归档。
+/// `RejectedStale` 表示缓存保持了更新值或同时间载荷不同，调用方必须停止派生副作用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarketCacheWriteOutcome {
     Accepted,
+    ReplayedIdentical,
     RejectedStale,
 }
 
@@ -398,6 +402,12 @@ impl MarketCacheWriteOutcome {
     /// 返回 false 表示缓存里已有时间更新的值，属于并发下的正常结果而非错误，调用方不应重试或告警。
     pub fn is_accepted(self) -> bool {
         matches!(self, Self::Accepted)
+    }
+
+    /// 返回 ticker 是否命中同时间、同载荷回放；该分支不重写 Redis，只可用来补齐尚未成功的持久化。
+    /// K 线脚本不返回此状态，因此它不会改变既有的 K 线严格递增契约。
+    pub fn is_identical_replay(self) -> bool {
+        matches!(self, Self::ReplayedIdentical)
     }
 }
 
@@ -410,7 +420,14 @@ if current then
     if not ok or type(decoded.observed_at) ~= 'number' then
         return redis.error_reply('invalid cached ticker observed_at')
     end
-    if decoded.observed_at >= tonumber(ARGV[1]) then
+    local incoming_observed_at = tonumber(ARGV[1])
+    if decoded.observed_at > incoming_observed_at then
+        return 0
+    end
+    if decoded.observed_at == incoming_observed_at then
+        if current == ARGV[2] then
+            return 2
+        end
         return 0
     end
 end
@@ -466,7 +483,8 @@ impl RedisMarketCache {
         Self { manager }
     }
 
-    /// 以 Redis Lua 原子比较 `observed_at` 后写入 ticker；相等或较旧实例返回 `RejectedStale`，不会重复派生副作用。
+    /// 以 Redis Lua 原子比较 `observed_at` 后写入 ticker；同时间且载荷逐字节相同返回 `ReplayedIdentical`，
+    /// 使 synthetic 路径能在不重写缓存的情况下补齐 MySQL 归档；同时间不同载荷或较旧实例返回 `RejectedStale`。
     /// 脚本在单条命令内完成读旧值、解析 JSON、比较时间、覆盖四步，消除了先查后写之间的竞态窗口。
     /// 缓存中已有载荷若不是合法 JSON 或缺少数值型 `observed_at`，脚本会直接报错而不是当作空槽覆盖，
     /// 这样被人工污染或格式不兼容的键会明确暴露出来，而不是被静默改写。
@@ -562,13 +580,13 @@ fn market_kline_sequence_redis_key(symbol: &str, interval: &str) -> String {
     )
 }
 
-/// 把 Lua 脚本返回的整数翻译成写入结果：仅 1 视为接受，其余一律按陈旧拒写处理。
-/// 采用白名单式判定而非「非 0 即接受」，可以避免脚本将来返回新状态码时被误判成写入成功。
+/// 把 Lua 脚本返回的整数翻译成写入结果：1 表示首次接受，2 表示同时间同载荷回放，其余按陈旧拒写。
+/// 采用白名单式判定可避免脚本将来返回新状态码时被误判成可继续执行副作用。
 fn cache_write_outcome(accepted: i64) -> MarketCacheWriteOutcome {
-    if accepted == 1 {
-        MarketCacheWriteOutcome::Accepted
-    } else {
-        MarketCacheWriteOutcome::RejectedStale
+    match accepted {
+        1 => MarketCacheWriteOutcome::Accepted,
+        2 => MarketCacheWriteOutcome::ReplayedIdentical,
+        _ => MarketCacheWriteOutcome::RejectedStale,
     }
 }
 

@@ -3,7 +3,7 @@
 //! 写用例统一在事务内完成锁定、写入、回读与审计。有三处副作用值得单独留意：
 //! 创建用户会投递用户创建 outbox 事件，事件只有在事务提交后才可能被投递；
 //! 封禁用户在事务内吊销刷新令牌、并在提交后撤销在线访问会话，后者不可回滚；
-//! 人工充值会真实增加用户可用余额且没有请求幂等键，超时重试存在重复入账风险。
+//! 人工充值会真实增加用户可用余额，因此以管理员级客户键和请求指纹固化首次收据。
 //! KYC 相关用例只做跨上下文转发，审核规则与状态机由 kyc 上下文负责，后台仅补写自己的审计。
 
 use super::*;
@@ -149,8 +149,8 @@ pub(crate) async fn update_admin_user_status(
 
 /// 执行后台人工充值，把指定资产计入用户可用余额并返回最新钱包快照。
 /// 调用方须已完成管理员鉴权、提供审计原因，且金额、用户和启用资产必须有效。
-/// 事务内完成余额加账、同额钱包流水、账户锁定回读和后台审计，账后余额必须与流水一致。
-/// 每次调用生成新的充值编号且没有请求幂等键；提交结果不确定时重试可能再次入账。
+/// 事务内完成收据占位、余额加账、同额钱包流水、账户锁定回读、响应快照和后台审计。
+/// 同管理员同键同指纹返回第一次快照，异指纹返回冲突；并发首请求由数据库唯一键裁决。
 /// 任一数据库步骤失败都会回滚，不允许出现有余额变化而无流水或审计的状态。
 pub(crate) async fn recharge_admin_user_wallet(
     pool: Option<Pool<MySql>>,
@@ -160,13 +160,57 @@ pub(crate) async fn recharge_admin_user_wallet(
 ) -> AppResult<AdminUserRechargeResponse> {
     validate_admin_user_recharge(&request)?;
     let reason = required_admin_audit_reason(request.reason)?;
+    let idempotency_key = normalize_admin_recharge_idempotency_key(&request.idempotency_key)?;
+    let request_fingerprint = admin_recharge_request_fingerprint(
+        admin_id,
+        user_id,
+        request.asset_id,
+        &request.amount,
+        &reason,
+    );
     let pool = admin_mysql_pool(pool)?;
+    if let Some(response) =
+        replay_admin_wallet_recharge(&pool, admin_id, &idempotency_key, &request_fingerprint)
+            .await?
+    {
+        return Ok(response);
+    }
     let recharge_id = Uuid::now_v7().to_string();
 
-    // 后台人工充值必须把余额更新、钱包流水和审计写入放在同一事务中。
+    // 先占收据唯一键再动账，充值、流水、审计和首次响应快照必须同事务提交。
     let mut tx = pool.begin().await?;
     ensure_admin_user_exists_in_tx(&mut tx, user_id).await?;
     let asset = load_active_asset_symbol_in_tx(&mut tx, request.asset_id).await?;
+    match insert_admin_wallet_recharge_receipt_in_tx(
+        &mut tx,
+        &recharge_id,
+        admin_id,
+        user_id,
+        request.asset_id,
+        &request.amount,
+        &reason,
+        &idempotency_key,
+        &request_fingerprint,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(error) if is_admin_wallet_recharge_duplicate_key(&error) => {
+            tx.rollback().await?;
+            if let Some(response) = replay_admin_wallet_recharge(
+                &pool,
+                admin_id,
+                &idempotency_key,
+                &request_fingerprint,
+            )
+            .await?
+            {
+                return Ok(response);
+            }
+            return Err(AppError::Database(error));
+        }
+        Err(error) => return Err(AppError::Database(error)),
+    }
     credit_admin_wallet_available_in_tx(
         &mut tx,
         user_id,
@@ -201,8 +245,32 @@ pub(crate) async fn recharge_admin_user_wallet(
         },
     )
     .await?;
+    store_admin_wallet_recharge_response_in_tx(&mut tx, admin_id, &idempotency_key, &response)
+        .await?;
     tx.commit().await?;
     Ok(response)
+}
+
+/// 命中收据时只核对稳定指纹并解析首次响应，不重新读钱包或追加流水/审计。
+async fn replay_admin_wallet_recharge(
+    pool: &Pool<MySql>,
+    admin_id: u64,
+    idempotency_key: &str,
+    request_fingerprint: &str,
+) -> AppResult<Option<AdminUserRechargeResponse>> {
+    let Some(receipt) = load_admin_wallet_recharge_receipt(pool, admin_id, idempotency_key).await?
+    else {
+        return Ok(None);
+    };
+    if receipt.request_fingerprint != request_fingerprint {
+        return Err(AppError::Conflict(
+            "admin recharge idempotency_key was already used with different parameters".to_owned(),
+        ));
+    }
+    let response = serde_json::from_value(receipt.response_snapshot_json.0).map_err(|error| {
+        AppError::Internal(format!("decode admin recharge receipt snapshot: {error}"))
+    })?;
+    Ok(Some(response))
 }
 
 /// 通过 KYC 上下文读取全局审核配置及国家证件规则。

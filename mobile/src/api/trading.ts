@@ -1,10 +1,5 @@
 import axios from 'axios'
 import { client, requestUrl } from './client'
-import {
-  createReferenceRequestKey,
-  referenceRequestRegistry,
-  type ReferenceRequestOptions,
-} from './requestCache'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarginProductMarginLimits } from '@/core/tradeForm'
 import { parseMarginOrderTypes } from '@/core/marginOrder'
@@ -13,7 +8,16 @@ import {
   parseMarginRiskNumber,
   type MarginCrossAccountRisk,
 } from '@/core/marginRiskMetrics'
+import { mapMarginUserLeverageSetting } from '@/core/marginLeverage'
 import type { MarginOrderType, MarginProduct, WalletAccount } from '@/core/types'
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
+
+const spotOrderIdempotencyKeys = new RetryStableIdempotencyKeys('mobile-spot')
 
 export type {
   MarginCrossAccountPriceAssumption,
@@ -41,7 +45,14 @@ export interface MarginOrderInput {
 
 export interface MarginUserSetting {
   leverage: number | null
+  longLeverage: number | null
+  shortLeverage: number | null
   marginMode: 'cross' | 'isolated' | null
+}
+
+export interface MarginDirectionalLeverageInput {
+  longLeverage: number
+  shortLeverage: number
 }
 
 interface BackendMarginProduct {
@@ -161,19 +172,24 @@ export interface MarginCloseInput {
 }
 
 export async function placeSpotOrder(input: SpotOrderInput): Promise<void> {
-  const payload: Record<string, string> = {
+  const businessIntent: Record<string, string> = {
     pair_id: normalizeSymbol(input.symbol).replace(/(USDT|USDC|BTC|ETH|USD)$/, '-$1'),
     side: input.side,
     order_type: input.type,
     quantity: String(input.quantity),
-    idempotency_key: createIdempotencyKey('mobile-spot'),
   }
   if (input.type === 'limit') {
-    payload.price = String(input.price || 0)
+    businessIntent.price = String(input.price || 0)
   } else {
-    payload.reference_price = String(input.price || 0)
+    businessIntent.reference_price = String(input.price || 0)
   }
-  await client.post(requestUrl('/spot/orders'), payload)
+  const intent = canonicalRequestIntent(businessIntent)
+  const idempotencyKey = spotOrderIdempotencyKeys.acquire(intent)
+  await client.post(requestUrl('/spot/orders'), {
+    ...businessIntent,
+    idempotency_key: idempotencyKey,
+  })
+  spotOrderIdempotencyKeys.complete(intent, idempotencyKey)
 }
 
 export async function fetchSpotOrders(symbol?: string, status?: string, limit = 30): Promise<SpotOrder[]> {
@@ -390,8 +406,17 @@ export async function cancelAllMarginPositions(productId?: number): Promise<Marg
   return mapMarginBatchAction(response.data)
 }
 
-export async function updateMarginLeverage(productId: number, leverage: number): Promise<void> {
-  await client.patch(requestUrl(`/margin/settings/${productId}/leverage`), { leverage: String(leverage) })
+export async function updateMarginLeverage(
+  productId: number,
+  leverage: number | MarginDirectionalLeverageInput,
+): Promise<void> {
+  const payload = typeof leverage === 'number'
+    ? { leverage: String(leverage) }
+    : {
+        long_leverage: String(leverage.longLeverage),
+        short_leverage: String(leverage.shortLeverage),
+      }
+  await client.patch(requestUrl(`/margin/settings/${productId}/leverage`), payload)
 }
 
 /**
@@ -402,18 +427,23 @@ export async function updateMarginLeverage(productId: number, leverage: number):
  */
 export async function fetchMarginSetting(productId: number): Promise<MarginUserSetting> {
   try {
-    const response = await client.get<{ leverage?: string | number | null; margin_mode?: string | null }>(
+    const response = await client.get<{
+      leverage?: string | number | null
+      long_leverage?: string | number | null
+      short_leverage?: string | number | null
+      margin_mode?: string | null
+    }>(
       requestUrl(`/margin/settings/${productId}`),
     )
-    const leverage = asNumber(response.data.leverage)
+    const leverageSetting = mapMarginUserLeverageSetting(response.data)
     const rawMode = response.data.margin_mode?.trim().toLowerCase()
     return {
-      leverage: leverage > 0 ? leverage : null,
+      ...leverageSetting,
       marginMode: rawMode === 'cross' || rawMode === 'isolated' ? rawMode : null,
     }
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 404) {
-      return { leverage: null, marginMode: null }
+      return { leverage: null, longLeverage: null, shortLeverage: null, marginMode: null }
     }
     throw error
   }

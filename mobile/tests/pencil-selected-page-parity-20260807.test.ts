@@ -125,7 +125,9 @@ test('资金划转按 Pencil 主弹窗与资产选择弹窗渲染，并保留真
   assert.match(sources.assets, /\.assets-transfer-route \{[\s\S]*?backdrop-filter: blur\(18px\);[\s\S]*?height: 52px;/)
   assert.match(sources.assets, /\.assets-transfer-submit[\s\S]*?height: 50px;/)
 
-  assert.match(sources.walletApi, /idempotency_key: createWalletMutationIdempotencyKey\('mobile-transfer'\)/)
+  assert.match(sources.walletApi, /const idempotencyKey = walletTransferIdempotencyKeys\.acquire\(intent\)/)
+  assert.match(sources.walletApi, /idempotency_key: idempotencyKey/)
+  assert.match(sources.walletApi, /walletTransferIdempotencyKeys\.complete\(intent, idempotencyKey\)/)
   assert.match(sources.walletApi, /spotWallet: mapTransferWallet\(response\.data\.spot_wallet, symbol\)/)
   assert.match(sources.walletApi, /marginWallet: mapTransferWallet\(response\.data\.margin_wallet, symbol\)/)
 })

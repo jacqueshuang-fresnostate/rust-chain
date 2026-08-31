@@ -1,0 +1,28 @@
+{
+  "id": "project-code-business-optimization-reaudit",
+  "name": "project-code-business-optimization-reaudit",
+  "title": "继续审查项目代码与业务优化",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "repo-wide static audit: code architecture, business flows, data/realtime, clients, delivery and quality; documentation only",
+  "package": null,
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/architecture/project-optimization-reaudit-2026-08-30.md"
+  ],
+  "notes": "静态复审完成：当前发布结论 HOLD/NO-GO，目录为 3 个 P0、16 个 P1、7 个 P2/热点组；未执行可疑 PC PostCSS 配置或任何前端构建，等待用户决定是否提交及是否进入 P0 修复。",
+  "meta": {}
+}

@@ -9,6 +9,9 @@ import {
   type BackendSpotOrdersResponse,
   type BackendWalletAccountsResponse,
 } from './backendAdapters'
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
+
+const spotOrderIdempotencyKeys = new RetryStableIdempotencyKeys('pc-spot')
 
 // Order Types: LIMIT_PRICE, MARKET_PRICE, STOP_LIMIT
 export type OrderType = 'LIMIT_PRICE' | 'MARKET_PRICE' | 'STOP_LIMIT'
@@ -28,10 +31,15 @@ export interface OrderParams {
  * Place a new order
  */
 export async function addOrder(params: OrderParams): Promise<{ data: any }> {
-  const response = await request.instance.post<BackendSpotOrder>(
-    backendApiUrl('/spot/orders'),
-    mapPcSpotOrderRequest(params, createSpotIdempotencyKey()),
-  )
+  const intentPayload = mapPcSpotOrderRequest(params, '')
+  const { idempotency_key: _ignoredKey, ...businessIntent } = intentPayload
+  const intent = canonicalRequestIntent(businessIntent)
+  const idempotencyKey = spotOrderIdempotencyKeys.acquire(intent)
+  const response = await request.instance.post<BackendSpotOrder>(backendApiUrl('/spot/orders'), {
+    ...intentPayload,
+    idempotency_key: idempotencyKey,
+  })
+  spotOrderIdempotencyKeys.complete(intent, idempotencyKey)
   return {
     data: {
       code: 0,
@@ -133,8 +141,4 @@ async function fetchOrdersByStatus(symbol: string, status: string, limit: number
 
 function pairId(symbol: string): string {
   return symbol.replace('/', '-').replace('_', '-').toUpperCase()
-}
-
-function createSpotIdempotencyKey(): string {
-  return `pc-spot-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }

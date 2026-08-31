@@ -31,6 +31,7 @@ pub(crate) struct AdminUserRechargeRequest {
     pub(crate) asset_id: u64,
     pub(crate) amount: BigDecimal,
     pub(crate) reason: Option<String>,
+    pub(crate) idempotency_key: String,
 }
 
 impl PresentationLayer for AdminUserRechargeRequest {}
@@ -51,7 +52,7 @@ pub(crate) struct AdminUserResponse {
 
 impl PresentationLayer for AdminUserResponse {}
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AdminUserRechargeResponse {
     pub(crate) recharge_id: String,
     pub(crate) user_id: u64,

@@ -12,6 +12,9 @@ import {
   type BackendMarginBatchActionResponse,
 } from './backendAdapters'
 import type { MarginBatchActionResult, MarginMode } from '../domain/marginActions'
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
+
+const marginTransferIdempotencyKeys = new RetryStableIdempotencyKeys('pc-margin-transfer')
 
 export type OpenDirection = 0 | 1
 export type OrderType = 0 | 1 | 2
@@ -135,12 +138,19 @@ export async function fetchWalletDetail(contractCoinId: number): Promise<{ data:
 }
 
 export async function transferFunds(params: TransferParams): Promise<{ data: any }> {
-  const response = await request.instance.post(backendApiUrl('/margin/transfers'), {
-    asset_symbol: params.unit,
+  const businessIntent = {
+    asset_symbol: params.unit.trim().toUpperCase(),
     from: params.from === 'SWAP' ? 'margin' : 'spot',
     to: params.to === 'SWAP' ? 'margin' : 'spot',
     amount: String(params.amount),
+  }
+  const intent = canonicalRequestIntent(businessIntent)
+  const idempotencyKey = marginTransferIdempotencyKeys.acquire(intent)
+  const response = await request.instance.post(backendApiUrl('/margin/transfers'), {
+    ...businessIntent,
+    idempotency_key: idempotencyKey,
   })
+  marginTransferIdempotencyKeys.complete(intent, idempotencyKey)
   return { data: { code: 0, message: 'success', data: response.data } }
 }
 

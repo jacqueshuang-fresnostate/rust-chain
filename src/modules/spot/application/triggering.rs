@@ -13,17 +13,17 @@ use crate::{
             lock_spot_fill_wallet_rows_in_order, lock_spot_order_by_db_id, pair_assets_in_tx,
             release_buy_order_surplus_reservation_after_fill,
             remaining_spot_fill_reservation_before_trade_in_tx, save_spot_order_fill_state,
-            spot_order_reservation_in_tx, triggered_limit_buy_order_ids,
-            triggered_limit_sell_order_ids, triggered_stop_limit_buy_order_ids,
-            triggered_stop_limit_sell_order_ids,
+            spot_order_reservation_in_tx, store_spot_order_idempotency_response_in_tx,
+            triggered_limit_buy_order_ids, triggered_limit_sell_order_ids,
+            triggered_stop_limit_buy_order_ids, triggered_stop_limit_sell_order_ids,
         },
         presentation::{SpotOrderResponse, SpotTradeResponse},
         service::{
-            SpotOrderReservation, ensure_market_price_within_reference,
+            SpotOrderRequestIdentity, SpotOrderReservation, ensure_market_price_within_reference,
             ensure_spot_fill_within_order_reservation, is_triggerable_limit_buy_order,
             is_triggerable_limit_sell_order, is_triggerable_stop_limit_buy_order,
             is_triggerable_stop_limit_sell_order, market_buy_reservation_price,
-            normalize_idempotency_key, publish_spot_fill_private_events_if_needed,
+            publish_spot_fill_private_events_if_needed,
         },
     },
 };
@@ -134,7 +134,8 @@ pub async fn execute_triggered_spot_limit_orders_with_hub(
 pub(crate) async fn insert_triggered_buy_order_freeze_and_execute(
     pool: &Pool<MySql>,
     new_order: NewOrder,
-    idempotency_key: Option<&str>,
+    idempotency_key: &str,
+    request_fingerprint: &str,
     request_price: Option<&BigDecimal>,
     request_reference_price: Option<&BigDecimal>,
     execution_price: &BigDecimal,
@@ -158,9 +159,12 @@ pub(crate) async fn insert_triggered_buy_order_freeze_and_execute(
         &mut tx,
         new_order,
         pair_db_id,
-        normalize_idempotency_key(idempotency_key),
-        request_price,
-        request_reference_price,
+        SpotOrderRequestIdentity {
+            idempotency_key: Some(idempotency_key),
+            request_fingerprint: Some(request_fingerprint),
+            request_price,
+            request_reference_price,
+        },
         &reservation,
     )
     .await?;
@@ -172,6 +176,8 @@ pub(crate) async fn insert_triggered_buy_order_freeze_and_execute(
     freeze_wallet_for_inserted_order_in_tx(&mut tx, &order, &reservation).await?;
     let (order, counterparty_order, trade) =
         execute_triggered_buy_order_in_tx(&mut tx, order, execution_price).await?;
+    let response = SpotOrderResponse::from(order.clone());
+    store_spot_order_idempotency_response_in_tx(&mut tx, &order.id, &response).await?;
     tx.commit().await?;
     Ok((order, true, Some((counterparty_order, trade))))
 }
@@ -182,7 +188,8 @@ pub(crate) async fn insert_triggered_buy_order_freeze_and_execute(
 pub(crate) async fn insert_triggered_sell_order_freeze_and_execute(
     pool: &Pool<MySql>,
     new_order: NewOrder,
-    idempotency_key: Option<&str>,
+    idempotency_key: &str,
+    request_fingerprint: &str,
     request_price: Option<&BigDecimal>,
     request_reference_price: Option<&BigDecimal>,
     execution_price: &BigDecimal,
@@ -204,9 +211,12 @@ pub(crate) async fn insert_triggered_sell_order_freeze_and_execute(
         &mut tx,
         new_order,
         pair_db_id,
-        normalize_idempotency_key(idempotency_key),
-        request_price,
-        request_reference_price,
+        SpotOrderRequestIdentity {
+            idempotency_key: Some(idempotency_key),
+            request_fingerprint: Some(request_fingerprint),
+            request_price,
+            request_reference_price,
+        },
         &reservation,
     )
     .await?;
@@ -218,6 +228,8 @@ pub(crate) async fn insert_triggered_sell_order_freeze_and_execute(
     freeze_wallet_for_inserted_order_in_tx(&mut tx, &order, &reservation).await?;
     let (order, counterparty_order, trade) =
         execute_triggered_sell_order_in_tx(&mut tx, order, execution_price).await?;
+    let response = SpotOrderResponse::from(order.clone());
+    store_spot_order_idempotency_response_in_tx(&mut tx, &order.id, &response).await?;
     tx.commit().await?;
     Ok((order, true, Some((counterparty_order, trade))))
 }

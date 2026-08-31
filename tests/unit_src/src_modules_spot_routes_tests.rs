@@ -222,7 +222,7 @@ fn route_new_order_requires_market_reference_price() {
         trigger_price: None,
         quantity: decimal("0.1"),
         reference_price: None,
-        idempotency_key: None,
+        idempotency_key: "unit-market-reference".to_owned(),
     };
     let result = build_create_spot_order_use_case(42, &request, &pair);
 

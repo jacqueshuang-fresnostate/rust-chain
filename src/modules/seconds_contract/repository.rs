@@ -9,6 +9,26 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 
+/// 秒合约产品激活与开仓共用的交易对结算能力基础信息。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SecondsContractSettlementPairCapability {
+    /// 交易对符号，用于匹配外部 feed 配置覆盖范围。
+    pub(crate) symbol: String,
+    /// 交易对当前状态；未启用时不具备可交易的结算能力。
+    pub(crate) status: String,
+    /// 来源类型：`strategy`/`internal` 核对策略运行，`external` 核对 feed 配置。
+    pub(crate) market_type: String,
+}
+
+/// 一条已启用外部行情配置的交易对与 provider 覆盖集合。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SecondsContractMarketFeedCoverage {
+    /// 配置声明的交易对列表，比较时会使用统一符号归一化规则。
+    pub(crate) symbols: Vec<String>,
+    /// 配置声明的 provider 代码，只有运行时已支持的代码才能提供能力。
+    pub(crate) providers: Vec<String>,
+}
+
 /// 秒合约事件时点结算所引用的不可变行情行；一旦写入订单，重放只能复用同一主键与版本。
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(crate) struct SecondsContractSettlementPriceRow {
@@ -105,7 +125,7 @@ pub(crate) struct SecondsContractAdminOrderFilter {
     pub(crate) user_id: Option<u64>,
     /// 按账号邮箱精确匹配，空白串已被降级为 `None` 而非空串匹配。
     pub(crate) email: Option<String>,
-    /// 按订单状态筛选，如 `opened` 或 `settled`。
+    /// 按订单状态筛选，如 `opened`、`settled` 或超龄快照异常的 `manual_review`。
     pub(crate) status: Option<String>,
     /// 单页条数，已被夹在 1 到 100 之间。
     pub(crate) limit: u32,
@@ -161,6 +181,21 @@ pub(crate) struct SecondsContractOrderInsert {
     pub(crate) idempotency_key: String,
     /// 到期时刻，由下单时间加周期时长算出，结算取价以此为时间锚点。
     pub(crate) expires_at: DateTime<Utc>,
+}
+
+/// 秒合约超过快照最大等待时长后写入的人工审核异常证据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SecondsContractSettlementExceptionWrite {
+    /// 被转入 `manual_review` 的订单主键，每单在异常表中只能出现一次。
+    pub(crate) order_id: u64,
+    /// 稳定、可用于运营分组的失败码，不存储不可控的底层错误文本。
+    pub(crate) failure_code: &'static str,
+    /// worker 确认订单超龄的 UTC 时间，生产路径取 MySQL 时钟。
+    pub(crate) detected_at: DateTime<Utc>,
+    /// 最后一次事件价格查找窗口的左边界，等于订单到期时间。
+    pub(crate) window_start: DateTime<Utc>,
+    /// 查找窗口的不包含右边界，必须严格晚于 `window_start`。
+    pub(crate) window_end: DateTime<Utc>,
 }
 
 /// 秒合约资金流水的写入参数，开仓扣款与结算派奖共用同一结构。

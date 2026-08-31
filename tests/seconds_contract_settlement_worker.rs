@@ -1,7 +1,7 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use exchange_api::workers::seconds_contract_settlement::{
-    run_once_with_pool, seconds_contract_settlement_result,
+    run_once_with_pool, run_once_with_pool_and_max_wait, seconds_contract_settlement_result,
 };
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
 use std::{error::Error, str::FromStr};
@@ -210,7 +210,7 @@ async fn timely_delayed_and_replay_use_the_same_event_price_snapshot() -> Result
         &fixture.pair_symbol,
         "105",
         "htx",
-        expires_at + TimeDelta::milliseconds(400),
+        expires_at + TimeDelta::milliseconds(100),
         8,
     )
     .await?;
@@ -348,5 +348,115 @@ async fn settlement_window_is_left_closed_and_right_open() -> Result<(), Box<dyn
     let settled = run_once_with_pool(&pool, expires_at + TimeDelta::seconds(65), 1).await?;
     assert_eq!(settled.settled, 1);
     assert_eq!(order_snapshot(&pool, order_id).await?.2, Some(exact_tick));
+    Ok(())
+}
+
+#[tokio::test]
+async fn missing_snapshot_moves_once_to_manual_review_and_restart_does_not_mutate_wallet()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    sqlx::query(
+        "UPDATE seconds_contract_orders SET status = 'settled' WHERE idempotency_key LIKE 'event-price-%' AND status = 'opened'",
+    )
+    .execute(&pool)
+    .await?;
+    let fixture = seed_fixture(&pool).await?;
+    let expires_at = Utc.with_ymd_and_hms(2030, 1, 4, 0, 0, 0).unwrap();
+    let order_id = seed_order(&pool, &fixture, expires_at, "up").await?;
+    let processing_time = expires_at + TimeDelta::seconds(15);
+
+    let first = run_once_with_pool_and_max_wait(&pool, processing_time, 1, 10).await?;
+    assert_eq!(first.scanned, 1);
+    assert_eq!(first.settled, 0);
+    assert_eq!(first.manual_review, 1);
+    assert_eq!(first.skipped, 0);
+    assert_eq!(first.failed, 0);
+
+    type FailureRow = (
+        String,
+        Option<String>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+        Option<BigDecimal>,
+    );
+    let failure: FailureRow = sqlx::query_as(
+        r#"SELECT status, settlement_failure_code, settlement_failed_at,
+                  settlement_window_start, settlement_window_end, settlement_price
+           FROM seconds_contract_orders
+           WHERE id = ?"#,
+    )
+    .bind(order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(failure.0, "manual_review");
+    assert_eq!(failure.1.as_deref(), Some("missing_settlement_snapshot"));
+    assert_eq!(failure.2, Some(processing_time));
+    assert_eq!(failure.3, Some(expires_at));
+    assert_eq!(failure.4, Some(expires_at + TimeDelta::seconds(5)));
+    assert!(failure.5.is_none());
+
+    let exception: (i64, String, DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) = sqlx::query_as(
+        r#"SELECT COUNT(*), MAX(failure_code), MAX(detected_at),
+                      MAX(window_start), MAX(window_end)
+               FROM seconds_contract_settlement_exceptions
+               WHERE order_id = ?"#,
+    )
+    .bind(order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(exception.0, 1);
+    assert_eq!(exception.1, "missing_settlement_snapshot");
+    assert_eq!(exception.2, processing_time);
+    assert_eq!(exception.3, expires_at);
+    assert_eq!(exception.4, expires_at + TimeDelta::seconds(5));
+
+    let wallet_before_restart: BigDecimal = sqlx::query_scalar(
+        r#"SELECT wallets.available
+           FROM seconds_contract_orders orders
+           INNER JOIN wallet_accounts wallets
+                   ON wallets.user_id = orders.user_id
+                  AND wallets.asset_id = orders.stake_asset
+           WHERE orders.id = ?"#,
+    )
+    .bind(order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(wallet_before_restart.normalized(), decimal("40"));
+    let ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ?",
+    )
+    .bind(order_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 0);
+
+    let replay =
+        run_once_with_pool_and_max_wait(&pool, processing_time + TimeDelta::minutes(1), 100, 10)
+            .await?;
+    assert_eq!(replay.scanned, 0);
+    assert_eq!(replay.manual_review, 0);
+    let exception_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM seconds_contract_settlement_exceptions WHERE order_id = ?",
+    )
+    .bind(order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(exception_count, 1);
+    let wallet_after_restart: BigDecimal = sqlx::query_scalar(
+        r#"SELECT wallets.available
+           FROM seconds_contract_orders orders
+           INNER JOIN wallet_accounts wallets
+                   ON wallets.user_id = orders.user_id
+                  AND wallets.asset_id = orders.stake_asset
+           WHERE orders.id = ?"#,
+    )
+    .bind(order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(wallet_after_restart, wallet_before_restart);
     Ok(())
 }

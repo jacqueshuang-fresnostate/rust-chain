@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { compileStyle } from 'vue/compiler-sfc'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 import {
@@ -17,6 +18,7 @@ import {
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
 const tradeSource = read('../src/views/TradeView.vue')
 const sheetSource = read('../src/components/MarginCloseSheet.vue')
+const sheetStyle = sheetSource.match(/<style\s+scoped>([\s\S]*?)<\/style>/)?.[1] || ''
 const tradingApiSource = read('../src/api/trading.ts')
 
 test('部分平仓比例限制在 1..100 且预览金额按冻结比例派生', () => {
@@ -58,6 +60,40 @@ test('平仓底部弹窗绑定当前 Pencil 浅色与深色选稿并保留关键
   assert.match(sheetSource, /--close-sheet-text: #101512;/)
   assert.match(sheetSource, /--close-sheet-action: #ff3e73;/)
   assert.match(sheetSource, /html\[data-theme='dark'\][\s\S]*?--close-sheet-page: #0b0f0d;[\s\S]*?--close-sheet-field: #181e1a;[\s\S]*?--close-sheet-text: #f5f7f6;/)
+})
+
+test('scoped CSS 编译保留 html 深色主题根与 Teleport 平仓弹窗的后代关系', () => {
+  assert.ok(sheetStyle, 'MarginCloseSheet.vue 必须保留可编译的 scoped style')
+  const compiled = compileStyle({
+    source: sheetStyle,
+    filename: 'MarginCloseSheet.vue',
+    id: 'data-v-margin-close-sheet',
+    scoped: true,
+  })
+  assert.deepEqual(compiled.errors, [])
+
+  const compiledCss = compiled.code.replace(/\/\*[\s\S]*?\*\//g, '')
+  const darkDescendantRule = compiledCss.match(
+    /html\[data-theme=['"]dark['"]\]\s+\.margin-close-sheet\s*\{([^}]*)\}/,
+  )
+  assert.ok(darkDescendantRule, '编译结果必须保留 html[data-theme="dark"] .margin-close-sheet 选择器')
+  for (const [token, value] of [
+    ['page', '#0b0f0d'],
+    ['field', '#181e1a'],
+    ['text', '#f5f7f6'],
+    ['line', '#303a35'],
+  ] as const) {
+    assert.match(
+      darkDescendantRule[1],
+      new RegExp(`--close-sheet-${token}:\\s*${value};`),
+      `深色后代规则必须声明 --close-sheet-${token}: ${value}`,
+    )
+  }
+  assert.doesNotMatch(
+    compiledCss,
+    /html\[data-theme=['"]dark['"]\]\s*\{[^}]*--close-sheet-[\w-]+\s*:/,
+    '任何平仓弹窗深色变量均不得退化到裸 html[data-theme="dark"] 规则',
+  )
 })
 
 test('弹窗只呈现真实仓位数据并用可拖动比例派生部分平仓预览', () => {

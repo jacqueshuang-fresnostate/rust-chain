@@ -229,7 +229,8 @@ async fn create_admin(pool: &MySqlPool) -> u64 {
 
 async fn create_asset(tx: &mut Transaction<'_, MySql>, prefix: &str) -> (u64, String) {
     let suffix = Uuid::now_v7().simple().to_string();
-    let symbol = format!("{prefix}{}", &suffix[16..32]);
+    // 两个资产符号拼成交易对后仍须落在行情领域的 32 字符上限内。
+    let symbol = format!("{prefix}{}", &suffix[24..32]);
     let id = sqlx::query(
         "INSERT INTO assets (symbol, name, precision_scale, asset_type, status) VALUES (?, ?, 18, 'coin', 'active')",
     )
@@ -248,19 +249,96 @@ async fn create_pair(
     quote_asset: u64,
     symbol: &str,
 ) -> u64 {
+    let pair_id = create_pair_without_feed(tx, base_asset, quote_asset, symbol, "external").await;
+    seed_market_feed_coverage(tx, symbol, "bitget", true).await;
+    pair_id
+}
+
+async fn create_pair_without_feed(
+    tx: &mut Transaction<'_, MySql>,
+    base_asset: u64,
+    quote_asset: u64,
+    symbol: &str,
+    market_type: &str,
+) -> u64 {
     sqlx::query(
         r#"INSERT INTO trading_pairs
            (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
-           VALUES (?, ?, ?, 18, 18, ?, 'active', 'external')"#,
+           VALUES (?, ?, ?, 18, 18, ?, 'active', ?)"#,
     )
     .bind(base_asset)
     .bind(quote_asset)
     .bind(symbol)
     .bind(decimal("1.000000000000000000"))
+    .bind(market_type)
     .execute(&mut **tx)
     .await
     .unwrap()
     .last_insert_id()
+}
+
+async fn seed_market_feed_coverage(
+    tx: &mut Transaction<'_, MySql>,
+    symbol: &str,
+    provider: &str,
+    enabled: bool,
+) -> u64 {
+    sqlx::query(
+        r#"INSERT INTO market_feed_configs
+           (name, symbols_json, intervals_json, providers_json, enabled)
+           VALUES (?, JSON_ARRAY(?), JSON_ARRAY('1m'), JSON_ARRAY(?), ?)"#,
+    )
+    .bind(format!("seconds-feed-{}", Uuid::now_v7().simple()))
+    .bind(symbol)
+    .bind(provider)
+    .bind(enabled)
+    .execute(&mut **tx)
+    .await
+    .unwrap()
+    .last_insert_id()
+}
+
+async fn seed_runnable_strategy(tx: &mut Transaction<'_, MySql>, pair_id: u64) -> u64 {
+    let now = chrono::Utc::now();
+    let strategy_id = sqlx::query(
+        r#"INSERT INTO market_strategies
+           (pair_id, strategy_type, start_price, target_price, start_time, end_time,
+            volatility, volume_min, volume_max, status)
+           VALUES (?, 'linear', 10, 20, ?, ?, 0.1, 1, 100, 'active')"#,
+    )
+    .bind(pair_id)
+    .bind((now - chrono::TimeDelta::hours(1)).naive_utc())
+    .bind((now + chrono::TimeDelta::hours(1)).naive_utc())
+    .execute(&mut **tx)
+    .await
+    .unwrap()
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO strategy_versions
+           (strategy_id, version, effective_time, config_json, seed)
+           VALUES (?, 1, ?, JSON_OBJECT(), ?)"#,
+    )
+    .bind(strategy_id)
+    .bind((now - chrono::TimeDelta::hours(1)).naive_utc())
+    .bind(format!("seconds-capability-{}", Uuid::now_v7().simple()))
+    .execute(&mut **tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO strategy_runs
+           (strategy_id, active_version, run_status, recovery_status, lease_owner, lease_expires_at)
+           VALUES (?, 1, 'live', 'live', ?, ?)"#,
+    )
+    .bind(strategy_id)
+    .bind(format!(
+        "seconds-capability-worker-{}",
+        Uuid::now_v7().simple()
+    ))
+    .bind((now + chrono::TimeDelta::hours(1)).naive_utc())
+    .execute(&mut **tx)
+    .await
+    .unwrap();
+    strategy_id
 }
 
 async fn seed_seconds_product(
@@ -312,6 +390,314 @@ async fn seed_seconds_product_cycle(
 async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
     let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+#[tokio::test]
+async fn settlement_history_capability_fails_closed_for_activation_and_opening()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let admin_id = create_admin(&pool).await;
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (external_base, external_base_symbol) = create_asset(&mut tx, "CFB").await;
+    let (external_quote, external_quote_symbol) = create_asset(&mut tx, "CFQ").await;
+    let external_symbol = format!("{external_base_symbol}-{external_quote_symbol}");
+    let external_pair = create_pair_without_feed(
+        &mut tx,
+        external_base,
+        external_quote,
+        &external_symbol,
+        "external",
+    )
+    .await;
+    let (strategy_base, strategy_base_symbol) = create_asset(&mut tx, "CSB").await;
+    let (strategy_quote, strategy_quote_symbol) = create_asset(&mut tx, "CSQ").await;
+    let strategy_symbol = format!("{strategy_base_symbol}-{strategy_quote_symbol}");
+    let strategy_pair = create_pair_without_feed(
+        &mut tx,
+        strategy_base,
+        strategy_quote,
+        &strategy_symbol,
+        "strategy",
+    )
+    .await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(external_quote)
+        .bind(decimal("50.000000000000000000"))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let user_token =
+        issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let admin_app = admin_routes().with_state(state_with_mysql_and_redis(
+        settings.clone(),
+        pool.clone(),
+        None,
+    ));
+
+    let active_external = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":{external_pair},"stake_asset":{external_quote},"duration_seconds":60,"payout_rate":"0.8","min_stake":"5","status":"active","reason":"capability guard"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let active_external_status = active_external.status();
+    let active_external_payload = body_json(active_external).await?;
+    assert_eq!(active_external_status, StatusCode::BAD_REQUEST);
+    assert!(
+        active_external_payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("settlement history is unavailable"),
+        "payload: {active_external_payload}"
+    );
+
+    let disabled_external = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":{external_pair},"stake_asset":{external_quote},"duration_seconds":60,"payout_rate":"0.8","min_stake":"5","status":"disabled","reason":"prepare external guard"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(disabled_external.status(), StatusCode::OK);
+    let external_product_id = body_json(disabled_external).await?["id"].as_u64().unwrap();
+
+    let unsupported_feed_id = {
+        let mut tx = pool.begin().await?;
+        let id = seed_market_feed_coverage(&mut tx, &external_symbol, "unsupported", true).await;
+        tx.commit().await?;
+        id
+    };
+    let unsupported_activation = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/seconds-contracts/products/{external_product_id}/status"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"active","reason":"unsupported feed must fail"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unsupported_activation.status(), StatusCode::BAD_REQUEST);
+
+    let supported_feed_id = {
+        let mut tx = pool.begin().await?;
+        let id = seed_market_feed_coverage(&mut tx, &external_symbol, "bitget", true).await;
+        tx.commit().await?;
+        id
+    };
+    let supported_activation = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/seconds-contracts/products/{external_product_id}/status"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"active","reason":"supported feed is runnable"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(supported_activation.status(), StatusCode::OK);
+    sqlx::query("UPDATE market_feed_configs SET enabled = FALSE WHERE id IN (?, ?)")
+        .bind(unsupported_feed_id)
+        .bind(supported_feed_id)
+        .execute(&pool)
+        .await?;
+
+    let open_without_history = user_routes()
+        .with_state(state_with_mysql_and_redis(
+            settings.clone(),
+            pool.clone(),
+            None,
+        ))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{external_product_id},"direction":"up","stake_amount":"10","idempotency_key":"capability-open-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let open_status = open_without_history.status();
+    let open_payload = body_json(open_without_history).await?;
+    assert_eq!(open_status, StatusCode::BAD_REQUEST);
+    assert!(
+        open_payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("settlement history is unavailable")
+    );
+    let wallet_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(external_quote)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(wallet_available.normalized(), decimal("50"));
+    let external_order_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM seconds_contract_orders WHERE product_id = ?")
+            .bind(external_product_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(external_order_count, 0);
+
+    let disabled_strategy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":{strategy_pair},"stake_asset":{strategy_quote},"duration_seconds":60,"payout_rate":"0.8","min_stake":"5","status":"disabled","reason":"prepare strategy guard"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(disabled_strategy.status(), StatusCode::OK);
+    let strategy_product_id = body_json(disabled_strategy).await?["id"].as_u64().unwrap();
+    let missing_strategy_activation = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/seconds-contracts/products/{strategy_product_id}/status"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"active","reason":"missing strategy must fail"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        missing_strategy_activation.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let mut tx = pool.begin().await?;
+    let strategy_id = seed_runnable_strategy(&mut tx, strategy_pair).await;
+    tx.commit().await?;
+    sqlx::query(
+        "UPDATE strategy_runs SET lease_owner = NULL, lease_expires_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR) WHERE strategy_id = ?",
+    )
+    .bind(strategy_id)
+    .execute(&pool)
+    .await?;
+    let missing_owner_activation = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/seconds-contracts/products/{strategy_product_id}/status"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"active","reason":"missing lease owner must fail"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_owner_activation.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query(
+        "UPDATE strategy_runs SET lease_owner = ?, lease_expires_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE strategy_id = ?",
+    )
+    .bind(format!("expired-seconds-worker-{}", Uuid::now_v7().simple()))
+    .bind(strategy_id)
+    .execute(&pool)
+    .await?;
+    let expired_lease_activation = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/seconds-contracts/products/{strategy_product_id}/status"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"active","reason":"expired strategy lease must fail"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(expired_lease_activation.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query(
+        "UPDATE strategy_runs SET lease_owner = ?, lease_expires_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR) WHERE strategy_id = ?",
+    )
+    .bind(format!("live-seconds-worker-{}", Uuid::now_v7().simple()))
+    .bind(strategy_id)
+    .execute(&pool)
+    .await?;
+    let runnable_strategy_activation = admin_app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/seconds-contracts/products/{strategy_product_id}/status"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"active","reason":"runnable strategy version exists"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(runnable_strategy_activation.status(), StatusCode::OK);
+    Ok(())
 }
 
 #[tokio::test]

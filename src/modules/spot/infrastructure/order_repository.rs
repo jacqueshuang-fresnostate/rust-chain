@@ -6,8 +6,8 @@
 
 use super::{
     common::{
-        is_duplicate_key_error, order_side_as_str, order_status_as_str, order_type_as_str,
-        parse_order_side, parse_order_status, parse_order_type, parse_spot_order_db_id,
+        order_side_as_str, order_status_as_str, order_type_as_str, parse_order_side,
+        parse_order_status, parse_order_type, parse_spot_order_db_id,
     },
     read_models::{SpotOrderQueryRow, base_spot_orders_query},
     trade_settlement::{
@@ -25,9 +25,10 @@ use crate::{
             SpotOrderCancelRepository, SpotUserCancelCommand,
         },
         service::{
-            SpotOrderReservation as CreateSpotOrderReservation, cancel_spot_order_state,
-            ensure_spot_order_idempotency_matches_insert, parse_spot_order_request_id,
-            spot_fill_order_lock_keys, spot_order_audit_json,
+            SpotOrderRequestIdentity, SpotOrderReservation as CreateSpotOrderReservation,
+            cancel_spot_order_state, ensure_spot_order_idempotency_matches_insert,
+            parse_spot_order_request_id, spot_fill_order_lock_keys, spot_order_audit_json,
+            spot_order_idempotency_response,
         },
     },
 };
@@ -35,6 +36,7 @@ use axum::async_trait;
 use bigdecimal::BigDecimal;
 use serde_json::Value;
 use sqlx::{MySql, Pool, Transaction, types::Json as SqlxJson};
+use uuid::Uuid;
 
 #[derive(Debug, sqlx::FromRow)]
 struct SpotOrderLockRow {
@@ -67,6 +69,9 @@ struct IdempotentSpotOrderRow {
     reserved_amount: Option<BigDecimal>,
     request_reference_price: Option<BigDecimal>,
     request_price: Option<BigDecimal>,
+    request_fingerprint: Option<String>,
+    idempotency_attempt_token: Option<String>,
+    idempotency_response_json: Option<SqlxJson<Value>>,
 }
 
 struct SpotAdminAuditEntry<'a> {
@@ -143,8 +148,11 @@ impl SpotOrderCancelRepository for SqlxSpotOrderCancelRepository {
 
 /// 从 MySQL 持久化数据读取现货订单，保持现货既有归属过滤、可见性及排序条件。
 /// 按用户和幂等键读取订单快照，供建单前重放核对而不再次冻结余额。
+/// 锁定范围显式限定为 `orders`：并发失败方在 RR 事务中能看见唯一键胜者，
+/// 同时不会锁住 JOIN 的交易对行而与 INSERT 外键共享锁形成倒序。
 pub(crate) async fn load_spot_order_by_idempotency_key<'e, E>(
     executor: E,
+    user_id: u64,
     idempotency_key: &str,
 ) -> AppResult<Option<SpotIdempotentOrderRecord>>
 where
@@ -154,13 +162,16 @@ where
         r#"SELECT orders.id, orders.user_id, orders.pair_id AS pair_db_id,
                   pairs.symbol AS pair_id, orders.side, orders.order_type, orders.price, orders.trigger_price,
                   orders.quantity, orders.filled_quantity, orders.status, orders.created_at,
-                  orders.reserved_amount, orders.request_reference_price, orders.request_price
+                  orders.reserved_amount, orders.request_reference_price, orders.request_price,
+                  orders.request_fingerprint, orders.idempotency_attempt_token,
+                  orders.idempotency_response_json
            FROM spot_orders orders
            INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
-           WHERE orders.idempotency_key = ?
+           WHERE orders.user_id = ? AND orders.idempotency_key = ?
            LIMIT 1
-           FOR UPDATE"#,
+           FOR UPDATE OF orders"#,
     )
+    .bind(user_id)
     .bind(idempotency_key)
     .fetch_optional(executor)
     .await?;
@@ -174,21 +185,24 @@ pub(crate) async fn insert_spot_order_in_tx(
     tx: &mut Transaction<'_, MySql>,
     new_order: NewOrder,
     pair_db_id: u64,
-    idempotency_key: Option<&str>,
-    request_price: Option<&BigDecimal>,
-    reference_price: Option<&BigDecimal>,
+    request_identity: SpotOrderRequestIdentity<'_>,
     reservation: &CreateSpotOrderReservation,
 ) -> AppResult<(SpotOrder, bool)> {
-    // 下单记录和钱包冻结必须同事务提交；重复幂等键命中时只返回原订单，避免再次冻结钱包。
+    // 下单记录和钱包冻结必须同事务提交；ON DUPLICATE KEY 会串行化同键竞争，
+    // 避免多个失败 INSERT 持有外键共享锁后再升级订单锁所形成的死锁环。
     let user_id = new_order
         .user_id
         .parse::<u64>()
         .map_err(|_| AppError::Unauthorized)?;
+    let insert_attempt_token = Uuid::now_v7().to_string();
     let insert_result = sqlx::query(
         r#"INSERT INTO spot_orders
            (user_id, pair_id, side, order_type, price, trigger_price, quantity, filled_quantity, status,
-            idempotency_key, reserved_asset, reserved_amount, request_reference_price, request_price)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            idempotency_key, request_fingerprint, idempotency_attempt_token,
+            reserved_asset, reserved_amount,
+            request_reference_price, request_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
     )
     .bind(user_id)
     .bind(pair_db_id)
@@ -199,53 +213,76 @@ pub(crate) async fn insert_spot_order_in_tx(
     .bind(&new_order.quantity)
     .bind(&new_order.filled_quantity)
     .bind(order_status_as_str(new_order.status))
-    .bind(idempotency_key)
+    .bind(request_identity.idempotency_key)
+    .bind(request_identity.request_fingerprint)
+    .bind(&insert_attempt_token)
     .bind(reservation.asset_id)
     .bind(&reservation.amount)
     .bind(match new_order.order_type {
         OrderType::Limit | OrderType::StopLimit => None,
-        OrderType::Market => reference_price,
+        OrderType::Market => request_identity.request_reference_price,
     })
-    .bind(request_price)
+    .bind(request_identity.request_price)
     .execute(&mut **tx)
     .await;
 
-    let (order_id, is_new_order) = match insert_result {
-        Ok(result) => (result.last_insert_id(), true),
-        Err(error) if is_duplicate_key_error(&error) => {
-            let Some(idempotency_key) = idempotency_key else {
-                return Err(error.into());
-            };
-            let existing = load_spot_order_by_idempotency_key(&mut **tx, idempotency_key)
-                .await?
-                .ok_or(AppError::NotFound)?;
-            if existing.user_id != user_id {
-                return Err(AppError::Conflict(
-                    "spot order idempotency key belongs to another user".to_owned(),
-                ));
-            }
+    let result = insert_result.map_err(AppError::from)?;
+    let order_id = result.last_insert_id();
+    if let Some(idempotency_key) = request_identity.idempotency_key {
+        let existing = load_spot_order_by_idempotency_key(&mut **tx, user_id, idempotency_key)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if existing.idempotency_attempt_token.as_deref() != Some(insert_attempt_token.as_str()) {
             ensure_spot_order_idempotency_matches_insert(
                 &existing,
                 &new_order,
-                request_price,
-                reference_price,
+                request_identity.request_price,
+                request_identity.request_reference_price,
                 reservation,
+                request_identity.request_fingerprint,
             )?;
-            return Ok((SpotOrderResponse::from(existing).into(), false));
+            return Ok((spot_order_idempotency_response(existing)?.into(), false));
         }
-        Err(error) => return Err(error.into()),
-    };
+    }
 
     let mut builder = base_spot_orders_query(true);
     builder.push(" WHERE orders.id = ");
     builder.push_bind(order_id);
-    builder.push(" LIMIT 1 FOR UPDATE");
+    // INSERT/ON DUPLICATE KEY 已经持有目标订单记录锁；这里保持普通一致性读，
+    // 避免带 JOIN 的 FOR UPDATE 额外锁住 users/trading_pairs 并与并发外键检查倒序。
+    builder.push(" LIMIT 1");
     let row = builder
         .build_query_as::<SpotOrderQueryRow>()
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(AppError::NotFound)?;
-    Ok((SpotOrderResponse::from(row).into(), is_new_order))
+    Ok((SpotOrderResponse::from(row).into(), true))
+}
+
+/// 在建单事务提交前保存首次响应，重放始终返回该快照而不是订单当前状态。
+pub(crate) async fn store_spot_order_idempotency_response_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    order_id: &str,
+    response: &SpotOrderResponse,
+) -> AppResult<()> {
+    let order_id = parse_spot_order_request_id(order_id)?;
+    let snapshot = serde_json::to_value(response)
+        .map_err(|error| AppError::Internal(format!("serialize spot order snapshot: {error}")))?;
+    let result = sqlx::query(
+        r#"UPDATE spot_orders
+           SET idempotency_response_json = ?
+           WHERE id = ? AND request_fingerprint IS NOT NULL"#,
+    )
+    .bind(SqlxJson(snapshot))
+    .bind(order_id)
+    .execute(&mut **tx)
+    .await?;
+    if result.rows_affected() != 1 {
+        return Err(AppError::Internal(
+            "spot order idempotency snapshot update affected an unexpected row count".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 在成交事务内创建做市卖单快照，数量和价格与用户买单成交腿严格对应。
@@ -280,9 +317,12 @@ pub(crate) async fn insert_spot_liquidity_sell_order_in_tx(
         tx,
         new_order,
         pair_db_id,
-        Some(&system_order_key),
-        Some(execution_price),
-        None,
+        SpotOrderRequestIdentity {
+            idempotency_key: Some(&system_order_key),
+            request_fingerprint: None,
+            request_price: Some(execution_price),
+            request_reference_price: None,
+        },
         &reservation,
     )
     .await?;
@@ -322,9 +362,12 @@ pub(crate) async fn insert_spot_liquidity_buy_order_in_tx(
         tx,
         new_order,
         pair_db_id,
-        Some(&system_order_key),
-        Some(execution_price),
-        None,
+        SpotOrderRequestIdentity {
+            idempotency_key: Some(&system_order_key),
+            request_fingerprint: None,
+            request_price: Some(execution_price),
+            request_reference_price: None,
+        },
         &reservation,
     )
     .await?;
@@ -511,6 +554,9 @@ impl From<IdempotentSpotOrderRow> for SpotIdempotentOrderRecord {
             reserved_amount: order.reserved_amount,
             request_reference_price: order.request_reference_price,
             request_price: order.request_price,
+            request_fingerprint: order.request_fingerprint,
+            idempotency_attempt_token: order.idempotency_attempt_token,
+            idempotency_response_json: order.idempotency_response_json.map(|value| value.0),
         }
     }
 }

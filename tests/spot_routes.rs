@@ -21,7 +21,7 @@ use redis::AsyncCommands;
 use secrecy::SecretString;
 use serde_json::Value;
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
-use std::{error::Error, str::FromStr, sync::Arc, time::Duration};
+use std::{error::Error, str::FromStr, time::Duration};
 use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -735,7 +735,7 @@ async fn admin_spot_order_detail_cancel_unfreezes_wallet_and_audits() -> Result<
         900,
     )
     .unwrap();
-    let hub = EventBroadcastHub::new(16);
+    let hub = EventBroadcastHub::new(32);
     let _keepalive_hub = hub.clone();
     let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
     let app = admin_routes().with_state(
@@ -2437,7 +2437,7 @@ async fn spot_create_order_is_idempotent_for_repeated_request_key() -> Result<()
         String::from_utf8_lossy(&second_body)
     );
     let second_order: Value = serde_json::from_slice(&second_body)?;
-    assert_eq!(second_order["id"], first_order_id);
+    assert_eq!(second_order, first_order);
 
     let (order_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM spot_orders WHERE user_id = ? AND idempotency_key = ?",
@@ -3444,59 +3444,65 @@ async fn spot_create_order_concurrent_idempotency_key_freezes_once() -> Result<(
     let hub = EventBroadcastHub::new(16);
     let _keepalive_hub = hub.clone();
     let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
-    let first_app = routes().with_state(
-        AppState::new(settings.clone())
-            .with_mysql(pool.clone())
-            .with_event_broadcast_hub(hub.clone()),
-    );
-    let second_app = routes().with_state(
+    let app = routes().with_state(
         AppState::new(settings)
             .with_mysql(pool.clone())
             .with_event_broadcast_hub(hub),
     );
-    let request_body = Arc::new(format!(
+    let missing_key = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"10.000000000000000000","quantity":"2.0000"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_key.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let request_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"10.000000000000000000","quantity":"2.0000","idempotency_key":"{idempotency_key}"}}"#
-    ));
-    let first_token = token.clone();
-    let second_token = token.clone();
-    let first_body = Arc::clone(&request_body);
-    let second_body = Arc::clone(&request_body);
-    let first_task = tokio::spawn(async move {
-        first_app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/spot/orders")
-                    .header("authorization", format!("Bearer {first_token}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from((*first_body).clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    });
-    let second_task = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-        second_app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/spot/orders")
-                    .header("authorization", format!("Bearer {second_token}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from((*second_body).clone()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    });
-    let (first_response, second_response) = tokio::join!(first_task, second_task);
-    let first_response = first_response.unwrap();
-    let second_response = second_response.unwrap();
-    let first_status = first_response.status();
-    let second_status = second_response.status();
-    let first_payload = axum::body::to_bytes(first_response.into_body(), 8192).await?;
-    let second_payload = axum::body::to_bytes(second_response.into_body(), 8192).await?;
+    );
+    let mut concurrent = tokio::task::JoinSet::new();
+    for _ in 0..20 {
+        let request_app = app.clone();
+        let request_token = token.clone();
+        let request_body = request_body.clone();
+        concurrent.spawn(async move {
+            request_app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/spot/orders")
+                        .header("authorization", format!("Bearer {request_token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(request_body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+    }
+    let mut concurrent_payloads = Vec::new();
+    while let Some(response) = concurrent.join_next().await {
+        let response = response?;
+        let status = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status, StatusCode::OK, "payload: {payload}");
+        concurrent_payloads.push(payload);
+    }
+    assert_eq!(concurrent_payloads.len(), 20);
+    let first_order = concurrent_payloads[0].clone();
+    assert!(
+        concurrent_payloads
+            .iter()
+            .all(|payload| payload == &first_order)
+    );
     let (order_id,): (String,) = sqlx::query_as(
         "SELECT CAST(id AS CHAR) FROM spot_orders WHERE user_id = ? AND idempotency_key = ?",
     )
@@ -3506,6 +3512,13 @@ async fn spot_create_order_concurrent_idempotency_key_freezes_once() -> Result<(
     .await?;
     let (order_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM spot_orders WHERE user_id = ? AND idempotency_key = ?",
+    )
+    .bind(user_id)
+    .bind(&idempotency_key)
+    .fetch_one(&pool)
+    .await?;
+    let (fingerprint_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM spot_orders WHERE user_id = ? AND idempotency_key = ? AND request_fingerprint IS NOT NULL AND idempotency_response_json IS NOT NULL",
     )
     .bind(user_id)
     .bind(&idempotency_key)
@@ -3534,22 +3547,7 @@ async fn spot_create_order_concurrent_idempotency_key_freezes_once() -> Result<(
     )
     .await?;
 
-    assert_eq!(
-        first_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&first_payload)
-    );
-    assert_eq!(
-        second_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&second_payload)
-    );
-    let first_order: Value = serde_json::from_slice(&first_payload)?;
-    let second_order: Value = serde_json::from_slice(&second_payload)?;
     assert_eq!(first_order["id"], order_id);
-    assert_eq!(second_order["id"], order_id);
     let event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
     assert_eq!(event["type"], "spot.order.created");
     assert_eq!(event["order_id"], order_id);
@@ -3560,6 +3558,7 @@ async fn spot_create_order_concurrent_idempotency_key_freezes_once() -> Result<(
         "idempotent replay must not publish a duplicate created event"
     );
     assert_eq!(order_count, 1);
+    assert_eq!(fingerprint_count, 1);
     assert_eq!(
         available.normalized(),
         decimal("80.000000000000000000").normalized()
@@ -3860,10 +3859,13 @@ async fn spot_create_order_idempotency_key_is_scoped_to_same_user() -> Result<()
     let second_body = axum::body::to_bytes(second_response.into_body(), 8192).await?;
     assert_eq!(
         second_status,
-        StatusCode::CONFLICT,
+        StatusCode::OK,
         "payload: {}",
         String::from_utf8_lossy(&second_body)
     );
+    let second_order: Value = serde_json::from_slice(&second_body)?;
+    let second_order_id = second_order["id"].as_str().unwrap().to_owned();
+    assert_ne!(second_order_id, first_order_id);
 
     let (first_available, first_frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
         "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
@@ -3889,11 +3891,11 @@ async fn spot_create_order_idempotency_key_is_scoped_to_same_user() -> Result<()
     .await?;
     assert_eq!(
         second_available.normalized(),
-        decimal("100.000000000000000000").normalized()
+        decimal("80.000000000000000000").normalized()
     );
     assert_eq!(
         second_frozen.normalized(),
-        decimal("0.000000000000000000").normalized()
+        decimal("20.000000000000000000").normalized()
     );
 
     let (order_count,): (i64,) =
@@ -3901,8 +3903,24 @@ async fn spot_create_order_idempotency_key_is_scoped_to_same_user() -> Result<()
             .bind(&idempotency_key)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(order_count, 1);
+    assert_eq!(order_count, 2);
 
+    let (second_ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'spot_order' AND ref_id = ?",
+    )
+    .bind(&second_order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(second_ledger_count, 2);
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'spot_order' AND ref_id = ?")
+        .bind(&second_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id = ?")
+        .bind(&second_order_id)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
         .bind(second_user_id)
         .bind(quote_asset)

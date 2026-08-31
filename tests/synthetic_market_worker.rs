@@ -198,6 +198,11 @@ fn checkpoint_sql_keeps_lease_owner_expiry_and_latest_version_guards() {
     assert!(worker_source.contains("last_tick_at IS NULL OR last_tick_at <= ?"));
     assert!(worker_source.contains("last_kline_open_time IS NULL OR last_kline_open_time <= ?"));
     assert!(worker_source.contains("SyntheticIngestionOutcome::RejectedStale"));
+    assert!(worker_source.contains("SyntheticTickerProvenance::new("));
+    assert!(
+        worker_source
+            .contains(".ingest_and_publish_synthetic_ticker(plan.ticker(), &ticker_provenance)")
+    );
     assert!(!worker_source.contains("SELECT MAX(latest.version)"));
 }
 

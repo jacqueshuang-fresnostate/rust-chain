@@ -265,6 +265,7 @@ x-common-environment: &common-environment
   BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
 
 # Correct: only an explicitly enabled migration process receives the one-time Secret.
+
 services:
   migrate:
     environment:
@@ -282,4 +283,66 @@ let enabled = secret.is_some() && site_key.is_some() && enforce_token;
 // Correct: credentials enable the widget; enforce only controls the clearance exception.
 let enabled = secret.is_some() && site_key.is_some();
 let require_token = enabled && (enforce_token || !has_cf_clearance);
+```
+
+## Scenario: Pre-install Source Integrity Gate
+
+### 1. Scope / Trigger
+
+- Trigger: changing executable build configuration, release workflows, dependency-install steps, image builds, or the root P0 release gate.
+- Applies to every CI job that can install dependencies, load frontend tooling, build an image, or publish an artifact.
+
+### 2. Signatures
+
+```text
+checkout -> static source-integrity scan -> toolchain setup/cache/install/build
+local release gate -> static scan + scanner tests -> language/toolchain checks
+```
+
+The scanner is a text-only program using the Python standard library. It does not import, require, transpile, or execute the files it inspects.
+
+### 3. Contracts
+
+- A clean checkout must be scanned before Node/Rust setup, cache restoration, dependency installation, Buildx setup, Docker build, or publishing.
+- Every repository `package.json` is part of the static scan boundary. Automatic install lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`, and related hooks), hidden pre/post hooks around protected release scripts, network/download commands, inline dynamic evaluation, encoded loaders, and malformed manifests are release-blocking.
+- Executable frontend build configuration must be declarative. Network clients, child-process APIs, dynamic evaluation, detached processes, and unexplained long executable lines are release-blocking.
+- `pc/package.json` must retain `build = "vite build"`; the local P0 gate must execute that production build after PC type-check and tests, so replacing it with a no-op cannot satisfy release evidence.
+- Known incident hashes are explicit IOCs in the scanner and its tests. Removing the exact hash must not remove generic behavioral detection.
+- CI and local release gates call the same scanner; a workflow-only shell fragment is not an independent source of truth.
+- Scanner fixtures are inert text generated inside a temporary directory. Tests never import a malicious fixture.
+- A clean source scan proves only repository state. Credential rotation, runner/cache rebuild, artifact invalidation, and historical investigation remain separate operational evidence.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Known IOC hash | Non-zero exit with path and rule identifier |
+| Long single-line executable payload in build config | Non-zero exit |
+| Network or child-process capability in executable build config | Non-zero exit unless a narrow reviewed allowlist entry exists |
+| Dynamic evaluation combined with network/process capability | Non-zero exit |
+| Automatic npm install lifecycle or protected pre/post release hook | Non-zero exit |
+| PC build script missing or replaced | Non-zero exit before dependency installation/build |
+| Minimal PostCSS/Tailwind/Vite declaration | Pass without loading the config |
+| Scanner cannot read a required path | Fail closed |
+
+### 5. Tests Required
+
+- Standard-library unit tests cover clean input, known hash, long line, dynamic evaluation plus network access, direct child-process use, package lifecycle hooks, malformed manifests, and the pinned PC build command.
+- Workflow contract tests or static assertions prove every build/publish job scans immediately after checkout.
+- `scripts/p0-release-gate.sh` runs the scanner and its tests before Rust or frontend commands.
+- Only after the tracked build configuration is clean may PC type-check, tests, and production build run.
+
+### 6. Wrong vs Correct
+
+```yaml
+# Wrong: dependencies and build configuration are loaded before inspection.
+- run: npm ci
+- run: python3 scripts/source_integrity_gate.py
+```
+
+```yaml
+# Correct: the checkout is inspected before any tool or cache can execute repository code.
+- uses: actions/checkout@v6
+- run: python3 scripts/source_integrity_gate.py
+- uses: actions/setup-node@v6
 ```

@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend architecture, Chinese contracts, tests, and forbidden patterns"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Immutable SQLx migration and real database validation rules"}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Spot order request, wallet reservation, and idempotency behavior"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "Margin transfer transaction and idempotency contract"}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Seconds order lifecycle and settlement contracts"}
+{"file": ".trellis/spec/backend/synthetic-market-kline.md", "reason": "Synthetic generation leases, versioning, and recovery rules"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Wallet amount, ledger, and decimal invariants"}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Release workflow and container quality-gate contract"}
+{"file": ".trellis/spec/admin/index.md", "reason": "Admin frontend quality gate and conventions"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Mobile financial mutation and adapter contracts"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer request-to-ledger and ticker-to-settlement mapping"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing receipt, fingerprint, and transaction patterns"}
+{"file": ".trellis/tasks/08-30-p0-release-blockers-remediation/research/p0-01-pc-build-integrity.md", "reason": "Verify PC loader removal and pre-build integrity gate"}
+{"file": ".trellis/tasks/08-30-p0-release-blockers-remediation/research/p0-02-financial-idempotency.md", "reason": "Verify receipts, fingerprints, conflicts, and concurrency"}
+{"file": ".trellis/tasks/08-30-p0-release-blockers-remediation/research/p0-03-synthetic-seconds-settlement.md", "reason": "Verify event-time settlement closure and controlled exception state"}

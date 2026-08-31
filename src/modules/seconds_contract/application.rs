@@ -41,10 +41,13 @@ use super::{
 };
 use crate::{
     error::{AppError, AppResult},
-    modules::agent::{
-        infrastructure::insert_agent_business_commission_in_tx,
-        repository::AgentBusinessCommissionWrite,
-        service::AGENT_COMMISSION_PRODUCT_SECONDS_CONTRACT,
+    modules::{
+        agent::{
+            infrastructure::insert_agent_business_commission_in_tx,
+            repository::AgentBusinessCommissionWrite,
+            service::AGENT_COMMISSION_PRODUCT_SECONDS_CONTRACT,
+        },
+        market::{ValidatedMarketSymbol, adapters::MarketFeedProvider},
     },
     state::AppState,
 };
@@ -59,6 +62,50 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for seconds contract routes".to_owned())
     })
+}
+
+/// 以一个共享门禁判定交易对是否能持续产生秒合约事件时间结算历史。
+/// `strategy`/`internal` 必须存在当前 active、在有效期、绑定精确版本且租约 owner 非空未过期的 running/live 策略；
+/// `external` 必须被某条已启用 `market_feed_configs` 覆盖，且同一配置至少含一个运行时支持的 provider。
+/// 产品创建/更新/上架和新订单开仓均调用本函数，任一路径都不能自行降级或绕过。
+async fn ensure_settlement_history_capability(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    pair_id: u64,
+) -> AppResult<()> {
+    let pair = infrastructure::load_settlement_pair_capability(tx, pair_id).await?;
+    let available = if pair.status != "active" {
+        false
+    } else {
+        match pair.market_type.as_str() {
+            "strategy" | "internal" => {
+                infrastructure::runnable_strategy_settlement_history_exists(tx, pair_id).await?
+            }
+            "external" => {
+                let expected_symbol = ValidatedMarketSymbol::from_raw(&pair.symbol)
+                    .map_err(|error| AppError::Validation(error.to_string()))?;
+                infrastructure::load_enabled_market_feed_coverages(tx)
+                    .await?
+                    .into_iter()
+                    .any(|coverage| {
+                        coverage.symbols.iter().any(|symbol| {
+                            ValidatedMarketSymbol::from_raw(symbol)
+                                .is_ok_and(|symbol| symbol == expected_symbol)
+                        }) && coverage
+                            .providers
+                            .iter()
+                            .any(|provider| MarketFeedProvider::from_code(provider).is_ok())
+                    })
+            }
+            _ => false,
+        }
+    };
+    if !available {
+        return Err(AppError::Validation(format!(
+            "seconds contract settlement history is unavailable for pair {}",
+            pair.symbol
+        )));
+    }
+    Ok(())
 }
 
 /// 组装面向用户的秒合约产品目录，状态在用例内硬编码为 `active`，客户端无法通过参数放宽过滤。
@@ -132,6 +179,9 @@ pub(crate) async fn create_product(
     // 产品主表、周期配置和后台审计必须同事务提交，避免配置生效后缺少可追溯记录。
     infrastructure::ensure_pair_exists(&mut tx, write.pair_id).await?;
     infrastructure::ensure_asset_exists(&mut tx, write.stake_asset).await?;
+    if write.status == "active" {
+        ensure_settlement_history_capability(&mut tx, write.pair_id).await?;
+    }
     let product_id = infrastructure::insert_product(&mut tx, &write).await?;
     infrastructure::insert_product_cycles(&mut tx, product_id, &cycles).await?;
     let product = infrastructure::load_product_by_id(&mut tx, product_id).await?;
@@ -182,6 +232,9 @@ pub(crate) async fn update_product(
     let before = infrastructure::lock_product_by_id(&mut tx, product_id).await?;
     infrastructure::ensure_pair_exists(&mut tx, write.pair_id).await?;
     infrastructure::ensure_asset_exists(&mut tx, write.stake_asset).await?;
+    if write.status == "active" {
+        ensure_settlement_history_capability(&mut tx, write.pair_id).await?;
+    }
     infrastructure::update_product(&mut tx, product_id, &write).await?;
     infrastructure::replace_product_cycles(&mut tx, product_id, &cycles).await?;
     let after = infrastructure::load_product_by_id(&mut tx, product_id).await?;
@@ -216,6 +269,9 @@ pub(crate) async fn update_product_status(
     let mut tx = pool.begin().await?;
     // 状态变更同样保留 before/after 审计，便于追踪产品下架或恢复的责任人和原因。
     let before = infrastructure::lock_product_by_id(&mut tx, product_id).await?;
+    if status == "active" {
+        ensure_settlement_history_capability(&mut tx, before.pair_id).await?;
+    }
     infrastructure::update_product_status(&mut tx, product_id, &status).await?;
     let after = infrastructure::load_product_by_id(&mut tx, product_id).await?;
     infrastructure::insert_admin_audit_log_in_tx(
@@ -329,6 +385,7 @@ pub(crate) async fn open_order(
         Err(error) => return Err(error),
     };
     validate_product_stake(&request.stake_amount, &product)?;
+    ensure_settlement_history_capability(&mut tx, product.pair_id).await?;
     let entry_price =
         infrastructure::cached_entry_price(redis, product.pair_id, product.symbol.as_str()).await?;
     let expires_at = infrastructure::database_now(&mut tx).await?
@@ -573,7 +630,7 @@ pub(crate) async fn settle_order_with_events(
 }
 
 /// 按认证用户读取秒合约订单历史，用户编号来自令牌解析，绝不通过订单标识跨用户返回记录。
-/// 返回结果同时包含持仓中与已结算订单，按创建时间倒序，条数由调用方归一后传入。
+/// 返回结果同时包含持仓中、已结算与等待人工审核的订单，按创建时间倒序，条数由调用方归一后传入。
 /// 纯读取，不触发到期结算，也不改动任何订单状态。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,

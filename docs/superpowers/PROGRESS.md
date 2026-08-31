@@ -7859,6 +7859,104 @@
 - 验证结果：稳定版全目标全特性 Clippy、Rust 1.98 nightly Clippy、Worker 11/11、后端架构 11/11、后端中文文档门禁 1/1、Trellis 上下文校验与暂存差异检查均通过；首次推送结果为 `1f35e69..b81c222 main -> main`。
 - 后续事项：等待 GitHub Actions 使用新提交重新执行；其他既有未提交改动未纳入本轮提交并继续保留在本地工作区。
 
+## 2026-08-29 20:46 - 秒合约历史订单页对齐 Pencil 选稿
+
+- 完成内容：以 Pencil 浅色画板 `vZy6U` 和深色画板 `x29z7` 为唯一视觉基线，重构 `/seconds/history` 为 52px 标题栏、38px 筛选轨道与 142px 三行历史卡片；实现全部/买涨/买跌真实方向筛选、44px 可访问触控目标、320–448px 响应式与明暗主题。卡片仅消费后端订单快照，将“已结算”生命周期状态与根据真实结果派生的正负盈亏分离，同时保留安全返回、访客、加载、失败重试、空态和中英文国际化。
+- 修改文件：`mobile/src/views/SecondsHistoryView.vue`、`mobile/src/core/secondsOrder.ts`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/seconds-history-view.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-29-mobile-seconds-history-pencil-parity/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增合同测试先在旧实现上按预期失败（1/6 通过），实现后聚焦回归 29/29、Mobile 全量测试 494/494、`npm --prefix mobile run build:pwa`（包含 `vue-tsc --noEmit`）和 `npm --prefix mobile run build:tauri`（包含 `vue-tsc --noEmit`）均通过；项目未配置独立 Mobile lint script。Ego Browser 在 390×920 实测标题栏 x16/y16/358×52、筛选轨道 x16/y82/358×38、可见筛选片 59×33与实际 59×44 触控区，历史卡片 x16/y134/358×142 并以 14px 节奏递增；浅色 `#F7FAF8/#FFFFFF`、深色 `#0D1411/#141D18` 与选稿一致。320px 和 448px 的 `scrollWidth` 均等于视口宽度，方向筛选交互通过。截图：`/private/tmp/seconds-history-final-light-390.png`、`/private/tmp/seconds-history-final-dark-390.png`。
+- 后续事项：无；本轮改动尚未提交或推送，工作区中原有的杠杆布局、Pencil 文件与其测试改动保持原样。
+
+## 2026-08-29 22:29 - 同步秒合约历史卡片全宽选稿
+
+- 完成内容：按 Pencil 最新选稿将历史订单列表扩展至手机画布两侧；390px 下卡片为 `x=0 / width=390 / height=142`，去除圆角、边框和阴影，内边距改为 `14px 16px`。标题和筛选仍保持 16px 安全轨道，列表在 320–448px 下自适应填满当前画布；未改动 API、请求状态、方向筛选、国际化或 Pencil 文件。
+- 修改文件：`mobile/src/views/SecondsHistoryView.vue`、`mobile/tests/seconds-history-view.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：RED 阶段定向测试在旧 358px 圆角实现上按预期失败（5/6 通过）；实现后单文件回归 6/6、Seconds 聚焦回归 29/29、`npm --prefix mobile run type-check` 与 `git diff --check` 均通过。Ego Browser 实测 320/390/448px 卡片宽分别为 320/390/448px、`x=0`，390px 明暗主题三张卡片 `y=134/290/446`，内边距 14/16px、圆角/边框/阴影为 0/0/none，各视口 `scrollWidth` 均等于视口宽度。
+- 后续事项：无；本轮未提交或推送，无关工作区脏改动保持原样。
+
+## 2026-08-29 22:31 - 校准秒合约历史卡片详情行
+
+- 完成内容：将历史卡片详情行从固定 126px 方向列改为 `auto minmax(0, 1fr) auto`，状态在中间弹性轨道居中且限宽。390px 的 358px 内轨下精确得到方向 `x=0/w=27`、状态 `x=140/w=40`、时间 `x=293/w=65`，320px 仍保留可收缩中轨且不横向溢出。
+- 修改文件：`mobile/src/views/SecondsHistoryView.vue`、`mobile/tests/seconds-history-view.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新合同在旧固定 126px 实现上按预期失败（5/6 通过）；修正后 Seconds 聚焦回归 29/29、`npm --prefix mobile run type-check` 通过。
+- 后续事项：无。
+
+## 2026-08-29 22:50 - 审查秒合约历史全宽卡片
+
+- 完成内容：独立复核本轮秒合约历史卡片全宽修订，确认标题/筛选安全轨、390px 卡片 x/y/宽高、直角无边框阴影、14px/16px 内边距及 320/448px 自适应均符合选稿。实际 Chromium 字体回退会把中文方向/状态文本收窄为 26px/39px，因此在项目仍使用弹性中轨的前提下，为两个文本项补 27px/40px 最小宽度，并增加回归断言；真实 API、请求状态、方向筛选和 i18n 逻辑未改动，Pencil 文件及其他脏改动未触碰。
+- 修改文件：`mobile/src/views/SecondsHistoryView.vue`、`mobile/tests/seconds-history-view.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Seconds 聚焦测试 29/29、Mobile 全量测试 494/494、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri`、`npm --prefix mobile run lint --if-present`（项目未配置 lint script）与 `git diff --check` 均通过；Ego Browser 实测 390px 详情行为方向 `x=0/w=27`、状态 `x=140/w=40`、时间 `x=293/w=65`，三卡 `x=0 / width=390 / height=142 / y=134,290,446`，320/448px 卡片分别填满 320/448px 且 `scrollWidth` 等于视口。截图：`/private/tmp/seconds-history-full-width-final-light-390.png`、`/private/tmp/seconds-history-full-width-dark-390.png`。
+- 后续事项：无。
+
+## 2026-08-30 00:42 - 建立项目代码与业务复审任务
+
+- 完成内容：建立独立 Trellis 任务 `08-30-project-code-business-optimization-reaudit`，以 2026-08-24 全域审计和已落地的 12 项 P0 修复为基线，固化本轮对 Rust 后端、核心资金与产品业务、数据/MQ/worker/行情/WS、admin/PC/mobile、CI/部署/安全/可观测性/恢复与测试治理的复审范围；明确只输出证据化审查报告和实施路线，不混入大范围生产代码改动，并并行启动六个只写任务 research 的专题审查。
+- 修改文件：`.trellis/tasks/08-30-project-code-business-optimization-reaudit/{task.json,prd.md,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`task.py current --source` 已指向新任务；PRD 已包含历史 12 项 P0、21 项 P1 的状态映射要求、全域覆盖面、统一优先级口径、证据/兼容/验收字段与独立复核标准；当前 17 项既有未提交改动已盘点，未被覆盖或回滚。
+- 后续事项：等待六个专题研究产物，完成历史项复核、P0/P1/P2 去重校准、项目级报告、独立检查与最终验证。
+
+## 2026-08-30 02:44 - 完成项目代码与业务全域复审
+
+- 完成内容：以 `main@fac1def` 为生产基线完成后端金融流、产品业务、数据/MQ/worker/行情/WS、Admin/PC/Mobile、CI/容器/Secret/可观测性/灾备/测试治理的全域静态复审；逐项映射历史 12 个 P0 与 21 个 P1，经独立检查代理重新校准并去重为当前 3 个 P0、16 个 P1、7 个 P2/结构热点。当前发布结论为 `HOLD / NO-GO`：P0 分别是 tracked `pc/postcss.config.js` 的构建期混淆远程代码加载器、高价值资金命令缺少稳定客户端幂等身份、合成行情未归档到秒合约事件时间结算历史。报告已给出 0–24 小时事件响应、运行时补证清单、业务保护矩阵、结构热点、依赖顺序、30/60/90 天路线图及可拆分 Trellis 任务。
+- 修改文件：`docs/architecture/project-optimization-reaudit-2026-08-30.md`；`.trellis/tasks/08-30-project-code-business-optimization-reaudit/{task.json,prd.md,implement.jsonl,check.jsonl,research/*.md}`；`docs/superpowers/PROGRESS.md`。未修改生产代码，也未覆盖、回滚既有 Mobile/Pencil/规范未提交改动。
+- 验证结果：Trellis 上下文 26/26（implement）与 26/26（check）通过；独立检查确认当前定义 ID 唯一连续（P0 3、P1 16、P2 7）、历史映射 P0 12/12、P1 21/21、51 个限定符号和全部证据路径存在；主会话复验报告 299 行、84 个路径、必需章节、Mermaid fence、冲突标记、尾随空白及 `git diff --check` 全部通过。HEAD 中 `pc/postcss.config.js` SHA-256 复验为 `556812c8ec8177751aa22b8fa641a92e782f9e2564866887061c6626186bd5f0`；根 workflow 只调用 PC type-check 与单个 Node 测试，未调用 PC Vite build。为避免触发可疑构建配置，本轮没有执行 npm/Vite/PC/PWA/Tauri build，也没有执行或披露任何解码 payload；生产数据库、MQ、日志、制品、Secret 和备份能力均已在报告中标为待运行时补证。规范同步判断：本轮只生成审计结论、未落地新执行合同，因此不改写 specs。
+- 后续事项：立即按报告 CUR-P0-01 停止 PC dev/build/发布与相关 cache 复用并启动取证；在 3 个 P0 关闭前保持发布冻结。当前审计产物尚未提交或推送，等待用户决定是否提交及是否进入 P0 修复。
+
+## 2026-08-30 11:26 - 启动三个发布阻断 P0 的闭环修复
+
+- 完成内容：建立 Trellis P0 任务 `08-30-p0-release-blockers-remediation`，将 PC 构建供应链清理与前置源码完整性门禁、高价值资金命令强幂等、合成行情归档与秒合约事件时间结算闭环固化为可测试验收合同；明确工作树隔离、fail-closed、历史价格不得臆造以及代码证据与生产运行证据分离规则，并启动三个互不覆盖代码的专题研究。
+- 修改文件：`.trellis/tasks/08-30-p0-release-blockers-remediation/{task.json,prd.md,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`task.py current --source` 已指向新 P0 任务；已读取 Trellis 工作流、backend/admin/mobile 相关规范、跨层复用指南、根 Docker workflow 与发布门禁，且在清理前未加载、执行、解码或构建 `pc/postcss.config.js`。
+- 后续事项：完成三个专题研究并固化实现上下文；随后按 P0-01、P0-02、P0-03 三条独立写入范围实施，最后执行独立检查与发布门禁。
+
+## 2026-08-30 11:53 - 完成三个 P0 的实施研究与上下文固化
+
+- 完成内容：完成 PC 构建完整性、人工充值/现货/杠杆资金命令幂等、合成行情/秒合约事件时间结算三份实施研究，明确了异常配置静态处置、依赖安装前门禁、主体范围幂等收据与请求指纹、策略租约内行情归档、产品开单 fail-closed 及超龄订单人工复核终态；将 12 份规范和 3 份研究同时注入 implement/check 上下文，并启动三个互斥写入范围的实现代理。
+- 修改文件：`.trellis/tasks/08-30-p0-release-blockers-remediation/research/{p0-01-pc-build-integrity,p0-02-financial-idempotency,p0-03-synthetic-seconds-settlement}.md`、`.trellis/tasks/08-30-p0-release-blockers-remediation/{implement.jsonl,check.jsonl,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`task.py validate` 对 implement/check 各 15 项上下文均通过；任务状态已由 `planning` 切换为 `in_progress`，当前任务解析为 `.trellis/tasks/08-30-p0-release-blockers-remediation`；清理完成前仍未执行 PC 构建配置。
+- 后续事项：等待三个实现切片完成，执行主会话集成复核、真实数据库并发测试、PC/三端质量门禁和独立 `trellis-check`。
+
+## 2026-08-30 12:04 - 固化三个 P0 的跨层执行合同
+
+- 完成内容：将 P0 实施研究转为可复用规范：容器交付增加依赖安装前静态源码完整性门禁；现货与杠杆规范明确主体范围 key、规范化指纹、并发唯一键与断连回放；秒合约与合成行情规范明确策略租约内 append-only tick 归档、产品/开单能力校验和超龄 `manual_review` 终态；Admin 规范明确人工充值一次确认生成并复用一枚 key，禁止客户端乐观加余额。
+- 修改文件：`.trellis/spec/backend/{container-delivery,spot-orders,margin-trading-actions,seconds-contracts,synthetic-market-kline}.md`、`.trellis/spec/admin/ui-system.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：六份规范 Markdown fence 均成对闭合，章节结构复核通过，`git diff --check` 无空白或冲突错误；未修改当前既有 Mobile/Pencil 脏文件。
+- 后续事项：待实现代理返回后逐条按上述合同检查 schema、事务、客户端重试与故障测试，必要时同步实现细节而不弱化合同。
+
+## 2026-08-30 13:03 - 关闭 P0-01 PC 构建期异常加载器
+
+- 完成内容：将 `pc/postcss.config.js` 恢复为仅含 Tailwind/Autoprefixer 的声明式配置；新增 Python 标准库、纯文本源码完整性扫描器和 11 个恶意/良性/工作流顺序回归；四个 GitHub Actions 构建/发布 Job 均在 checkout 后、setup/cache/install/build 前执行门禁，根发布门禁也把扫描器与其测试放到首位；新增中文供应链事件响应 Runbook，明确冻结、取证、凭据轮换、Runner/cache/制品失效和可信恢复准入。
+- 修改文件：`pc/postcss.config.js`、`scripts/source_integrity_gate.py`、`tests/test_source_integrity_gate.py`、`.github/workflows/docker-image.yml`、`scripts/p0-release-gate.sh`、`docs/security/pc-build-source-integrity-incident-runbook.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：主会话复验扫描器通过并静态扫描 11 个构建配置，单元测试 11/11 通过，四个 workflow Job 的 `checkout < scan < 首个 setup/install/build` 与本地门禁首序均由持久回归断言覆盖，`bash -n`、`git diff --check` 通过；实现代理另已执行 `npm --prefix pc run type-check`、`npm --prefix pc run test:margin`（11/11）和 `npm --prefix pc run build`（365 modules），均通过。清理后配置 SHA-256 为 `e32657baf631d7c5f4dc67b4b2ee0ec8e7d5b3c41860e09cddce7c0377cd80bc`。
+- 后续事项：代码层 P0-01 已关闭；主机取证、可能暴露凭据轮换、旧 Runner/cache/artifact/镜像失效仍须部署环境负责人按 Runbook 补真实运行证据，不能用本地构建成功替代。
+
+## 2026-08-30 14:53 - 独立复核并加固 P0 发布阻断修复
+
+- 完成内容：对 P0-01 补齐全仓 `package.json` lifecycle/脚本静态扫描、锁定 PC `vite build` 入口并让本地发布门禁实际执行生产构建；对 P0-03 将 synthetic ticker 的 MySQL 租约/版本/事件时间持锁复核与归档移到 Redis CAS 之前，确保过期 lease、旧版本和未来时间不留 Redis 孤儿 ticker，并让秒合约能力门禁强制非空 owner+未过期 lease；同时移除仅测试使用、先冻结后插单的 legacy Spot 建单公开 API，消除缺键与重放二次冻结分支，并同步执行规范与任务研究文档。
+- 修改文件：`scripts/{source_integrity_gate.py,p0-release-gate.sh}`、`tests/{test_source_integrity_gate.py,market_ingestion.rs,seconds_contract_routes.rs,wallet_spot_services.rs}`、`src/modules/market/infrastructure/adapters/ingestion.rs`、`src/modules/seconds_contract/{application.rs,infrastructure.rs}`、`src/workers/synthetic_market.rs`、`src/modules/spot/{mod.rs,repository.rs,service.rs}`、`.trellis/spec/backend/{container-delivery,synthetic-market-kline,seconds-contracts}.md`、`.trellis/tasks/08-30-p0-release-blockers-remediation/research/{p0-01-pc-build-integrity,p0-03-synthetic-seconds-settlement}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：静态完整性扫描通过（16 个输入），扫描器回归 16/16，`npm --prefix pc run build` 真实执行 `vite build` 并通过（366 modules）；`cargo fmt -- --check`、synthetic worker 13/13、0119 migration 1/1、legacy wallet/spot service 5/5、ingestion 顺序合同 1/1 与秒合约能力路由定向测试均通过。当前会话未配置 `DATABASE_URL`/`REDIS_URL`，因此带真实 MySQL/Redis 的分支由环境门禁跳过；按用户要求未运行耗时全量 P0 gate。
+- 后续事项：主会话在已配置 MySQL/Redis/Mongo 的环境中统一运行过期 lease 无 Redis 残留、20 并发幂等和全量发布门禁；本轮未提交或推送，无关 Mobile/Pencil/i18n 脏改动保持原样。
+
+## 2026-08-30 15:12 - 关闭 P0-02 高价值资金命令重复动账风险
+
+- 完成内容：新增 `0118_financial_command_idempotency.sql`，为管理员人工充值建立事务内命令收据，为现货订单建立用户范围唯一键、请求指纹、首次响应快照和并发 attempt token，为杠杆划转补请求指纹并从不可变双腿流水快照重建首次结果；三条 API 均在动账前拒绝缺失键，同键异参返回 409，不同主体可复用相同文本键。Admin、PC、Mobile 适配器会在一次确认/失败重试期间复用稳定键，legacy Spot 缺键建单公开端口已删除。
+- 修改文件：`migrations/0118_financial_command_idempotency.sql`、`src/modules/admin/{application.rs,application/users.rs,infrastructure.rs,infrastructure/financial_idempotency.rs,presentation/users.rs,service/users.rs}`、`src/modules/spot/{application/*,infrastructure.rs,infrastructure/order_repository.rs,mod.rs,presentation.rs,repository.rs,service.rs}`、`src/modules/margin/{application.rs,application/account_settings.rs,application/support.rs,infrastructure/transfers.rs,presentation.rs}`、`web/src/{admin/resources/actions/users.tsx,shared/idempotency.ts}`、`pc/src/api/{contract.ts,exchange.ts,idempotency.ts}`、`mobile/src/api/{trading.ts,wallet.ts,idempotency.ts}` 及对应测试与规范。
+- 验证结果：本机隔离 MySQL fresh migration 后，管理员充值、现货下单、杠杆划转真实路由测试均通过；覆盖缺键、精确响应回放、异参冲突、不同主体隔离及 20 个并发同键请求，只产生一笔业务记录/资金变化/流水。现货并发测试连续复验通过；Web typecheck/测试、PC type-check/测试、Mobile type-check/幂等测试以及全仓发布门禁均通过。
+- 后续事项：代码层 P0-02 已关闭；部署后需运行生产重复画像查询并对历史疑似重复充值、订单和划转逐笔形成财务结论。
+
+## 2026-08-30 15:12 - 关闭 P0-03 合成行情与秒合约结算断链
+
+- 完成内容：新增 `0119_synthetic_seconds_settlement_safety.sql`；合成 ticker 现在先在 MySQL 事务中持锁复核 strategy owner、lease、active version、运行状态和事件时间，幂等写入带策略证据的 `market_price_ticks` 后才允许 Redis CAS、资金触发器和 WebSocket 广播。秒合约产品激活与开仓共用结算历史能力门禁；缺合法事件快照的到期订单在有界等待后只转一次 `manual_review` 并写追加式异常证据，不使用当前价猜测且不自动改钱包。
+- 修改文件：`migrations/0119_synthetic_seconds_settlement_safety.sql`、`src/modules/market/infrastructure/{adapters/ingestion.rs,cache.rs}`、`src/modules/seconds_contract/{application.rs,infrastructure.rs,repository.rs}`、`src/workers/{synthetic_market.rs,seconds_contract_settlement.rs}`、`tests/{market_ingestion.rs,market_redis_cache.rs,seconds_contract_routes.rs,seconds_contract_settlement_worker.rs,synthetic_market_worker.rs,synthetic_seconds_settlement_migration.rs}` 及对应规范。
+- 验证结果：本机隔离 MySQL/Redis 真实集成测试确认正常归档、完全相同回放、Redis 缓存修复、同事件异价冲突、倒退事件、过期 lease、旧版本和未来事件时间；后三类非法事件在 Redis 中均无残留。秒合约能力路由测试确认无 owner/过期 lease/无受支持 feed 时在扣款前拒绝；结算 worker 6/6、迁移合同 1/1、synthetic worker 13/13 和 Redis CAS 4/4 均通过。
+- 后续事项：代码层 P0-03 已关闭；部署后需盘点存量 strategy/internal 产品、超龄 `opened` 订单和历史价格缺口，禁止伪造历史价格回填。
+
+## 2026-08-30 15:12 - 完成三个 P0 的全仓发布门禁与状态收口
+
+- 完成内容：独立 `trellis-check` 发现并修复 package lifecycle 扫描缺口、synthetic Redis 先写后验租约、秒合约未校验 lease owner/expiry 及 legacy Spot 可选键路径；主会话修正归档先行后的同事件异价测试合同，更新 P0 PRD 全部验收项、复审报告和代码/生产证据边界。三个代码 P0 均已关闭，既有无关 Mobile/Pencil/i18n 工作树改动未被覆盖或回滚。
+- 修改文件：`.trellis/tasks/08-30-p0-release-blockers-remediation/{prd.md,research/*.md,check.jsonl}`、`docs/architecture/project-optimization-reaudit-2026-08-30.md`、`docs/superpowers/PROGRESS.md`，以及上述 P0 实现、测试、CI、规范和 Runbook 文件。
+- 验证结果：`python3 -B scripts/source_integrity_gate.py` 通过（16 个构建输入），scanner 16/16；`cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、`cargo clippy --all-targets --all-features -- -D warnings`、`git diff --check` 全部通过；沙箱外完整 `./scripts/p0-release-gate.sh` 通过，覆盖全量 Rust、Admin Web lint/typecheck/tests、PC type-check/margin tests/production build、Mobile type-check/tests。真实 MySQL/Redis 定向并发和故障分支另行通过，不依赖全量测试的环境跳过语义。
+- 后续事项：代码交付已完成但尚未提交或推送；生产发布继续 HOLD，直到供应链事件取证、凭据轮换、旧 Runner/cache/artifact/镜像失效，以及历史资金/秒合约数据对账均有真实运行证据。
+
 ## 2026-08-30 15:32 - 1:1 对齐当前 Pencil 秒合约历史订单页
 
 - 完成内容：重新读取 Pencil 当前选中的 `07d / 秒合约 · 历史订单 · 浅色主题` 与深色主题画板，将页面浅色背景/卡片改为纯白 `#FFFFFF`，深色背景/卡片改为纯黑 `#000000`；Header 改为左侧 24px Lucide `ArrowLeft` 返回图标、右侧标题“秒合约订单”，保持 52px Header、16px 安全轨、右对齐标题和原有真实 API/方向筛选/状态流程。
@@ -7901,19 +7999,26 @@
 - 验证结果：基于精确暂存快照创建隔离 worktree，`npm run type-check`、Mobile 测试 498/498、`npm run build:pwa`、`npm run build:tauri` 均通过；两份完成任务上下文校验、`git diff --cached --check` 通过；首次推送结果为 `fac1def..8326f12 main -> main`。
 - 后续事项：等待 GitHub Actions 执行；本地其余未提交任务不在本轮提交范围内。
 
+## 2026-08-31 00:30 - 修复杠杆平仓弹窗深色主题
+
+- 完成内容：定位 `margin-close-dialog` 的 body Teleport 与 Vue scoped CSS 组合问题；将深色规则改为完整全局后代选择器，使已打开的平仓弹窗跟随 `<html data-theme>` 即时切换深浅色，并新增 `vue/compiler-sfc` 编译级回归，防止规则再次退化为裸 `html[data-theme='dark']`。
+- 修改文件：`mobile/src/components/MarginCloseSheet.vue`、`mobile/tests/margin-close-sheet.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-31-mobile-margin-close-dialog-dark-theme/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：平仓弹窗定向测试 9/9、Mobile 全量测试 502/502、`npm run type-check`、`npm run build:pwa`、`npm run build:tauri` 均通过；Ego Browser 在真实 Vite 页面验证 320/390/448px 下深色面板/字段/文字分别为 `rgb(11,15,13)`、`#181e1a`、`rgb(245,247,246)`，切回浅色恢复白色与 `#f2f4f3`，再次切回深色即时生效且零横向溢出。
+- 后续事项：无；本轮未提交或推送。
+
+## 2026-08-31 01:40 - 按 Pencil 1:1 重构杠杆倍数调整弹窗
+
+- 完成内容：依据 Pencil 当前选中的深色 `NTiiS` 与浅色 `CulR4` 画板，将手机端杠杆倍数调整重构为 840px 双方向底部弹层；做多/做空各自支持真实档位加减、六档快捷窗口与更多分页，并以真实余额、行情及产品风控参数生成预览。扩展后端用户设置为可原子保存的 `long_leverage` / `short_leverage`，保留旧 `leverage` 请求与响应兼容，按订单方向冻结后续开仓倍数；新增不可变迁移、严格载荷校验、旧行回填、模式更新保留倍数和竞态隔离。复核阶段进一步修复显式非法方向值错误回退 legacy 以及旧 GET 覆盖新保存结果的问题。
+- 修改文件：`mobile/src/{api/trading.ts,core/marginLeverage.ts,components/ContractTradeSheets.vue,views/TradeView.vue,i18n/messages/zh-CN.ts,i18n/messages/en.ts}`、`mobile/tests/{margin-leverage.test.ts,margin-leverage-sheet-pencil-parity.test.ts,contract-pencil-selected-parity.test.ts,trading-lending-views.test.ts}`、`migrations/0120_margin_directional_leverage_settings.sql`、`src/modules/margin/{presentation.rs,routes.rs,application/account_settings.rs,infrastructure/product_config.rs}`、`tests/{margin_routes.rs,margin_directional_leverage_migration.rs}`、`.trellis/spec/{mobile/backend-integration.md,mobile/pwa-and-shell.md,backend/margin-trading-actions.md}`、`.trellis/tasks/08-31-mobile-margin-leverage-sheet-pencil-parity/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增旧 UI 契约测试先得到 5/5 失败；实现及复核后 Mobile 全量测试 513/513、`npm --prefix mobile run type-check`、`build:pwa`、`build:tauri` 均通过；`cargo fmt --all -- --check`、迁移定向测试 2/2、非法载荷路由测试 1/1、`cargo check --all-targets` 与 `cargo clippy --all-targets -- -D warnings` 均通过。Ego Browser 在真实 Vue 页面验证 390×920 下弹层 `0,80,390,840`、Header 350×34、信息卡 350×103/75、确认按钮 `20,852,350,52`，深浅色与 Pencil 色板一致；320/390/448px 均无横向溢出，取消、失败保留草稿及多空独立调节已实测。`git diff --check` 与 Trellis task validate 通过。
+- 后续事项：当前环境未配置 `DATABASE_URL`，真实 MySQL 隔离库迁移分支按测试合同跳过；部署前需在 MySQL 8.x 环境再运行该分支。本轮未提交或推送。
+
 ## 2026-08-31 03:15 - 完成手机端动画性能、参考请求与 KYC 国家搜索优化
 
 - 完成内容：将功能性加载旋转与装饰动效分离，低动态和受限设备仍保留低频加载反馈；新增启动前性能档位、SignalField 30fps/可见性暂停与静态降级、GSAP 按需分包、K 线浅监听和稳定参考 GET 的内存 TTL/single-flight 白名单。资产页只渲染当前主题 Hero，会员总额与今日收益按长度降级到最小 20px 并完整换行。KYC 国家改为可搜索底部弹层，支持 ISO、后端名、本地化名及去重音符搜索，保留后端配置原始 country 值；国家目录失败不再遮蔽认证状态，并修复 Teleport 明暗主题及低动态/受限设备模糊降级的 scoped CSS 编译问题。
 - 修改文件：`mobile/src/{main.ts,core/{performanceTier.ts,countrySearch.ts},components/{SignalField.vue,LaunchIntro.vue,LightweightMarketChart.vue},styles/base.css,views/{HomeView.vue,AssetsView.vue,KycView.vue},api/{requestCache.ts,auth.ts,market.ts,swap.ts,trading.ts,seconds.ts,earn.ts,loan.ts,prediction.ts,newCoin.ts,wallet.ts},i18n/messages/{zh-CN.ts,en.ts}}`、`mobile/tests/{performance-tier,request-cache,reference-request-whitelist,functional-spinner,kyc-country-search,access-identity-settings-views,award-ui-assets-profile,motion-parity,launch-intro}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-31-mobile-animation-performance/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：独立 `trellis-check` 定向测试 46/46 与 type-check 通过；主会话 Mobile 全量测试 533/533、`npm run build:pwa`、`npm run build:tauri` 全部通过。Ego Browser 实测 KYC 搜索 `China`、`cote ivoire`、`United States` 均得到唯一正确国家，选择后触发器显示 `美国 (US)`，Escape/选择均归还焦点并解除滚动锁；浅深主题文字/表面可读，320/390/448px 文档宽度与视口一致。reduced-motion 和 constrained 两种场景下国家遮罩 `backdrop-filter: none`；资产长数字、功能 spinner 时间推进、受限档 Canvas 静态化和 TTL 内页面返回不重复请求也已完成浏览器回归。
 - 后续事项：代码与测试已完成；本轮未提交或推送，待用户确认后按任务范围整理提交。
-
-## 2026-08-31 09:31 - 提交并推送手机端性能与 KYC 搜索优化
-
-- 完成内容：将手机端动画可靠性、低端设备性能分级、参考请求 TTL/single-flight 白名单、资产长数字适配与 KYC 可搜索国家弹层整理为功能提交 `194772f`；完成任务归档提交 `72f9999` 与会话日志提交 `b0c05c1`，并推送至 `origin/main`。未纳入本轮范围的 P0、杠杆、Pencil 与其他并行工作继续保留在本地工作区。
-- 修改文件：功能提交 `194772f` 中的 Mobile 实现、双语资源、回归测试、Mobile Trellis 规范、任务资料与完成记录；归档提交 `72f9999`；会话日志提交 `b0c05c1`；以及本条交付记录。
-- 验证结果：基于精确暂存树创建隔离 worktree，`npm run type-check`、Mobile 测试 518/518、`npm run build:pwa`、`npm run build:tauri` 全部通过；`git diff --cached --check` 通过；首次推送结果为 `0db7538..b0c05c1 main -> main`。
-- 后续事项：等待 GitHub Actions 执行；本地其余未提交任务不在本轮提交范围内。
 
 ## 2026-08-31 10:24 - 手机资金账单补齐杠杆账户流水
 

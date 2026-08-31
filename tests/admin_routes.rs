@@ -2866,7 +2866,8 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
     let user_recharge_body = json!({
         "asset_id": 1,
         "amount": "1.000000000000000000",
-        "reason": "scope recharge user"
+        "reason": "scope recharge user",
+        "idempotency_key": "scope-recharge-user"
     })
     .to_string();
     let cases = [
@@ -6023,6 +6024,7 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
     };
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
+    let (other_role_id, other_admin_id) = create_admin_user(&pool).await;
     let user_id = create_user(&pool).await;
     let (asset_id, symbol) = create_asset_with_symbol(&pool, "ARU").await;
     let token = issue_token(
@@ -6032,9 +6034,17 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
         900,
     )
     .unwrap();
+    let other_token = issue_token(
+        &settings,
+        format!("admin:{other_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let idempotency_key = format!("admin-recharge-{}", Uuid::now_v7().simple());
 
-    let created = app
+    let missing_key = app
         .clone()
         .oneshot(
             Request::builder()
@@ -6053,9 +6063,50 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
                 .unwrap(),
         )
         .await?;
-    let created_status = created.status();
-    let created_payload = body_json(created).await?;
-    assert_eq!(created_status, StatusCode::OK, "payload: {created_payload}");
+    assert_eq!(missing_key.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let request_body = json!({
+        "asset_id": asset_id,
+        "amount": "25.500000000000000000",
+        "reason": "manual support recharge",
+        "idempotency_key": idempotency_key
+    })
+    .to_string();
+    let mut concurrent = tokio::task::JoinSet::new();
+    for _ in 0..20 {
+        let request_app = app.clone();
+        let request_token = token.clone();
+        let request_body = request_body.clone();
+        concurrent.spawn(async move {
+            request_app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                        .header(AUTHORIZATION, format!("Bearer {request_token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(request_body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+    }
+    let mut concurrent_payloads = Vec::new();
+    while let Some(response) = concurrent.join_next().await {
+        let response = response?;
+        let status = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status, StatusCode::OK, "payload: {payload}");
+        concurrent_payloads.push(payload);
+    }
+    assert_eq!(concurrent_payloads.len(), 20);
+    let created_payload = concurrent_payloads[0].clone();
+    assert!(
+        concurrent_payloads
+            .iter()
+            .all(|payload| payload == &created_payload)
+    );
     assert_eq!(created_payload["user_id"], user_id);
     assert_eq!(created_payload["asset_id"], asset_id);
     assert_eq!(created_payload["asset_symbol"], symbol);
@@ -6064,6 +6115,28 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
     assert_eq!(created_payload["frozen"], "0.000000000000000000");
     assert_eq!(created_payload["locked"], "0.000000000000000000");
     let recharge_id = created_payload["recharge_id"].as_str().unwrap().to_owned();
+
+    let conflict = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "25.600000000000000000",
+                        "reason": "manual support recharge",
+                        "idempotency_key": idempotency_key
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
 
     let available: BigDecimal = sqlx::query_scalar(
         "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
@@ -6116,13 +6189,14 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
             Request::builder()
                 .method("POST")
                 .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
-                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header(AUTHORIZATION, format!("Bearer {other_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
                         "asset_id": asset_id,
                         "amount": "4.500000000000000000",
-                        "reason": "second support recharge"
+                        "reason": "second support recharge",
+                        "idempotency_key": idempotency_key
                     })
                     .to_string(),
                 ))
@@ -6133,6 +6207,31 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
     let second_payload = body_json(second).await?;
     assert_eq!(second_status, StatusCode::OK, "payload: {second_payload}");
     assert_eq!(second_payload["available"], "30.000000000000000000");
+
+    let replay = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "25.5000",
+                        "reason": "  manual support recharge  ",
+                        "idempotency_key": format!("  {idempotency_key}  ")
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let replay_status = replay.status();
+    let replay_payload = body_json(replay).await?;
+    assert_eq!(replay_status, StatusCode::OK, "payload: {replay_payload}");
+    assert_eq!(replay_payload, created_payload);
 
     let missing_reason = app
         .clone()
@@ -6145,7 +6244,8 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
                 .body(Body::from(
                     json!({
                         "asset_id": asset_id,
-                        "amount": "1.000000000000000000"
+                        "amount": "1.000000000000000000",
+                        "idempotency_key": "admin-recharge-missing-reason"
                     })
                     .to_string(),
                 ))
@@ -6166,7 +6266,8 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
                     json!({
                         "asset_id": asset_id,
                         "amount": "0.000000000000000000",
-                        "reason": "zero recharge"
+                        "reason": "zero recharge",
+                        "idempotency_key": "admin-recharge-zero"
                     })
                     .to_string(),
                 ))
@@ -6190,7 +6291,8 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
                     json!({
                         "asset_id": asset_id,
                         "amount": "1.000000000000000000",
-                        "reason": "missing user recharge"
+                        "reason": "missing user recharge",
+                        "idempotency_key": "admin-recharge-missing-user"
                     })
                     .to_string(),
                 ))
@@ -6199,8 +6301,38 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
         .await?;
     assert_eq!(invalid_user.status(), StatusCode::NOT_FOUND);
 
-    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+    let (receipt_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM admin_wallet_recharges WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    let (ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ? AND asset_id = ? AND ref_type = 'admin_recharge'",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    let (audit_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM admin_audit_logs WHERE target_type = 'wallet_account' AND target_id = ? AND action = 'wallet.recharge'",
+    )
+    .bind(user_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(receipt_count, 2);
+    assert_eq!(ledger_count, 2);
+    assert_eq!(audit_count, 2);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id IN (?, ?)")
         .bind(admin_id)
+        .bind(other_admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_wallet_recharges WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
@@ -6221,12 +6353,14 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
         .bind(user_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+    sqlx::query("DELETE FROM admin_users WHERE id IN (?, ?)")
         .bind(admin_id)
+        .bind(other_admin_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+    sqlx::query("DELETE FROM admin_roles WHERE id IN (?, ?)")
         .bind(role_id)
+        .bind(other_role_id)
         .execute(&pool)
         .await?;
     Ok(())
