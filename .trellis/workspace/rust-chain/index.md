@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
+- **Total Sessions**: 50
 - **Last Active**: 2026-08-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1685 | Active |
+| `journal-1.md` | ~1720 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-08-31 | 手机资金账单补齐杠杆账户流水 | `b631c15` | `main` |
 | 49 | 2026-08-31 | 手机端性能与 KYC 国家搜索优化 | `194772f` | `main` |
 | 48 | 2026-08-29 | 手机端底部交易导航弹窗 | `c9543c4` | `main` |
 | 47 | 2026-08-28 | 杠杆比例拖动与真实部分平仓 | `53d10b2`, `a931423` | `main` |

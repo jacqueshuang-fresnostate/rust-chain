@@ -1685,3 +1685,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: 手机资金账单补齐杠杆账户流水
+
+**Date**: 2026-08-31
+**Task**: 手机资金账单补齐杠杆账户流水
+**Branch**: `main`
+
+### Summary
+
+合并现货与杠杆账户流水，补齐账户筛选、来源标签和稳定分页。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b631c15` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
