@@ -58,9 +58,9 @@ test('KYC 国家底部弹窗复用焦点管理并支持搜索、Escape、遮罩�
   assert.match(source, /@click\.self="closeCountryPicker"/)
   assert.match(source, /role="dialog"[\s\S]*?aria-modal="true"/)
   assert.match(source, /v-if="!filteredCountryOptions\.length"[\s\S]*?kyc\.countryNoResults/)
-  assert.match(source, /:global\(html\[data-performance-tier='constrained'\] \.kyc-country-picker-mask\)/)
-  assert.match(source, /\.kyc-country-picker-search \{[^}]*background: color-mix\(in srgb, var\(--surface-elevated\) 90%, var\(--ink\)\)/)
-  assert.doesNotMatch(source, /\.kyc-country-picker-(?:header button|search) \{[^}]*background: var\(--surface-2\)/)
+  assert.match(source, /:global\(html\[data-performance-tier='constrained'\] \.kyc-picker-mask\)/)
+  assert.match(source, /\.kyc-picker-search \{[^}]*background: color-mix\(in srgb, var\(--surface-elevated\) 90%, var\(--ink\)\)/)
+  assert.doesNotMatch(source, /\.kyc-picker-(?:header button|search) \{[^}]*background: var\(--surface-2\)/)
 })
 
 test('KYC 国家弹窗的受限设备样式编译后仍准确作用于遮罩', () => {
@@ -73,7 +73,7 @@ test('KYC 国家弹窗的受限设备样式编译后仍准确作用于遮罩', (
   })
 
   assert.deepEqual(compiled.errors, [])
-  assert.match(compiled.code, /html\[data-performance-tier=['"]?constrained['"]?\] \.kyc-country-picker-mask\s*\{[^}]*backdrop-filter:\s*none/)
+  assert.match(compiled.code, /html\[data-performance-tier=['"]?constrained['"]?\] \.kyc-picker-mask\s*\{[^}]*backdrop-filter:\s*none/)
   assert.doesNotMatch(compiled.code, /html\[data-performance-tier=['"]?constrained['"]?\]\s*\{[^}]*backdrop-filter/)
 })
 

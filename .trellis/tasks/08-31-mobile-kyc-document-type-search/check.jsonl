@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify required Mobile test, type-check and build gates."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify localization symmetry, search semantics and dialog focus behavior."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify Teleport theme, performance fallbacks, touch size and modal styling."}
+{"file":".trellis/tasks/08-31-mobile-kyc-document-type-search/research/existing-kyc-picker-pattern.md","reason":"Verify scope preserves current KYC API values and country behavior."}

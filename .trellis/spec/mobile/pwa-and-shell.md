@@ -1478,6 +1478,15 @@ detectPerformanceTier(navigatorLike?: object | null): PerformanceTier
   backend's original `country` value. The dialog focuses search on open, traps
   Tab, closes with Escape/backdrop/close, restores the exact trigger, locks body
   scroll only while open, and shows a localized no-results state.
+- The KYC document-type field uses a second independent searchable dialog and
+  renders only the current country rule's raw `document_types` (or the existing
+  fallback when the rule is empty). Search matches the localized display label
+  and raw backend value with the country search normalizer. Only selecting a
+  result changes `form.documentType`; submit preserves that raw value as
+  `document_type`, including unknown configured types.
+- Both KYC dialogs share the `.kyc-picker-*` visual surface and explicit
+  Teleport focus styles, while retaining separate open/query/dialog/trigger
+  state. Do not couple their queries or reuse one selected value for the other.
 - A Teleported KYC picker does not inherit page-local `--surface-2`. Its field
   and close surfaces must derive from `--surface-elevated` and `--ink` so light
   and dark themes retain readable text/icon contrast without hard-coded theme

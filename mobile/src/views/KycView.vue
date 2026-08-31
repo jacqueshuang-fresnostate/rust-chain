@@ -9,6 +9,7 @@ import { fetchCountries, type CountryOption } from '@/api/auth'
 import { fetchKycStatus, submitKycApplication, type KycCountryDocumentRule, type KycStatus } from '@/api/user'
 import { formatDateTime } from '@/core/format'
 import { filterCountryOptions, matchesCountryIdentity } from '@/core/countrySearch'
+import { filterDocumentTypeOptions, type KycDocumentTypeSearchOption } from '@/core/kycDocumentSearch'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 
@@ -50,10 +51,18 @@ const countryPickerOpen = ref(false)
 const countrySearch = ref('')
 const countryPickerDialog = ref<HTMLElement | null>(null)
 const countryPickerTrigger = ref<HTMLButtonElement | null>(null)
+const documentTypePickerOpen = ref(false)
+const documentTypeSearch = ref('')
+const documentTypePickerDialog = ref<HTMLElement | null>(null)
+const documentTypePickerTrigger = ref<HTMLButtonElement | null>(null)
 const {
   trapFocus: trapCountryPickerFocus,
   setReturnFocus: setCountryPickerReturnFocus,
 } = useModalDialog(countryPickerOpen, countryPickerDialog, '[data-country-search]')
+const {
+  trapFocus: trapDocumentTypePickerFocus,
+  setReturnFocus: setDocumentTypePickerReturnFocus,
+} = useModalDialog(documentTypePickerOpen, documentTypePickerDialog, '[data-document-type-search]')
 
 const latest = computed(() => kyc.value?.latestSubmission)
 const isLocked = computed(() => latest.value?.status === 'pending' || latest.value?.status === 'approved')
@@ -98,6 +107,17 @@ const documentTypes = computed(() => {
   const configured = selectedRule.value?.documentTypes || []
   return configured.length ? uniqueValues(configured) : ['identity_card', 'passport', 'driver_license', 'residence_permit']
 })
+const documentTypeOptions = computed<KycDocumentTypeSearchOption[]>(() => documentTypes.value.map((value) => ({
+  value,
+  label: documentLabel(value),
+})))
+const filteredDocumentTypeOptions = computed(() => filterDocumentTypeOptions(
+  documentTypeOptions.value,
+  documentTypeSearch.value,
+))
+const selectedDocumentTypeLabel = computed(() => documentTypeOptions.value.find(
+  (option) => option.value.toLowerCase() === form.value.documentType.toLowerCase(),
+)?.label || t('kyc.selectDocumentType'))
 const requiresHandheld = computed(() => selectedRule.value?.handheldDocumentTypes.includes(form.value.documentType) || false)
 const uploadItems = computed(() => [
   { kind: 'front' as const, label: t('kyc.front') },
@@ -170,6 +190,31 @@ function selectCountry(value: string): void {
 
 function handleCountryPickerKeydown(event: KeyboardEvent): void {
   trapCountryPickerFocus(event, closeCountryPicker)
+}
+
+function isDocumentTypeSelected(value: string): boolean {
+  return value.trim().toLowerCase() === form.value.documentType.trim().toLowerCase()
+}
+
+function openDocumentTypePicker(): void {
+  documentTypeSearch.value = ''
+  setDocumentTypePickerReturnFocus(documentTypePickerTrigger.value)
+  documentTypePickerOpen.value = true
+}
+
+function closeDocumentTypePicker(): void {
+  documentTypePickerOpen.value = false
+}
+
+function selectDocumentType(value: string): void {
+  const option = documentTypeOptions.value.find((item) => item.value === value)
+  if (!option) return
+  form.value.documentType = option.value
+  closeDocumentTypePicker()
+}
+
+function handleDocumentTypePickerKeydown(event: KeyboardEvent): void {
+  trapDocumentTypePickerFocus(event, closeDocumentTypePicker)
 }
 
 function documentLabel(value: string): string {
@@ -363,7 +408,7 @@ onMounted(() => { void load() })
                 <button
                   id="kyc-country-picker-trigger"
                   ref="countryPickerTrigger"
-                  class="kyc-country-trigger"
+                  class="kyc-picker-trigger kyc-country-trigger"
                   type="button"
                   aria-haspopup="dialog"
                   :aria-controls="countryPickerOpen ? 'kyc-country-picker' : undefined"
@@ -374,12 +419,22 @@ onMounted(() => { void load() })
                   <ChevronDown :size="17" aria-hidden="true" />
                 </button>
               </div>
-              <label class="kyc-field">
+              <div class="kyc-field">
                 <span>{{ t('kyc.documentType') }}</span>
-                <select v-model="form.documentType">
-                  <option v-for="type in documentTypes" :key="type" :value="type">{{ documentLabel(type) }}</option>
-                </select>
-              </label>
+                <button
+                  id="kyc-document-type-picker-trigger"
+                  ref="documentTypePickerTrigger"
+                  class="kyc-picker-trigger kyc-document-trigger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  :aria-controls="documentTypePickerOpen ? 'kyc-document-type-picker' : undefined"
+                  :aria-expanded="documentTypePickerOpen"
+                  @click="openDocumentTypePicker"
+                >
+                  <span>{{ selectedDocumentTypeLabel }}</span>
+                  <ChevronDown :size="17" aria-hidden="true" />
+                </button>
+              </div>
               <label class="kyc-field">
                 <span>{{ t('kyc.legalName') }}</span>
                 <input v-model="form.realName" :placeholder="t('kyc.legalNamePlaceholder')" />
@@ -431,24 +486,24 @@ onMounted(() => { void load() })
     </div>
 
     <Teleport to="body">
-      <div v-if="countryPickerOpen" class="kyc-country-picker-mask" @click.self="closeCountryPicker">
+      <div v-if="countryPickerOpen" class="kyc-picker-mask kyc-country-picker-mask" @click.self="closeCountryPicker">
         <section
           id="kyc-country-picker"
           ref="countryPickerDialog"
-          class="kyc-country-picker-sheet"
+          class="kyc-picker-sheet kyc-country-picker-sheet"
           role="dialog"
           aria-modal="true"
           aria-labelledby="kyc-country-picker-title"
           @keydown="handleCountryPickerKeydown"
         >
-          <div class="kyc-country-picker-handle" aria-hidden="true" />
-          <header class="kyc-country-picker-header">
+          <div class="kyc-picker-handle" aria-hidden="true" />
+          <header class="kyc-picker-header">
             <h2 id="kyc-country-picker-title">{{ t('kyc.countryPickerTitle') }}</h2>
             <button type="button" :aria-label="t('kyc.countryPickerClose')" @click="closeCountryPicker">
               <X :size="20" aria-hidden="true" />
             </button>
           </header>
-          <label class="kyc-country-picker-search">
+          <label class="kyc-picker-search">
             <Search :size="18" aria-hidden="true" />
             <input
               v-model="countrySearch"
@@ -461,11 +516,11 @@ onMounted(() => { void load() })
               :spellcheck="false"
             />
           </label>
-          <div class="kyc-country-picker-list">
+          <div class="kyc-picker-list">
             <button
               v-for="country in filteredCountryOptions"
               :key="country.value"
-              class="kyc-country-picker-option"
+              class="kyc-picker-option kyc-country-picker-option"
               :class="{ 'is-selected': isCountrySelected(country.value) }"
               type="button"
               :aria-pressed="isCountrySelected(country.value)"
@@ -478,9 +533,64 @@ onMounted(() => { void load() })
               <code>{{ country.code }}</code>
               <Check v-if="isCountrySelected(country.value)" :size="18" aria-hidden="true" />
             </button>
-            <div v-if="!filteredCountryOptions.length" class="kyc-country-picker-empty" role="status">
+            <div v-if="!filteredCountryOptions.length" class="kyc-picker-empty" role="status">
               <Search :size="24" aria-hidden="true" />
               <strong>{{ t('kyc.countryNoResults') }}</strong>
+            </div>
+          </div>
+        </section>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="documentTypePickerOpen" class="kyc-picker-mask kyc-document-picker-mask" @click.self="closeDocumentTypePicker">
+        <section
+          id="kyc-document-type-picker"
+          ref="documentTypePickerDialog"
+          class="kyc-picker-sheet kyc-document-picker-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="kyc-document-type-picker-title"
+          @keydown="handleDocumentTypePickerKeydown"
+        >
+          <div class="kyc-picker-handle" aria-hidden="true" />
+          <header class="kyc-picker-header">
+            <h2 id="kyc-document-type-picker-title">{{ t('kyc.documentTypePickerTitle') }}</h2>
+            <button type="button" :aria-label="t('kyc.documentTypePickerClose')" @click="closeDocumentTypePicker">
+              <X :size="20" aria-hidden="true" />
+            </button>
+          </header>
+          <label class="kyc-picker-search">
+            <Search :size="18" aria-hidden="true" />
+            <input
+              v-model="documentTypeSearch"
+              data-document-type-search
+              type="search"
+              autocomplete="off"
+              autocapitalize="none"
+              :aria-label="t('kyc.documentTypeSearchLabel')"
+              :placeholder="t('kyc.documentTypeSearchPlaceholder')"
+              :spellcheck="false"
+            />
+          </label>
+          <div class="kyc-picker-list">
+            <button
+              v-for="option in filteredDocumentTypeOptions"
+              :key="option.value"
+              class="kyc-picker-option kyc-document-picker-option"
+              :class="{ 'is-selected': isDocumentTypeSelected(option.value) }"
+              type="button"
+              :aria-pressed="isDocumentTypeSelected(option.value)"
+              @click="selectDocumentType(option.value)"
+            >
+              <span>
+                <strong>{{ option.label }}</strong>
+              </span>
+              <Check v-if="isDocumentTypeSelected(option.value)" :size="18" aria-hidden="true" />
+            </button>
+            <div v-if="!filteredDocumentTypeOptions.length" class="kyc-picker-empty" role="status">
+              <Search :size="24" aria-hidden="true" />
+              <strong>{{ t('kyc.documentTypeNoResults') }}</strong>
             </div>
           </div>
         </section>
@@ -514,11 +624,10 @@ onMounted(() => { void load() })
 .kyc-field { border: 1px solid transparent; border-radius: 8px; display: grid; gap: 3px; min-height: 48px; padding: 4px 0; }
 .kyc-field:focus-within { border-color: var(--positive); box-shadow: 0 0 0 2px var(--focus-ring); }
 .kyc-field > span { color: var(--muted); font-size: 11px; font-weight: 500; line-height: 15px; }
-.kyc-field input,
-.kyc-field select { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 14px; font-weight: 600; line-height: 20px; min-height: 25px; outline: 0; padding: 0; width: 100%; }
-.kyc-country-trigger { align-items: center; background: transparent; color: var(--ink); display: flex; font-size: 14px; font-weight: 600; gap: 8px; justify-content: space-between; min-height: 25px; padding: 0; text-align: left; width: 100%; }
-.kyc-country-trigger span { min-width: 0; overflow-wrap: anywhere; }
-.kyc-country-trigger svg { flex: 0 0 auto; }
+.kyc-field input { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 14px; font-weight: 600; line-height: 20px; min-height: 25px; outline: 0; padding: 0; width: 100%; }
+.kyc-picker-trigger { align-items: center; background: transparent; color: var(--ink); display: flex; font-size: 14px; font-weight: 600; gap: 8px; justify-content: space-between; min-height: 44px; padding: 0; text-align: left; width: 100%; }
+.kyc-picker-trigger span { min-width: 0; overflow-wrap: anywhere; }
+.kyc-picker-trigger svg { flex: 0 0 auto; }
 .document-grid { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .upload-tile { align-items: center; background: transparent; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); display: flex; flex-direction: column; font-size: 11px; gap: 6px; height: 72px; justify-content: center; min-height: 72px; overflow: hidden; padding: 5px; position: relative; }
 .upload-tile:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); outline: 0; }
@@ -530,33 +639,37 @@ onMounted(() => { void load() })
 .kyc-country-directory-warning { color: var(--warning); }
 .kyc-submit { font-size: 15px; height: 48px; min-height: 48px; width: 100%; }
 .kyc-page button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.kyc-country-picker-mask { align-items: end; backdrop-filter: blur(10px); background: var(--overlay); display: grid; inset: 0; justify-items: center; position: fixed; z-index: var(--layer-overlay); }
-.kyc-country-picker-sheet { background: var(--surface-elevated); border: 1px solid var(--line); border-bottom: 0; border-radius: 24px 24px 0 0; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); height: min(680px, 82dvh); max-height: calc(100dvh - 20px); min-height: 360px; overflow: hidden; padding: 10px 20px calc(14px + env(safe-area-inset-bottom)); width: min(100%, 448px); }
-.kyc-country-picker-handle { background: var(--line-strong); border-radius: 999px; height: 4px; justify-self: center; margin-bottom: 6px; width: 38px; }
-.kyc-country-picker-header { align-items: center; display: flex; justify-content: space-between; min-height: 58px; }
-.kyc-country-picker-header h2 { color: var(--ink); font-size: 19px; line-height: 25px; margin: 0; }
-.kyc-country-picker-header button { align-items: center; background: color-mix(in srgb, var(--surface-elevated) 90%, var(--ink)); border: 1px solid var(--line); border-radius: 50%; color: var(--ink); display: inline-flex; height: 44px; justify-content: center; min-height: 44px; padding: 0; width: 44px; }
-.kyc-country-picker-search { align-items: center; background: color-mix(in srgb, var(--surface-elevated) 90%, var(--ink)); border: 1px solid transparent; border-radius: 14px; color: var(--muted); display: flex; gap: 10px; height: 52px; margin: 6px 0 10px; padding: 0 14px; }
-.kyc-country-picker-search:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
-.kyc-country-picker-search input { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 14px; height: 50px; min-width: 0; outline: 0; padding: 0; width: 100%; }
-.kyc-country-picker-list { min-height: 0; overscroll-behavior: contain; overflow-y: auto; scrollbar-width: none; }
-.kyc-country-picker-list::-webkit-scrollbar { display: none; }
-.kyc-country-picker-option { align-items: center; background: transparent; border-bottom: 1px solid var(--line); color: var(--ink); display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto 20px; min-height: 58px; padding: 8px 2px; text-align: left; width: 100%; }
-.kyc-country-picker-option.is-selected { color: var(--positive); }
-.kyc-country-picker-option > span { display: grid; gap: 2px; min-width: 0; }
-.kyc-country-picker-option strong { font-size: 14px; overflow-wrap: anywhere; }
-.kyc-country-picker-option small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.kyc-country-picker-option code { color: var(--muted-strong); font-family: var(--data-font); font-size: 12px; }
-.kyc-country-picker-empty { align-items: center; color: var(--muted); display: flex; flex-direction: column; gap: 10px; justify-content: center; min-height: 180px; text-align: center; }
-:global(html[data-performance-tier='constrained'] .kyc-country-picker-mask) { backdrop-filter: none; }
+.kyc-page .kyc-picker-trigger:focus-visible { outline: 0; }
+.kyc-picker-mask { align-items: end; backdrop-filter: blur(10px); background: var(--overlay); display: grid; inset: 0; justify-items: center; position: fixed; z-index: var(--layer-overlay); }
+.kyc-picker-sheet { background: var(--surface-elevated); border: 1px solid var(--line); border-bottom: 0; border-radius: 24px 24px 0 0; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); height: min(680px, 82dvh); max-height: calc(100dvh - 20px); min-height: 360px; overflow: hidden; padding: 10px 20px calc(14px + env(safe-area-inset-bottom)); width: min(100%, 448px); }
+.kyc-picker-handle { background: var(--line-strong); border-radius: 999px; height: 4px; justify-self: center; margin-bottom: 6px; width: 38px; }
+.kyc-picker-header { align-items: center; display: flex; justify-content: space-between; min-height: 58px; }
+.kyc-picker-header h2 { color: var(--ink); font-size: 19px; line-height: 25px; margin: 0; }
+.kyc-picker-header button { align-items: center; background: color-mix(in srgb, var(--surface-elevated) 90%, var(--ink)); border: 1px solid var(--line); border-radius: 50%; color: var(--ink); display: inline-flex; height: 44px; justify-content: center; min-height: 44px; padding: 0; width: 44px; }
+.kyc-picker-header button:focus-visible,
+.kyc-picker-option:focus-visible { box-shadow: 0 0 0 3px var(--focus-ring); outline: 2px solid var(--focus); outline-offset: -2px; }
+.kyc-picker-search { align-items: center; background: color-mix(in srgb, var(--surface-elevated) 90%, var(--ink)); border: 1px solid transparent; border-radius: 14px; color: var(--muted); display: flex; gap: 10px; height: 52px; margin: 6px 0 10px; padding: 0 14px; }
+.kyc-picker-search:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.kyc-picker-search input { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 14px; height: 50px; min-width: 0; outline: 0; padding: 0; width: 100%; }
+.kyc-picker-list { min-height: 0; overscroll-behavior: contain; overflow-y: auto; scrollbar-width: none; }
+.kyc-picker-list::-webkit-scrollbar { display: none; }
+.kyc-picker-option { align-items: center; background: transparent; border-bottom: 1px solid var(--line); color: var(--ink); display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) 20px; min-height: 58px; padding: 8px 2px; text-align: left; width: 100%; }
+.kyc-country-picker-option { grid-template-columns: minmax(0, 1fr) auto 20px; }
+.kyc-picker-option.is-selected { color: var(--positive); }
+.kyc-picker-option > span { display: grid; gap: 2px; min-width: 0; }
+.kyc-picker-option strong { font-size: 14px; overflow-wrap: anywhere; }
+.kyc-picker-option small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.kyc-picker-option code { color: var(--muted-strong); font-family: var(--data-font); font-size: 12px; }
+.kyc-picker-empty { align-items: center; color: var(--muted); display: flex; flex-direction: column; gap: 10px; justify-content: center; min-height: 180px; text-align: center; }
+:global(html[data-performance-tier='constrained'] .kyc-picker-mask) { backdrop-filter: none; }
 @media (prefers-reduced-motion: reduce) {
-  .kyc-country-picker-mask { backdrop-filter: none; }
+  .kyc-picker-mask { backdrop-filter: none; }
 }
 @media (max-width: 340px) {
   .kyc-content { padding-inline: 16px; }
   .account-login-state { align-items: start; grid-template-columns: 44px minmax(0, 1fr); }
   .account-login-state .pencil-primary { grid-column: 2; justify-self: start; }
   .document-grid { gap: 6px; }
-  .kyc-country-picker-sheet { padding-inline: 16px; }
+  .kyc-picker-sheet { padding-inline: 16px; }
 }
 </style>

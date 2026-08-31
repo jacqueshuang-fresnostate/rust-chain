@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile quality commands, touch targets, theme and shared picker contracts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Localized searchable picker behavior, focus restoration and raw-value preservation."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"KYC Teleport theme, constrained-device and application-shell requirements."}
+{"file":".trellis/tasks/08-31-mobile-kyc-document-type-search/research/existing-kyc-picker-pattern.md","reason":"Existing KYC country picker reuse boundary and document-type edge cases."}

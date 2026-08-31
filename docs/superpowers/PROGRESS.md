@@ -8026,3 +8026,10 @@
 - 修改文件：`src/modules/wallet/{presentation.rs,application.rs,infrastructure.rs,infrastructure/accounts_ledger.rs,routes.rs}`、`tests/{unit_src/src_modules_wallet_application_tests.rs,unit_src/src_modules_wallet_infrastructure_tests.rs,unit_src/src_modules_wallet_routes_tests.rs,wallet_routes.rs}`、`mobile/src/{core/walletLedger.ts,api/wallet.ts,views/WalletLedgerView.vue,i18n/messages/zh-CN.ts,i18n/messages/en.ts}`、`mobile/tests/wallet-ledger-classification.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/{backend-integration.md,navigation-and-localization.md}`、`.trellis/tasks/08-31-mobile-wallet-ledger-margin-entries/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo fmt --all -- --check`、`cargo test --lib wallet_ledger -- --nocapture`（11/11）、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 全部通过；钱包模块验证累计 46/46 通过。Mobile 全量测试 534/534、`npm run type-check`、`npm run build:pwa`、`npm run build:tauri` 全部通过；任务上下文校验和定向 `git diff --check` 通过。路由集成用例完成编译并返回通过，但本机未配置 `DATABASE_URL`，真实 MySQL 数据断言按测试合同跳过。
 - 后续事项：部署前在 MySQL 8.x 环境执行 `wallet_routes_return_authenticated_user_accounts_and_ledger`，验证真实 UNION、手续费 JOIN 与跨表分页；本轮未提交或推送。
+
+## 2026-08-31 12:08 - 手机端 KYC 证件类型支持搜索
+
+- 完成内容：将 KYC 证件类型原生下拉框替换为独立的可搜索 Teleport 底部弹层；选项继续严格来自当前国家的后台 `document_types`，搜索复用 Unicode 归一化并同时匹配本地化名称与后台原始值，只有明确选择结果才更新表单。弹层复用国家选择器的焦点闭环、Escape/遮罩/关闭、滚动锁、焦点归还、深浅主题及受限设备降级，并将两类选择器视觉样式收敛到共享 `.kyc-picker-*` 体系。
+- 修改文件：`mobile/src/views/KycView.vue`、`mobile/src/core/kycDocumentSearch.ts`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{kyc-country-search,kyc-document-type-search}.test.ts`、`.trellis/spec/mobile/{navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/08-31-mobile-kyc-document-type-search/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增及国家搜索定向测试 10/10、Mobile 全量测试 538/538、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；PWA/Tauri 构建各转换 2095 modules。
+- 后续事项：无；本轮未提交或推送。

@@ -56,6 +56,22 @@ filterCountryOptions<T extends CountrySearchOption>(
 ): T[]
 ```
 
+KYC document-type search signatures live in
+`mobile/src/core/kycDocumentSearch.ts`:
+
+```ts
+interface KycDocumentTypeSearchOption {
+  value: string
+  label: string
+  searchAliases?: readonly string[]
+}
+
+filterDocumentTypeOptions<T extends KycDocumentTypeSearchOption>(
+  options: readonly T[],
+  query: unknown,
+): T[]
+```
+
 The navigation store persists both parts of the latest trade context:
 
 ```ts
@@ -190,6 +206,27 @@ lastTradePath: ComputedRef<string>
   fails. This picker does not change KYC country selection or request location
   permission.
 
+### KYC searchable pickers
+
+- The KYC country and document-type fields are independent dialog triggers,
+  not native `select` elements. Both use body-Teleported sheets and
+  `useModalDialog`; opening one clears only its own query, focuses its own
+  search input, locks body scroll, traps Tab, supports Escape/backdrop/Close,
+  and restores its exact trigger.
+- Document options come only from the selected country's configured
+  `document_types`; the established four-value fallback applies only when that
+  rule has no document types. Filtering preserves this order and matches every
+  query token against the current localized label plus the unmodified backend
+  value using the same Unicode normalization as country search.
+- Opening, filtering, closing, and an empty result never mutate
+  `form.documentType`. Only selecting an explicit row stores its raw `value`,
+  and KYC submission sends that same value as `document_type`.
+- Unknown configured document types remain visible and searchable by raw value;
+  clients must not invent a translation, substitute a known type, or send the
+  localized label to the backend.
+- Picker titles, close labels, search labels/placeholders, selection fallback,
+  and empty states use symmetric `kyc.*` keys in `zh-CN` and `en`.
+
 ### Localization
 
 - Fixed UI text must use `vue-i18n`; do not add Chinese or English literals to Vue templates or API fallback mapping.
@@ -304,6 +341,12 @@ lastTradePath: ComputedRef<string>
 - Unit: locale normalization and app-locale to API-locale mapping.
 - Unit: country search normalization and token matching across localized name,
   backend name, ISO code, full-width text, punctuation, and decomposable accents.
+- Unit: KYC document-type filtering matches localized labels and raw backend
+  values, preserves configured order, and returns an unchanged full list for a
+  blank query.
+- Source/browser: KYC country and document triggers own independent Teleported
+  dialogs; only explicit row selection changes the associated raw value, while
+  Escape/backdrop/Close/no-results restore focus and preserve selection.
 - Source/browser: the registration picker is Teleported, labelled, starts on
   search, restores focus, keeps body scroll locked while open, renders a
   localized no-result state, and retains zero horizontal overflow at 320px,
