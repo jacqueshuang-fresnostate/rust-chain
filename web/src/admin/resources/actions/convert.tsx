@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
@@ -155,22 +156,25 @@ export function ConvertPairRowActions({ helpers, record }: { helpers: RowActionH
       <Button disabled={!pairId} onClick={() => openRecordDetail('/admin/api/v1/convert/pairs', pairId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <ConvertPairEditAction helpers={helpers} pairId={pairId} record={record} />
-      <ConfirmAction
-        actionText={actionText}
-        disabled={!pairId}
-        title={`${actionText}闪兑交易对`}
-        onConfirm={async (reason) => {
-          await submitAction(`${actionText}闪兑交易对`, () =>
-            apiRequest(`/admin/api/v1/convert/pairs/${pairId}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ enabled: nextEnabled, reason })
-            })
-          );
-          helpers.reload();
-        }}
-      />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/convert/pairs/${pairId}`} method="PATCH">
+        <ConvertPairEditAction helpers={helpers} pairId={pairId} record={record} />
+        <ConfirmAction
+          actionText={actionText}
+          disabled={!pairId}
+          title={`${actionText}闪兑交易对`}
+          onConfirm={async (reason) => {
+            await submitAction(`${actionText}闪兑交易对`, () =>
+              apiRequest(`/admin/api/v1/convert/pairs/${pairId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ enabled: nextEnabled, reason })
+              })
+            );
+            helpers.reload();
+          }}
+        />
+      </AdminRequestActionBoundary>
       {!enabled ? (
+        <AdminRequestActionBoundary endpoint={`/admin/api/v1/convert/pairs/${pairId}`} method="DELETE">
         <ConfirmAction
           actionText="删除"
           disabled={!pairId}
@@ -185,6 +189,7 @@ export function ConvertPairRowActions({ helpers, record }: { helpers: RowActionH
             helpers.reload();
           }}
         />
+        </AdminRequestActionBoundary>
       ) : null}
     </>
   );

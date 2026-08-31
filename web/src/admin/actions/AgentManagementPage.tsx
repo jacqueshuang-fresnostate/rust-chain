@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import type { ApiRecord } from '../../api/types';
+import { AdminRequestActionBoundary, useCanAdminRequest } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { DataTable } from '../../shared/DataTable';
@@ -107,7 +108,8 @@ function AgentPasswordResetAction({ agentId, disabled }: { agentId: string; disa
   const [password, setPassword] = useState('');
 
   return (
-    <Space spacing={6}>
+    <AdminRequestActionBoundary endpoint={`/admin/api/v1/agents/${agentId}/password/reset`} method="POST">
+      <Space spacing={6}>
       <AdminPasswordInput ariaLabel={`代理${agentId}新密码`} value={password} onChange={setPassword} />
       <ConfirmAction
         actionText="重置密码"
@@ -123,7 +125,8 @@ function AgentPasswordResetAction({ agentId, disabled }: { agentId: string; disa
           setPassword('');
         }}
       />
-    </Space>
+      </Space>
+    </AdminRequestActionBoundary>
   );
 }
 
@@ -237,7 +240,8 @@ function AgentDetailDrawer({ agentId, agentOptions, onClose, onReassigned }: Age
         const userId = recordString(record, 'user_id');
         const target = targetAgents[userId] ?? '';
         return (
-          <Space spacing={6}>
+          <AdminRequestActionBoundary endpoint={`/admin/api/v1/users/${userId}/agent`} method="PATCH">
+            <Space spacing={6}>
             <AdminSelect
               ariaLabel={`用户${userId}目标代理`}
               onChange={(value) => setTargetAgents((current) => ({ ...current, [userId]: value }))}
@@ -253,7 +257,8 @@ function AgentDetailDrawer({ agentId, agentOptions, onClose, onReassigned }: Age
             >
               <Button disabled={!userId || !target} size="small" type="danger">转移</Button>
             </Popconfirm>
-          </Space>
+            </Space>
+          </AdminRequestActionBoundary>
         );
       },
       title: '转移归属',
@@ -288,6 +293,7 @@ export function AgentManagementPage() {
   const [loading, setLoading] = useState(true);
   const [reloadVersion, setReloadVersion] = useState(0);
   const reload = useCallback(() => setReloadVersion((value) => value + 1), []);
+  const canCreateAgent = useCanAdminRequest('/admin/api/v1/agents', 'POST');
   const parentAgentOptions = useMemo(
     () => [
       { label: '无上级（创建总代理）', value: '' },
@@ -382,13 +388,14 @@ export function AgentManagementPage() {
                 详情
               </Button>
               {agentStatusActions(status).map((action) => (
-                <ConfirmAction
-                  actionText={action.label}
-                  disabled={!agentId}
-                  key={action.status}
-                  title={`${action.label}代理`}
-                  onConfirm={(reason) => updateAgentStatus(agentId, action.status, reason)}
-                />
+                <AdminRequestActionBoundary endpoint={`/admin/api/v1/agents/${agentId}/status`} key={action.status} method="PATCH">
+                  <ConfirmAction
+                    actionText={action.label}
+                    disabled={!agentId}
+                    title={`${action.label}代理`}
+                    onConfirm={(reason) => updateAgentStatus(agentId, action.status, reason)}
+                  />
+                </AdminRequestActionBoundary>
               ))}
               <AgentPasswordResetAction agentId={agentId} disabled={!agentId || !record.admin_user_id} />
             </Space>
@@ -419,13 +426,14 @@ export function AgentManagementPage() {
           tabBarExtraContent={<Text type="tertiary">共 {agents.length} 个代理</Text>}
           tabList={[
             { itemKey: 'list', tab: '代理列表', icon: <IconList aria-hidden="true" /> },
-            { itemKey: 'create', tab: '创建代理', icon: <IconPlus aria-hidden="true" /> }
+            ...(canCreateAgent ? [{ itemKey: 'create', tab: '创建代理', icon: <IconPlus aria-hidden="true" /> }] : [])
           ]}
           type="button"
         />
         <div className="admin-action-workbench-grid">
           {activeTab === 'create' ? (
-          <section className="admin-action-panel">
+          <AdminRequestActionBoundary endpoint="/admin/api/v1/agents" method="POST">
+            <section className="admin-action-panel">
             <Title heading={4}>创建代理</Title>
             <div className="admin-action-form admin-action-form-narrow">
               <label>用户ID<AdminTextInput ariaLabel="用户ID" value={createValues.userId} onChange={(userId) => setCreateValues({ ...createValues, userId })} /></label>
@@ -457,7 +465,8 @@ export function AgentManagementPage() {
                 reload();
               }}
             />
-          </section>
+            </section>
+          </AdminRequestActionBoundary>
           ) : null}
           {activeTab === 'list' ? (
           <section className="admin-action-panel">

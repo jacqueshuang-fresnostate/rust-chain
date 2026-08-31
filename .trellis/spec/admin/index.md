@@ -17,7 +17,10 @@ Run from the repository root after shared admin UI or page changes:
 npm --prefix web run typecheck
 npm --prefix web run lint
 npm --prefix web run test
+npm --prefix web run test:production-policy
+npm --prefix web run test:coverage
 npm --prefix web run build
+npm --prefix web run budget
 git diff --check
 ```
 

@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import {
   AdminReferenceSelect,
   type AdminReferenceOption,
@@ -71,7 +72,8 @@ export function RiskRuleRowActions({ helpers, record }: { helpers: RowActionHelp
   const actionText = enabled ? '禁用' : '启用';
 
   return (
-    <ConfirmAction
+    <AdminRequestActionBoundary endpoint={`/admin/api/v1/risk/rules/${ruleId}/status`} method="PATCH">
+      <ConfirmAction
       actionText={actionText}
       disabled={!ruleId}
       title={`${actionText}风控规则`}
@@ -84,7 +86,8 @@ export function RiskRuleRowActions({ helpers, record }: { helpers: RowActionHelp
         );
         helpers.reload();
       }}
-    />
+      />
+    </AdminRequestActionBoundary>
   );
 }
 

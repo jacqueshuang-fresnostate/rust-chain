@@ -1,37 +1,62 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
-import { AgentCommissionBatchActions, AgentCommissionRowActions, AgentCommissionRuleRowActions, CreateAgentCommissionRuleAction } from './actions/agents';
-import { ConvertOrderRowActions, ConvertPairRowActions, CreateConvertPairAction } from './actions/convert';
-import { CreateEarnCategoryAction, CreateEarnProductAction, EarnCategoryRowActions, EarnProductRowActions, EarnSubscriptionRowActions } from './actions/earn';
-import { CreateLoanProductAction, LoanOrderRowActions, LoanProductRowActions } from './actions/loan';
-import { CreateMarginPairAction, MarginLiquidationRowActions, MarginPositionRowActions, MarginProductRowActions } from './actions/margin';
-import { CreateMarketStrategyAction, CreateSpotPairAction, MarketPairRowActions, MarketStrategyRowActions, SpotOrderRowActions } from './actions/market';
-import { CreateNewCoinProjectAction, NewCoinProjectRowActions } from './actions/newCoins';
-import { AdminNewsRowActions, CreateAdminNewsAction } from './actions/news';
-import { CreateRiskRuleAction, RiskRuleRowActions } from './actions/risk';
-import { CreateSecondsPairAction, SecondsOrderRowActions, SecondsProductRowActions } from './actions/secondsContract';
-import { CountryRowActions, CreateCountryAction } from './actions/system';
-import { CreateUserAction, UserRowActions } from './actions/users';
-import {
-  AssetRowActions,
-  CreateAssetAction,
-  CreateDepositAddressPoolAction,
-  CreateDepositNetworkConfigAction,
-  DepositAddressPoolRowActions,
-  DepositNetworkConfigRowActions,
-  DepositRowActions,
-  QuickRechargeOrderRowActions,
-  WithdrawalRowActions
-} from './actions/wallet';
-import { subscribeMarketTicker } from '../../api/marketTickerSocket';
+import { normalizeTickerSymbol, subscribeMarketTicker, type MarketTickerSnapshot } from '../../api/marketTickerSocket';
 import type { FilterField } from '../../shared/FilterBar';
 import { AdminImageCell } from '../../shared/AdminImageUpload';
 import { formatAdminNumber } from '../../shared/numberFormat';
 import { formatBusinessOrderNo } from '../../shared/orderNo';
 import type { ApiRecord } from '../../api/types';
-import { PredictionMarketRowActions } from '../actions/PredictionMarketRowActions';
-import { adminMutationPermissionsForEndpoint, hasAdminPermission, useOptionalAdminAccess } from '../access';
+import { AdminRequestActionBoundary, adminPermissionForRequest, hasAdminPermission, useOptionalAdminAccess } from '../access';
+
+// 动作域按需注册：通用资源配置只保留列/筛选描述，路由首屏不再静态导入全部业务动作。
+const AgentCommissionBatchActions = lazy(async () => ({ default: (await import('./actions/agents')).AgentCommissionBatchActions }));
+const AgentCommissionRowActions = lazy(async () => ({ default: (await import('./actions/agents')).AgentCommissionRowActions }));
+const AgentCommissionRuleRowActions = lazy(async () => ({ default: (await import('./actions/agents')).AgentCommissionRuleRowActions }));
+const CreateAgentCommissionRuleAction = lazy(async () => ({ default: (await import('./actions/agents')).CreateAgentCommissionRuleAction }));
+const ConvertOrderRowActions = lazy(async () => ({ default: (await import('./actions/convert')).ConvertOrderRowActions }));
+const ConvertPairRowActions = lazy(async () => ({ default: (await import('./actions/convert')).ConvertPairRowActions }));
+const CreateConvertPairAction = lazy(async () => ({ default: (await import('./actions/convert')).CreateConvertPairAction }));
+const CreateEarnCategoryAction = lazy(async () => ({ default: (await import('./actions/earn')).CreateEarnCategoryAction }));
+const CreateEarnProductAction = lazy(async () => ({ default: (await import('./actions/earn')).CreateEarnProductAction }));
+const EarnCategoryRowActions = lazy(async () => ({ default: (await import('./actions/earn')).EarnCategoryRowActions }));
+const EarnProductRowActions = lazy(async () => ({ default: (await import('./actions/earn')).EarnProductRowActions }));
+const EarnSubscriptionRowActions = lazy(async () => ({ default: (await import('./actions/earn')).EarnSubscriptionRowActions }));
+const CreateLoanProductAction = lazy(async () => ({ default: (await import('./actions/loan')).CreateLoanProductAction }));
+const LoanOrderRowActions = lazy(async () => ({ default: (await import('./actions/loan')).LoanOrderRowActions }));
+const LoanProductRowActions = lazy(async () => ({ default: (await import('./actions/loan')).LoanProductRowActions }));
+const CreateMarginPairAction = lazy(async () => ({ default: (await import('./actions/margin')).CreateMarginPairAction }));
+const MarginLiquidationRowActions = lazy(async () => ({ default: (await import('./actions/margin')).MarginLiquidationRowActions }));
+const MarginPositionRowActions = lazy(async () => ({ default: (await import('./actions/margin')).MarginPositionRowActions }));
+const MarginProductRowActions = lazy(async () => ({ default: (await import('./actions/margin')).MarginProductRowActions }));
+const CreateSpotPairAction = lazy(async () => ({ default: (await import('./actions/market')).CreateSpotPairAction }));
+const MarketPairRowActions = lazy(async () => ({ default: (await import('./actions/market')).MarketPairRowActions }));
+const SpotOrderRowActions = lazy(async () => ({ default: (await import('./actions/market')).SpotOrderRowActions }));
+const CreateMarketStrategyAction = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).CreateMarketStrategyAction }));
+const MarketStrategyRowActions = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).MarketStrategyRowActions }));
+const CreateNewCoinProjectAction = lazy(async () => ({ default: (await import('./actions/newCoins')).CreateNewCoinProjectAction }));
+const NewCoinProjectRowActions = lazy(async () => ({ default: (await import('./actions/newCoins')).NewCoinProjectRowActions }));
+const AdminNewsRowActions = lazy(async () => ({ default: (await import('./actions/news')).AdminNewsRowActions }));
+const CreateAdminNewsAction = lazy(async () => ({ default: (await import('./actions/news')).CreateAdminNewsAction }));
+const CreateRiskRuleAction = lazy(async () => ({ default: (await import('./actions/risk')).CreateRiskRuleAction }));
+const RiskRuleRowActions = lazy(async () => ({ default: (await import('./actions/risk')).RiskRuleRowActions }));
+const CreateSecondsPairAction = lazy(async () => ({ default: (await import('./actions/secondsContract')).CreateSecondsPairAction }));
+const SecondsOrderRowActions = lazy(async () => ({ default: (await import('./actions/secondsContract')).SecondsOrderRowActions }));
+const SecondsProductRowActions = lazy(async () => ({ default: (await import('./actions/secondsContract')).SecondsProductRowActions }));
+const CountryRowActions = lazy(async () => ({ default: (await import('./actions/system')).CountryRowActions }));
+const CreateCountryAction = lazy(async () => ({ default: (await import('./actions/system')).CreateCountryAction }));
+const CreateUserAction = lazy(async () => ({ default: (await import('./actions/users')).CreateUserAction }));
+const UserRowActions = lazy(async () => ({ default: (await import('./actions/users')).UserRowActions }));
+const AssetRowActions = lazy(async () => ({ default: (await import('./actions/wallet')).AssetRowActions }));
+const CreateAssetAction = lazy(async () => ({ default: (await import('./actions/wallet')).CreateAssetAction }));
+const CreateDepositAddressPoolAction = lazy(async () => ({ default: (await import('./actions/wallet')).CreateDepositAddressPoolAction }));
+const CreateDepositNetworkConfigAction = lazy(async () => ({ default: (await import('./actions/wallet')).CreateDepositNetworkConfigAction }));
+const DepositAddressPoolRowActions = lazy(async () => ({ default: (await import('./actions/wallet')).DepositAddressPoolRowActions }));
+const DepositNetworkConfigRowActions = lazy(async () => ({ default: (await import('./actions/wallet')).DepositNetworkConfigRowActions }));
+const DepositRowActions = lazy(async () => ({ default: (await import('./actions/wallet')).DepositRowActions }));
+const QuickRechargeOrderRowActions = lazy(async () => ({ default: (await import('./actions/wallet')).QuickRechargeOrderRowActions }));
+const WithdrawalRowActions = lazy(async () => ({ default: (await import('./actions/wallet')).WithdrawalRowActions }));
+const PredictionMarketRowActions = lazy(async () => ({ default: (await import('../actions/PredictionMarketRowActions')).PredictionMarketRowActions }));
 
 export type ResourceConfig = {
   actions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['actions'];
@@ -494,29 +519,28 @@ const marketPairStatusFilter: FilterField = statusSelectFilter;
 const marketPairSymbolFilter: FilterField = { key: 'symbol', label: '交易对', type: 'select', optionsFromRows: true };
 const marketTypeFilter: FilterField = { key: 'market_type', label: '市场类型', type: 'select', options: marketTypeOptions };
 
-function normalizeTickerSymbol(symbol: string) {
-  return symbol
-    .trim()
-    .split('')
-    .filter((character) => /[A-Za-z0-9]/.test(character))
-    .join('')
-    .toUpperCase();
-}
-
 function MarketPairLatestPrice({ symbol }: { symbol: unknown }) {
   const normalizedSymbol = useMemo(() => (typeof symbol === 'string' ? normalizeTickerSymbol(symbol) : ''), [symbol]);
-  const [latestPrice, setLatestPrice] = useState<string | null>(null);
+  const [ticker, setTicker] = useState<MarketTickerSnapshot | null>(null);
 
   useEffect(() => {
-    setLatestPrice(null);
+    setTicker(null);
     if (!normalizedSymbol) {
       return undefined;
     }
 
-    return subscribeMarketTicker(normalizedSymbol, ({ lastPrice }) => setLatestPrice(lastPrice));
+    return subscribeMarketTicker(normalizedSymbol, setTicker);
   }, [normalizedSymbol]);
 
-  return <span>{formatAdminNumber(latestPrice) ?? '-'}</span>;
+  const statusLabel = ticker?.status === 'fresh' ? '实时' : ticker?.status === 'stale' ? '已陈旧' : ticker?.status === 'offline' ? '离线' : '连接中';
+  const observedTime = ticker?.observedAt
+    ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(ticker.observedAt)
+    : null;
+  return (
+    <span data-ticker-status={ticker?.status ?? 'connecting'} title={ticker?.observedAt ? `行情时间 ${new Date(ticker.observedAt).toLocaleString('zh-CN')}` : statusLabel}>
+      {formatAdminNumber(ticker?.lastPrice) ?? '-'} <small>{statusLabel}{observedTime ? ` · ${observedTime}` : ''}</small>
+    </span>
+  );
 }
 
 function InlineAmount({ unit, value }: { unit: unknown; value: unknown }) {
@@ -615,7 +639,11 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/deposit-network-configs',
     responseKey: 'configs',
     filters: [depositNetworkFilter, { key: 'address_group_code', label: '地址集合编号' }, depositNetworkConfigStatusFilter, { key: 'asset_symbol', label: '资产符号' }, limitFilter],
-    rowActions: (record, helpers) => <DepositNetworkConfigRowActions helpers={helpers} record={record} />,
+    rowActions: (record, helpers) => (
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/deposit-network-configs/${String(record.id ?? '')}`} method="PATCH">
+        <DepositNetworkConfigRowActions helpers={helpers} record={record} />
+      </AdminRequestActionBoundary>
+    ),
     showJsonAction: false,
     columns: [
       { key: 'network', title: '网络', valueMap: depositNetworkLabels },
@@ -900,7 +928,11 @@ export const resourceConfigs = {
       isRowSelectable: (record) => record.status === 'pending',
       render: (helpers) => <AgentCommissionBatchActions helpers={helpers} />
     },
-    rowActions: (record, helpers) => <AgentCommissionRowActions helpers={helpers} record={record} />,
+    rowActions: (record, helpers) => (
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/agent-commissions/${String(record.id ?? '')}/status`} method="PATCH">
+        <AgentCommissionRowActions helpers={helpers} record={record} />
+      </AdminRequestActionBoundary>
+    ),
     columns: [
       { key: 'id', title: 'ID' },
       { key: 'agent_id', title: '代理ID' },
@@ -921,7 +953,11 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/agent-commission-rules',
     responseKey: 'rules',
     filters: [{ key: 'agent_id', label: '代理ID' }, agentCommissionRuleProductFilter, agentCommissionRuleStatusFilter, limitFilter],
-    rowActions: (record, helpers) => <AgentCommissionRuleRowActions helpers={helpers} record={record} />,
+    rowActions: (record, helpers) => (
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/agent-commission-rules/${String(record.id ?? '')}`} method="PATCH">
+        <AgentCommissionRuleRowActions helpers={helpers} record={record} />
+      </AdminRequestActionBoundary>
+    ),
     showJsonAction: false,
     columns: [
       { key: 'id', title: 'ID' },
@@ -1452,17 +1488,36 @@ export function isServerPagedResource(endpoint: string) {
 
 export function ResourcePage({ config }: { config: ResourceConfig }) {
   const access = useOptionalAdminAccess();
-  const canMutate =
-    access === null ||
-    adminMutationPermissionsForEndpoint(config.endpoint).some((permission) => hasAdminPermission(access, permission));
+  const writePermission = adminPermissionForRequest(config.endpoint, 'POST');
+  const canWrite = writePermission === null || access === null || hasAdminPermission(access, writePermission);
+  const permittedActions = config.actions && canWrite ? config.actions : undefined;
+  const actions = typeof permittedActions === 'function'
+    ? (helpers: Parameters<typeof permittedActions>[0]) => <Suspense fallback={<span aria-live="polite">正在加载操作</span>}>{permittedActions(helpers)}</Suspense>
+    : permittedActions
+      ? <Suspense fallback={<span aria-live="polite">正在加载操作</span>}>{permittedActions}</Suspense>
+      : undefined;
+  const permittedBatchActions = config.batchActions && canWrite ? config.batchActions : undefined;
+  const batchActions = permittedBatchActions
+    ? {
+        ...permittedBatchActions,
+        render: (helpers: Parameters<typeof permittedBatchActions.render>[0]) => (
+          <Suspense fallback={<span aria-live="polite">正在加载批量操作</span>}>{permittedBatchActions.render(helpers)}</Suspense>
+        )
+      }
+    : undefined;
+  const rowActions = config.rowActions
+    ? (record: ApiRecord, helpers: Parameters<NonNullable<ResourceConfig['rowActions']>>[1]) => (
+        <Suspense fallback={<span aria-live="polite">正在加载行操作</span>}>{config.rowActions?.(record, helpers)}</Suspense>
+      )
+    : undefined;
   // 按 endpoint 重建组件：路由复用同一实例时，分页与筛选状态不会带到下一个资源页。
   return (
     <AdminResourcePage<ApiRecord>
       key={config.endpoint}
       {...config}
-      actions={canMutate ? config.actions : undefined}
-      batchActions={canMutate ? config.batchActions : undefined}
-      rowActions={canMutate ? config.rowActions : undefined}
+      actions={actions}
+      batchActions={batchActions}
+      rowActions={rowActions}
       serverPaged={isServerPagedResource(config.endpoint)}
     />
   );

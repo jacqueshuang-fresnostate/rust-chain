@@ -1,0 +1,18 @@
+{
+  "initialJavaScript": {
+    "rawBytes": 1750000,
+    "gzipBytes": 480000
+  },
+  "largestAsyncJavaScript": {
+    "rawBytes": 230000,
+    "gzipBytes": 68000
+  },
+  "totalJavaScript": {
+    "rawBytes": 2600000,
+    "gzipBytes": 750000
+  },
+  "totalCss": {
+    "rawBytes": 650000,
+    "gzipBytes": 82000
+  }
+}

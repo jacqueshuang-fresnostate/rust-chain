@@ -1,12 +1,19 @@
 import { Button, Card, SideSheet, Space, Toast } from '@douyinfe/semi-ui';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
-import { apiRequest } from '../../../api/client';
+import { ApiError, apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminReferenceSelect, isReferenceSelectable, useAdminReferenceOptions } from '../../referenceOptions';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminPasswordInput, AdminTextInput } from '../../../shared/SemiFormControls';
-import { canonicalRequestIntent, RetryStableIdempotencyKeys } from '../../../shared/idempotency';
+import { canonicalDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
+import {
+  financialCommandIntents,
+  financialCommandScopeFromSession,
+  runRecoverableFinancialCommand
+} from '../../../shared/idempotency';
+import { authStore } from '../../../auth/authStore';
+import { AdminRequestActionBoundary } from '../../access';
 import {
   AssetSelect,
   AssetStatusSelect,
@@ -64,7 +71,13 @@ function isUserCreatable(values: UserValues): boolean {
 }
 
 function isUserRechargeSubmittable(values: UserRechargeValues): boolean {
-  return Boolean(values.assetId.trim() && values.amount.trim() && Number(values.amount) > 0);
+  return Boolean(values.assetId.trim() && isPositiveDecimalText(values.amount));
+}
+
+function isDefinitiveRechargeFailure(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status < 400 || error.status >= 500) return false;
+  // 这些状态仍可能表示请求已进入处理链路，保留原键由管理员重放核对。
+  return error.status !== 408 && error.status !== 425 && error.status !== 429;
 }
 
 function isAssignAgentSubmittable(values: AssignAgentValues, selectableAgentIds: Set<string>): boolean {
@@ -85,8 +98,7 @@ async function openUserAssets(userId: string, helpers: RowActionHelpers) {
 function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; userId: string }) {
   const [recharge, setRecharge] = useState(initialUserRecharge);
   const [visible, setVisible] = useState(false);
-  const idempotencyKeys = useRef(new RetryStableIdempotencyKeys('admin-recharge'));
-  const { assetLoading, assetOptions } = useAssetOptions();
+  const { assetError, assetLoading, assetOptions } = useAssetOptions(visible);
 
   return (
     <>
@@ -98,6 +110,7 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <div className="admin-action-form">
               <AssetSelect label="充值资产" loading={assetLoading} options={assetOptions} value={recharge.assetId} onChange={(assetId) => setRecharge({ ...recharge, assetId })} />
+              {assetError ? <span className="admin-reference-field__error" role="alert">资产目录加载失败，请关闭后重试</span> : null}
               <label>充值金额<AdminTextInput ariaLabel="充值金额" value={recharge.amount} onChange={(amount) => setRecharge({ ...recharge, amount })} /></label>
             </div>
             <ConfirmAction
@@ -105,26 +118,39 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
               disabled={!isUserRechargeSubmittable(recharge)}
               title="确认用户充值"
               onConfirm={async (reason) => {
+                const amount = canonicalDecimalText(recharge.amount);
+                if (amount === null || !isPositiveDecimalText(amount)) throw new Error('充值金额必须为正数');
+                const session = authStore.getSession('admin');
+                if (!session) throw new Error('管理员会话已失效，请重新登录');
                 const businessIntent = {
                   user_id: requiredPositiveInteger(userId, '用户ID'),
                   asset_id: requiredPositiveInteger(recharge.assetId, '充值资产'),
-                  amount: requiredString(recharge.amount, '充值金额'),
+                  amount,
                   reason: reason.trim()
                 };
-                const intent = canonicalRequestIntent(businessIntent);
-                const idempotencyKey = idempotencyKeys.current.acquire(intent);
-                await submitAction('用户充值', () =>
-                  apiRequest(`/admin/api/v1/users/${userId}/recharge`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      asset_id: businessIntent.asset_id,
-                      amount: businessIntent.amount,
-                      reason: businessIntent.reason,
-                      idempotency_key: idempotencyKey
+                await runRecoverableFinancialCommand({
+                  isDefinitiveFailure: isDefinitiveRechargeFailure,
+                  request: (idempotencyKey) =>
+                    submitAction('用户充值', () =>
+                    apiRequest(`/admin/api/v1/users/${userId}/recharge`, {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        asset_id: businessIntent.asset_id,
+                        amount: businessIntent.amount,
+                        reason: businessIntent.reason,
+                        idempotency_key: idempotencyKey
+                      })
                     })
-                  })
-                );
-                idempotencyKeys.current.complete(intent, idempotencyKey);
+                    ),
+                  scope: financialCommandScopeFromSession(
+                    session,
+                    'admin-user-recharge',
+                    businessIntent.user_id,
+                    businessIntent.asset_id
+                  ),
+                  store: financialCommandIntents,
+                  values: businessIntent
+                });
                 setVisible(false);
                 setRecharge(initialUserRecharge);
                 helpers.reload();
@@ -256,10 +282,10 @@ export function UserRowActions({ helpers, record }: { helpers: RowActionHelpers;
       <Button disabled={!userId} onClick={() => openUserAssets(userId, helpers)} size="small" theme="borderless">
         查看资产
       </Button>
-      <UserRechargeAction helpers={helpers} userId={userId} />
-      <AssignAgentAction helpers={helpers} userId={userId} />
-      <ResetUserTwoFactorAction helpers={helpers} userId={userId} />
-      <UserStatusActions helpers={helpers} status={recordString(record, 'status')} userId={userId} />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/users/${userId}/recharge`} method="POST"><UserRechargeAction helpers={helpers} userId={userId} /></AdminRequestActionBoundary>
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/users/${userId}/agent`} method="PATCH"><AssignAgentAction helpers={helpers} userId={userId} /></AdminRequestActionBoundary>
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/users/${userId}/2fa/reset`} method="POST"><ResetUserTwoFactorAction helpers={helpers} userId={userId} /></AdminRequestActionBoundary>
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/users/${userId}/status`} method="PATCH"><UserStatusActions helpers={helpers} status={recordString(record, 'status')} userId={userId} /></AdminRequestActionBoundary>
     </>
   );
 }

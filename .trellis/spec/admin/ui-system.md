@@ -569,3 +569,98 @@ resource filters align as a stable labeled grid
 empty state remains deliberate and readable
 project resize handles remain keyboard focusable without clipping
 ```
+
+## Admin Financial Intent, DTO, Permission, Ticker, and Release Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changing an Admin financial command, resource DTO, action control,
+  reference selector, live ticker consumer, table, or production bundle policy.
+
+### 2. Signatures
+
+```ts
+canonicalRequestIntent(values: Record<string, unknown>): string
+runRecoverableFinancialCommand<T>(options: RecoverableFinancialCommandOptions<T>): Promise<T>
+apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T>
+adminPermissionForRequest(endpoint: string, method: AdminHttpMethod): string | null
+subscribeMarketTicker(symbol: string, listener: TickerListener): () => void
+useSharedAdminOptionQuery<T>(options): SharedOptionQueryState<T>
+```
+
+### 3. Contracts
+
+- Financial command identity includes auth scope, subject, session generation,
+  command, user, asset, and canonical intent. Decimal-like fields canonicalize
+  as decimal text. The pending/uncertain lease remains in `sessionStorage`
+  through timeout, cancellation, response-body loss, and component remount; only
+  success or an explicit definitive non-execution failure releases it.
+- API requests have one deadline covering fetch and body parsing. Errors are
+  typed as timeout, abort, network, HTTP, or contract failures. List DTOs must
+  be objects with the declared response key, object rows, non-negative safe
+  integer totals, required fields, and decimal text for amount columns.
+- Admin read permission is exact per route. Mutation controls resolve the real
+  endpoint and HTTP method to exactly one of `write | review | settle | operate`
+  and are absent without permission; the backend remains authoritative.
+- Shared reference options are cancellable, cached by stable query identity,
+  and reused across drawers/pages. Mutations invalidate the owned key rather
+  than causing every selector to refetch on mount.
+- Ticker consumers share one symbol-normalized connection manager with
+  ref-counting, session generation, watchdog, jittered reconnect, and
+  `connecting | fresh | stale | offline` diagnostics.
+- Every populated table leaf has the project resize handle, pointer/keyboard
+  resize, contained horizontal scrolling, and nowrap compact action controls.
+  Selected navigation uses an opaque contrast-safe background; a Semi light
+  theme background color must not sit behind white selected text.
+- Lint, typecheck, all tests, production-policy tests, coverage thresholds,
+  production build, and bundle budget all pass before release.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|-----------|-------------------|
+| Same financial intent retries after uncertainty | Reuse the exact idempotency key |
+| Same key is paired with changed intent | Never send; create a different lease/key |
+| Response body drops after server success | Mark uncertain; preserve key for replay |
+| DTO row misses a required/decimal field | Raise `ContractError`; do not coerce |
+| User has read but lacks mutation action | Render data; omit that action control |
+| Reference request unmounts | Abort consumer without committing stale options |
+| Last ticker consumer releases | Close socket/watchdog and retain no reconnect timer |
+| Selected sidebar item is white on a light inherited background | Release-blocking visual defect |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a recharge times out after the server commits; reload and retry replay
+  the same key and display the original result without a second credit.
+- Good: nine visible table leaves expose nine resize handles and a pointer drag
+  changes the first column while document overflow remains zero.
+- Base: a read-only operator can inspect a page but sees no review/settle button.
+- Bad: rotate an idempotency key by TTL, coerce `"0.000000000000000001"` through
+  `Number`, infer permission from a page label, or open one ticker socket per row.
+
+### 6. Tests Required
+
+- Financial command tests cover canonical decimal identity, timeout, abort,
+  body loss, reload recovery, definitive failure, success, and changed intent.
+- API contract tests cover required fields, decimal fields, malformed totals,
+  error classification, request deadline, and stale-session 401 behavior.
+- Access tests cover every route/API mapping and independent action permission.
+- Ticker tests cover ref-counting, stale watchdog, backoff, symbol/session change,
+  listener isolation, and cleanup.
+- Browser checks cover login, selected sidebar contrast, populated table handles,
+  real pointer resize, no wrapped action buttons, and 768/1024/1440 overflow.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: each retry creates a new command and silently coerces the amount.
+await recharge({ amount: Number(amount), idempotency_key: crypto.randomUUID() })
+
+// Correct: canonical intent owns a recoverable key until the outcome is known.
+await runRecoverableFinancialCommand({
+  scope: financialCommandScopeFromSession(session, 'wallet.recharge', userId, assetId),
+  values: { amount: canonicalDecimalText(amount), reason: reason.trim() },
+  store: financialCommandIntents,
+  request: (key) => recharge({ amount, idempotency_key: key }),
+})
+```

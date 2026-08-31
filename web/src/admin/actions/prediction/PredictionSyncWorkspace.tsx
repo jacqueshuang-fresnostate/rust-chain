@@ -8,6 +8,7 @@ import { ResizableTable } from '../../../shared/ResizableTable';
 import { TimestampText } from '../../../shared/TimestampText';
 import { containedTableStyle } from '../../../shared/tableLayout';
 import { WorkflowPageActions } from '../../components/WorkflowPageActions';
+import { AdminRequestActionBoundary } from '../../access';
 import { triggerTypeLabel } from './model';
 import { PredictionSyncStatusTag } from './PredictionStatus';
 import type { PredictionSyncLog } from './types';
@@ -106,15 +107,17 @@ export function PredictionSyncWorkspace() {
               </Col>
               <Col xs={24} lg={6}>
                 <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-                  <Button
-                    icon={<IconSync aria-hidden="true" />}
-                    loading={workspace.syncing}
-                    onClick={() => void workspace.triggerSync()}
-                    theme="solid"
-                    type="primary"
-                  >
-                    立即同步
-                  </Button>
+                  <AdminRequestActionBoundary endpoint="/admin/api/v1/prediction/sync" method="POST">
+                    <Button
+                      icon={<IconSync aria-hidden="true" />}
+                      loading={workspace.syncing}
+                      onClick={() => void workspace.triggerSync()}
+                      theme="solid"
+                      type="primary"
+                    >
+                      立即同步
+                    </Button>
+                  </AdminRequestActionBoundary>
                 </Space>
               </Col>
             </Row>

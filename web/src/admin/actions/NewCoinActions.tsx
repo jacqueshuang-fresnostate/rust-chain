@@ -2,6 +2,7 @@ import { Card, Space, Typography, Toast } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminCheckbox, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
@@ -170,7 +171,8 @@ export function NewCoinActions() {
               </label>
               <label>上市时间戳<AdminTextInput ariaLabel="上市时间戳" placeholder="listed 可选，Unix ms" value={lifecycle.listedAt} onChange={(listedAt) => setLifecycle({ ...lifecycle, listedAt })} /></label>
             </div>
-            <ConfirmAction
+            <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${lifecycle.projectId}/lifecycle`} method="PATCH">
+              <ConfirmAction
               actionText="更新生命周期"
               disabled={!isReferenceSelectable(projectReferences.options, lifecycle.projectId)}
               title="确认更新新币生命周期"
@@ -182,7 +184,8 @@ export function NewCoinActions() {
                   })
                 )
               }
-            />
+              />
+            </AdminRequestActionBoundary>
           </Space>
         </Card>
 
@@ -212,7 +215,8 @@ export function NewCoinActions() {
               <label>派发数量<AdminTextInput ariaLabel="派发数量" value={distribute.quantity} onChange={(quantity) => setDistribute({ ...distribute, quantity })} /></label>
               <label>幂等键<AdminTextInput ariaLabel="幂等键" value={distribute.idempotencyKey} onChange={(idempotencyKey) => setDistribute({ ...distribute, idempotencyKey })} /></label>
             </div>
-            <ConfirmAction
+            <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${distribute.projectId}/distribute`} method="POST">
+              <ConfirmAction
               actionText="执行派发"
               disabled={
                 !isReferenceSelectable(distributableProjects, distribute.projectId) ||
@@ -233,7 +237,8 @@ export function NewCoinActions() {
                   })
                 )
               }
-            />
+              />
+            </AdminRequestActionBoundary>
           </Space>
         </Card>
 
@@ -267,7 +272,8 @@ export function NewCoinActions() {
               <label>固定解禁时间戳<AdminTextInput ariaLabel="固定解禁时间戳" value={unlockRule.fixedUnlockAt} onChange={(fixedUnlockAt) => setUnlockRule({ ...unlockRule, fixedUnlockAt })} /></label>
               <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={unlockRule.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setUnlockRule({ ...unlockRule, relativeUnlockSeconds })} /></label>
             </div>
-            <ConfirmAction
+            <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${unlockRule.projectId}/unlock-rule`} method="PATCH">
+              <ConfirmAction
               actionText="更新解禁规则"
               disabled={!isReferenceSelectable(projectReferences.options, unlockRule.projectId)}
               title="确认更新解禁规则"
@@ -285,7 +291,8 @@ export function NewCoinActions() {
                   })
                 )
               }
-            />
+              />
+            </AdminRequestActionBoundary>
           </Space>
         </Card>
 
@@ -328,7 +335,8 @@ export function NewCoinActions() {
                 />
               ) : null}
             </div>
-            <ConfirmAction
+            <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${unlockFee.projectId}/unlock-fee-rule`} method="PATCH">
+              <ConfirmAction
               actionText="更新矿工费"
               disabled={
                 !isReferenceSelectable(projectReferences.options, unlockFee.projectId) ||
@@ -349,7 +357,8 @@ export function NewCoinActions() {
                   })
                 )
               }
-            />
+              />
+            </AdminRequestActionBoundary>
           </Space>
         </Card>
       </div>

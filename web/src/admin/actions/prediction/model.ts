@@ -1,4 +1,5 @@
 import type { SemiSelectOption } from '../../../shared/SemiFormControls';
+import { canonicalDecimalText, isNonNegativeDecimalText } from '../../../shared/decimal';
 import type {
   PredictionAssetConfig,
   PredictionAssetDraft,
@@ -73,10 +74,11 @@ function positiveInteger(value: string, label: string): number {
 
 function nonNegativeAmount(value: string, label: string): string {
   const trimmed = value.trim();
-  if (!trimmed || Number(trimmed) < 0 || Number.isNaN(Number(trimmed))) {
+  const canonical = canonicalDecimalText(trimmed);
+  if (canonical === null || !isNonNegativeDecimalText(canonical)) {
     throw new Error(`${label}必须为非负数字`);
   }
-  return trimmed;
+  return canonical;
 }
 
 export function settingsPayload(

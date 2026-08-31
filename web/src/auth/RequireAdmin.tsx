@@ -13,7 +13,7 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
       return <Navigate to="/403" replace />;
     }
 
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}${location.hash}` }} />;
   }
 
   if (session.scope !== 'admin') {

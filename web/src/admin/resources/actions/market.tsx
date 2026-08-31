@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
@@ -162,8 +163,9 @@ export function MarketPairRowActions({ helpers, record }: { helpers: RowActionHe
       <Button disabled={!pairId} onClick={() => openRecordDetail('/admin/api/v1/market-pairs', pairId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <MarketPairEditAction helpers={helpers} pairId={pairId} record={record} />
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-pairs/${pairId}`} method="PATCH">
+        <MarketPairEditAction helpers={helpers} pairId={pairId} record={record} />
+        <ConfirmAction
         actionText={actionText}
         disabled={!pairId}
         title={`${actionText}交易对`}
@@ -176,7 +178,8 @@ export function MarketPairRowActions({ helpers, record }: { helpers: RowActionHe
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }
@@ -190,7 +193,8 @@ export function SpotOrderRowActions({ helpers, record }: { helpers: RowActionHel
       <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/spot/orders', orderId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/spot/orders/${orderId}/cancel`} method="POST">
+        <ConfirmAction
         actionText="管理员撤单"
         disabled={!orderId || !canCancelSpotOrder(status)}
         title="管理员撤单"
@@ -203,7 +207,8 @@ export function SpotOrderRowActions({ helpers, record }: { helpers: RowActionHel
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

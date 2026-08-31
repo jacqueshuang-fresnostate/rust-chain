@@ -8,6 +8,7 @@ import { RequireAgent } from './RequireAgent';
 describe('RequireAgent', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
   });
 
   it('renders agent content for agent scope', () => {

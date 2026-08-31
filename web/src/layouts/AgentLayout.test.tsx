@@ -33,6 +33,7 @@ describe('AgentLayout', () => {
 
   afterEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
   });
 
   it('renders the agent navigation labels and subject', () => {
@@ -67,12 +68,13 @@ describe('AgentLayout', () => {
     fireEvent.click(screen.getByRole('button', { name: /退出登录/ }));
 
     expect(await screen.findByText('登录页')).toBeInTheDocument();
-    expect(authStore.getSession()).toEqual({
+    expect(authStore.getSession()).toMatchObject({
       accessToken: 'admin-token',
       refreshToken: 'admin-refresh',
       scope: 'admin',
       subject: 'admin:1'
     });
+    expect(authStore.getSession()?.generation).toEqual(expect.any(String));
     expect(authStore.getSession('agent')).toBeNull();
   });
 });

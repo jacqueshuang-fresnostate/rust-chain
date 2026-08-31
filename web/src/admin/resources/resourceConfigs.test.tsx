@@ -1,10 +1,12 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render as testingLibraryRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { StrictMode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StrictMode, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
+import { authStore } from '../../auth/authStore';
 import { batchStatusSummary } from './actions/agents';
 import { ResourcePage, resourceConfigs, type ResourceConfig } from './resourceConfigs';
 
@@ -22,6 +24,11 @@ vi.mock('../../api/client', async () => {
 
 const listAdminResourceMock = vi.mocked(listAdminResource);
 const apiRequestMock = vi.mocked(apiRequest);
+
+function render(element: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return testingLibraryRender(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
 
 async function expectFormattedDetail(value: string, rawJson: RegExp) {
   expect(await screen.findByText(value)).toBeInTheDocument();
@@ -116,6 +123,12 @@ async function openFiltersTab(user: ReturnType<typeof userEvent.setup>) {
   });
 }
 
+async function waitForLazyResourceActions() {
+  await waitFor(() => {
+    expect(screen.queryAllByText(/正在加载(?:行|批量)?操作/)).toHaveLength(0);
+  });
+}
+
 function semiSelectByLabel(root: HTMLElement, label: string, index = 0): HTMLElement {
   const labelNode = [...root.querySelectorAll('label')].filter((item) => item.textContent?.trim().startsWith(label) && item.querySelector('.semi-select'))[index] as HTMLElement | undefined;
   expect(labelNode).toBeDefined();
@@ -196,33 +209,41 @@ function stubMatchMedia() {
 class WebSocketMock {
   readonly url: string;
   closed = false;
-  onmessage: ((event: MessageEvent<string>) => void) | null = null;
-  private listeners: Array<(event: MessageEvent<string>) => void> = [];
+  readyState = 0;
+  readonly sent: string[] = [];
+  private listeners = new Map<string, Array<(event: Event) => void>>();
 
   constructor(url: string) {
     this.url = url;
   }
 
-  addEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
-    if (type === 'message') {
-      this.listeners.push(listener);
-    }
+  addEventListener(type: string, listener: (event: Event) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
 
-  removeEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
-    if (type === 'message') {
-      this.listeners = this.listeners.filter((item) => item !== listener);
-    }
+  removeEventListener(type: string, listener: (event: Event) => void) {
+    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((item) => item !== listener));
+  }
+
+  send(message: string) {
+    this.sent.push(message);
   }
 
   close() {
+    if (this.closed) return;
     this.closed = true;
+    this.readyState = 3;
+    this.listeners.get('close')?.forEach((listener) => listener(new Event('close')));
+  }
+
+  emitOpen() {
+    this.readyState = 1;
+    this.listeners.get('open')?.forEach((listener) => listener(new Event('open')));
   }
 
   emitMessage(payload: unknown) {
     const event = { data: JSON.stringify(payload) } as MessageEvent<string>;
-    this.onmessage?.(event);
-    this.listeners.forEach((listener) => listener(event));
+    this.listeners.get('message')?.forEach((listener) => listener(event));
   }
 }
 
@@ -563,7 +584,7 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByText('美国')).toBeInTheDocument();
     expect(screen.getAllByText('en').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', { limit: 50, offset: 0 });
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', { limit: 50, offset: 0 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('creates edits and updates Admin country status from row actions', async () => {
@@ -757,8 +778,9 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.news} />);
 
     expect(await screen.findByText('平台公告')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('系统公告')).toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/news', 'news', { limit: 50, offset: 0 });
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/news', 'news', { limit: 50, offset: 0 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('creates edits publishes and archives Admin news', async () => {
@@ -888,7 +910,12 @@ describe('resourceConfigs create actions', () => {
     expect(createEditor.closest('.ql-editor')).toHaveAttribute('data-placeholder', '请输入新闻内容');
     expect(within(dialog).getAllByRole('button', { name: '插入图片' }).length).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', expect.objectContaining({ status: 'active' }));
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
+        '/admin/api/v1/countries',
+        'countries',
+        expect.objectContaining({ status: 'active' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
       expect(semiSelectByLabel(dialog, '国家')).not.toHaveClass('semi-select-disabled');
     });
     await user.type(within(dialog).getByLabelText('新闻标题'), '平台新公告');
@@ -1036,6 +1063,7 @@ describe('resourceConfigs create actions', () => {
   });
 
   beforeEach(() => {
+    sessionStorage.clear();
     stubResizeObserver();
     stubMatchMedia();
     if (typeof Range !== 'undefined' && !Range.prototype.getBoundingClientRect) {
@@ -1091,6 +1119,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.quickRechargeOrders} />);
 
     expect(await screen.findByText('QRDELETE001')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(resourceConfigs.quickRechargeOrders.showJsonAction).toBe(false);
     await user.click(screen.getByRole('button', { name: '删除' }));
     await user.type(await screen.findByLabelText('操作原因'), 'delete quick recharge order');
@@ -1289,6 +1318,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.depositAddressPool} />);
 
     expect(await screen.findByText('TAssignedAddress')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByRole('button', { name: '修改' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     await waitFor(() => {
@@ -1357,6 +1387,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.assets} />);
 
     expect(await screen.findByText('BTC', { selector: 'span' })).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('数字货币', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('稳定币', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('1 - 100: 1%', { selector: 'span' })).toBeInTheDocument();
@@ -1378,7 +1409,7 @@ describe('resourceConfigs create actions', () => {
         status: 'disabled',
         limit: 50,
         offset: 0
-      });
+      }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
     await user.click(screen.getAllByRole('button', { name: '查看详情' })[0]);
@@ -1771,8 +1802,19 @@ describe('resourceConfigs create actions', () => {
     await user.click(await screen.findByRole('button', { name: '添加秒合约交易对' }));
     const dialog = await findActionSheet('添加秒合约交易对');
     expectCreateModalSize(dialog, 'wide');
-    expect(within(dialog).getByRole('tab', { name: '基础配置' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('tab', { name: '交易参数' })).toBeInTheDocument();
+    const basicTab = within(dialog).getByRole('tab', { name: '基础配置' });
+    const tradeTab = within(dialog).getByRole('tab', { name: '交易参数' });
+    expect(basicTab).toHaveAttribute('aria-selected', 'true');
+    expect(basicTab).toHaveAttribute('aria-controls');
+    expect(within(dialog).getByRole('tabpanel')).toHaveAttribute('id', basicTab.getAttribute('aria-controls'));
+    expect(within(dialog).getByRole('tabpanel')).toHaveAttribute('aria-labelledby', basicTab.id);
+    basicTab.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(tradeTab).toHaveFocus();
+    expect(tradeTab).toHaveAttribute('aria-selected', 'true');
+    expect(within(dialog).getByRole('tabpanel')).toHaveAttribute('id', tradeTab.getAttribute('aria-controls'));
+    await user.keyboard('{Home}');
+    expect(basicTab).toHaveFocus();
     expect(within(dialog).getByRole('button', { name: '提交添加秒合约交易对' })).toBeDisabled();
     expect(within(dialog).queryByLabelText('秒合约交易对ID')).not.toBeInTheDocument();
     semiSelectByLabel(dialog, '秒合约交易对');
@@ -1800,6 +1842,12 @@ describe('resourceConfigs create actions', () => {
     await user.type(payoutInputs[1], '0.9');
     await user.type(minStakeInputs[1], '20');
     await user.type(maxStakeInputs[1], '2000');
+    const secondPeriodRow = within(dialog).getByRole('group', { name: /周期 2：120 秒/ });
+    const secondPeriodRowId = secondPeriodRow.id;
+    await user.click(within(dialog).getByRole('button', { name: '新增周期' }));
+    await user.click(within(dialog).getByRole('button', { name: '删除周期 3：未填写秒数' }));
+    await waitFor(() => expect(durationInputs[1]).toHaveFocus());
+    expect(within(dialog).getByRole('group', { name: /周期 2：120 秒/ })).toHaveAttribute('id', secondPeriodRowId);
     expect(within(dialog).getByRole('button', { name: '提交添加秒合约交易对' })).not.toBeDisabled();
     await user.click(within(dialog).getByRole('button', { name: '提交添加秒合约交易对' }));
     await user.type(await screen.findByLabelText('操作原因'), 'add seconds pair');
@@ -2120,15 +2168,17 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
-      expect(listAdminResourceMock.mock.calls).toContainEqual([
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
         '/admin/api/v1/users',
         'users',
-        { email: 'target@example.com', limit: 50, offset: 0 }
-      ]);
+        { email: 'target@example.com', limit: 50, offset: 0 },
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
     });
   });
 
   it('recharges a user wallet from user row actions', async () => {
+    authStore.setSession({ accessToken: 'admin-access', refreshToken: 'admin-refresh', scope: 'admin', subject: 'admin:7' });
     const user = userEvent.setup();
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
@@ -2301,6 +2351,7 @@ describe('resourceConfigs create actions', () => {
     const { unmount } = render(<ResourcePage config={config} />);
 
     expect(await screen.findByText('0.05')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('更新时间')).toBeInTheDocument();
     await openFiltersTab(user);
     semiInputByLabel(document.body, '代理ID');
@@ -2315,7 +2366,7 @@ describe('resourceConfigs create actions', () => {
         status: 'disabled',
         limit: 50,
         offset: 0
-      });
+      }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
     await user.click(screen.getByRole('button', { name: '添加佣金规则' }));
@@ -2484,12 +2535,18 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.agentCommissions} />);
 
     expect(await screen.findByText('quote-88')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     await openFiltersTab(user);
     semiSelectByLabel(document.body, '状态');
     await selectSemiOption(user, document.body, '状态', '待结算');
     await user.click(screen.getByRole('button', { name: '查询' }));
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/agent-commissions', 'commissions', { status: 'pending', limit: 50, offset: 0 });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith(
+        '/admin/api/v1/agent-commissions',
+        'commissions',
+        { status: 'pending', limit: 50, offset: 0 },
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
     });
 
     await user.click(screen.getByRole('button', { name: '结算' }));
@@ -2620,6 +2677,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.marketPairs} />);
 
     expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
+    await waitForLazyResourceActions();
     await user.click(screen.getByRole('button', { name: '禁用' }));
     await user.type(await screen.findByLabelText('操作原因'), 'disable risky pair');
     await user.click(await screen.findByRole('button', { name: '确认' }));
@@ -2683,6 +2741,7 @@ describe('resourceConfigs create actions', () => {
     const { unmount } = render(<ResourcePage config={resourceConfigs.marketPairs} />);
 
     expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('最新价格')).toBeInTheDocument();
     expect(screen.getByText('外部行情', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('策略行情', { selector: 'span' })).toBeInTheDocument();
@@ -2691,17 +2750,23 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getAllByRole('button', { name: '查看详情' })).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: '修改' })).toHaveLength(2);
 
-    await waitFor(() => {
-      expect(sockets.map((socket) => socket.url).some((url) => url.endsWith('/ws/public/ticker/BTCUSDT'))).toBe(true);
-      expect(sockets.map((socket) => socket.url).some((url) => url.endsWith('/ws/public/ticker/ETHUSDT'))).toBe(true);
-    });
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(sockets[0].url).toBe('ws://127.0.0.1:8080/ws/public');
     act(() => {
-      sockets.find((socket) => socket.url.endsWith('/BTCUSDT'))?.emitMessage({ symbol: 'BTCUSDT', last_price: '67890.1200', observed_at: 1_735_732_800_000 });
-      sockets.find((socket) => socket.url.endsWith('/ETHUSDT'))?.emitMessage({ symbol: 'ETHUSDT', last_price: '3200.55', observed_at: 1_735_732_800_000 });
+      sockets[0].emitOpen();
+    });
+    expect(sockets[0].sent.map((message) => JSON.parse(message))).toEqual(expect.arrayContaining([
+      { op: 'subscribe', channel: 'ticker', symbol: 'BTCUSDT' },
+      { op: 'subscribe', channel: 'ticker', symbol: 'ETHUSDT' }
+    ]));
+    act(() => {
+      sockets[0].emitMessage({ symbol: 'BTCUSDT', last_price: '67890.1200', observed_at: 1_735_732_800_000 });
+      sockets[0].emitMessage({ symbol: 'ETHUSDT', last_price: '3200.55', observed_at: 1_735_732_800_000 });
     });
 
     expect(await screen.findByText('67,890.12')).toBeInTheDocument();
     expect(screen.getByText('3,200.55')).toBeInTheDocument();
+    expect(screen.getAllByText(/\u5b9e\u65f6 ·/)).toHaveLength(2);
 
     await openFiltersTab(user);
     semiSelectByLabel(document.body, '交易对');
@@ -2719,10 +2784,11 @@ describe('resourceConfigs create actions', () => {
         market_type: 'strategy',
         limit: 50,
         offset: 0
-      });
+      }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
     unmount();
-    expect(sockets.every((socket) => socket.closed)).toBe(true);
+    expect(sockets).toHaveLength(1);
+    await waitFor(() => expect(sockets[0].closed).toBe(true));
   });
 
   it('opens market pair details from row actions', async () => {
@@ -2884,6 +2950,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.spotOrders} />);
 
     expect(await screen.findByText('0.50')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('99.50')).toBeInTheDocument();
     expect(screen.getByText('spot-user@example.test')).toBeInTheDocument();
     expect(screen.getByText('买入')).toBeInTheDocument();
@@ -2904,7 +2971,7 @@ describe('resourceConfigs create actions', () => {
         include_internal: 'true',
         limit: 50,
         offset: 0
-      });
+      }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
     await waitFor(() => {
       expect(screen.getByLabelText('显示机器人订单')).not.toBeDisabled();
@@ -2918,7 +2985,7 @@ describe('resourceConfigs create actions', () => {
         include_internal: 'true',
         limit: 50,
         offset: 0
-      });
+      }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
     await user.click(screen.getByRole('button', { name: '查看详情' }));
@@ -3100,6 +3167,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.marginPositions} />);
 
     expect(await screen.findByText('400.00')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.queryByRole('button', { name: '强平' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关闭仓位' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '修改状态' })).not.toBeInTheDocument();
@@ -3143,6 +3211,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.marginLiquidations} />);
 
     expect(await screen.findByText('maintenance_margin')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
@@ -3217,6 +3286,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.secondsProducts} />);
 
     expect(await screen.findByText('ETH-USDT')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.queryByRole('columnheader', { name: '产品ID' })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '交易对ID' })).not.toBeInTheDocument();
     expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
@@ -3344,6 +3414,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.secondsOrders} />);
 
     expect(await screen.findByRole('columnheader', { name: '用户邮箱' })).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByRole('columnheader', { name: '交易对' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '结算价格' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '订单ID' })).not.toBeInTheDocument();
@@ -3448,6 +3519,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.earnCategories} />);
 
     expect(await screen.findByText('稳健栏目')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('zh-CN: 稳健栏目 / en-US: Stable Earn')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '默认栏目名' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '添加理财分类' })).toBeInTheDocument();
@@ -3462,7 +3534,12 @@ describe('resourceConfigs create actions', () => {
     semiSelectByLabel(dialog, '国家');
     semiInputByLabel(dialog, '栏目名称');
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', expect.objectContaining({ status: 'active' }));
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
+        '/admin/api/v1/countries',
+        'countries',
+        expect.objectContaining({ status: 'active' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
       expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN / zh-CN)');
     });
     await user.type(within(dialog).getByLabelText('分类代码'), 'premium');
@@ -3638,6 +3715,7 @@ describe('resourceConfigs create actions', () => {
     );
 
     expect(await screen.findByText('USDT 30D')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('定期', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '添加理财产品' })).toBeInTheDocument();
     const initialEarnProductLoadCount = listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products').length;
@@ -3672,8 +3750,18 @@ describe('resourceConfigs create actions', () => {
     expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
     semiInputByLabel(dialog, '介绍标题');
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', expect.objectContaining({ status: 'active' }));
-      expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/earn/categories', 'categories', expect.objectContaining({ status: 'active' }));
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
+        '/admin/api/v1/countries',
+        'countries',
+        expect.objectContaining({ status: 'active' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
+        '/admin/api/v1/earn/categories',
+        'categories',
+        expect.objectContaining({ status: 'active' }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
       expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN / zh-CN)');
     });
     await selectSemiOption(user, dialog, '理财资产', 'USDT - Tether（ID: 12）');
@@ -3871,6 +3959,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.earnSubscriptions} />);
 
     expect(await screen.findByText('100.00')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.queryByRole('button', { name: '管理员赎回' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '赎回' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '修改状态' })).not.toBeInTheDocument();
@@ -4338,6 +4427,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.convertOrders} />);
 
     expect(await screen.findByText('convert-user@example.test')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByText('USDT')).toBeInTheDocument();
     expect(screen.getByText('BTC')).toBeInTheDocument();
     expect(screen.queryByText('quote-72')).not.toBeInTheDocument();
@@ -4441,6 +4531,7 @@ describe('wallet review resources', () => {
 
     render(<ResourcePage config={resourceConfigs.walletWithdrawals} />);
     await screen.findByText('0xabc1');
+    await waitForLazyResourceActions();
 
     const actionsByStatus: Record<string, string[]> = {
       pending_review: ['通过', '驳回'],
@@ -4536,6 +4627,7 @@ describe('wallet review resources', () => {
 
     render(<ResourcePage config={resourceConfigs.walletDeposits} />);
     await screen.findByText('0xdep21');
+    await waitForLazyResourceActions();
 
     const reversedRow = screen.getByText('0xdep22').closest('tr') as HTMLElement;
     expect(within(reversedRow).queryByRole('button', { name: '冲正' })).not.toBeInTheDocument();

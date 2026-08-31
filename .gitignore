@@ -12,6 +12,7 @@
 # Frontend
 /web/node_modules/
 /web/dist/
+/web/coverage/
 /pc/node_modules/
 /pc/dist/
 /pc/*.tsbuildinfo

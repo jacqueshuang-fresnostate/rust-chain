@@ -2,6 +2,7 @@ import { Card, Image, Space, Typography } from '@douyinfe/semi-ui';
 import { useMemo } from 'react';
 
 import { apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { AdminImageUpload } from '../../shared/AdminImageUpload';
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
 import { TimestampText } from '../../shared/TimestampText';
@@ -164,15 +165,17 @@ export function PlatformBrandPage() {
                 onChange={(logoUrl) => editor.setDraft((current) => ({ ...current, logoUrl }))}
               />
             </div>
-            <SettingsSaveConfirmation
-              actionText="保存品牌配置"
-              differences={differences}
-              disabled={editor.isSaving}
-              impactSummary={impactSummary}
-              title="确认保存 PC 品牌配置"
-              onConfirm={editor.saveChanges}
-              validationIssues={validationIssues}
-            />
+            <AdminRequestActionBoundary endpoint={platformBrandApiPath} method="PATCH">
+              <SettingsSaveConfirmation
+                actionText="保存品牌配置"
+                differences={differences}
+                disabled={editor.isSaving}
+                impactSummary={impactSummary}
+                title="确认保存 PC 品牌配置"
+                onConfirm={editor.saveChanges}
+                validationIssues={validationIssues}
+              />
+            </AdminRequestActionBoundary>
           </Space>
         </Card>
 

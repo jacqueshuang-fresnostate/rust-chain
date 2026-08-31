@@ -5,6 +5,7 @@ import { getLoginConfig } from './adminAuth';
 describe('getLoginConfig', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.unstubAllGlobals();
   });
 

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
 import type { ApiRecord } from '../../api/types';
+import { AdminRequestActionBoundary } from '../access';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import type { DetailDrawerData } from '../../shared/DetailDrawer';
 import { AdminMultiSelect, AdminSelect, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
@@ -143,14 +144,11 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
       <Button onClick={() => helpers.openDetail(detailData)} theme="borderless">
         详情
       </Button>
-      <Button onClick={() => setSheetVisible(true)} theme="light" type="primary">
-        编辑
-      </Button>
-      <ConfirmAction actionText="YES" disabled={!canSettle} title="确认按 YES 结算" onConfirm={() => settle('yes')} />
-      <ConfirmAction actionText="NO" disabled={!canSettle} title="确认按 NO 结算" onConfirm={() => settle('no')} />
-      <ConfirmAction actionText="无效退全额" disabled={!canSettle} title="确认按无效市场退本金和手续费" onConfirm={() => settle('invalid', 'refund_stake_and_fee')} />
-      <ConfirmAction actionText="无效退本金" disabled={!canSettle} title="确认按无效市场只退本金" onConfirm={() => settle('invalid', 'refund_stake_only')} />
-      <SideSheet
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/prediction/markets/${marketId}`} method="PATCH">
+        <Button onClick={() => setSheetVisible(true)} theme="light" type="primary">
+          编辑
+        </Button>
+        <SideSheet
         bodyStyle={{ overflowY: 'auto' }}
         maskClosable={false}
         onCancel={() => setSheetVisible(false)}
@@ -197,7 +195,14 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
             保存市场配置
           </Button>
         </Space>
-      </SideSheet>
+        </SideSheet>
+      </AdminRequestActionBoundary>
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/prediction/markets/${marketId}/settle`} method="POST">
+        <ConfirmAction actionText="YES" disabled={!canSettle} title="确认按 YES 结算" onConfirm={() => settle('yes')} />
+        <ConfirmAction actionText="NO" disabled={!canSettle} title="确认按 NO 结算" onConfirm={() => settle('no')} />
+        <ConfirmAction actionText="无效退全额" disabled={!canSettle} title="确认按无效市场退本金和手续费" onConfirm={() => settle('invalid', 'refund_stake_and_fee')} />
+        <ConfirmAction actionText="无效退本金" disabled={!canSettle} title="确认按无效市场只退本金" onConfirm={() => settle('invalid', 'refund_stake_only')} />
+      </AdminRequestActionBoundary>
     </Space>
   );
 }

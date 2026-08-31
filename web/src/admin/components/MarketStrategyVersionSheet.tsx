@@ -2,6 +2,7 @@ import { Button, Card, SideSheet, Space, Tag, Toast, Typography } from '@douyinf
 import { useCallback, useEffect, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
 type GeneratorRecord = {
@@ -104,19 +105,21 @@ export function MarketStrategyVersionSheet({ onRestored, strategyId }: { onResto
                       {version.active ? <Tag color="green">当前激活</Tag> : null}
                     </div>
                     {!version.active ? (
-                      <ConfirmAction
-                        actionText="复制为新版本"
-                        title={`确认回滚到版本 ${version.version}`}
-                        onConfirm={async (reason) => {
-                          await apiRequest(`/admin/api/v1/market-strategies/${strategyId}/versions/${version.version}/restore`, {
-                            method: 'POST',
-                            body: JSON.stringify({ reason })
-                          });
-                          Toast.success(`已复制版本 ${version.version} 为新的激活版本`);
-                          await loadVersions();
-                          onRestored?.();
-                        }}
-                      />
+                      <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-strategies/${strategyId}/versions/${version.version}/restore`} method="POST">
+                        <ConfirmAction
+                          actionText="复制为新版本"
+                          title={`确认回滚到版本 ${version.version}`}
+                          onConfirm={async (reason) => {
+                            await apiRequest(`/admin/api/v1/market-strategies/${strategyId}/versions/${version.version}/restore`, {
+                              method: 'POST',
+                              body: JSON.stringify({ reason })
+                            });
+                            Toast.success(`已复制版本 ${version.version} 为新的激活版本`);
+                            await loadVersions();
+                            onRestored?.();
+                          }}
+                        />
+                      </AdminRequestActionBoundary>
                     ) : null}
                   </div>
                   <dl className="admin-market-version-card__meta">

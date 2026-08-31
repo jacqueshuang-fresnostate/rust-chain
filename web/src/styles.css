@@ -195,9 +195,13 @@ body {
 }
 
 .admin-layout-nav .semi-navigation-item-selected {
-  background: linear-gradient(90deg, rgba(237, 106, 44, 0.42), rgba(237, 106, 44, 0.22));
+  /* Semi 的浅色主题会单独写入 background-color；必须同时覆盖颜色和图层，
+     否则白色选中文字会落在浅粉背景上，真实浏览器中的对比度不足。 */
+  background-color: #9f3918 !important;
+  background-image: linear-gradient(90deg, #c94f1f 0%, #8f3218 100%) !important;
   color: #fff !important;
   border-left: 0;
+  font-weight: 700;
   box-shadow: inset 3px 0 0 #ffb48f, inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
@@ -207,7 +211,8 @@ body {
 }
 
 .admin-layout-nav .semi-navigation-item-selected:hover {
-  background: linear-gradient(90deg, rgba(255, 180, 126, 0.58), rgba(237, 106, 44, 0.28));
+  background-color: #ad411c !important;
+  background-image: linear-gradient(90deg, #d85a27 0%, #9e391a 100%) !important;
 }
 
 .admin-layout-nav .semi-navigation-sub-title.semi-navigation-sub-title-selected {

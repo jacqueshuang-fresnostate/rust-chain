@@ -2,7 +2,7 @@ import { IconLock, IconShield } from '@douyinfe/semi-icons';
 import { Button, Card, Form, Radio, RadioGroup, Toast, Typography } from '@douyinfe/semi-ui';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import {
   adminLogin,
@@ -14,7 +14,8 @@ import { agentLogin } from '../api/agentAuth';
 import { ApiError } from '../api/client';
 import type { AdminLoginResponse } from '../api/types';
 import hippoLogoLandscape from '../assets/brand/hippo-logo-landscape.png';
-import { authStore, type AuthScope } from './authStore';
+import { authStore, authSubjectFromAccessToken, type AuthScope } from './authStore';
+import { safeInternalRedirect } from './internalRedirect';
 import { createTurnstileLifecycle, type TurnstileLifecycle } from './turnstile';
 
 const { Title, Text } = Typography;
@@ -44,6 +45,7 @@ function isTurnstileTokenMissingError(error: unknown): boolean {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loginScope, setLoginScope] = useState<LoginScope>('admin');
   const [challengeId, setChallengeId] = useState<string | null>(null);
   const [cfTurnstileToken, setCfTurnstileToken] = useState('');
@@ -54,6 +56,8 @@ export function LoginPage() {
   const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
   const turnstileMountedRef = useRef(false);
   const turnstileLifecycleRef = useRef<TurnstileLifecycle | null>(null);
+  const loginSubmissionRef = useRef(false);
+  const twoFactorSubmissionRef = useRef(false);
   if (!turnstileLifecycleRef.current) {
     turnstileLifecycleRef.current = createTurnstileLifecycle();
   }
@@ -126,9 +130,9 @@ export function LoginPage() {
     }
   };
 
-  const applySession = (response: AdminLoginResponse) => {
-    if (response.scope !== loginScope) {
-      Toast.error(loginScope === 'agent' ? '当前账号不是代理' : '当前账号不是管理员');
+  const applySession = (response: AdminLoginResponse, attemptedScope: LoginScope) => {
+    if (response.scope !== attemptedScope) {
+      Toast.error(attemptedScope === 'agent' ? '当前账号不是代理' : '当前账号不是管理员');
       return;
     }
 
@@ -136,14 +140,17 @@ export function LoginPage() {
       accessToken: response.access_token,
       refreshToken: response.refresh_token,
       scope: response.scope,
-      subject: response.subject ?? loginScope,
+      subject: response.subject?.trim() || authSubjectFromAccessToken(response.access_token, attemptedScope),
     });
-    navigate(loginScope === 'agent' ? '/agent/dashboard' : '/admin/dashboard', { replace: true });
+    const fallback = attemptedScope === 'agent' ? '/agent/dashboard' : '/admin/dashboard';
+    const from = (location.state as { from?: unknown } | null)?.from;
+    navigate(safeInternalRedirect(from, fallback, attemptedScope === 'agent' ? '/agent' : '/admin'), { replace: true, state: null });
   };
 
   const notifyError = (error: unknown) => {
     if (isTurnstileTokenMissingError(error)) {
       Toast.error(turnstileRequiredText);
+      resetTurnstileWidget();
       void refreshTurnstileConfig();
       return;
     }
@@ -153,16 +160,17 @@ export function LoginPage() {
   };
 
   const loginMutation = useMutation({
-    mutationFn: (values: Required<LoginFormValues>) => {
+    retry: false,
+    mutationFn: (attempt: Required<LoginFormValues> & { scope: LoginScope; turnstileToken: string }) => {
       const payload = {
-        username: values.username ?? '',
-        password: values.password ?? '',
-        ...(cfTurnstileToken?.trim() ? { cf_turnstile_token: cfTurnstileToken.trim() } : {}),
+        username: attempt.username,
+        password: attempt.password,
+        ...(attempt.turnstileToken ? { cf_turnstile_token: attempt.turnstileToken } : {}),
       };
 
-      return loginScope === 'agent' ? agentLogin(payload) : adminLogin(payload);
+      return attempt.scope === 'agent' ? agentLogin(payload) : adminLogin(payload);
     },
-    onSuccess: (response) => {
+    onSuccess: (response, attempt) => {
       // 密码正确但需要二次验证时，后端只返回挑战，不下发任何令牌。
       if (isAdminLoginTwoFactorChallenge(response)) {
         removeTurnstileWidget();
@@ -170,15 +178,22 @@ export function LoginPage() {
         return;
       }
 
-      applySession(response);
+      applySession(response, attempt.scope);
     },
     onError: notifyError,
+    onSettled: () => {
+      loginSubmissionRef.current = false;
+    },
   });
 
   const twoFactorMutation = useMutation({
-    mutationFn: (totpCode: string) => adminLoginTwoFactor({ challenge_id: challengeId ?? '', totp_code: totpCode }),
-    onSuccess: applySession,
+    retry: false,
+    mutationFn: (attempt: { challengeId: string; totpCode: string }) => adminLoginTwoFactor({ challenge_id: attempt.challengeId, totp_code: attempt.totpCode }),
+    onSuccess: (response) => applySession(response, 'admin'),
     onError: notifyError,
+    onSettled: () => {
+      twoFactorSubmissionRef.current = false;
+    },
   });
 
   const isAgentLogin = loginScope === 'agent';
@@ -250,7 +265,9 @@ export function LoginPage() {
               <Form<TwoFactorFormValues>
                 className="admin-login-form"
                 onSubmit={(values) => {
-                  twoFactorMutation.mutate(values.totp_code ?? '');
+                  if (twoFactorSubmissionRef.current || !challengeId) return;
+                  twoFactorSubmissionRef.current = true;
+                  twoFactorMutation.mutate({ challengeId, totpCode: values.totp_code ?? '' });
                 }}
               >
                 <Form.Input
@@ -280,13 +297,20 @@ export function LoginPage() {
               <Form<LoginFormValues>
                 className="admin-login-form"
                 onSubmit={(values) => {
+                  if (loginSubmissionRef.current) return;
                   if (turnstileEnabled && !cfTurnstileToken) {
                     Toast.error(turnstileRequiredText);
                     return;
                   }
+                  loginSubmissionRef.current = true;
+                  const turnstileToken = cfTurnstileToken.trim();
+                  // Turnstile token 单次使用：请求发出后立即从 UI 状态移除，失败只能由用户换新 token 重试。
+                  setCfTurnstileToken('');
                   loginMutation.mutate({
                     username: values.username ?? '',
                     password: values.password ?? '',
+                    scope: loginScope,
+                    turnstileToken,
                   });
                 }}
               >

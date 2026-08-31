@@ -3,6 +3,7 @@ import { Avatar, Button, Image, Space, Toast, Typography, Upload } from '@douyin
 import type { FileItem, customRequestArgs } from '@douyinfe/semi-ui/lib/es/upload';
 
 import { ApiError, apiRequest } from '../api/client';
+import { useCanAdminRequest } from '../admin/access';
 
 const { Text } = Typography;
 
@@ -65,6 +66,7 @@ const avatarHoverMask = (
 
 export function AdminImageUpload({ buttonText = '上传图片', label, onChange, onUploaded, value, variant = 'picture' }: AdminImageUploadProps) {
   const currentUrl = value.trim();
+  const canUpload = useCanAdminRequest('/admin/api/v1/uploads/images', 'POST');
   const defaultFileList = currentUrl ? [uploadedFileItem(currentUrl, label)] : [];
 
   const customRequest = async (request: customRequestArgs) => {
@@ -85,7 +87,7 @@ export function AdminImageUpload({ buttonText = '上传图片', label, onChange,
       <Space align="start" spacing={8} vertical style={{ width: '100%' }}>
         <Text strong>{label}</Text>
         <Space align="center" spacing={8}>
-          <Upload
+          {canUpload ? <Upload
             accept="image/png,image/jpeg,image/webp,image/gif"
             action="/admin/api/v1/uploads/images"
             customRequest={customRequest}
@@ -97,7 +99,7 @@ export function AdminImageUpload({ buttonText = '上传图片', label, onChange,
             <Avatar alt={label} hoverMask={avatarHoverMask} shape="square" size="large" src={currentUrl || undefined}>
               <IconCamera aria-hidden="true" />
             </Avatar>
-          </Upload>
+          </Upload> : <Avatar alt={label} shape="square" size="large" src={currentUrl || undefined}><IconCamera aria-hidden="true" /></Avatar>}
           {currentUrl ? <Button aria-label={`清除${label}`} icon={<IconDelete aria-hidden="true" />} onClick={() => onChange('')} size="small" theme="borderless" type="danger" /> : null}
         </Space>
       </Space>
@@ -107,7 +109,7 @@ export function AdminImageUpload({ buttonText = '上传图片', label, onChange,
   return (
     <Space align="start" spacing={8} vertical style={{ width: '100%' }}>
       <Text strong>{label}</Text>
-      <Upload
+      {canUpload ? <Upload
         accept="image/png,image/jpeg,image/webp,image/gif"
         action="/admin/api/v1/uploads/images"
         customRequest={customRequest}
@@ -122,7 +124,8 @@ export function AdminImageUpload({ buttonText = '上传图片', label, onChange,
         showReplace
       >
         <Button icon={<IconUpload aria-hidden="true" />}>{buttonText}</Button>
-      </Upload>
+      </Upload> : currentUrl ? <Image alt={label} height={variant === 'banner' ? 96 : 72} preview src={currentUrl} width={variant === 'banner' ? 240 : 120} /> : <Text type="tertiary">无图片</Text>}
+      {currentUrl && !canUpload ? <Button aria-label={`清除${label}`} icon={<IconDelete aria-hidden="true" />} onClick={() => onChange('')} size="small" theme="borderless" type="danger" /> : null}
     </Space>
   );
 }

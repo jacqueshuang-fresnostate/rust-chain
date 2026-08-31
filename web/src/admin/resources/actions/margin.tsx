@@ -3,7 +3,9 @@ import { useState, type ReactNode } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
+import { canonicalDecimalText, compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminCheckbox, AdminMultiSelect, AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
@@ -100,13 +102,10 @@ function updateSupportedMarginModes(values: MarginProductValues, nextModes: stri
   };
 }
 
-function decimalNumber(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed || !/^\d+(?:\.\d+)?$/.test(trimmed)) {
-    return null;
-  }
-  const numeric = Number(trimmed);
-  return Number.isFinite(numeric) ? numeric : null;
+const plainUnsignedDecimalPattern = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+function isPlainUnsignedDecimal(value: string): boolean {
+  return plainUnsignedDecimalPattern.test(value.trim());
 }
 
 function customLeverageLevelError(value: string): string | null {
@@ -117,10 +116,7 @@ function customLeverageLevelError(value: string): string | null {
   const invalidLevel = value
     .split(',')
     .map((level) => level.trim())
-    .find((level) => {
-      const numeric = decimalNumber(level);
-      return numeric === null || numeric <= 1;
-    });
+    .find((level) => !isPlainUnsignedDecimal(level) || compareDecimalText(level, '1') !== 1);
 
   return invalidLevel === undefined ? null : `自定义杠杆档位“${invalidLevel || '空项'}”必须为大于 1 的十进制数`;
 }
@@ -129,13 +125,10 @@ function marginLeverageLevels(values: MarginProductValues): string[] {
   const levels = [...values.leverageLevels, ...values.customLeverageLevels.split(',')]
     .map((level) => level.trim())
     .filter(Boolean)
-    .filter((level) => {
-      const numeric = decimalNumber(level);
-      return numeric !== null && numeric > 1;
-    })
-    .map((level) => String(Number(level)));
+    .filter((level) => isPlainUnsignedDecimal(level) && compareDecimalText(level, '1') === 1)
+    .map((level) => canonicalDecimalText(level) as string);
 
-  return [...new Set(levels)].sort((left, right) => Number(left) - Number(right));
+  return [...new Set(levels)].sort((left, right) => compareDecimalText(left, right) ?? 0);
 }
 
 function marginProductStepError(values: MarginProductValues, tab: Exclude<MarginProductTab, 'review'>): string | null {
@@ -154,15 +147,11 @@ function marginProductStepError(values: MarginProductValues, tab: Exclude<Margin
     return null;
   }
 
-  const minMargin = decimalNumber(values.minMargin);
-  if (minMargin === null || minMargin <= 0) return '最小保证金必须为大于 0 的十进制数';
-  const maxMargin = values.maxMargin.trim() ? decimalNumber(values.maxMargin) : null;
-  if (values.maxMargin.trim() && (maxMargin === null || maxMargin <= 0)) return '最大保证金必须为大于 0 的十进制数，或留空表示不设上限';
-  if (maxMargin !== null && maxMargin < minMargin) return '最大保证金不能小于最小保证金';
-  const maintenanceRate = decimalNumber(values.maintenanceMarginRate);
-  if (maintenanceRate === null || maintenanceRate < 0) return '维持保证金率必须为非负十进制数';
-  const hourlyRate = values.hourlyInterestRate.trim() ? decimalNumber(values.hourlyInterestRate) : null;
-  if (values.hourlyInterestRate.trim() && (hourlyRate === null || hourlyRate < 0)) return '小时利率必须为非负十进制数，或留空';
+  if (!isPlainUnsignedDecimal(values.minMargin) || !isPositiveDecimalText(values.minMargin)) return '最小保证金必须为大于 0 的十进制数';
+  if (values.maxMargin.trim() && (!isPlainUnsignedDecimal(values.maxMargin) || !isPositiveDecimalText(values.maxMargin))) return '最大保证金必须为大于 0 的十进制数，或留空表示不设上限';
+  if (values.maxMargin.trim() && compareDecimalText(values.maxMargin, values.minMargin) === -1) return '最大保证金不能小于最小保证金';
+  if (!isPlainUnsignedDecimal(values.maintenanceMarginRate) || !isNonNegativeDecimalText(values.maintenanceMarginRate)) return '维持保证金率必须为非负十进制数';
+  if (values.hourlyInterestRate.trim() && (!isPlainUnsignedDecimal(values.hourlyInterestRate) || !isNonNegativeDecimalText(values.hourlyInterestRate))) return '小时利率必须为非负十进制数，或留空';
   return null;
 }
 
@@ -182,9 +171,7 @@ function isMarginProductCreatable(values: MarginProductValues): boolean {
 }
 
 function normalizedMarginLeverageLevel(value: string): string {
-  const trimmed = value.trim();
-  const numeric = Number(trimmed);
-  return trimmed && Number.isFinite(numeric) ? String(numeric) : trimmed;
+  return canonicalDecimalText(value) ?? value.trim();
 }
 
 function marginProductFromRecord(record: ApiRecord): MarginProductValues {
@@ -461,8 +448,9 @@ export function MarginProductRowActions({ helpers, record }: { helpers: RowActio
       <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/margin/products', productId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <MarginProductEditAction helpers={helpers} productId={productId} record={record} />
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/margin/products/${productId}`} method="PATCH">
+        <MarginProductEditAction helpers={helpers} productId={productId} record={record} />
+        <ConfirmAction
         actionText={actionText}
         disabled={!productId}
         title={`${actionText}杠杆产品`}
@@ -475,7 +463,8 @@ export function MarginProductRowActions({ helpers, record }: { helpers: RowActio
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

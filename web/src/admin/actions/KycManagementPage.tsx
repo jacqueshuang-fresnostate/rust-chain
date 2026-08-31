@@ -3,6 +3,7 @@ import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { WorkflowPageActions } from '../components/WorkflowPageActions';
 import { ConfirmAction } from '../../shared/ConfirmAction';
@@ -616,29 +617,31 @@ function KycWorkspacePage({ workspace }: { workspace: KycWorkspace }) {
                 ))}
                 <span>最后更新：<TimestampText value={config?.updated_at ?? null} /></span>
               </div>
-              <ConfirmAction
-                actionText="保存配置"
-                disabled={normalizeRequiredDocuments(configForm.requiredDocuments).length === 0}
-                title="确认保存 KYC 配置"
-                onConfirm={(reason) =>
-                  submitAction('保存 KYC 配置', async () => {
-                    const saved = await apiRequest<KycConfig>('/admin/api/v1/kyc/config', {
-                      method: 'PATCH',
-                      body: JSON.stringify({
-                        allowed_countries: uniqueItems(splitCsv(configForm.allowedCountries)),
-                        country_document_types: serializeCountryDocumentTypes(configForm.countryDocumentTypes),
-                        enabled: configForm.enabled,
-                        max_document_size_bytes: mbToBytes(configForm.maxDocumentSizeMb),
-                        reason,
-                        required_documents: normalizeRequiredDocuments(configForm.requiredDocuments),
-                        target_kyc_level: positiveInteger(configForm.targetKycLevel, '目标 KYC 等级')
-                      })
-                    });
-                    setConfig(saved);
-                    setConfigForm(configToForm(saved));
-                  })
-                }
-              />
+              <AdminRequestActionBoundary endpoint="/admin/api/v1/kyc/config" method="PATCH">
+                <ConfirmAction
+                  actionText="保存配置"
+                  disabled={normalizeRequiredDocuments(configForm.requiredDocuments).length === 0}
+                  title="确认保存 KYC 配置"
+                  onConfirm={(reason) =>
+                    submitAction('保存 KYC 配置', async () => {
+                      const saved = await apiRequest<KycConfig>('/admin/api/v1/kyc/config', {
+                        method: 'PATCH',
+                        body: JSON.stringify({
+                          allowed_countries: uniqueItems(splitCsv(configForm.allowedCountries)),
+                          country_document_types: serializeCountryDocumentTypes(configForm.countryDocumentTypes),
+                          enabled: configForm.enabled,
+                          max_document_size_bytes: mbToBytes(configForm.maxDocumentSizeMb),
+                          reason,
+                          required_documents: normalizeRequiredDocuments(configForm.requiredDocuments),
+                          target_kyc_level: positiveInteger(configForm.targetKycLevel, '目标 KYC 等级')
+                        })
+                      });
+                      setConfig(saved);
+                      setConfigForm(configToForm(saved));
+                    })
+                  }
+                />
+              </AdminRequestActionBoundary>
             </Space>
         ) : null}
 
@@ -751,7 +754,7 @@ function KycWorkspacePage({ workspace }: { workspace: KycWorkspace }) {
             </div>
 
             {detail.status === 'pending' ? (
-              <>
+              <AdminRequestActionBoundary endpoint={`/admin/api/v1/kyc/submissions/${detail.id}/review`} method="PATCH">
                 <Divider margin="12px" />
                 <Title heading={5}>审核处理</Title>
                 <div className="admin-action-form admin-action-form-narrow">
@@ -772,7 +775,7 @@ function KycWorkspacePage({ workspace }: { workspace: KycWorkspace }) {
                     审核拒绝
                   </Button>
                 </Space>
-              </>
+              </AdminRequestActionBoundary>
             ) : (
               <Text type="secondary">审核人：{detail.reviewed_by ?? '-'}，审核原因：{detail.review_reason ?? '-'}</Text>
             )}

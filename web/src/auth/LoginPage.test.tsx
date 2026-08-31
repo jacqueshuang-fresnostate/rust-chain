@@ -1,12 +1,14 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 
 import { adminLogin, adminLoginTwoFactor, getLoginConfig } from '../api/adminAuth';
 import { agentLogin } from '../api/agentAuth';
+import { ApiError } from '../api/client';
+import { createAppQueryClient } from '../app/providers';
 import { authStore } from './authStore';
 import { LoginPage } from './LoginPage';
 import type { TurnstileApi } from './turnstile';
@@ -38,17 +40,16 @@ const turnstileApi: TurnstileApi = {
 };
 let renderedWidgetOptions: Record<string, unknown>[] = [];
 
-function renderLoginPage() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } }
-  });
+function renderLoginPage(from?: string) {
+  const queryClient = createAppQueryClient();
   const router = createMemoryRouter(
     [
       { path: '/login', element: <LoginPage /> },
       { path: '/admin/dashboard', element: <div>管理员控制台</div> },
+      { path: '/admin/users', element: <div>用户管理目标页</div> },
       { path: '/agent/dashboard', element: <div>代理控制台</div> }
     ],
-    { initialEntries: ['/login'] }
+    { initialEntries: [from ? { pathname: '/login', state: { from } } : '/login'] }
   );
 
   return render(
@@ -59,6 +60,7 @@ function renderLoginPage() {
 describe('LoginPage', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     window.turnstile = turnstileApi;
     document.querySelectorAll('script[src*="challenges.cloudflare.com/turnstile"]').forEach((script) => script.remove());
     adminLoginMock.mockReset();
@@ -215,13 +217,40 @@ describe('LoginPage', () => {
       expect(adminLoginMock).toHaveBeenCalledWith({ username: 'admin', password: 'password' });
     });
     expect(agentLoginMock).not.toHaveBeenCalled();
-    expect(authStore.getSession()).toEqual({
+    expect(authStore.getSession()).toMatchObject({
       accessToken: 'admin-access',
       refreshToken: 'admin-refresh',
       scope: 'admin',
       subject: 'admin:7'
     });
     expect(await screen.findByText('管理员控制台')).toBeInTheDocument();
+  });
+
+  it('快速重复提交密码登录时只发送一次请求', async () => {
+    const user = userEvent.setup();
+    let resolveLogin!: (value: Awaited<ReturnType<typeof adminLogin>>) => void;
+    adminLoginMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveLogin = resolve;
+      })
+    );
+    renderLoginPage();
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    const form = screen.getByRole('button', { name: '登录' }).closest('form');
+    expect(form).toBeInTheDocument();
+
+    fireEvent.submit(form!);
+    fireEvent.submit(form!);
+    await waitFor(() => expect(adminLoginMock).toHaveBeenCalledTimes(1));
+
+    resolveLogin({
+      access_token: 'admin-access',
+      refresh_token: 'admin-refresh',
+      token_type: 'Bearer',
+      scope: 'admin',
+      subject: 'admin:7'
+    });
   });
 
   it('prompts for the admin two-factor code before storing a session', async () => {
@@ -253,13 +282,98 @@ describe('LoginPage', () => {
     await waitFor(() => {
       expect(adminLoginTwoFactorMock).toHaveBeenCalledWith({ challenge_id: 'challenge-1', totp_code: '123456' });
     });
-    expect(authStore.getSession()).toEqual({
+    expect(authStore.getSession()).toMatchObject({
       accessToken: 'admin-access',
       refreshToken: 'admin-refresh',
       scope: 'admin',
       subject: 'admin:7'
     });
     expect(await screen.findByText('管理员控制台')).toBeInTheDocument();
+  });
+
+  it('快速重复提交 2FA 时只消费一次挑战', async () => {
+    const user = userEvent.setup();
+    adminLoginMock.mockResolvedValueOnce({ requires_2fa: true, challenge_id: 'challenge-once', expires_in_seconds: 300 });
+    let resolveTwoFactor!: (value: Awaited<ReturnType<typeof adminLoginTwoFactor>>) => void;
+    adminLoginTwoFactorMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveTwoFactor = resolve;
+      })
+    );
+    renderLoginPage();
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+    await user.type(await screen.findByLabelText('两步验证码'), '123456');
+    const form = screen.getByRole('button', { name: '验证并登录' }).closest('form');
+
+    fireEvent.submit(form!);
+    fireEvent.submit(form!);
+    await waitFor(() => expect(adminLoginTwoFactorMock).toHaveBeenCalledTimes(1));
+
+    resolveTwoFactor({
+      access_token: 'admin-access',
+      refresh_token: 'admin-refresh',
+      token_type: 'Bearer',
+      scope: 'admin',
+      subject: 'admin:7'
+    });
+  });
+
+  it('Turnstile 令牌失败后必须获取新 token 才能由用户再次提交', async () => {
+    const user = userEvent.setup();
+    getLoginConfigMock.mockResolvedValue({
+      usernameLoginEnabled: true,
+      cfTurnstileEnabled: true,
+      cfTurnstileSiteKey: 'runtime-site-key'
+    });
+    adminLoginMock
+      .mockRejectedValueOnce(new ApiError(400, 'CF_TURNSTILE_TOKEN_MISSING', 'cf_turnstile_token is required'))
+      .mockResolvedValueOnce({
+        access_token: 'admin-access',
+        refresh_token: 'admin-refresh',
+        token_type: 'Bearer',
+        scope: 'admin',
+        subject: 'admin:7'
+      });
+    renderLoginPage();
+    await waitFor(() => expect(turnstileRenderMock).toHaveBeenCalled());
+    await act(async () => {
+      (renderedWidgetOptions.at(-1)?.callback as (token: string) => void)('token-once');
+    });
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+    await waitFor(() => expect(adminLoginMock).toHaveBeenCalledTimes(1));
+
+    // 第一枚 token 已从状态移除，未收到新回调时不会再发请求。
+    await user.click(screen.getByRole('button', { name: '登录' }));
+    expect(adminLoginMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      (renderedWidgetOptions.at(-1)?.callback as (token: string) => void)('token-twice');
+    });
+    await user.click(screen.getByRole('button', { name: '登录' }));
+
+    await waitFor(() => expect(adminLoginMock).toHaveBeenCalledTimes(2));
+    expect(adminLoginMock.mock.calls[0][0].cf_turnstile_token).toBe('token-once');
+    expect(adminLoginMock.mock.calls[1][0].cf_turnstile_token).toBe('token-twice');
+  });
+
+  it('登录后恢复已校验的站内 path/search/hash', async () => {
+    const user = userEvent.setup();
+    adminLoginMock.mockResolvedValueOnce({
+      access_token: 'admin-access',
+      refresh_token: 'admin-refresh',
+      token_type: 'Bearer',
+      scope: 'admin',
+      subject: 'admin:7'
+    });
+    renderLoginPage('/admin/users?status=disabled#user-7');
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+
+    expect(await screen.findByText('用户管理目标页')).toBeInTheDocument();
   });
 
   it('logs in as agent and stores the agent session separately', async () => {
@@ -283,8 +397,8 @@ describe('LoginPage', () => {
       expect(agentLoginMock).toHaveBeenCalledWith({ username: 'agent', password: 'password' });
     });
     expect(adminLoginMock).not.toHaveBeenCalled();
-    expect(authStore.getSession()).toEqual({ accessToken: 'admin-old', refreshToken: 'admin-refresh-old', scope: 'admin', subject: 'admin:1' });
-    expect(authStore.getSession('agent')).toEqual({
+    expect(authStore.getSession()).toMatchObject({ accessToken: 'admin-old', refreshToken: 'admin-refresh-old', scope: 'admin', subject: 'admin:1' });
+    expect(authStore.getSession('agent')).toMatchObject({
       accessToken: 'agent-access',
       refreshToken: 'agent-refresh',
       scope: 'agent',

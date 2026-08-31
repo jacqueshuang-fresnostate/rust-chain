@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react';
 import { listAdminResource } from '../../../api/adminResources';
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { QuillRichTextEditor, type RichTextValue } from '../../../shared/QuillRichTextEditor';
 import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
+import { useSharedAdminOptionQuery } from '../../sharedOptionQuery';
 import {
   type AdminNewsCountryOption,
   type AssetOption,
@@ -151,42 +153,17 @@ function isEarnCategorySubmittable(values: EarnCategoryValues, includeCode: bool
 }
 
 function useEarnCategoryOptions(enabled = true) {
-  const [categoryOptions, setCategoryOptions] = useState<SemiSelectOption[]>([]);
-  const [categoryLoading, setCategoryLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return undefined;
+  const query = useSharedAdminOptionQuery<SemiSelectOption[]>({
+    cacheKey: 'earn-categories:active:100',
+    empty: [],
+    enabled,
+    load: async (signal) => {
+      const result = await listAdminResource('/admin/api/v1/earn/categories', 'categories', { status: 'active', limit: 100 }, { signal });
+      return result.rows.map(toEarnCategoryOption).filter((category): category is SemiSelectOption => category !== null);
     }
+  });
 
-    let active = true;
-    setCategoryLoading(true);
-
-    listAdminResource('/admin/api/v1/earn/categories', 'categories', { status: 'active', limit: 100 })
-      .then((result) => {
-        if (!active) {
-          return;
-        }
-
-        setCategoryOptions(result.rows.map(toEarnCategoryOption).filter((category): category is SemiSelectOption => category !== null));
-      })
-      .catch(() => {
-        if (active) {
-          setCategoryOptions([]);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setCategoryLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [enabled]);
-
-  return { categoryLoading, categoryOptions };
+  return { categoryLoading: query.loading, categoryOptions: query.data };
 }
 
 function newEarnIntroduction(countries: AdminNewsCountryOption[] = []): EarnIntroductionItemValues {
@@ -573,21 +550,23 @@ export function EarnCategoryRowActions({ helpers, record }: { helpers: RowAction
       <Button disabled={!categoryId} onClick={() => openRecordDetail('/admin/api/v1/earn/categories', categoryId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <EarnCategoryEditAction categoryId={categoryId} helpers={helpers} record={record} />
-      <ConfirmAction
-        actionText={actionText}
-        disabled={!categoryId}
-        title={`${actionText}理财分类`}
-        onConfirm={async (reason) => {
-          await submitAction(`${actionText}理财分类`, () =>
-            apiRequest(`/admin/api/v1/earn/categories/${categoryId}/status`, {
-              method: 'PATCH',
-              body: JSON.stringify({ status: nextStatus, reason })
-            })
-          );
-          helpers.reload();
-        }}
-      />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/earn/categories/${categoryId}`} method="PATCH">
+        <EarnCategoryEditAction categoryId={categoryId} helpers={helpers} record={record} />
+        <ConfirmAction
+          actionText={actionText}
+          disabled={!categoryId}
+          title={`${actionText}理财分类`}
+          onConfirm={async (reason) => {
+            await submitAction(`${actionText}理财分类`, () =>
+              apiRequest(`/admin/api/v1/earn/categories/${categoryId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: nextStatus, reason })
+              })
+            );
+            helpers.reload();
+          }}
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }
@@ -858,21 +837,23 @@ export function EarnProductRowActions({ helpers, record }: { helpers: RowActionH
       <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/earn/products', productId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <EarnProductEditAction helpers={helpers} productId={productId} record={record} />
-      <ConfirmAction
-        actionText={actionText}
-        disabled={!productId}
-        title={`${actionText}理财产品`}
-        onConfirm={async (reason) => {
-          await submitAction(`${actionText}理财产品`, () =>
-            apiRequest(`/admin/api/v1/earn/products/${productId}/status`, {
-              method: 'PATCH',
-              body: JSON.stringify({ status: nextStatus, reason })
-            })
-          );
-          helpers.reload();
-        }}
-      />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/earn/products/${productId}`} method="PATCH">
+        <EarnProductEditAction helpers={helpers} productId={productId} record={record} />
+        <ConfirmAction
+          actionText={actionText}
+          disabled={!productId}
+          title={`${actionText}理财产品`}
+          onConfirm={async (reason) => {
+            await submitAction(`${actionText}理财产品`, () =>
+              apiRequest(`/admin/api/v1/earn/products/${productId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: nextStatus, reason })
+              })
+            );
+            helpers.reload();
+          }}
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

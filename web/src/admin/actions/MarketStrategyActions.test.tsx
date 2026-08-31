@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render as testingLibraryRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactElement } from 'react';
 
 import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
@@ -20,6 +22,11 @@ vi.mock('../../api/client', async () => {
 
 const listAdminResourceMock = vi.mocked(listAdminResource);
 const apiRequestMock = vi.mocked(apiRequest);
+
+function render(element: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return testingLibraryRender(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
 
 class ResizeObserverMock {
   observe() {}
@@ -109,13 +116,13 @@ describe('MarketStrategyActions', () => {
     render(<MarketStrategyActions />);
 
     expect(await screen.findByText('行情策略')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '创建策略' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '创建策略' })).toBeInTheDocument();
     expect(screen.getByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '检测缺口/补偿K线（策略91）' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '修改' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '版本历史' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '启用' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '检测缺口/补偿K线（策略91）' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '修改' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '版本历史' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '启用' })).toBeInTheDocument();
     expect(screen.queryByText('更新策略状态')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
   });
@@ -263,7 +270,12 @@ describe('MarketStrategyActions', () => {
     await user.click(await screen.findByRole('button', { name: '创建策略' }));
     const sheet = (await screen.findByText('创建策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs', 'pairs', { status: 'active', limit: 100 });
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
+        '/admin/api/v1/market-pairs',
+        'pairs',
+        { status: 'active', limit: 100 },
+        { signal: expect.any(AbortSignal) }
+      );
     });
     expect(semiSelectByLabel(sheet, '策略类型')).toHaveTextContent('价格路径（OHLCV）');
     await selectSemiOption(user, sheet, '交易对ID', 'BTC-USDT（ID: 21）', 'ETH-USDT（ID: 23）');

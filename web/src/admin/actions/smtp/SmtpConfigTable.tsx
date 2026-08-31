@@ -1,6 +1,7 @@
 import { Button, Space, Typography } from '@douyinfe/semi-ui';
 
 import { ConfirmAction } from '../../../shared/ConfirmAction';
+import { AdminRequestActionBoundary } from '../../access';
 import { ResizableTable } from '../../../shared/ResizableTable';
 import { StatusTag } from '../../../shared/StatusTag';
 import type { SmtpConfig } from './types';
@@ -54,15 +55,17 @@ export function SmtpConfigTable({
       render: (_value: unknown, record: SmtpConfig) => (
         <Space>
           <Button onClick={() => onSelect(record)} theme="borderless">编辑</Button>
-          <ConfirmAction
-            actionText={record.enabled ? '停用' : '启用'}
-            title={record.enabled ? '确认停用发信配置' : '确认启用发信配置'}
-            onConfirm={(reason) =>
-              submitSmtpAction(record.enabled ? '停用发信配置' : '启用发信配置', () =>
-                onToggle(record, !record.enabled, reason)
-              )
-            }
-          />
+          <AdminRequestActionBoundary endpoint={`/admin/api/v1/smtp/configs/${record.id}`} method="PATCH">
+            <ConfirmAction
+              actionText={record.enabled ? '停用' : '启用'}
+              title={record.enabled ? '确认停用发信配置' : '确认启用发信配置'}
+              onConfirm={(reason) =>
+                submitSmtpAction(record.enabled ? '停用发信配置' : '启用发信配置', () =>
+                  onToggle(record, !record.enabled, reason)
+                )
+              }
+            />
+          </AdminRequestActionBoundary>
         </Space>
       )
     }

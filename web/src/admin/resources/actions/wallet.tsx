@@ -6,9 +6,12 @@ import { useEffect, useState } from 'react';
 import { listAdminResource } from '../../../api/adminResources';
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
+import { compareDecimalText } from '../../../shared/decimal';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminMultiSelect, AdminSelect, AdminSwitch, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
+import { useSharedAdminOptionQuery } from '../../sharedOptionQuery';
 import {
   type AssetOption,
   AssetStatusSelect,
@@ -161,7 +164,7 @@ function isWithdrawFeeTiersInputValid(tiers: AssetWithdrawFeeTierValues[]): bool
     const maxAmount = tier.maxAmount.trim();
     return (
       isNonNegativeDecimalInput(minAmount) &&
-      (!maxAmount || (isNonNegativeDecimalInput(maxAmount) && Number(maxAmount) > Number(minAmount))) &&
+      (!maxAmount || (isNonNegativeDecimalInput(maxAmount) && compareDecimalText(maxAmount, minAmount) === 1)) &&
       isNonNegativeDecimalInput(tier.feeRatePercent)
     );
   });
@@ -187,7 +190,7 @@ function withdrawFeeTierPayload(tiers: AssetWithdrawFeeTierValues[]) {
   return tiers.map((tier, index) => {
     const minAmount = requiredNonNegativeDecimal(tier.minAmount, `第${index + 1}档最小金额`);
     const maxAmount = tier.maxAmount.trim() ? requiredNonNegativeDecimal(tier.maxAmount, `第${index + 1}档最大金额`) : null;
-    if (maxAmount !== null && Number(maxAmount) <= Number(minAmount)) {
+    if (maxAmount !== null && compareDecimalText(maxAmount, minAmount) !== 1) {
       throw new Error(`第${index + 1}档最大金额必须大于最小金额`);
     }
     return {
@@ -436,42 +439,17 @@ function toDepositNetworkConfigOption(record: ApiRecord): DepositNetworkConfigOp
 }
 
 function useDepositNetworkConfigOptions(enabled = true) {
-  const [networkConfigs, setNetworkConfigs] = useState<DepositNetworkConfigOption[]>([]);
-  const [networkConfigLoading, setNetworkConfigLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return undefined;
+  const query = useSharedAdminOptionQuery<DepositNetworkConfigOption[]>({
+    cacheKey: 'deposit-network-configs:active:100',
+    empty: [],
+    enabled,
+    load: async (signal) => {
+      const result = await listAdminResource('/admin/api/v1/deposit-network-configs', 'configs', { status: 'active', limit: 100 }, { signal });
+      return result.rows.map(toDepositNetworkConfigOption).filter((config): config is DepositNetworkConfigOption => config !== null);
     }
+  });
 
-    let active = true;
-    setNetworkConfigLoading(true);
-
-    listAdminResource('/admin/api/v1/deposit-network-configs', 'configs', { status: 'active', limit: 100 })
-      .then((result) => {
-        if (!active) {
-          return;
-        }
-
-        setNetworkConfigs(result.rows.map(toDepositNetworkConfigOption).filter((config): config is DepositNetworkConfigOption => config !== null));
-      })
-      .catch(() => {
-        if (active) {
-          setNetworkConfigs([]);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setNetworkConfigLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [enabled]);
-
-  return { networkConfigLoading, networkConfigs };
+  return { networkConfigLoading: query.loading, networkConfigs: query.data };
 }
 
 function AssetSymbolMultiSelect({
@@ -721,8 +699,11 @@ export function AssetRowActions({ helpers, record }: { helpers: RowActionHelpers
       <Button disabled={!assetId} onClick={() => openRecordDetail('/admin/api/v1/assets', assetId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <AssetEditAction assetId={assetId} helpers={helpers} record={record} />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/assets/${assetId}`} method="PATCH">
+        <AssetEditAction assetId={assetId} helpers={helpers} record={record} />
+      </AdminRequestActionBoundary>
       {status === 'disabled' ? (
+        <AdminRequestActionBoundary endpoint={`/admin/api/v1/assets/${assetId}`} method="DELETE">
         <ConfirmAction
           actionText="删除"
           disabled={!assetId}
@@ -737,6 +718,7 @@ export function AssetRowActions({ helpers, record }: { helpers: RowActionHelpers
             helpers.reload();
           }}
         />
+        </AdminRequestActionBoundary>
       ) : null}
     </>
   );
@@ -1189,8 +1171,11 @@ export function DepositAddressPoolRowActions({ helpers, record }: { helpers: Row
       <Button disabled={!addressId} onClick={() => openRecordDetail('/admin/api/v1/deposit-address-pool', addressId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <DepositAddressPoolEditAction addressId={addressId} helpers={helpers} record={record} />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/deposit-address-pool/${addressId}`} method="PATCH">
+        <DepositAddressPoolEditAction addressId={addressId} helpers={helpers} record={record} />
+      </AdminRequestActionBoundary>
       {assigned ? (
+        <AdminRequestActionBoundary endpoint={`/admin/api/v1/deposit-address-pool/${addressId}/reclaim`} method="POST">
         <ConfirmAction
           actionText="回收"
           disabled={!addressId}
@@ -1205,6 +1190,7 @@ export function DepositAddressPoolRowActions({ helpers, record }: { helpers: Row
             helpers.reload();
           }}
         />
+        </AdminRequestActionBoundary>
       ) : null}
     </>
   );
@@ -1282,21 +1268,33 @@ export function WithdrawalRowActions({ helpers, record }: { helpers: RowActionHe
         查看详情
       </Button>
       {status === 'pending_review' ? (
-        <ConfirmAction actionText="通过" disabled={!withdrawalId} title="确认通过提现审核" onConfirm={(reason) => transition('通过提现审核', 'approve', { reason })} />
+        <AdminRequestActionBoundary endpoint={`${withdrawalAdminEndpoint}/${withdrawalId}/approve`} method="POST">
+          <ConfirmAction actionText="通过" disabled={!withdrawalId} title="确认通过提现审核" onConfirm={(reason) => transition('通过提现审核', 'approve', { reason })} />
+        </AdminRequestActionBoundary>
       ) : null}
       {status === 'pending_review' || status === 'approved' ? (
-        <ConfirmAction actionText="驳回" disabled={!withdrawalId} title="确认驳回提现" onConfirm={(reason) => transition('驳回提现', 'reject', { reason })} />
-      ) : null}
-      {status === 'approved' || status === 'broadcasting' ? <BroadcastWithdrawalAction helpers={helpers} withdrawalId={withdrawalId} /> : null}
-      {status === 'broadcasted' || status === 'manual_review' ? (
-        <Popconfirm content="确认该提现已在链上到账？" okText="确认到账" onConfirm={() => transition('确认提现到账', 'confirm', {})} title="确认提现到账">
-          <Button disabled={!withdrawalId} size="small" theme="borderless">
-            确认到账
-          </Button>
-        </Popconfirm>
+        <AdminRequestActionBoundary endpoint={`${withdrawalAdminEndpoint}/${withdrawalId}/reject`} method="POST">
+          <ConfirmAction actionText="驳回" disabled={!withdrawalId} title="确认驳回提现" onConfirm={(reason) => transition('驳回提现', 'reject', { reason })} />
+        </AdminRequestActionBoundary>
       ) : null}
       {status === 'approved' || status === 'broadcasting' ? (
-        <ConfirmAction actionText="标记失败" disabled={!withdrawalId} title="确认标记提现失败" onConfirm={(reason) => transition('标记提现失败', 'fail', { reason })} />
+        <AdminRequestActionBoundary endpoint={`${withdrawalAdminEndpoint}/${withdrawalId}/broadcast`} method="POST">
+          <BroadcastWithdrawalAction helpers={helpers} withdrawalId={withdrawalId} />
+        </AdminRequestActionBoundary>
+      ) : null}
+      {status === 'broadcasted' || status === 'manual_review' ? (
+        <AdminRequestActionBoundary endpoint={`${withdrawalAdminEndpoint}/${withdrawalId}/confirm`} method="POST">
+          <Popconfirm content="确认该提现已在链上到账？" okText="确认到账" onConfirm={() => transition('确认提现到账', 'confirm', {})} title="确认提现到账">
+            <Button disabled={!withdrawalId} size="small" theme="borderless">
+              确认到账
+            </Button>
+          </Popconfirm>
+        </AdminRequestActionBoundary>
+      ) : null}
+      {status === 'approved' || status === 'broadcasting' ? (
+        <AdminRequestActionBoundary endpoint={`${withdrawalAdminEndpoint}/${withdrawalId}/fail`} method="POST">
+          <ConfirmAction actionText="标记失败" disabled={!withdrawalId} title="确认标记提现失败" onConfirm={(reason) => transition('标记提现失败', 'fail', { reason })} />
+        </AdminRequestActionBoundary>
       ) : null}
     </>
   );
@@ -1312,6 +1310,7 @@ export function DepositRowActions({ helpers, record }: { helpers: RowActionHelpe
         查看详情
       </Button>
       {status === 'credited' ? (
+        <AdminRequestActionBoundary endpoint={`/admin/api/v1/wallet/deposits/${depositId}/reverse`} method="POST">
         <ConfirmAction
           actionText="冲正"
           disabled={!depositId}
@@ -1323,6 +1322,7 @@ export function DepositRowActions({ helpers, record }: { helpers: RowActionHelpe
             helpers.reload();
           }}
         />
+        </AdminRequestActionBoundary>
       ) : null}
     </>
   );
@@ -1338,7 +1338,8 @@ export function QuickRechargeOrderRowActions({ helpers, record }: { helpers: Row
       <Button disabled={!orderId} onClick={() => helpers.openDetail({ title: '快速充值订单详情', data: record })} size="small" theme="borderless">
         查看详情
       </Button>
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/quick-recharge/orders/${encodeURIComponent(orderId)}`} method="DELETE">
+        <ConfirmAction
         actionText="删除"
         disabled={!orderId || !canDelete}
         title="确认删除快速充值订单"
@@ -1351,7 +1352,8 @@ export function QuickRechargeOrderRowActions({ helpers, record }: { helpers: Row
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

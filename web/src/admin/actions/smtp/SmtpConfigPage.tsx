@@ -1,6 +1,7 @@
 import { Banner, Button, Card, SideSheet, Space, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
 
 import { PageHeader } from '../../../layouts/PageHeader';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import { deliveryStrategyOptions, smtpModuleTabs } from './model';
@@ -24,13 +25,15 @@ export function SmtpConfigPage() {
   const selectedConfigTitle = workspace.selectedConfigId ? '编辑发信配置' : '发信配置';
 
   const saveConfigAction = (
-    <ConfirmAction
-      actionText="保存配置"
-      title="确认保存 SMTP 配置"
-      onConfirm={(reason) =>
-        submitSmtpAction('保存 SMTP 配置', () => workspace.saveCurrentConfig(reason))
-      }
-    />
+    <AdminRequestActionBoundary endpoint={`/admin/api/v1/smtp/configs/${workspace.selectedConfigId}`} method="PATCH">
+      <ConfirmAction
+        actionText="保存配置"
+        title="确认保存 SMTP 配置"
+        onConfirm={(reason) =>
+          submitSmtpAction('保存 SMTP 配置', () => workspace.saveCurrentConfig(reason))
+        }
+      />
+    </AdminRequestActionBoundary>
   );
 
   return (
@@ -70,7 +73,9 @@ export function SmtpConfigPage() {
             <section className="admin-action-panel">
               <div className="admin-earn-section-header">
                 <Title heading={4}>发信配置列表</Title>
-                <Button onClick={workspace.startCreateConfig} theme="solid" type="primary">新增配置</Button>
+                <AdminRequestActionBoundary endpoint="/admin/api/v1/smtp/configs" method="POST">
+                  <Button onClick={workspace.startCreateConfig} theme="solid" type="primary">新增配置</Button>
+                </AdminRequestActionBoundary>
               </div>
               <SmtpConfigTable
                 configs={workspace.configs}
@@ -124,13 +129,15 @@ export function SmtpConfigPage() {
                 />
               </label>
             </div>
-            <ConfirmAction
-              actionText="保存策略"
-              title="确认保存 SMTP 发信策略"
-              onConfirm={(reason) =>
-                submitSmtpAction('保存 SMTP 发信策略', () => workspace.saveDeliverySettings(reason))
-              }
-            />
+            <AdminRequestActionBoundary endpoint="/admin/api/v1/smtp/delivery-settings" method="PATCH">
+              <ConfirmAction
+                actionText="保存策略"
+                title="确认保存 SMTP 发信策略"
+                onConfirm={(reason) =>
+                  submitSmtpAction('保存 SMTP 发信策略', () => workspace.saveDeliverySettings(reason))
+                }
+              />
+            </AdminRequestActionBoundary>
           </section>
         ) : null}
 
@@ -156,11 +163,13 @@ export function SmtpConfigPage() {
                 />
               </label>
             </div>
-            <ConfirmAction
-              actionText="测试发送"
-              title="确认发送 SMTP 测试邮件"
-              onConfirm={(reason) => submitSmtpAction('SMTP 测试邮件', () => workspace.sendTest(reason))}
-            />
+            <AdminRequestActionBoundary endpoint="/admin/api/v1/smtp/test" method="POST">
+              <ConfirmAction
+                actionText="测试发送"
+                title="确认发送 SMTP 测试邮件"
+                onConfirm={(reason) => submitSmtpAction('SMTP 测试邮件', () => workspace.sendTest(reason))}
+              />
+            </AdminRequestActionBoundary>
             {workspace.lastTestResult ? (
               <Text type="secondary">
                 最近测试收件邮箱：{workspace.lastTestResult.recipient} / {workspace.lastTestResult.configName}
@@ -187,11 +196,13 @@ export function SmtpConfigPage() {
                 mode="create"
                 onChange={workspace.setCreateConfigForm}
               />
-              <ConfirmAction
-                actionText="新增配置"
-                title="确认新增 SMTP 配置"
-                onConfirm={(reason) => submitSmtpAction('新增 SMTP 配置', () => workspace.createConfig(reason))}
-              />
+              <AdminRequestActionBoundary endpoint="/admin/api/v1/smtp/configs" method="POST">
+                <ConfirmAction
+                  actionText="新增配置"
+                  title="确认新增 SMTP 配置"
+                  onConfirm={(reason) => submitSmtpAction('新增 SMTP 配置', () => workspace.createConfig(reason))}
+                />
+              </AdminRequestActionBoundary>
             </Space>
           </Card>
         </SideSheet>

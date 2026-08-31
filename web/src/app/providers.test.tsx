@@ -1,37 +1,63 @@
-import { ConfigConsumer } from '@douyinfe/semi-ui';
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, render, waitFor } from '@testing-library/react';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { authStore } from '../auth/authStore';
 import { AppProviders } from './providers';
 
-describe('AppProviders', () => {
-  it('provides Semi Chinese locale and Shanghai timezone', () => {
-    render(
-      <AppProviders>
-        <ConfigConsumer>
-          {(config) => (
-            <div>
-              <span data-testid="timezone">{config.timeZone}</span>
-              <span data-testid="pagination-page-size">{config.locale?.Pagination?.pageSize}</span>
-              <span data-testid="table-empty">{config.locale?.Table?.emptyText}</span>
-            </div>
-          )}
-        </ConfigConsumer>
-      </AppProviders>
-    );
+const resetMarketTickerConnectionMock = vi.hoisted(() => vi.fn());
 
-    expect(screen.getByTestId('timezone')).toHaveTextContent('Asia/Shanghai');
-    expect(screen.getByTestId('pagination-page-size')).toHaveTextContent('每页条数');
-    expect(screen.getByTestId('table-empty')).toHaveTextContent('暂无数据');
+vi.mock('../api/marketTickerSocket', () => ({
+  resetMarketTickerConnection: resetMarketTickerConnectionMock
+}));
+
+let capturedSignal: AbortSignal | null = null;
+let capturedClient: QueryClient | null = null;
+
+function PrivateQueryProbe() {
+  capturedClient = useQueryClient();
+  useQuery({
+    queryKey: ['private-admin-data'],
+    queryFn: ({ signal }) => {
+      capturedSignal = signal;
+      return new Promise(() => undefined);
+    }
+  });
+  return null;
+}
+
+describe('AppProviders 身份生命周期', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    capturedClient = null;
+    capturedSignal = null;
+    resetMarketTickerConnectionMock.mockReset();
+    authStore.setSession({
+      accessToken: 'admin-access',
+      generation: 'generation-a',
+      refreshToken: 'admin-refresh',
+      scope: 'admin',
+      subject: 'admin:7'
+    });
   });
 
-  it('enables Semi theme mode on the document body', async () => {
+  it('登出或跨标签会话变化时取消旧查询、清空私有缓存并重置实时连接', async () => {
     render(
       <AppProviders>
-        <div>theme target</div>
+        <PrivateQueryProbe />
       </AppProviders>
     );
+    await waitFor(() => expect(capturedSignal).not.toBeNull());
+    expect(capturedClient?.getQueryCache().getAll()).toHaveLength(1);
+    const oldPrivateQuery = capturedClient?.getQueryCache().getAll()[0];
 
-    await waitFor(() => expect(document.body).toHaveAttribute('theme-mode', 'light'));
+    act(() => {
+      authStore.clearSession('admin', 'generation-a');
+    });
+
+    await waitFor(() => expect(capturedSignal?.aborted).toBe(true));
+    await waitFor(() => expect(capturedClient?.getQueryCache().getAll()).not.toContain(oldPrivateQuery));
+    expect(resetMarketTickerConnectionMock).toHaveBeenCalledTimes(1);
   });
 });

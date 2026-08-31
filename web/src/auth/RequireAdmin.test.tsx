@@ -18,6 +18,7 @@ function renderRouter(router: ReturnType<typeof createMemoryRouter>) {
 describe('RequireAdmin', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(

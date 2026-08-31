@@ -3,6 +3,7 @@ import { Button, Card, Col, Divider, Row, Space, Switch, Toast, Typography } fro
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
@@ -433,7 +434,8 @@ export function QuickRechargeConfigPage() {
                 </FieldColumn>
                 <FieldColumn size="half">
                   <Space align="center" style={{ height: '100%' }}>
-                    <ConfirmAction
+                    <AdminRequestActionBoundary endpoint="/admin/api/v1/quick-recharge/config/test" method="POST">
+                      <ConfirmAction
                       actionText="测试快速充值"
                       disabled={!canTest}
                       title="确认测试快速充值配置"
@@ -449,7 +451,8 @@ export function QuickRechargeConfigPage() {
                           setTestResult(response);
                         })
                       }
-                    />
+                      />
+                    </AdminRequestActionBoundary>
                   </Space>
                 </FieldColumn>
                 {testResult ? (
@@ -490,7 +493,8 @@ export function QuickRechargeConfigPage() {
 
           <Divider margin="0" />
           <Row style={{ width: '100%' }} type="flex" justify="end">
-            <ConfirmAction
+            <AdminRequestActionBoundary endpoint="/admin/api/v1/quick-recharge/config" method="PATCH">
+              <ConfirmAction
               actionText={saveActionText}
               disabled={!canSave}
               title="确认保存快速充值配置"
@@ -510,7 +514,8 @@ export function QuickRechargeConfigPage() {
                   setTestResult(null);
                 })
               }
-            />
+              />
+            </AdminRequestActionBoundary>
           </Row>
         </Space>
       </Card>

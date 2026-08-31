@@ -43,6 +43,7 @@ function jsonResponse(payload: unknown) {
 describe('staff support API', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.unstubAllGlobals();
     authStore.setSession({
       accessToken: 'admin-token',

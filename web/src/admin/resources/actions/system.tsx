@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import {
@@ -226,8 +227,9 @@ export function CountryRowActions({ helpers, record }: { helpers: RowActionHelpe
       <Button disabled={!countryId} onClick={() => openRecordDetail('/admin/api/v1/countries', countryId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <CountryEditAction countryId={countryId} helpers={helpers} record={record} />
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/countries/${countryId}`} method="PATCH">
+        <CountryEditAction countryId={countryId} helpers={helpers} record={record} />
+        <ConfirmAction
         actionText={actionText}
         disabled={!countryId}
         title={`${actionText}国家配置`}
@@ -240,7 +242,8 @@ export function CountryRowActions({ helpers, record }: { helpers: RowActionHelpe
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

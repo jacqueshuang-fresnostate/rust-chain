@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { QuillRichTextEditor, type RichTextValue } from '../../../shared/QuillRichTextEditor';
@@ -423,8 +424,9 @@ export function AdminNewsRowActions({ helpers, record }: { helpers: RowActionHel
       <Button disabled={!newsId} onClick={() => openRecordDetail('/admin/api/v1/news', newsId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <AdminNewsEditAction helpers={helpers} newsId={newsId} record={record} />
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/news/${newsId}`} method="PATCH">
+        <AdminNewsEditAction helpers={helpers} newsId={newsId} record={record} />
+        <ConfirmAction
         actionText="发布"
         disabled={!newsId || recordString(record, 'status') === 'published'}
         title="发布新闻"
@@ -437,8 +439,8 @@ export function AdminNewsRowActions({ helpers, record }: { helpers: RowActionHel
           );
           helpers.reload();
         }}
-      />
-      <ConfirmAction
+        />
+        <ConfirmAction
         actionText="归档"
         disabled={!newsId || recordString(record, 'status') === 'archived'}
         title="归档新闻"
@@ -451,7 +453,8 @@ export function AdminNewsRowActions({ helpers, record }: { helpers: RowActionHel
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

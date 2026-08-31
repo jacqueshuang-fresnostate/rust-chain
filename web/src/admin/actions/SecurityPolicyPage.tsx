@@ -3,6 +3,7 @@ import { Card, Space, Switch, Tabs, Typography } from '@douyinfe/semi-ui';
 import { useMemo, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { AdminCheckbox, AdminSelect, type SemiSelectOption } from '../../shared/SemiFormControls';
 import {
   AdminSettingsPage,
@@ -408,16 +409,18 @@ export function SecurityPolicyPage() {
             <Text strong>保存当前安全策略</Text>
             <Text type="tertiary">提交前将要求填写操作原因，并沿用现有审计流程。</Text>
           </div>
-          <SettingsSaveConfirmation
-            actionText="保存安全策略"
-            differences={differences}
-            disabled={editor.isSaving}
-            impactSummary={impactSummary}
-            onConfirm={editor.saveChanges}
-            riskLevel="high"
-            title="确认保存高风险安全策略"
-            validationIssues={validationIssues}
-          />
+          <AdminRequestActionBoundary endpoint={securityPolicyApiPath} method="PATCH">
+            <SettingsSaveConfirmation
+              actionText="保存安全策略"
+              differences={differences}
+              disabled={editor.isSaving}
+              impactSummary={impactSummary}
+              onConfirm={editor.saveChanges}
+              riskLevel="high"
+              title="确认保存高风险安全策略"
+              validationIssues={validationIssues}
+            />
+          </AdminRequestActionBoundary>
         </div>
       </div>
     </AdminSettingsPage>

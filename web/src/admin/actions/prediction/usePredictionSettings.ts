@@ -2,6 +2,7 @@ import { Toast } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../../api/client';
+import { useCanAdminRequest } from '../../access';
 import {
   assetConfigPayload,
   assetDraftsFromConfigs,
@@ -17,6 +18,7 @@ import type {
 } from './types';
 
 export function usePredictionSettings() {
+  const canReadAssetConfigs = useCanAdminRequest('/admin/api/v1/prediction/asset-configs', 'GET');
   const [assetConfigs, setAssetConfigs] = useState<PredictionAssetConfig[]>([]);
   const [assetDrafts, setAssetDrafts] = useState<Record<string, PredictionAssetDraft>>({});
   const [loading, setLoading] = useState(true);
@@ -29,7 +31,9 @@ export function usePredictionSettings() {
     try {
       const [settingsResponse, assetResponse] = await Promise.all([
         apiRequest<PredictionSettings>('/admin/api/v1/prediction/settings'),
-        apiRequest<AssetConfigsResponse>('/admin/api/v1/prediction/asset-configs')
+        canReadAssetConfigs
+          ? apiRequest<AssetConfigsResponse>('/admin/api/v1/prediction/asset-configs')
+          : Promise.resolve<AssetConfigsResponse>({ configs: [] })
       ]);
       const configs = Array.isArray(assetResponse.configs) ? assetResponse.configs : [];
       setSettings(settingsResponse);
@@ -42,7 +46,7 @@ export function usePredictionSettings() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canReadAssetConfigs]);
 
   useEffect(() => {
     void loadSettings();
@@ -120,6 +124,7 @@ export function usePredictionSettings() {
   return {
     assetConfigs,
     assetDrafts,
+    canReadAssetConfigs,
     conflict,
     loadSettings,
     loading,

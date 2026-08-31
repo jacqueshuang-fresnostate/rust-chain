@@ -1,9 +1,10 @@
 import { Typography } from '@douyinfe/semi-ui';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import { listAdminResource } from '../api/adminResources';
 import type { ApiRecord } from '../api/types';
 import { AdminSelect } from '../shared/SemiFormControls';
+import { useSharedAdminOptionQuery } from './sharedOptionQuery';
 
 const { Text } = Typography;
 
@@ -139,47 +140,17 @@ function mapReference(kind: AdminReferenceKind, record: ApiRecord): AdminReferen
 }
 
 export function useAdminReferenceOptions(kind: AdminReferenceKind, enabled = true) {
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [options, setOptions] = useState<AdminReferenceOption[]>([]);
-
-  useEffect(() => {
-    if (!enabled) {
-      setError(null);
-      setLoading(false);
-      setOptions([]);
-      return undefined;
+  const source = referenceSources[kind];
+  const query = useSharedAdminOptionQuery<AdminReferenceOption[]>({
+    cacheKey: `reference:${kind}:100`,
+    empty: [],
+    enabled,
+    load: async (signal) => {
+      const { rows } = await listAdminResource(source.endpoint, source.responseKey, { limit: 100 }, { signal });
+      return rows.map((record) => mapReference(kind, record)).filter((option): option is AdminReferenceOption => option !== null);
     }
-
-    let active = true;
-    const source = referenceSources[kind];
-    setError(null);
-    setLoading(true);
-    listAdminResource(source.endpoint, source.responseKey, { limit: 100 })
-      .then(({ rows }) => {
-        if (!active) {
-          return;
-        }
-        setOptions(rows.map((record) => mapReference(kind, record)).filter((option): option is AdminReferenceOption => option !== null));
-      })
-      .catch(() => {
-        if (active) {
-          setError('引用数据加载失败，请刷新后重试');
-          setOptions([]);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [enabled, kind]);
-
-  return { error, loading, options };
+  });
+  return { error: query.error ? '引用数据加载失败，请刷新后重试' : null, loading: query.loading, options: query.data };
 }
 
 export function isReferenceSelectable(options: AdminReferenceOption[], value: string): boolean {

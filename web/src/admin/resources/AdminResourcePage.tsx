@@ -20,6 +20,7 @@ const { Text } = Typography;
 export type AdminResourceColumn<T extends ApiRecord> = {
   asset?: string;
   key: Extract<keyof T, string>;
+  precision?: number;
   render?: (record: T) => ReactNode;
   title: string;
   type?: 'amount' | 'json' | 'status' | 'text' | 'timestamp';
@@ -98,7 +99,7 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
   }
 
   if (column.type === 'amount') {
-    return <AmountText asset={column.asset} value={typeof value === 'string' ? value : value === null || value === undefined ? null : String(value)} />;
+    return <AmountText asset={column.asset} precision={column.precision} value={typeof value === 'string' ? value : value === null || value === undefined ? null : String(value)} />;
   }
 
   if (column.type === 'status') {
@@ -221,13 +222,21 @@ export function AdminResourcePage<T extends ApiRecord>({
     }),
     [filterValues, page, pageSize, serverPaged, toolbarFilterValues]
   );
+  const rowContract = useMemo(
+    () => ({
+      decimalFields: [...new Set(columns.filter((column) => column.type === 'amount').map((column) => column.key))],
+      requiredFields: [...new Set(columns.map((column) => column.key))]
+    }),
+    [columns]
+  );
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
 
-    listAdminResource<T>(endpoint, responseKey, requestFilterValues)
+    listAdminResource<T>(endpoint, responseKey, requestFilterValues, { rowContract, signal: controller.signal })
       .then((result) => {
         if (!active) {
           return;
@@ -254,8 +263,9 @@ export function AdminResourcePage<T extends ApiRecord>({
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [endpoint, reloadVersion, requestFilterValues, responseKey]);
+  }, [endpoint, reloadVersion, requestFilterValues, responseKey, rowContract]);
 
   const filterFields = useMemo(
     () =>

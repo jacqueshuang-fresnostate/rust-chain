@@ -2,6 +2,7 @@ import type { ApiRecord } from '../../../../api/types';
 import type { SemiSelectOption } from '../../../../shared/SemiFormControls';
 import type { MarketStrategyNodeDraft } from '../../../components/MarketStrategyNodeEditor';
 import type { MarketPairOption } from '../shared';
+import { applyPercentDecimalText, compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../../shared/decimal';
 import { optionalString, recordString, requiredString } from '../shared';
 import type {
   MarketStrategyGeneratorRecord,
@@ -142,9 +143,10 @@ export function marketStrategyFromRecord(record: ApiRecord): MarketStrategyValue
   };
 }
 
-function isDecimalInRange(value: string, minimum: number, maximum: number): boolean {
-  const parsed = Number(value);
-  return value.trim().length > 0 && Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum;
+function isDecimalInRange(value: string, minimum: string, maximum?: string): boolean {
+  const minimumComparison = compareDecimalText(value, minimum);
+  const maximumComparison = maximum === undefined ? null : compareDecimalText(value, maximum);
+  return minimumComparison !== null && minimumComparison >= 0 && (maximum === undefined || (maximumComparison !== null && maximumComparison <= 0));
 }
 
 function parseInputDateTime(value: string): number | null {
@@ -161,12 +163,12 @@ function isMarketStrategyNodeSubmittable(node: MarketStrategyNodeDraft, targetTi
       node.targetType &&
       node.targetValue.trim() &&
       node.executionMode &&
-      isDecimalInRange(node.tolerance, 0, Number.MAX_VALUE) &&
-      isDecimalInRange(node.volatility, 0, Number.MAX_VALUE) &&
+      isDecimalInRange(node.tolerance, '0') &&
+      isDecimalInRange(node.volatility, '0') &&
       ((!volumeMin && !volumeMax) ||
-        (isDecimalInRange(volumeMin, 0, Number.MAX_VALUE) &&
-          isDecimalInRange(volumeMax, 0, Number.MAX_VALUE) &&
-          Number(volumeMax) >= Number(volumeMin)))
+        (isDecimalInRange(volumeMin, '0') &&
+          isDecimalInRange(volumeMax, '0') &&
+          (compareDecimalText(volumeMax, volumeMin) ?? -1) >= 0))
   );
 }
 
@@ -205,17 +207,17 @@ export function isMarketStrategySubmittable(values: MarketStrategyValues, includ
   return Boolean(
     (!includePairId || values.pairId.trim()) &&
       values.strategyType.trim() &&
-      Number(values.startPrice) > 0 &&
-      Number(values.targetPrice) > 0 &&
-      isDecimalInRange(values.volatility, 0, Number.MAX_VALUE) &&
-      isDecimalInRange(values.volumeMin, 0, Number.MAX_VALUE) &&
-      isDecimalInRange(values.volumeMax, Number(values.volumeMin), Number.MAX_VALUE) &&
+      isPositiveDecimalText(values.startPrice) &&
+      isPositiveDecimalText(values.targetPrice) &&
+      isNonNegativeDecimalText(values.volatility) &&
+      isNonNegativeDecimalText(values.volumeMin) &&
+      (compareDecimalText(values.volumeMax, values.volumeMin) ?? -1) >= 0 &&
       scenarioOptions.some((option) => option.value === values.scenario) &&
       seedModeOptions.some((option) => option.value === values.seedMode) &&
       fixedSeedValid &&
-      isDecimalInRange(values.meanReversionStrength, 0, 2) &&
-      isDecimalInRange(values.noiseScale, 0, 5) &&
-      isDecimalInRange(values.wickScale, 0, 5) &&
+      isDecimalInRange(values.meanReversionStrength, '0', '2') &&
+      isDecimalInRange(values.noiseScale, '0', '5') &&
+      isDecimalInRange(values.wickScale, '0', '5') &&
       volumeShapeOptions.some((option) => option.value === values.volumeShape)
   );
 }
@@ -262,14 +264,8 @@ export function marketStrategyBasePayload(values: MarketStrategyValues) {
 }
 
 function targetPriceFromPreset(startPrice: string, changePercent: string): string | null {
-  const start = Number(startPrice);
-  const percent = Number(changePercent);
-  if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(percent)) return null;
-  const decimalPlaces = Math.min(18, Math.max(8, startPrice.split('.')[1]?.length ?? 0));
-  return (start * (1 + percent / 100))
-    .toFixed(decimalPlaces)
-    .replace(/(?:\.0+|(?<=[0-9])0+)$/, '')
-    .replace(/\.$/, '');
+  if (!isPositiveDecimalText(startPrice)) return null;
+  return applyPercentDecimalText(startPrice, changePercent);
 }
 
 function presetNodes(

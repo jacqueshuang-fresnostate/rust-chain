@@ -2,6 +2,7 @@ import { Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../shared/AdminImageUpload';
@@ -291,7 +292,8 @@ export function UploadConfigPage() {
               </div>
             </div>
             <Space>
-              <ConfirmAction
+              <AdminRequestActionBoundary endpoint="/admin/api/v1/upload/config" method="PATCH">
+                <ConfirmAction
                 actionText="保存配置"
                 title="确认保存上传配置"
                 onConfirm={(reason) =>
@@ -304,7 +306,8 @@ export function UploadConfigPage() {
                     setConfigForm(formFromConfig(saved));
                   })
                 }
-              />
+                />
+              </AdminRequestActionBoundary>
               <Button loading={loading} onClick={() => loadConfig().catch((error) => Toast.error(errorMessage(error)))}>
                 刷新配置
               </Button>

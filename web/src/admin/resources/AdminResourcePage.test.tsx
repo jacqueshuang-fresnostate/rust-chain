@@ -105,7 +105,7 @@ describe('AdminResourcePage', () => {
     expect(screen.getByRole('button', { name: /刷新/ })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: /筛选条件/ })).not.toBeInTheDocument();
     expect(screen.queryByText('后台资源检索视图，敏感操作需走二次确认。')).not.toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/accounts', 'items', {});
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/accounts', 'items', {}, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fixes the operation column on the right side', async () => {
@@ -223,7 +223,7 @@ describe('AdminResourcePage', () => {
     await user.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { keyword: 'alice' });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { keyword: 'alice' }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 
@@ -249,7 +249,7 @@ describe('AdminResourcePage', () => {
 
     await user.click(switchControl);
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { include_internal: 'true' });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { include_internal: 'true' }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
     await waitFor(() => {
       expect(switchControl).not.toBeDisabled();
@@ -257,7 +257,7 @@ describe('AdminResourcePage', () => {
 
     await user.click(switchControl);
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', {});
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', {}, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 
@@ -292,7 +292,7 @@ describe('AdminResourcePage', () => {
     await user.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { status: 'disabled' });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { status: 'disabled' }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 
@@ -329,7 +329,7 @@ describe('AdminResourcePage', () => {
     await user.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { asset_id: '12' });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { asset_id: '12' }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 
@@ -690,21 +690,21 @@ describe('AdminResourcePage', () => {
     );
 
     expect(await screen.findByText('分页行1')).toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { limit: 50, offset: 0 });
+    expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { limit: 50, offset: 0 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.getByText('共 210 条记录，未启用筛选')).toBeInTheDocument();
     // 服务端总数决定页码数量，50 条一页共 5 页。
     expect(pagerItem('5')).toBeInTheDocument();
 
     await user.click(pagerItem('3'));
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { limit: 50, offset: 100 });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { limit: 50, offset: 100 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
     expect(await screen.findByText('分页行101')).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('关键词'), 'alice');
     await user.click(screen.getByRole('button', { name: '查询' }));
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { keyword: 'alice', limit: 50, offset: 0 });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { keyword: 'alice', limit: 50, offset: 0 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
   });
 
@@ -723,7 +723,7 @@ describe('AdminResourcePage', () => {
     render(<AdminResourcePage<TestRecord> title="管理员资源" endpoint="/admin/accounts" responseKey="items" columns={columns} />);
 
     expect(await screen.findByText('本地行1')).toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', {});
+    expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', {}, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.queryByText('本地行11')).not.toBeInTheDocument();
     expect(screen.getByText('共 12 条记录，未启用筛选')).toBeInTheDocument();
   });

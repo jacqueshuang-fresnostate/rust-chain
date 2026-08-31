@@ -6,10 +6,11 @@ import { agentLogin } from './agentAuth';
 describe('agentLogin', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.unstubAllGlobals();
   });
 
-  it('uses the agent session scope without clearing admin session on 401', async () => {
+  it('does not attach or clear an existing session on a failed login', async () => {
     authStore.setSession({ accessToken: 'admin-token', refreshToken: 'admin-refresh', scope: 'admin', subject: 'admin:1' });
     authStore.setSession({ accessToken: 'agent-token', refreshToken: 'agent-refresh', scope: 'agent', subject: 'agent:1' });
     const fetchMock = vi.fn().mockResolvedValue(
@@ -26,8 +27,8 @@ describe('agentLogin', () => {
     });
 
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
-    expect(headers.get('Authorization')).toBe('Bearer agent-token');
-    expect(authStore.getSession()).toEqual({ accessToken: 'admin-token', refreshToken: 'admin-refresh', scope: 'admin', subject: 'admin:1' });
-    expect(authStore.getSession('agent')).toBeNull();
+    expect(headers.get('Authorization')).toBeNull();
+    expect(authStore.getSession()).toMatchObject({ accessToken: 'admin-token', refreshToken: 'admin-refresh', scope: 'admin', subject: 'admin:1' });
+    expect(authStore.getSession('agent')).toMatchObject({ accessToken: 'agent-token', refreshToken: 'agent-refresh', scope: 'agent', subject: 'agent:1' });
   });
 });

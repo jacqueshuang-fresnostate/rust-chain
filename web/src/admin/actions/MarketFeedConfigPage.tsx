@@ -4,6 +4,7 @@ import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ComponentPropsWithoutRef, useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { ResizableTable } from '../../shared/ResizableTable';
@@ -414,7 +415,8 @@ export function MarketFeedConfigPage() {
                   </div>
                 </fieldset>
                 <Space>
-                  <ConfirmAction
+                  <AdminRequestActionBoundary endpoint="/admin/api/v1/market-feed/config" method="PATCH">
+                    <ConfirmAction
                     actionText="保存配置"
                     title="确认保存行情订阅配置"
                     onConfirm={(reason) =>
@@ -432,8 +434,10 @@ export function MarketFeedConfigPage() {
                         setConfig(saved);
                       })
                     }
-                  />
-                  <ConfirmAction
+                    />
+                  </AdminRequestActionBoundary>
+                  <AdminRequestActionBoundary endpoint="/admin/api/v1/market-feed/reload" method="POST">
+                    <ConfirmAction
                     actionText="重载行情订阅"
                     disabled={!config}
                     title="确认重载第三方行情订阅"
@@ -447,7 +451,8 @@ export function MarketFeedConfigPage() {
                         setRuntime(response.runtime);
                       })
                     }
-                  />
+                    />
+                  </AdminRequestActionBoundary>
                 </Space>
               </section>
               <section className="admin-action-panel">
@@ -523,7 +528,8 @@ export function MarketFeedConfigPage() {
                     <AdminPasswordInput ariaLabel="Passphrase" value={credentialForm.passphrase} onChange={(passphrase) => setCredentialForm({ ...credentialForm, passphrase })} />
                   </label>
                 </div>
-                <ConfirmAction
+                <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-feed/credentials/${credentialForm.provider}`} method="PATCH">
+                  <ConfirmAction
                   actionText="保存凭证"
                   title="确认保存行情源凭证"
                   onConfirm={(reason) =>
@@ -543,7 +549,8 @@ export function MarketFeedConfigPage() {
                       setCredentialForm({ ...credentialForm, apiKey: '', apiSecret: '', passphrase: '' });
                     })
                   }
-                />
+                  />
+                </AdminRequestActionBoundary>
               </section>
               <section className="admin-action-panel">
                 <Title heading={4}>已保存凭证</Title>

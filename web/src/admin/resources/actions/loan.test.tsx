@@ -1,7 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Toast } from '@douyinfe/semi-ui';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactElement } from 'react';
 
 import { listAdminResource } from '../../../api/adminResources';
 import { ApiError, apiRequest } from '../../../api/client';
@@ -22,6 +24,11 @@ vi.mock('../../../api/client', async () => {
 
 const listAdminResourceMock = vi.mocked(listAdminResource);
 const apiRequestMock = vi.mocked(apiRequest);
+
+function renderWithQueryClient(element: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
 
 class ResizeObserverMock {
   observe() {}
@@ -110,7 +117,7 @@ describe('loan product revision actions', () => {
   it('sends the row revision and trimmed reason when changing product status', async () => {
     const user = userEvent.setup();
     const helpers = rowHelpers();
-    render(<LoanProductRowActions helpers={helpers} record={productRecord} />);
+    renderWithQueryClient(<LoanProductRowActions helpers={helpers} record={productRecord} />);
 
     await user.click(screen.getByRole('button', { name: '禁用' }));
     await user.type(await screen.findByLabelText('操作原因'), '停售旧产品');
@@ -128,7 +135,7 @@ describe('loan product revision actions', () => {
   it('keeps the list revision in the complete edit payload', async () => {
     const user = userEvent.setup();
     const helpers = rowHelpers();
-    render(<LoanProductRowActions helpers={helpers} record={productRecord} />);
+    renderWithQueryClient(<LoanProductRowActions helpers={helpers} record={productRecord} />);
 
     await user.click(screen.getByRole('button', { name: '修改' }));
     await user.click(await screen.findByRole('button', { name: '提交修改' }));
@@ -163,7 +170,7 @@ describe('loan product revision actions', () => {
     apiRequestMock.mockRejectedValue(
       new ApiError(409, 'CONFLICT', 'conflict: loan product revision is stale')
     );
-    render(<LoanProductRowActions helpers={helpers} record={productRecord} />);
+    renderWithQueryClient(<LoanProductRowActions helpers={helpers} record={productRecord} />);
 
     await user.click(screen.getByRole('button', { name: '禁用' }));
     await user.type(await screen.findByLabelText('操作原因'), '尝试停售');
@@ -179,7 +186,7 @@ describe('loan product revision actions', () => {
     const helpers = rowHelpers();
     const legacyRecord = { ...productRecord };
     delete legacyRecord.revision;
-    render(<LoanProductRowActions helpers={helpers} record={legacyRecord} />);
+    renderWithQueryClient(<LoanProductRowActions helpers={helpers} record={legacyRecord} />);
 
     expect(screen.getByRole('button', { name: '修改' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '禁用' })).toBeDisabled();

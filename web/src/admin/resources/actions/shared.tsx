@@ -1,5 +1,5 @@
 import { SideSheet, Toast } from '@douyinfe/semi-ui';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useState } from 'react';
 
 import { listAdminResource } from '../../../api/adminResources';
 import { ApiError, apiRequest } from '../../../api/client';
@@ -7,6 +7,8 @@ import type { ApiRecord } from '../../../api/types';
 import type { DetailDrawerData } from '../../../shared/DetailDrawer';
 import type { RichTextValue } from '../../../shared/QuillRichTextEditor';
 import { AdminModalTriggerButton, AdminSelect, type SemiSelectOption } from '../../../shared/SemiFormControls';
+import { useSharedAdminOptionQuery } from '../../sharedOptionQuery';
+import { canonicalDecimalText, isNonNegativeDecimalText } from '../../../shared/decimal';
 
 export type AssetOption = {
   id: string;
@@ -104,11 +106,11 @@ export function requiredNonNegativeDecimal(value: string, label: string): string
   if (!trimmed) {
     throw new Error(`${label}不能为空`);
   }
-  const parsed = Number(trimmed);
-  if (!/^\d+(\.\d+)?$/.test(trimmed) || !Number.isFinite(parsed)) {
+  const canonical = canonicalDecimalText(trimmed);
+  if (canonical === null || !isNonNegativeDecimalText(canonical)) {
     throw new Error(`${label}必须为非负数`);
   }
-  return trimmed;
+  return canonical;
 }
 
 export function isNonNegativeDecimalInput(value: string): boolean {
@@ -116,7 +118,7 @@ export function isNonNegativeDecimalInput(value: string): boolean {
   if (!trimmed) {
     return false;
   }
-  return /^\d+(\.\d+)?$/.test(trimmed) && Number.isFinite(Number(trimmed));
+  return canonicalDecimalText(trimmed) !== null && isNonNegativeDecimalText(trimmed);
 }
 
 export function requiredString(value: string, label: string): string {
@@ -207,109 +209,42 @@ export function FormModal({ actionText, children, size = 'medium', title }: { ac
 }
 
 export function useAssetOptions(enabled = true) {
-  const [assetOptions, setAssetOptions] = useState<AssetOption[]>([]);
-  const [assetLoading, setAssetLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return undefined;
+  const query = useSharedAdminOptionQuery<AssetOption[]>({
+    cacheKey: 'assets:active:100',
+    empty: [],
+    enabled,
+    load: async (signal) => {
+      const result = await listAdminResource('/admin/api/v1/assets', 'assets', { status: 'active', limit: 100 }, { signal });
+      return result.rows.map(toAssetOption).filter((asset): asset is AssetOption => asset !== null);
     }
-
-    let active = true;
-    setAssetLoading(true);
-
-    listAdminResource('/admin/api/v1/assets', 'assets', { status: 'active', limit: 100 })
-      .then((result) => {
-        if (!active) {
-          return;
-        }
-
-        setAssetOptions(result.rows.map(toAssetOption).filter((asset): asset is AssetOption => asset !== null));
-      })
-      .catch(() => {
-        if (active) {
-          setAssetOptions([]);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setAssetLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [enabled]);
-
-  return { assetLoading, assetOptions };
+  });
+  return { assetError: query.error, assetLoading: query.loading, assetOptions: query.data };
 }
 
 export function useMarketPairOptions(enabled = true) {
-  const [pairOptions, setPairOptions] = useState<MarketPairOption[]>([]);
-  const [pairLoading, setPairLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled) {
-      return undefined;
+  const query = useSharedAdminOptionQuery<MarketPairOption[]>({
+    cacheKey: 'market-pairs:active:100',
+    empty: [],
+    enabled,
+    load: async (signal) => {
+      const result = await listAdminResource('/admin/api/v1/market-pairs', 'pairs', { status: 'active', limit: 100 }, { signal });
+      return result.rows.map(toMarketPairOption).filter((pair): pair is MarketPairOption => pair !== null);
     }
-
-    let active = true;
-    setPairLoading(true);
-
-    listAdminResource('/admin/api/v1/market-pairs', 'pairs', { status: 'active', limit: 100 })
-      .then((result) => {
-        if (!active) {
-          return;
-        }
-
-        setPairOptions(result.rows.map(toMarketPairOption).filter((pair): pair is MarketPairOption => pair !== null));
-      })
-      .catch(() => {
-        if (active) {
-          setPairOptions([]);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setPairLoading(false);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [enabled]);
-
-  return { pairLoading, pairOptions };
+  });
+  return { pairError: query.error, pairLoading: query.loading, pairOptions: query.data };
 }
 
 export function useAdminCountryOptions(enabled = true) {
-  const [countries, setCountries] = useState<AdminNewsCountryOption[]>([]);
-  const [countriesLoading, setCountriesLoading] = useState(false);
-
-  useEffect(() => {
-    if (!enabled || countries.length > 0 || countriesLoading) return;
-    let cancelled = false;
-    setCountriesLoading(true);
-    listAdminResource('/admin/api/v1/countries', 'countries', { status: 'active', limit: 500 })
-      .then(({ rows }) => {
-        if (cancelled) return;
-        setCountries(rows.map(adminNewsCountryFromRecord).filter((country): country is AdminNewsCountryOption => country !== null));
-        setCountriesLoading(false);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        Toast.error(errorMessage(error));
-        setCountries([]);
-        setCountriesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [countries.length, enabled]);
-
-  return { countries, countriesLoading };
+  const query = useSharedAdminOptionQuery<AdminNewsCountryOption[]>({
+    cacheKey: 'countries:active:500',
+    empty: [],
+    enabled,
+    load: async (signal) => {
+      const { rows } = await listAdminResource('/admin/api/v1/countries', 'countries', { status: 'active', limit: 500 }, { signal });
+      return rows.map(adminNewsCountryFromRecord).filter((country): country is AdminNewsCountryOption => country !== null);
+    }
+  });
+  return { countries: query.data, countriesError: query.error, countriesLoading: query.loading };
 }
 
 export function AssetSelect({

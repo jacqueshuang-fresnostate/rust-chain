@@ -1,8 +1,9 @@
-import { Button, Card, SideSheet, Space, Tabs, Typography } from '@douyinfe/semi-ui';
-import { useState } from 'react';
+import { Button, Card, SideSheet, Space, Typography } from '@douyinfe/semi-ui';
+import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
@@ -40,6 +41,7 @@ type SecondsProductValues = {
 
 type SecondsProductPeriodValues = {
   durationSeconds: string;
+  rowId: string;
   payoutRate: string;
   minStake: string;
   maxStake: string;
@@ -47,25 +49,101 @@ type SecondsProductPeriodValues = {
 
 type SecondsProductTab = 'basic' | 'trade';
 
-const initialSecondsProductPeriod: SecondsProductPeriodValues = {
-  durationSeconds: '',
-  payoutRate: '',
-  minStake: '',
-  maxStake: ''
-};
+let secondsPeriodSequence = 0;
 
-const initialSecondsProduct: SecondsProductValues = {
-  logoUrl: '',
-  pairId: '',
-  stakeAsset: '',
-  periods: [initialSecondsProductPeriod],
-  status: 'active'
-};
+function newSecondsProductPeriod(values: Partial<Omit<SecondsProductPeriodValues, 'rowId'>> = {}, stableId?: string): SecondsProductPeriodValues {
+  secondsPeriodSequence += 1;
+  return {
+    durationSeconds: '',
+    payoutRate: '',
+    minStake: '',
+    maxStake: '',
+    ...values,
+    rowId: stableId ?? `period-${secondsPeriodSequence}`
+  };
+}
+
+function newSecondsProduct(): SecondsProductValues {
+  return {
+    logoUrl: '',
+    pairId: '',
+    stakeAsset: '',
+    periods: [newSecondsProductPeriod()],
+    status: 'active'
+  };
+}
 
 const secondsProductTabs = [
   { itemKey: 'basic', tab: '基础配置' },
   { itemKey: 'trade', tab: '交易参数' }
 ];
+
+function SecondsProductTabs({
+  activeTab,
+  children,
+  onActiveTabChange
+}: {
+  activeTab: SecondsProductTab;
+  children: ReactNode;
+  onActiveTabChange: (tab: SecondsProductTab) => void;
+}) {
+  const instanceId = useId().replaceAll(':', '');
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const activeIndex = secondsProductTabs.findIndex((tab) => tab.itemKey === activeTab);
+  const tabId = (key: string) => `${instanceId}-seconds-tab-${key}`;
+  const panelId = (key: string) => `${instanceId}-seconds-panel-${key}`;
+
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % secondsProductTabs.length;
+    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + secondsProductTabs.length) % secondsProductTabs.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = secondsProductTabs.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = secondsProductTabs[nextIndex].itemKey as SecondsProductTab;
+    onActiveTabChange(nextTab);
+    tabRefs.current[nextIndex]?.focus();
+  };
+
+  return (
+    <>
+      <div aria-label="秒合约产品配置" className="admin-seconds-product-tabs" role="tablist">
+        {secondsProductTabs.map((tab, index) => {
+          const selected = index === activeIndex;
+          return (
+            <button
+              aria-controls={panelId(tab.itemKey)}
+              aria-selected={selected}
+              className={`semi-button semi-button-size-default ${selected ? 'semi-button-primary' : 'semi-button-tertiary'}`}
+              id={tabId(tab.itemKey)}
+              key={tab.itemKey}
+              onClick={() => onActiveTabChange(tab.itemKey as SecondsProductTab)}
+              onKeyDown={(event) => onKeyDown(event, index)}
+              ref={(element) => {
+                tabRefs.current[index] = element;
+              }}
+              role="tab"
+              tabIndex={selected ? 0 : -1}
+              type="button"
+            >
+              {tab.tab}
+            </button>
+          );
+        })}
+      </div>
+      <div
+        aria-labelledby={tabId(activeTab)}
+        id={panelId(activeTab)}
+        key={activeTab}
+        role="tabpanel"
+        tabIndex={0}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
 
 function isSecondsProductPeriodSubmittable(period: SecondsProductPeriodValues): boolean {
   return Boolean(period.durationSeconds.trim() && period.payoutRate.trim() && period.minStake.trim());
@@ -97,12 +175,14 @@ function secondsProductFromRecord(record: ApiRecord): SecondsProductValues {
       const cycleRecord = cycle as ApiRecord;
       return {
         durationSeconds: recordString(cycleRecord, 'duration_seconds'),
+        rowId: '',
         payoutRate: recordString(cycleRecord, 'payout_rate'),
         minStake: recordString(cycleRecord, 'min_stake'),
         maxStake: recordString(cycleRecord, 'max_stake')
       };
     })
-    .filter((period): period is SecondsProductPeriodValues => Boolean(period?.durationSeconds));
+    .filter((period): period is SecondsProductPeriodValues => Boolean(period?.durationSeconds))
+    .map((period, index) => newSecondsProductPeriod(period, `stored-${recordString(cycles[index] as ApiRecord, 'id') || index}`));
 
   return {
     logoUrl: recordString(record, 'logo_url'),
@@ -111,12 +191,12 @@ function secondsProductFromRecord(record: ApiRecord): SecondsProductValues {
     periods: periods.length
       ? periods
       : [
-          {
+          newSecondsProductPeriod({
             durationSeconds: recordString(record, 'duration_seconds'),
             payoutRate: recordString(record, 'payout_rate'),
             minStake: recordString(record, 'min_stake'),
             maxStake: recordString(record, 'max_stake')
-          }
+          })
         ],
     status: recordString(record, 'status') || 'active'
   };
@@ -149,8 +229,9 @@ export function SecondsProductRowActions({ helpers, record }: { helpers: RowActi
       <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/seconds-contracts/products', productId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <SecondsProductEditAction helpers={helpers} productId={productId} record={record} />
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/seconds-contracts/products/${productId}`} method="PATCH">
+        <SecondsProductEditAction helpers={helpers} productId={productId} record={record} />
+        <ConfirmAction
         actionText={actionText}
         disabled={!productId}
         title={`${actionText}秒合约产品`}
@@ -163,8 +244,10 @@ export function SecondsProductRowActions({ helpers, record }: { helpers: RowActi
           );
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
       {status === 'disabled' ? (
+        <AdminRequestActionBoundary endpoint={`/admin/api/v1/seconds-contracts/products/${productId}`} method="DELETE">
         <ConfirmAction
           actionText="删除"
           disabled={!productId}
@@ -179,6 +262,7 @@ export function SecondsProductRowActions({ helpers, record }: { helpers: RowActi
             helpers.reload();
           }}
         />
+        </AdminRequestActionBoundary>
       ) : null}
     </>
   );
@@ -191,10 +275,20 @@ function SecondsProductPeriodsEditor({
   periods
 }: {
   onAdd: () => void;
-  onRemove: (index: number) => void;
-  onUpdate: (index: number, patch: Partial<SecondsProductPeriodValues>) => void;
+  onRemove: (rowId: string) => void;
+  onUpdate: (rowId: string, patch: Partial<SecondsProductPeriodValues>) => void;
   periods: SecondsProductPeriodValues[];
 }) {
+  const editorId = useId().replaceAll(':', '');
+
+  const removeAndRestoreFocus = (rowId: string, index: number) => {
+    const focusTarget = periods[index + 1] ?? periods[index - 1];
+    onRemove(rowId);
+    globalThis.setTimeout(() => {
+      if (focusTarget) document.getElementById(`${editorId}-${focusTarget.rowId}`)?.querySelector<HTMLElement>('input')?.focus();
+    }, 0);
+  };
+
   return (
     <Space align="start" spacing={12} vertical style={{ width: '100%' }}>
       <div className="admin-earn-section-header">
@@ -204,15 +298,26 @@ function SecondsProductPeriodsEditor({
         </Button>
       </div>
       {periods.map((period, index) => (
-        <div className="admin-action-form admin-action-form-wide" key={index}>
-          <label>周期秒数<AdminTextInput ariaLabel="周期秒数" value={period.durationSeconds} onChange={(durationSeconds) => onUpdate(index, { durationSeconds })} /></label>
-          <label>赔率<AdminTextInput ariaLabel="赔率" value={period.payoutRate} onChange={(payoutRate) => onUpdate(index, { payoutRate })} /></label>
-          <label>最小押注<AdminTextInput ariaLabel="最小押注" value={period.minStake} onChange={(minStake) => onUpdate(index, { minStake })} /></label>
+        <div
+          aria-label={`周期 ${index + 1}：${period.durationSeconds.trim() ? `${period.durationSeconds.trim()} 秒` : '未填写秒数'}`}
+          className="admin-action-form admin-action-form-wide"
+          id={`${editorId}-${period.rowId}`}
+          key={period.rowId}
+          role="group"
+        >
+          <label>周期秒数<AdminTextInput ariaLabel="周期秒数" value={period.durationSeconds} onChange={(durationSeconds) => onUpdate(period.rowId, { durationSeconds })} /></label>
+          <label>赔率<AdminTextInput ariaLabel="赔率" value={period.payoutRate} onChange={(payoutRate) => onUpdate(period.rowId, { payoutRate })} /></label>
+          <label>最小押注<AdminTextInput ariaLabel="最小押注" value={period.minStake} onChange={(minStake) => onUpdate(period.rowId, { minStake })} /></label>
           <label>
             最大押注
-            <AdminTextInput ariaLabel="最大押注" placeholder="留空表示无上限" value={period.maxStake} onChange={(maxStake) => onUpdate(index, { maxStake })} />
+            <AdminTextInput ariaLabel="最大押注" placeholder="留空表示无上限" value={period.maxStake} onChange={(maxStake) => onUpdate(period.rowId, { maxStake })} />
           </label>
-          <Button disabled={periods.length === 1} onClick={() => onRemove(index)} theme="borderless">
+          <Button
+            aria-label={`删除周期 ${index + 1}：${period.durationSeconds.trim() ? `${period.durationSeconds.trim()} 秒` : '未填写秒数'}`}
+            disabled={periods.length === 1}
+            onClick={() => removeAndRestoreFocus(period.rowId, index)}
+            theme="borderless"
+          >
             删除周期
           </Button>
         </div>
@@ -233,22 +338,22 @@ function SecondsProductEditAction({ helpers, productId, record }: { helpers: Row
     config.stakeAsset,
     `${recordString(record, 'stake_asset_symbol') || `资产${config.stakeAsset}`}（ID: ${config.stakeAsset}）`
   );
-  const updatePeriod = (index: number, patch: Partial<SecondsProductPeriodValues>) => {
+  const updatePeriod = (rowId: string, patch: Partial<SecondsProductPeriodValues>) => {
     setConfig((current) => ({
       ...current,
-      periods: current.periods.map((period, periodIndex) => (periodIndex === index ? { ...period, ...patch } : period))
+      periods: current.periods.map((period) => (period.rowId === rowId ? { ...period, ...patch } : period))
     }));
   };
   const addPeriod = () => {
     setConfig((current) => ({
       ...current,
-      periods: [...current.periods, { ...initialSecondsProductPeriod }]
+      periods: [...current.periods, newSecondsProductPeriod()]
     }));
   };
-  const removePeriod = (index: number) => {
+  const removePeriod = (rowId: string) => {
     setConfig((current) => ({
       ...current,
-      periods: current.periods.length > 1 ? current.periods.filter((_, periodIndex) => periodIndex !== index) : current.periods
+      periods: current.periods.length > 1 ? current.periods.filter((period) => period.rowId !== rowId) : current.periods
     }));
   };
 
@@ -260,14 +365,8 @@ function SecondsProductEditAction({ helpers, productId, record }: { helpers: Row
       <SideSheet onCancel={() => setVisible(false)} title="修改秒合约产品" visible={visible} {...createModalProps('wide')}>
         <Card bordered={false}>
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Tabs
-              activeKey={activeTab}
-              className="admin-seconds-product-tabs"
-              onChange={(nextTab) => setActiveTab(nextTab as SecondsProductTab)}
-              tabList={secondsProductTabs}
-              type="button"
-            />
-            {activeTab === 'basic' ? (
+            <SecondsProductTabs activeTab={activeTab} onActiveTabChange={setActiveTab}>
+              {activeTab === 'basic' ? (
               <div className="admin-action-form admin-action-form-wide">
                 <label>产品ID<AdminTextInput ariaLabel="产品ID" readOnly value={productId} onChange={() => undefined} /></label>
                 <MarketPairSelect
@@ -290,9 +389,10 @@ function SecondsProductEditAction({ helpers, productId, record }: { helpers: Row
                   <AdminSelect ariaLabel="状态" onChange={(status) => setConfig({ ...config, status })} optionList={statusOptions} value={config.status} />
                 </label>
               </div>
-            ) : (
+              ) : (
               <SecondsProductPeriodsEditor periods={config.periods} onAdd={addPeriod} onRemove={removePeriod} onUpdate={updatePeriod} />
-            )}
+              )}
+            </SecondsProductTabs>
             <div className="admin-action-footer">
               <ConfirmAction
                 actionText="提交修改"
@@ -336,33 +436,35 @@ export function SecondsOrderRowActions({ helpers, record }: { helpers: RowAction
       <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/seconds-contracts/orders', orderId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <ConfirmAction actionText="结算赢" disabled={!orderId || !canSettle} title="结算赢" onConfirm={(reason) => settle('win', reason)} />
-      <ConfirmAction actionText="结算输" disabled={!orderId || !canSettle} title="结算输" onConfirm={(reason) => settle('loss', reason)} />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/seconds-contracts/orders/${orderId}/settle`} method="POST">
+        <ConfirmAction actionText="结算赢" disabled={!orderId || !canSettle} title="结算赢" onConfirm={(reason) => settle('win', reason)} />
+        <ConfirmAction actionText="结算输" disabled={!orderId || !canSettle} title="结算输" onConfirm={(reason) => settle('loss', reason)} />
+      </AdminRequestActionBoundary>
     </>
   );
 }
 
 export function CreateSecondsPairAction({ onCreated }: CreateActionProps = {}) {
-  const [secondsProduct, setSecondsProduct] = useState(initialSecondsProduct);
+  const [secondsProduct, setSecondsProduct] = useState(newSecondsProduct);
   const [activeTab, setActiveTab] = useState<SecondsProductTab>('basic');
   const { assetLoading, assetOptions } = useAssetOptions();
   const { pairLoading, pairOptions } = useMarketPairOptions();
-  const updatePeriod = (index: number, patch: Partial<SecondsProductPeriodValues>) => {
+  const updatePeriod = (rowId: string, patch: Partial<SecondsProductPeriodValues>) => {
     setSecondsProduct((current) => ({
       ...current,
-      periods: current.periods.map((period, periodIndex) => (periodIndex === index ? { ...period, ...patch } : period))
+      periods: current.periods.map((period) => (period.rowId === rowId ? { ...period, ...patch } : period))
     }));
   };
   const addPeriod = () => {
     setSecondsProduct((current) => ({
       ...current,
-      periods: [...current.periods, { ...initialSecondsProductPeriod }]
+      periods: [...current.periods, newSecondsProductPeriod()]
     }));
   };
-  const removePeriod = (index: number) => {
+  const removePeriod = (rowId: string) => {
     setSecondsProduct((current) => ({
       ...current,
-      periods: current.periods.length > 1 ? current.periods.filter((_, periodIndex) => periodIndex !== index) : current.periods
+      periods: current.periods.length > 1 ? current.periods.filter((period) => period.rowId !== rowId) : current.periods
     }));
   };
 
@@ -371,14 +473,8 @@ export function CreateSecondsPairAction({ onCreated }: CreateActionProps = {}) {
       {({ close }) => (
       <Card bordered={false}>
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-          <Tabs
-            activeKey={activeTab}
-            className="admin-seconds-product-tabs"
-            onChange={(nextTab) => setActiveTab(nextTab as SecondsProductTab)}
-            tabList={secondsProductTabs}
-            type="button"
-          />
-          {activeTab === 'basic' ? (
+          <SecondsProductTabs activeTab={activeTab} onActiveTabChange={setActiveTab}>
+            {activeTab === 'basic' ? (
             <div className="admin-action-form admin-action-form-wide">
               <MarketPairSelect
                 label="秒合约交易对"
@@ -400,9 +496,10 @@ export function CreateSecondsPairAction({ onCreated }: CreateActionProps = {}) {
                 <AdminSelect ariaLabel="初始状态" onChange={(status) => setSecondsProduct({ ...secondsProduct, status })} optionList={statusOptions} value={secondsProduct.status} />
               </label>
             </div>
-          ) : (
+            ) : (
             <SecondsProductPeriodsEditor periods={secondsProduct.periods} onAdd={addPeriod} onRemove={removePeriod} onUpdate={updatePeriod} />
-          )}
+            )}
+          </SecondsProductTabs>
           <div className="admin-action-footer">
             <ConfirmAction
               actionText="提交添加秒合约交易对"
@@ -416,7 +513,7 @@ export function CreateSecondsPairAction({ onCreated }: CreateActionProps = {}) {
                   })
                 );
                 completeCreate(close, onCreated, () => {
-                  setSecondsProduct(initialSecondsProduct);
+                  setSecondsProduct(newSecondsProduct());
                   setActiveTab('basic');
                 });
               }}

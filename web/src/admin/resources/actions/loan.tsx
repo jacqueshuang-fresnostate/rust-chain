@@ -3,7 +3,9 @@ import { useEffect, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
+import { compareDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
 import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import {
   type AdminNewsCountryOption,
@@ -19,7 +21,6 @@ import {
   isNonNegativeIntegerInput,
   nextToggleStatus,
   openRecordDetail,
-  optionalString,
   recordString,
   requiredNonNegativeDecimal,
   requiredNonNegativeInteger,
@@ -143,8 +144,7 @@ function loanProductNameJson(values: LoanProductValues) {
 }
 
 function isLoanProductSubmittable(values: LoanProductValues): boolean {
-  const minAmount = Number(values.minAmount);
-  const maxAmount = values.maxAmount.trim() ? Number(values.maxAmount) : undefined;
+  const maximumComparison = values.maxAmount.trim() ? compareDecimalText(values.maxAmount, values.minAmount) : null;
   return Boolean(
     values.names.length > 0 &&
       values.names.every((item) => item.locale.trim() && item.country.trim() && item.title.trim()) &&
@@ -156,10 +156,8 @@ function isLoanProductSubmittable(values: LoanProductValues): boolean {
       isNonNegativeIntegerInput(values.termDays) &&
       Number(values.termDays) > 0 &&
       isNonNegativeDecimalInput(values.interestRate) &&
-      values.minAmount.trim() &&
-      Number.isFinite(minAmount) &&
-      minAmount > 0 &&
-      (!values.maxAmount.trim() || (Number.isFinite(maxAmount) && Number(maxAmount) >= minAmount))
+      isPositiveDecimalText(values.minAmount) &&
+      (!values.maxAmount.trim() || maximumComparison === 0 || maximumComparison === 1)
   );
 }
 
@@ -175,8 +173,8 @@ function loanProductRequestBody(values: LoanProductValues, reason: string, revis
     interest_rate: requiredNonNegativeDecimal(values.interestRate, '期限利率'),
     interest_calculation_mode: requiredString(values.interestCalculationMode, '计息方式'),
     min_kyc_level: requiredNonNegativeInteger(values.minKycLevel, '最低KYC等级'),
-    min_amount: requiredString(values.minAmount, '最小借款金额'),
-    max_amount: optionalString(values.maxAmount) ?? null,
+    min_amount: requiredNonNegativeDecimal(values.minAmount, '最小借款金额'),
+    max_amount: values.maxAmount.trim() ? requiredNonNegativeDecimal(values.maxAmount, '最大借款金额') : null,
     status: requiredString(values.status, '状态'),
     reason,
     ...(revision === undefined ? {} : { revision })
@@ -474,8 +472,9 @@ export function LoanProductRowActions({ helpers, record }: { helpers: RowActionH
       <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/loan/products', productId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <LoanProductEditAction helpers={helpers} productId={productId} record={record} />
-      <ConfirmAction
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/loan/products/${productId}`} method="PATCH">
+        <LoanProductEditAction helpers={helpers} productId={productId} record={record} />
+        <ConfirmAction
         actionText={actionText}
         disabled={!productId || revision === null}
         title={`${actionText}贷款产品`}
@@ -493,7 +492,8 @@ export function LoanProductRowActions({ helpers, record }: { helpers: RowActionH
           if (!updated) return;
           helpers.reload();
         }}
-      />
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }
@@ -507,29 +507,31 @@ export function LoanOrderRowActions({ helpers, record }: { helpers: RowActionHel
       <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/loan/orders', orderId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <ConfirmAction
-        actionText="审核通过"
-        disabled={!orderId || !isPending}
-        title="审核通过贷款申请"
-        onConfirm={async () => {
-          await submitAction('审核通过贷款申请', () => apiRequest(`/admin/api/v1/loan/orders/${orderId}/approve`, { method: 'POST' }));
-          helpers.reload();
-        }}
-      />
-      <ConfirmAction
-        actionText="拒绝"
-        disabled={!orderId || !isPending}
-        title="拒绝贷款申请"
-        onConfirm={async (reason) => {
-          await submitAction('拒绝贷款申请', () =>
-            apiRequest(`/admin/api/v1/loan/orders/${orderId}/reject`, {
-              method: 'POST',
-              body: JSON.stringify({ reason })
-            })
-          );
-          helpers.reload();
-        }}
-      />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/loan/orders/${orderId}/approve`} method="POST">
+        <ConfirmAction
+          actionText="审核通过"
+          disabled={!orderId || !isPending}
+          title="审核通过贷款申请"
+          onConfirm={async () => {
+            await submitAction('审核通过贷款申请', () => apiRequest(`/admin/api/v1/loan/orders/${orderId}/approve`, { method: 'POST' }));
+            helpers.reload();
+          }}
+        />
+        <ConfirmAction
+          actionText="拒绝"
+          disabled={!orderId || !isPending}
+          title="拒绝贷款申请"
+          onConfirm={async (reason) => {
+            await submitAction('拒绝贷款申请', () =>
+              apiRequest(`/admin/api/v1/loan/orders/${orderId}/reject`, {
+                method: 'POST',
+                body: JSON.stringify({ reason })
+              })
+            );
+            helpers.reload();
+          }}
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

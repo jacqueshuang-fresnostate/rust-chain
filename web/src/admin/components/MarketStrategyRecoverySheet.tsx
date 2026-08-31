@@ -2,6 +2,7 @@ import { Button, Card, Descriptions, SideSheet, Space, Spin, Tag, TextArea, Toas
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
+import { AdminRequestActionBoundary } from '../access';
 import { ResizableTable } from '../../shared/ResizableTable';
 
 type GapRange = {
@@ -221,7 +222,11 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
                     {
                       title: '操作',
                       key: 'actions',
-                      render: (_, gap) => <Button aria-label={`预览缺口${gap.range_start}`} disabled={loading || submitting} onClick={() => previewGap(gap)} size="small">预览补偿</Button>
+                      render: (_, gap) => (
+                        <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-strategies/${strategyId}/kline-recovery/preview`} method="POST">
+                          <Button aria-label={`预览缺口${gap.range_start}`} disabled={loading || submitting} onClick={() => previewGap(gap)} size="small">预览补偿</Button>
+                        </AdminRequestActionBoundary>
+                      )
                     }
                   ]}
                   dataSource={gaps.gaps}
@@ -266,9 +271,11 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
                   补偿原因
                   <TextArea aria-label="补偿原因" autosize disabled={submitting} onChange={setReason} placeholder="请输入本次手动补偿的审计原因" value={reason} />
                 </label>
-                <Button aria-label="确认执行K线补偿" disabled={submitting || !reason.trim()} loading={submitting} onClick={executeRecovery} theme="solid" type="primary">
-                  确认执行补偿
-                </Button>
+                <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-strategies/${strategyId}/kline-recovery/execute`} method="POST">
+                  <Button aria-label="确认执行K线补偿" disabled={submitting || !reason.trim()} loading={submitting} onClick={executeRecovery} theme="solid" type="primary">
+                    确认执行补偿
+                  </Button>
+                </AdminRequestActionBoundary>
               </Space>
             </Card>
           ) : null}

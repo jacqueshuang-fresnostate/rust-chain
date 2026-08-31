@@ -9,7 +9,10 @@
     "typecheck": "tsc -b --pretty false && rm -f vite.config.js vite.config.d.ts",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage src/admin/sharedOptionQuery.test.tsx src/api/marketTickerSocket.test.ts src/auth/authStore.test.ts src/config/backend.test.ts",
+    "test:production-policy": "vitest run src/app/productionPolicy.test.ts src/config/backend.test.ts src/admin/access.test.tsx",
+    "budget": "node ./scripts/check-bundle-budget.mjs"
   },
   "dependencies": {
     "@douyinfe/semi-icons": "^2.99.2",
@@ -31,6 +34,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.7",
     "eslint": "^10.4.1",
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",

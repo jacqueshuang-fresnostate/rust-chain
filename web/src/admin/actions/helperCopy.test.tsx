@@ -1,6 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render as testingLibraryRender, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactElement } from 'react';
 
 import { apiRequest } from '../../api/client';
 import { AgentManagementPage } from './AgentManagementPage';
@@ -16,6 +18,11 @@ vi.mock('../../api/client', async () => {
 });
 
 const apiRequestMock = vi.mocked(apiRequest);
+
+function render(element: ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return testingLibraryRender(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
 
 class ResizeObserverMock {
   observe() {}
@@ -118,11 +125,11 @@ describe('Admin action helper copy', () => {
     expect(screen.queryByText('启用矿工费时需提供费率、计费依据和费用资产。')).not.toBeInTheDocument();
   });
 
-  it('does not render static helper copy on market strategy actions', () => {
+  it('does not render static helper copy on market strategy actions', async () => {
     render(<MarketStrategyActions />);
 
     expect(screen.getByText('行情策略')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '创建策略' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '创建策略' })).toBeInTheDocument();
     expect(screen.queryByText('创建 internal/strategy 交易对策略并控制策略运行状态。')).not.toBeInTheDocument();
     expect(screen.queryByText('开始和结束时间均使用 Unix milliseconds。')).not.toBeInTheDocument();
     expect(screen.queryByText('支持 draft、active、paused、disabled。')).not.toBeInTheDocument();

@@ -1,4 +1,4 @@
-import numeral from 'numeral';
+import { formatDecimalText, type DecimalFormatOptions } from './decimal';
 
 export const ADMIN_NUMBER_FORMAT = '0,0.00[0000]';
 
@@ -47,17 +47,11 @@ const includedNumericKeyParts = [
   'cost'
 ];
 
-export function formatAdminNumber(value: number | string | null | undefined): string | null {
+export function formatAdminNumber(value: number | string | null | undefined, options: DecimalFormatOptions = {}): string | null {
   if (value === null || value === undefined || value === '') {
     return null;
   }
-
-  const numericValue = numeral(value).value();
-  if (numericValue === null || !Number.isFinite(numericValue)) {
-    return null;
-  }
-
-  return numeral(numericValue).format(ADMIN_NUMBER_FORMAT);
+  return formatDecimalText(value, options);
 }
 
 export function shouldFormatAdminNumericKey(key: string): boolean {

@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../../api/client';
 import type { ApiRecord } from '../../../../api/types';
+import { AdminRequestActionBoundary } from '../../../access';
 import { ConfirmAction } from '../../../../shared/ConfirmAction';
 import { AdminModalTriggerButton } from '../../../../shared/SemiFormControls';
 import { MarketStrategyRecoverySheet } from '../../../components/MarketStrategyRecoverySheet';
@@ -49,63 +50,65 @@ export function MarketStrategyRowActions({
       </Button>
       <MarketStrategyRecoverySheet strategyId={strategyId} />
       <MarketStrategyVersionSheet onRestored={helpers.reload} strategyId={strategyId} />
-      <Button
-        disabled={!strategyId}
-        loading={editor.loading}
-        onClick={() => void editor.openEditor()}
-        size="small"
-        theme="borderless"
-      >
-        修改
-      </Button>
-      <SideSheet
-        onCancel={() => editor.setVisible(false)}
-        title="修改行情策略"
-        visible={editor.visible}
-        {...createModalProps('wide')}
-      >
-        <Card bordered={false}>
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <MarketStrategyForm
-              active={editor.visible}
-              includePairId={false}
-              isEditing
-              strategyId={strategyId}
-              values={editor.config}
-              onChange={editor.setConfig}
-            />
-            <ConfirmAction
-              actionText="提交修改"
-              disabled={!isMarketStrategySubmittable(editor.config, false)}
-              title="确认修改行情策略"
-              onConfirm={async (reason) => {
-                await submitAction('修改行情策略', () =>
-                  apiRequest(`/admin/api/v1/market-strategies/${strategyId}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ ...marketStrategyBasePayload(editor.config), reason })
-                  })
-                );
-                editor.setVisible(false);
-                helpers.reload();
-              }}
-            />
-          </Space>
-        </Card>
-      </SideSheet>
-      <ConfirmAction
-        actionText={actionText}
-        disabled={!strategyId}
-        title={`${actionText}行情策略`}
-        onConfirm={async (reason) => {
-          await submitAction(`${actionText}行情策略`, () =>
-            apiRequest(`/admin/api/v1/market-strategies/${strategyId}/status`, {
-              method: 'PATCH',
-              body: JSON.stringify({ status: nextStatus, reason })
-            })
-          );
-          helpers.reload();
-        }}
-      />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-strategies/${strategyId}`} method="PATCH">
+        <Button
+          disabled={!strategyId}
+          loading={editor.loading}
+          onClick={() => void editor.openEditor()}
+          size="small"
+          theme="borderless"
+        >
+          修改
+        </Button>
+        <SideSheet
+          onCancel={() => editor.setVisible(false)}
+          title="修改行情策略"
+          visible={editor.visible}
+          {...createModalProps('wide')}
+        >
+          <Card bordered={false}>
+            <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+              <MarketStrategyForm
+                active={editor.visible}
+                includePairId={false}
+                isEditing
+                strategyId={strategyId}
+                values={editor.config}
+                onChange={editor.setConfig}
+              />
+              <ConfirmAction
+                actionText="提交修改"
+                disabled={!isMarketStrategySubmittable(editor.config, false)}
+                title="确认修改行情策略"
+                onConfirm={async (reason) => {
+                  await submitAction('修改行情策略', () =>
+                    apiRequest(`/admin/api/v1/market-strategies/${strategyId}`, {
+                      method: 'PATCH',
+                      body: JSON.stringify({ ...marketStrategyBasePayload(editor.config), reason })
+                    })
+                  );
+                  editor.setVisible(false);
+                  helpers.reload();
+                }}
+              />
+            </Space>
+          </Card>
+        </SideSheet>
+        <ConfirmAction
+          actionText={actionText}
+          disabled={!strategyId}
+          title={`${actionText}行情策略`}
+          onConfirm={async (reason) => {
+            await submitAction(`${actionText}行情策略`, () =>
+              apiRequest(`/admin/api/v1/market-strategies/${strategyId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: nextStatus, reason })
+              })
+            );
+            helpers.reload();
+          }}
+        />
+      </AdminRequestActionBoundary>
     </>
   );
 }

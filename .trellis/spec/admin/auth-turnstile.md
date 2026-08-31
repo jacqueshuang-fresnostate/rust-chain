@@ -131,3 +131,77 @@ useEffect(() => {
   return () => lifecycleRef.current?.remove()
 }, [sitekey, enabled, challengeId])
 ```
+
+## 8. Admin Session Ownership and Login Mutation Contract
+
+### 1. Scope / Trigger
+
+- Trigger: changing Admin/Agent login, refresh, logout, protected redirects,
+  cross-tab synchronization, or login/2FA/Turnstile mutation policy.
+
+### 2. Signatures
+
+```ts
+interface AuthSession {
+  accessToken: string
+  refreshToken: string
+  generation: string
+  scope: 'admin' | 'agent' | 'user'
+  subject: string
+}
+
+authStore.compareAndSetSession(scope, expectedGeneration, expectedRefreshToken, tokens): boolean
+authStore.clearSession(scope, expectedGeneration?): boolean
+```
+
+### 3. Contracts
+
+- Access/refresh tokens live in `sessionStorage`, not durable local storage.
+  `localStorage` and `BroadcastChannel` carry only non-sensitive replacement/
+  clear signals. A legacy local-storage session may migrate once and is removed.
+- Every interactive login creates a generation. Refresh compares generation and
+  refresh token; a late refresh or old 401 cannot overwrite/clear a newer login.
+- Cross-tab login/logout invalidates the local tab's session instead of copying
+  credentials between tabs. Query/cache identity includes subject + generation.
+- Login, two-factor, Turnstile, and other mutations use `retry: false` globally;
+  an explicit user action is required to retry. Redirects accept only normalized
+  internal Admin/Agent paths, never protocol-relative or external URLs.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|-----------|-------------------|
+| Refresh returns after logout/new login | CAS fails; preserve current/empty session |
+| Old request returns 401 | Do not refresh or clear a different generation |
+| Another tab replaces or clears session | Clear this tab and require re-authentication |
+| Storage access throws | Fail closed for protected route without crashing login |
+| Turnstile token missing when enforced | Keep form recoverable; send no login mutation |
+| Redirect begins `//`, contains another origin, or targets wrong scope | Use the scope dashboard fallback |
+
+### 5. Good / Base / Bad Cases
+
+- Good: logout occurs while refresh is in flight; the response is ignored and
+  the protected query cache is invalidated.
+- Base: an Admin deep link survives login only when it is a valid internal Admin path.
+- Bad: persist refresh tokens in local storage, broadcast credentials, enable
+  automatic mutation retry, or let an old 401 clear a new session.
+
+### 6. Tests Required
+
+- Test logout/new-login races, refresh CAS, old 401 handling, cross-tab signals,
+  storage exceptions, legacy migration/removal, and query key isolation.
+- Test Admin/Agent internal redirect allowlists and external/protocol-relative rejection.
+- Test QueryClient mutation defaults and login/2FA/Turnstile single submission.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong
+localStorage.setItem('session', JSON.stringify(tokens))
+useMutation({ mutationFn: login, retry: 3 })
+
+// Correct
+const session = authStore.setSession({ ...tokens, scope, subject })
+useMutation({ mutationFn: login, retry: false })
+authStore.compareAndSetSession(scope, session.generation, session.refreshToken, refreshed)
+```

@@ -17,6 +17,7 @@ import { StatusTag } from '../../../shared/StatusTag';
 import { TimestampText } from '../../../shared/TimestampText';
 import { containedTableStyle } from '../../../shared/tableLayout';
 import { WorkflowPageActions } from '../../components/WorkflowPageActions';
+import { AdminRequestActionBoundary } from '../../access';
 import {
   invalidRefundPolicyOptions,
   joinText,
@@ -45,8 +46,8 @@ function AssetConfigTable(props: PredictionTableProps) {
 
 export function PredictionSettingsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab: PredictionTab = searchParams.get('tab') === 'assets' ? 'assets' : 'settings';
   const workspace = usePredictionSettings();
+  const activeTab: PredictionTab = searchParams.get('tab') === 'assets' && workspace.canReadAssetConfigs ? 'assets' : 'settings';
 
   function selectTab(nextTab: PredictionTab) {
     const nextParams = new URLSearchParams(searchParams);
@@ -124,11 +125,13 @@ export function PredictionSettingsWorkspace() {
         title: '操作',
         width: 120,
         render: (_value, record) => (
-          <ConfirmAction
-            actionText="保存"
-            title={`确认保存 ${record.asset_symbol} 下注配置`}
-            onConfirm={(reason) => workspace.saveAssetConfig(record, reason)}
-          />
+          <AdminRequestActionBoundary endpoint="/admin/api/v1/prediction/asset-configs" method="POST">
+            <ConfirmAction
+              actionText="保存"
+              title={`确认保存 ${record.asset_symbol} 下注配置`}
+              onConfirm={(reason) => workspace.saveAssetConfig(record, reason)}
+            />
+          </AdminRequestActionBoundary>
         )
       }
     ],
@@ -194,7 +197,7 @@ export function PredictionSettingsWorkspace() {
             className="admin-action-tabs"
             collapsible="auto"
             onChange={(nextTab) => selectTab(nextTab as PredictionTab)}
-            tabList={predictionTabs}
+            tabList={workspace.canReadAssetConfigs ? predictionTabs : predictionTabs.filter((tab) => tab.itemKey !== 'assets')}
             type="button"
           />
 
@@ -301,16 +304,18 @@ export function PredictionSettingsWorkspace() {
                 </section>
               </div>
               <Row justify="end" style={{ width: '100%' }} type="flex">
-                <ConfirmAction
-                  actionText="保存全局策略"
-                  title="确认保存竞猜全局策略"
-                  onConfirm={workspace.saveSettings}
-                />
+                <AdminRequestActionBoundary endpoint="/admin/api/v1/prediction/settings" method="PATCH">
+                  <ConfirmAction
+                    actionText="保存全局策略"
+                    title="确认保存竞猜全局策略"
+                    onConfirm={workspace.saveSettings}
+                  />
+                </AdminRequestActionBoundary>
               </Row>
             </Space>
           ) : null}
 
-          {activeTab === 'assets' ? (
+          {activeTab === 'assets' && workspace.canReadAssetConfigs ? (
             <section className="admin-action-panel">
               <Space align="center" spacing={12} style={{ width: '100%', justifyContent: 'space-between' }}>
                 <Title heading={4} style={{ margin: 0 }}>下注资产</Title>
