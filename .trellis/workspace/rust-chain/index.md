@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 50
+- **Total Sessions**: 51
 - **Last Active**: 2026-08-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1720 | Active |
+| `journal-1.md` | ~1753 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 51 | 2026-08-31 | 手机端 KYC 证件类型支持搜索 | `24c9d5a` | `main` |
 | 50 | 2026-08-31 | 手机资金账单补齐杠杆账户流水 | `b631c15` | `main` |
 | 49 | 2026-08-31 | 手机端性能与 KYC 国家搜索优化 | `194772f` | `main` |
 | 48 | 2026-08-29 | 手机端底部交易导航弹窗 | `c9543c4` | `main` |

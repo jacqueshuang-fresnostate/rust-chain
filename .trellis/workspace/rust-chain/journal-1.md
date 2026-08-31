@@ -1718,3 +1718,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 51: 手机端 KYC 证件类型支持搜索
+
+**Date**: 2026-08-31
+**Task**: 手机端 KYC 证件类型支持搜索
+**Branch**: `main`
+
+### Summary
+
+将 KYC 证件类型改为可搜索弹层，保留后台原始值并补齐焦点、主题与回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `24c9d5a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
