@@ -1785,3 +1785,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 53: 修复 Admin 一体化镜像同源配置
+
+**Date**: 2026-09-01
+**Task**: 修复 Admin 一体化镜像同源配置
+**Branch**: `main`
+
+### Summary
+
+修复 GHCR 一体化镜像构建 Admin 时未注入 VITE_API_SAME_ORIGIN 导致浏览器启动崩溃的问题；增加 Docker 构建合同、同源 REST/WS 语义测试、完整部署规范，并通过 Admin 全量测试、生产构建、预算与 Ego Browser 回归。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2c6d80e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
