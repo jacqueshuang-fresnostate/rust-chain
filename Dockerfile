@@ -5,6 +5,8 @@ ARG NODE_VERSION=24
 
 FROM node:${NODE_VERSION}-bookworm-slim AS web-builder
 
+ARG VITE_API_SAME_ORIGIN=true
+
 WORKDIR /workspace/web
 
 COPY web/package.json web/package-lock.json ./
@@ -14,7 +16,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 
 COPY web ./
 
-RUN npm run build
+RUN VITE_API_SAME_ORIGIN="${VITE_API_SAME_ORIGIN}" npm run build
 
 FROM rust:${RUST_VERSION}-bookworm AS builder
 

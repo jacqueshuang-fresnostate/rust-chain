@@ -1,0 +1,3 @@
+{"file":".trellis/spec/admin/index.md","reason":"遵循 Admin 质量门禁与生产构建要求。"}
+{"file":".trellis/spec/admin/backend-origin.md","reason":"遵循 Admin API Origin 与一体化镜像的编译期变量合同。"}
+{"file":".trellis/tasks/09-01-fix-admin-api-same-origin-runtime/research/root-cause.md","reason":"按已确认的 Vite 编译期变量根因修复 Docker 构建合同。"}

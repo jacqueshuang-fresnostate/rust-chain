@@ -8145,3 +8145,17 @@
 - 修改文件：`.trellis/tasks/08-31-admin-mobile-frontend-completion/{prd.md,research/*.md}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Mobile 所测路由无横向溢出、破图或重复 ID，转场结束后单一 `main#main-content`、标题和播报正确；Admin 1440/1024/768px 无溢出，9 列 resize handle 生效且第一列 160→208px；`git diff --check` 通过，`pc/**` 无改动。
 - 后续事项：无。
+
+## 2026-09-01 01:25 - 修复 Admin 一体化镜像同源构建配置
+
+- 完成内容：在 Dockerfile 的 `web-builder` 阶段新增默认值为 `true` 的 `VITE_API_SAME_ORIGIN` 构建参数，并只在 `npm run build` 命令作用域注入；新增静态镜像合同测试，约束一体化构建不注入 `VITE_API_BASE_URL`、不把 Vite 开关持久化为 Docker `ENV` 或 Compose 运行期变量，同时保留 `web/src/config/backend.ts` 的 fail-closed 行为；新增同源生产语义测试，覆盖相对 REST 和由页面 Origin 派生的 WebSocket；部署文档与 Admin code-spec 明确默认 GHCR 镜像的构建期同源合同。
+- 修改文件：`Dockerfile`、`tests/docker_image_contract.rs`、`web/{package.json,src/config/backend.same-origin.test.ts}`、`.trellis/spec/admin/{index.md,backend-origin.md}`、`.trellis/tasks/09-01-fix-admin-api-same-origin-runtime/**`、`docs/deployment/docker.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：旧 Dockerfile 合同负例按预期失败；修复后 Docker 合同 4/4、Admin 生产策略 15/15、Admin 全量 431/431、覆盖率门禁 23/23 均通过，覆盖率 statements/branches/functions/lines 为 85.61%/81.78%/85.33%/92.87%；`cargo fmt --all -- --check`、Admin lint、typecheck、同源生产构建（3770 modules）、bundle budget 与 `git diff --check` 通过。Ego Browser 打开生产制品后进入 `/login`，挂载根节点并同源请求 `http://127.0.0.1:4181/api/v1/auth/login/config`，页面及事件中均无缺失同源开关异常。`docker buildx build --check .` 因本机 OrbStack Docker daemon 未运行而未完成。
+- 后续事项：真实镜像构建由 Docker 发布 CI 的原生 AMD64/ARM64 job 继续验证；本次未推送。
+
+## 2026-09-01 01:46 - 独立复核 Admin 同源镜像构建合同
+
+- 完成内容：独立复核 Dockerfile、GitHub Docker workflow、`.dockerignore`、全部已跟踪 Compose 模板及 Admin URL 构造链路；将原先依赖 Dockerfile 完整字符串的合同测试改为按 stage/ARG/RUN 语义校验，补充旧实现必败、等价多行命令可通过、Docker/Compose runtime ENV 与 workflow 错误覆盖必败用例，并约束 `web/.env*` 不进入构建上下文。新增同源模块级 REST/WS 测试并纳入 production-policy，保持 `backend.ts` 原文件未改且继续 fail-closed；同步 Admin 规范与 PRD 验收项。
+- 修改文件：`tests/docker_image_contract.rs`、`web/src/config/backend.same-origin.test.ts`、`web/package.json`、`.trellis/spec/admin/index.md`、`.trellis/tasks/09-01-fix-admin-api-same-origin-runtime/prd.md`、`docs/superpowers/PROGRESS.md`，以及此前任务已有的 `Dockerfile`、`docs/deployment/docker.md`。
+- 验证结果：Admin production-policy 15/15、lint、typecheck、Docker 合同 4/4、`cargo fmt --all -- --check` 与 `git diff --check` 通过；从 `git ls-files web` 生成且确认不存在 `.env*` 的临时干净目录执行 `npm ci` 和仅注入 `VITE_API_SAME_ORIGIN=true` 的生产构建通过（3770 modules）。真实浏览器加载该制品后，登录页及模拟登录后的仪表盘初始化无 console error，同一 `127.0.0.1:43871` Origin 实际收到 `POST /admin/api/v1/auth/login`、`GET /admin/api/v1/access/me`、`GET /admin/api/v1/dashboard`；交易对页实际向同一 Origin 发起 `GET /ws/public` WebSocket 握手，HTTPS/WSS 与 HTTP/WS 派生另由模块测试覆盖。`docker buildx build --check .` 已尝试，但本机 OrbStack Docker daemon 未运行；临时服务器、浏览器测试页、临时构建目录及误生成的仓库根 `node_modules/` 均已清理。
+- 后续事项：真实完整镜像构建仍由 Docker 发布 CI 的原生 AMD64/ARM64 job 验证；本次未提交或推送。

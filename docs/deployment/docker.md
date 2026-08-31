@@ -25,6 +25,31 @@ Nginx 会把 `/health`、`/api/v1/*`、`/admin/api/v1/*`、`/agent/api/v1/*`、
 使用 SPA history fallback 返回后台 `index.html`，`/uploads/*` 则直接读取
 `/app/uploads`。
 
+### Admin 同源构建配置
+
+`VITE_API_SAME_ORIGIN` 和 `VITE_API_BASE_URL` 是 Vite **构建期变量**，会在
+`npm run build` 时写入静态 JavaScript；容器启动后的 `ENV` 或 Compose `environment`
+不能修改已经生成的 Admin 制品。默认 GHCR 一体化镜像已在 Dockerfile 的 `web-builder`
+阶段把 `VITE_API_SAME_ORIGIN=true` 仅注入 Admin 构建命令，因此部署者不需要、也不应在
+Compose 中设置该变量。
+
+该镜像不注入 `VITE_API_BASE_URL`。Admin 的 REST 请求保持 `/admin/api/v1/*` 相对路径，
+WebSocket 根据页面所在 Origin 选择 `ws://` 或 `wss://`，两者都由同一 Nginx 转发。若自行
+构建独立部署的 Admin，必须在自己的前端构建命令中显式选择一种模式：
+
+```bash
+# 与页面同源
+VITE_API_SAME_ORIGIN=true npm --prefix web run build
+
+# 独立 API Origin（生产环境必须为 HTTPS）
+VITE_API_SAME_ORIGIN=false \
+VITE_API_BASE_URL=https://api.example.com \
+npm --prefix web run build
+```
+
+不要把上述 Vite 变量追加到镜像的 `docker run --env` 或 Compose `environment`；如需切换
+模式，应重新构建 Admin 静态资源或自定义镜像。
+
 ## 原生双架构构建
 
 原 Workflow 曾在单个 x86 runner 上通过 QEMU 串行构建 AMD64 和 ARM64。运行

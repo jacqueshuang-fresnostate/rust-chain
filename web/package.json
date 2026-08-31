@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage src/admin/sharedOptionQuery.test.tsx src/api/marketTickerSocket.test.ts src/auth/authStore.test.ts src/config/backend.test.ts",
-    "test:production-policy": "vitest run src/app/productionPolicy.test.ts src/config/backend.test.ts src/admin/access.test.tsx",
+    "test:production-policy": "vitest run src/app/productionPolicy.test.ts src/config/backend.test.ts src/config/backend.same-origin.test.ts src/admin/access.test.tsx",
     "budget": "node ./scripts/check-bundle-budget.mjs"
   },
   "dependencies": {

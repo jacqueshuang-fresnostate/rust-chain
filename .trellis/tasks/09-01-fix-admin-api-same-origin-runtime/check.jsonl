@@ -1,0 +1,3 @@
+{"file":".trellis/spec/admin/index.md","reason":"复核 Admin 配置测试、类型检查、生产构建和 diff 门禁。"}
+{"file":".trellis/spec/admin/backend-origin.md","reason":"复核编译期输入、错误矩阵、同源 REST/WS 与 Docker 发布边界。"}
+{"file":".trellis/tasks/09-01-fix-admin-api-same-origin-runtime/research/root-cause.md","reason":"验证修复覆盖 GitHub 干净构建上下文且不依赖本地 .env。"}
