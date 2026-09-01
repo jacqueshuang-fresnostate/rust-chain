@@ -12,12 +12,22 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// 用户侧产品目录与订单历史共用的查询串，只支持限制条数。
-/// 缺省时由 `route_limit` 补默认 50 并封顶 100；本类型不支持偏移分页。
+/// 用户侧产品目录查询串，只支持限制条数。
+/// 缺省时由 `route_limit` 补默认 50 并封顶 100；产品目录不支持偏移分页。
 #[derive(Debug, Deserialize)]
 pub(crate) struct ListQuery {
     /// 期望返回的条数上限，未给出时使用服务端默认值。
     pub(crate) limit: Option<u32>,
+}
+
+/// 用户侧订单历史查询串，使用独立的条数与偏移参数，避免给产品目录引入无效偏移。
+/// 两个参数仅控制当前认证用户的稳定倒序结果页，不能指定或改变用户范围。
+#[derive(Debug, Deserialize)]
+pub(crate) struct ListOrdersQuery {
+    /// 单页条数，路由归一后夹在 1 到 100 之间。
+    pub(crate) limit: Option<u32>,
+    /// 分页偏移，路由归一后截断到 100000 以内；缺省等同于第一页。
+    pub(crate) offset: Option<u32>,
 }
 
 /// 后台产品列表查询串，比用户侧多出偏移分页能力。
@@ -223,11 +233,13 @@ pub(crate) struct AdminSecondsContractProductsResponse {
     pub(crate) total: i64,
 }
 
-/// 用户侧订单历史响应，包含持仓中与已结算订单，不返回总数。
+/// 用户侧订单历史响应，包含持仓中与已结算订单，并以多取一条给出续页信号。
 #[derive(Debug, Serialize)]
 pub(crate) struct SecondsContractOrdersResponse {
     /// 按创建时间倒序排列的订单列表。
     pub(crate) orders: Vec<SecondsContractOrderResponse>,
+    /// 当前偏移之后是否仍有订单；应用层通过 `limit + 1` 判断，不执行 COUNT。
+    pub(crate) has_more: bool,
 }
 
 /// 后台订单列表响应，附带匹配总数供客服与风控分页翻查。

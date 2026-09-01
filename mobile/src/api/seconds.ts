@@ -5,7 +5,13 @@ import {
   type ReferenceRequestOptions,
 } from './requestCache'
 import { asNumber } from '@/core/format'
-import { mapSecondsOrder, type SecondsOrder } from '@/core/secondsOrder'
+import {
+  mapSecondsHistoryPage,
+  mapSecondsOrder,
+  type SecondsHistoryPage,
+  type SecondsHistoryPageRequest,
+  type SecondsOrder,
+} from '@/core/secondsOrder'
 import { normalizeDecimalText, requiredDecimalText, type DecimalText } from '@/core/decimal'
 
 const SECONDS_PRODUCT_DECIMAL_CONSTRAINTS = {
@@ -70,6 +76,15 @@ export async function fetchSecondsProducts(limit = 50, options: ReferenceRequest
 export async function fetchSecondsOrders(limit = 50): Promise<SecondsOrder[]> {
   const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(requestUrl('/seconds-contracts/orders'), { params: { limit } })
   return (response.data.orders || []).map(mapSecondsOrder)
+}
+
+export async function fetchSecondsOrdersPage(
+  request: SecondsHistoryPageRequest,
+): Promise<SecondsHistoryPage> {
+  const response = await client.get<unknown>(requestUrl('/seconds-contracts/orders'), {
+    params: { limit: request.limit, offset: request.offset },
+  })
+  return mapSecondsHistoryPage(response.data, request)
 }
 
 export interface OpenSecondsOrderInput {

@@ -630,15 +630,21 @@ pub(crate) async fn settle_order_with_events(
 }
 
 /// 按认证用户读取秒合约订单历史，用户编号来自令牌解析，绝不通过订单标识跨用户返回记录。
-/// 返回结果同时包含持仓中、已结算与等待人工审核的订单，按创建时间倒序，条数由调用方归一后传入。
-/// 纯读取，不触发到期结算，也不改动任何订单状态。
+/// 返回结果同时包含持仓中、已结算与等待人工审核的订单，按创建时间与主键稳定倒序。
+/// 底层多读一条后在内存截断并生成续页信号，不执行 COUNT；纯读取且不触发任何结算或状态变更。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
     user_id: u64,
     limit: u32,
+    offset: u32,
 ) -> AppResult<SecondsContractOrdersResponse> {
-    let orders = infrastructure::list_user_orders(pool, user_id, limit).await?;
-    Ok(SecondsContractOrdersResponse { orders })
+    let mut orders =
+        infrastructure::list_user_orders(pool, user_id, limit.saturating_add(1), offset).await?;
+    let has_more = orders.len() > limit as usize;
+    if has_more {
+        orders.truncate(limit as usize);
+    }
+    Ok(SecondsContractOrdersResponse { orders, has_more })
 }
 
 /// 组装后台订单分页查询条件并返回订单列表与匹配总数，供客服核单与风控排查。

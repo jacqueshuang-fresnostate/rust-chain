@@ -2161,7 +2161,8 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
 }
 
 #[tokio::test]
-async fn seconds_contract_lists_current_user_orders_with_timestamp() -> Result<(), Box<dyn Error>> {
+async fn seconds_contract_paginates_current_user_orders_with_timestamp()
+-> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -2191,7 +2192,9 @@ async fn seconds_contract_lists_current_user_orders_with_timestamp() -> Result<(
     .bind(format!("seconds-list-first-{}", Uuid::now_v7().simple()))
     .bind("2026-05-30 04:00:00.000000")
     .bind("2026-05-30 04:01:00.000000")
-    .bind("2026-05-30 04:00:00.000000")
+    // Keep the same creation timestamp as the next row so the route test
+    // proves the mandatory `id DESC` pagination tie-breaker.
+    .bind("2026-05-30 05:00:00.000000")
     .execute(&mut *fixture_tx)
     .await?
     .last_insert_id();
@@ -2238,8 +2241,72 @@ async fn seconds_contract_lists_current_user_orders_with_timestamp() -> Result<(
     fixture_tx.commit().await?;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let response = user_routes()
-        .with_state(state_with_mysql_and_redis(settings, pool.clone(), None))
+    let app = user_routes().with_state(state_with_mysql_and_redis(settings, pool.clone(), None));
+
+    let first_page_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders?limit=1&offset=0")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let first_page_status = first_page_response.status();
+    let first_page = body_json(first_page_response).await?;
+    assert_eq!(first_page_status, StatusCode::OK, "payload: {first_page}");
+    let first_page_orders = first_page["orders"].as_array().unwrap();
+    assert_eq!(first_page_orders.len(), 1);
+    assert_eq!(first_page_orders[0]["id"], second_order_id);
+    assert_eq!(first_page["has_more"], true);
+    assert_eq!(first_page_orders[0]["direction"], "down");
+    assert_eq!(first_page_orders[0]["symbol"], symbol);
+    assert_eq!(first_page_orders[0]["stake_asset_symbol"], quote_symbol);
+    assert_eq!(
+        first_page_orders[0]["stake_amount"],
+        "20.000000000000000000"
+    );
+    assert!(first_page_orders[0]["expires_at"].is_number());
+    assert!(first_page_orders[0]["created_at"].is_number());
+
+    let second_page_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders?limit=1&offset=1")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let second_page_status = second_page_response.status();
+    let second_page = body_json(second_page_response).await?;
+    assert_eq!(second_page_status, StatusCode::OK, "payload: {second_page}");
+    let second_page_orders = second_page["orders"].as_array().unwrap();
+    assert_eq!(second_page_orders.len(), 1);
+    assert_eq!(second_page_orders[0]["id"], first_order_id);
+    assert_eq!(second_page["has_more"], false);
+    assert!(second_page_orders[0]["expires_at"].is_number());
+    assert!(second_page_orders[0]["created_at"].is_number());
+
+    let empty_page_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders?limit=1&offset=2")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let empty_page_status = empty_page_response.status();
+    let empty_page = body_json(empty_page_response).await?;
+    assert_eq!(empty_page_status, StatusCode::OK, "payload: {empty_page}");
+    assert_eq!(empty_page["orders"].as_array().unwrap().len(), 0);
+    assert_eq!(empty_page["has_more"], false);
+
+    let legacy_first_page_response = app
         .oneshot(
             Request::builder()
                 .uri("/seconds-contracts/orders?limit=10")
@@ -2248,28 +2315,22 @@ async fn seconds_contract_lists_current_user_orders_with_timestamp() -> Result<(
                 .unwrap(),
         )
         .await?;
-    let status = response.status();
-    let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
+    let legacy_first_page_status = legacy_first_page_response.status();
+    let legacy_first_page = body_json(legacy_first_page_response).await?;
     assert_eq!(
-        status,
+        legacy_first_page_status,
         StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&body)
+        "payload: {legacy_first_page}"
     );
-    let payload: Value = serde_json::from_slice(&body)?;
-    let orders = payload["orders"].as_array().unwrap();
-    let order_ids: Vec<u64> = orders
+    let legacy_order_ids: Vec<u64> = legacy_first_page["orders"]
+        .as_array()
+        .unwrap()
         .iter()
         .map(|order| order["id"].as_u64().unwrap())
         .collect();
-    assert_eq!(order_ids, vec![second_order_id, first_order_id]);
-    assert!(!order_ids.contains(&other_order_id));
-    assert_eq!(orders[0]["direction"], "down");
-    assert_eq!(orders[0]["symbol"], symbol);
-    assert_eq!(orders[0]["stake_asset_symbol"], quote_symbol);
-    assert_eq!(orders[0]["stake_amount"], "20.000000000000000000");
-    assert!(orders[0]["expires_at"].is_number());
-    assert!(orders[0]["created_at"].is_number());
+    assert_eq!(legacy_order_ids, vec![second_order_id, first_order_id]);
+    assert!(!legacy_order_ids.contains(&other_order_id));
+    assert_eq!(legacy_first_page["has_more"], false);
 
     Ok(())
 }

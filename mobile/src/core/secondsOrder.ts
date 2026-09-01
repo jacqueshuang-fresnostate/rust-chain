@@ -18,6 +18,13 @@ export class SecondsOrderContractError extends TypeError {
   }
 }
 
+export class SecondsHistoryPageContractError extends TypeError {
+  constructor(field: string) {
+    super(`invalid seconds orders page ${field}`)
+    this.name = 'SecondsHistoryPageContractError'
+  }
+}
+
 export interface SecondsOrder {
   id: number
   symbol: string
@@ -61,8 +68,52 @@ export interface SecondsSettlementResultTracker {
   reset: () => void
 }
 
+export interface SecondsHistoryPageRequest {
+  limit: number
+  offset: number
+}
+
+export interface SecondsHistoryPage {
+  orders: SecondsOrder[]
+  nextOffset: number
+  hasMore: boolean
+}
+
+export interface SecondsHistoryPageMerge {
+  orders: SecondsOrder[]
+  nextOffset: number
+  hasMore: boolean
+  addedCount: number
+}
+
+export interface SecondsHistoryPaginationState {
+  orders: SecondsOrder[]
+  loading: boolean
+  loadingMore: boolean
+  nextOffset: number
+  hasMore: boolean
+  initialError: unknown | null
+  appendError: unknown | null
+}
+
+export type SecondsHistoryPaginationOperation =
+  | 'loaded'
+  | 'error'
+  | 'guest'
+  | 'stale'
+  | 'ignored'
+
+export interface SecondsHistoryPaginationController {
+  snapshot: () => SecondsHistoryPaginationState
+  loadInitial: () => Promise<SecondsHistoryPaginationOperation>
+  loadMore: () => Promise<SecondsHistoryPaginationOperation>
+  retryLoadMore: () => Promise<SecondsHistoryPaginationOperation>
+  reset: () => void
+  stop: () => void
+}
+
 export type SecondsHistoryRequestResult =
-  | { state: 'loaded'; orders: SecondsOrder[] }
+  | { state: 'loaded'; page: SecondsHistoryPage }
   | { state: 'error'; error: unknown }
   | { state: 'guest' }
   | { state: 'stale' }
@@ -80,7 +131,7 @@ export function activeSecondsOrders(orders: readonly SecondsOrder[]): SecondsOrd
 export function historicalSecondsOrders(orders: readonly SecondsOrder[]): SecondsOrder[] {
   return orders
     .filter((order) => !isActiveSecondsOrder(order))
-    .sort((left, right) => right.createdAt - left.createdAt)
+    .sort(compareSecondsHistoryOrder)
 }
 
 /**
@@ -93,6 +144,249 @@ export function filterSecondsHistoryOrdersByDirection(
 ): SecondsOrder[] {
   if (direction === 'all') return [...orders]
   return orders.filter((order) => order.direction === direction)
+}
+
+function compareSecondsHistoryOrder(left: SecondsOrder, right: SecondsOrder): number {
+  return right.createdAt - left.createdAt || right.id - left.id
+}
+
+/**
+ * Merge one raw server page by order ID without changing the page offset.
+ * A later row replaces the earlier snapshot for the same ID, then the merged
+ * snapshot is restored to the backend's `created_at DESC, id DESC` order.
+ * `addedCount` counts only IDs not seen before.
+ */
+export function mergeSecondsHistoryOrderPage(
+  currentOrders: readonly SecondsOrder[],
+  page: SecondsHistoryPage,
+): SecondsHistoryPageMerge {
+  const orders: SecondsOrder[] = []
+  const orderIndex = new Map<number, number>()
+
+  const upsert = (order: SecondsOrder): boolean => {
+    const existingIndex = orderIndex.get(order.id)
+    if (existingIndex !== undefined) {
+      orders[existingIndex] = order
+      return false
+    }
+    orderIndex.set(order.id, orders.length)
+    orders.push(order)
+    return true
+  }
+
+  for (const order of currentOrders) upsert(order)
+  let addedCount = 0
+  for (const order of page.orders) {
+    if (upsert(order)) addedCount += 1
+  }
+
+  orders.sort(compareSecondsHistoryOrder)
+
+  return {
+    orders,
+    nextOffset: page.nextOffset,
+    hasMore: page.hasMore && page.orders.length > 0 && addedCount > 0,
+    addedCount,
+  }
+}
+
+/** Map the paginated transport envelope and preserve raw-row offset progress. */
+export function mapSecondsHistoryPage(
+  payload: unknown,
+  request: SecondsHistoryPageRequest,
+): SecondsHistoryPage {
+  if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+    throw new SecondsHistoryPageContractError('limit')
+  }
+  if (!Number.isSafeInteger(request.offset) || request.offset < 0) {
+    throw new SecondsHistoryPageContractError('offset')
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new SecondsHistoryPageContractError('payload')
+  }
+
+  const response = payload as Record<string, unknown>
+  const rawOrders = response.orders
+  if (!Array.isArray(rawOrders)) throw new SecondsHistoryPageContractError('orders')
+  if (rawOrders.length > request.limit) {
+    throw new SecondsHistoryPageContractError('orders length')
+  }
+  if (response.has_more !== undefined && typeof response.has_more !== 'boolean') {
+    throw new SecondsHistoryPageContractError('has_more')
+  }
+
+  const orders = rawOrders.map((order) => {
+    if (!order || typeof order !== 'object' || Array.isArray(order)) {
+      throw new SecondsHistoryPageContractError('orders item')
+    }
+    const row = order as Record<string, unknown>
+    if (!Number.isSafeInteger(row.id) || Number(row.id) <= 0) {
+      throw new SecondsHistoryPageContractError('orders item id')
+    }
+    if (!isPositiveSafeTimestamp(row.created_at)) {
+      throw new SecondsHistoryPageContractError('orders item created_at')
+    }
+    return mapSecondsOrder(row)
+  })
+  return {
+    orders,
+    nextOffset: request.offset + rawOrders.length,
+    hasMore: response.has_more === undefined
+      ? rawOrders.length === request.limit
+      : response.has_more,
+  }
+}
+
+function isPositiveSafeTimestamp(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+/** Create a detached snapshot so view state cannot mutate controller authority. */
+export function createSecondsHistoryPaginationState(): SecondsHistoryPaginationState {
+  return {
+    orders: [],
+    loading: false,
+    loadingMore: false,
+    nextOffset: 0,
+    hasMore: false,
+    initialError: null,
+    appendError: null,
+  }
+}
+
+/**
+ * Own the initial/append state split and the one-page-at-a-time guard.
+ * The view only forwards observer/retry intents, while this controller keeps
+ * offsets, stale-session suppression, de-duplication, and append recovery in
+ * one behaviorally testable lifecycle.
+ */
+export function createSecondsHistoryPaginationController(options: {
+  sessionToken: () => string
+  sessionGeneration: () => number
+  fetchPage: (request: SecondsHistoryPageRequest) => Promise<SecondsHistoryPage>
+  pageSize?: number
+  onChange?: (state: SecondsHistoryPaginationState) => void
+}): SecondsHistoryPaginationController {
+  const pageSize = options.pageSize ?? 20
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new SecondsHistoryPageContractError('limit')
+  }
+
+  const requests = createSecondsHistoryRequestLifecycle(options)
+  let state = createSecondsHistoryPaginationState()
+  let active = true
+
+  const snapshot = (): SecondsHistoryPaginationState => ({
+    ...state,
+    orders: [...state.orders],
+  })
+  const publish = (): void => options.onChange?.(snapshot())
+  const replaceState = (next: SecondsHistoryPaginationState): void => {
+    state = next
+    publish()
+  }
+
+  async function loadInitial(): Promise<SecondsHistoryPaginationOperation> {
+    if (!active) return 'stale'
+    if (!options.sessionToken()) {
+      requests.invalidate()
+      replaceState(createSecondsHistoryPaginationState())
+      return 'guest'
+    }
+    replaceState({
+      ...createSecondsHistoryPaginationState(),
+      loading: true,
+    })
+
+    const result = await requests.load({ limit: pageSize, offset: 0 })
+    if (result.state === 'stale') return 'stale'
+    if (result.state === 'guest') {
+      replaceState(createSecondsHistoryPaginationState())
+      return 'guest'
+    }
+    if (result.state === 'error') {
+      replaceState({
+        ...createSecondsHistoryPaginationState(),
+        initialError: normalizedSecondsHistoryRequestError(result.error),
+      })
+      return 'error'
+    }
+
+    const merged = mergeSecondsHistoryOrderPage([], result.page)
+    replaceState({
+      ...createSecondsHistoryPaginationState(),
+      orders: merged.orders,
+      nextOffset: merged.nextOffset,
+      hasMore: merged.hasMore,
+    })
+    return 'loaded'
+  }
+
+  async function append(retry: boolean): Promise<SecondsHistoryPaginationOperation> {
+    if (!active) return 'stale'
+    if (!options.sessionToken()) {
+      requests.invalidate()
+      replaceState(createSecondsHistoryPaginationState())
+      return 'guest'
+    }
+    if (
+      state.loading
+      || state.loadingMore
+      || !state.hasMore
+      || (retry ? state.appendError === null : state.appendError !== null)
+    ) return 'ignored'
+
+    const offset = state.nextOffset
+    replaceState({
+      ...state,
+      loadingMore: true,
+    })
+
+    const result = await requests.load({ limit: pageSize, offset })
+    if (result.state === 'stale') return 'stale'
+    if (result.state === 'guest') {
+      replaceState(createSecondsHistoryPaginationState())
+      return 'guest'
+    }
+    if (result.state === 'error') {
+      replaceState({
+        ...state,
+        loadingMore: false,
+        appendError: normalizedSecondsHistoryRequestError(result.error),
+      })
+      return 'error'
+    }
+
+    const merged = mergeSecondsHistoryOrderPage(state.orders, result.page)
+    replaceState({
+      ...state,
+      orders: merged.orders,
+      loadingMore: false,
+      nextOffset: merged.nextOffset,
+      hasMore: merged.hasMore,
+      appendError: null,
+    })
+    return 'loaded'
+  }
+
+  return {
+    snapshot,
+    loadInitial,
+    loadMore: () => append(false),
+    retryLoadMore: () => append(true),
+    reset(): void {
+      requests.invalidate()
+      replaceState(createSecondsHistoryPaginationState())
+    },
+    stop(): void {
+      active = false
+      requests.stop()
+    },
+  }
+}
+
+function normalizedSecondsHistoryRequestError(error: unknown): unknown {
+  return error ?? new Error('seconds history request failed')
 }
 
 /**
@@ -272,11 +566,11 @@ function compareSecondsSettlementResultOrder(left: SecondsOrder, right: SecondsO
 }
 
 export function createSecondsHistoryRequestLifecycle(options: {
-  isAuthenticated: () => boolean
-  fetchOrders: (limit: number) => Promise<SecondsOrder[]>
-  limit?: number
+  sessionToken: () => string
+  sessionGeneration: () => number
+  fetchPage: (request: SecondsHistoryPageRequest) => Promise<SecondsHistoryPage>
 }): {
-  load: () => Promise<SecondsHistoryRequestResult>
+  load: (request: SecondsHistoryPageRequest) => Promise<SecondsHistoryRequestResult>
   invalidate: () => void
   stop: () => void
 } {
@@ -284,19 +578,31 @@ export function createSecondsHistoryRequestLifecycle(options: {
   let generation = 0
 
   return {
-    async load(): Promise<SecondsHistoryRequestResult> {
+    async load(request: SecondsHistoryPageRequest): Promise<SecondsHistoryRequestResult> {
       const requestGeneration = ++generation
       if (!active) return { state: 'stale' }
-      if (!options.isAuthenticated()) return { state: 'guest' }
+      const sessionToken = options.sessionToken()
+      const sessionGeneration = options.sessionGeneration()
+      if (!sessionToken) return { state: 'guest' }
 
       try {
-        const orders = await options.fetchOrders(options.limit ?? 100)
-        if (!active || requestGeneration !== generation || !options.isAuthenticated()) {
+        const page = await options.fetchPage({ limit: request.limit, offset: request.offset })
+        if (
+          !active
+          || requestGeneration !== generation
+          || options.sessionToken() !== sessionToken
+          || options.sessionGeneration() !== sessionGeneration
+        ) {
           return { state: 'stale' }
         }
-        return { state: 'loaded', orders }
+        return { state: 'loaded', page }
       } catch (error) {
-        if (!active || requestGeneration !== generation || !options.isAuthenticated()) {
+        if (
+          !active
+          || requestGeneration !== generation
+          || options.sessionToken() !== sessionToken
+          || options.sessionGeneration() !== sessionGeneration
+        ) {
           return { state: 'stale' }
         }
         return { state: 'error', error }

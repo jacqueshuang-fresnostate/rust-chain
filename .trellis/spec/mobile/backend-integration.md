@@ -362,14 +362,31 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   image/price fallbacks enter production. Choosing a row delegates to the
   existing `selectProduct()` path so cycle, minimum stake, and K-line switch
   together while the independent `orders` collection remains unchanged.
-- The dedicated Seconds history page reuses `fetchSecondsOrders(100)` and the
-  shared `isActiveSecondsOrder` boundary after DTO mapping. It renders only
-  non-active rows, preserves unknown result/status source values, and reads
-  entry and settlement prices only from their optional API fields; a missing or
-  invalid price stays unavailable and is never replaced with a live ticker.
-  History reads are latest-request-wins and are invalidated on logout or
-  unmount; guest, loading, error, list, and empty states remain mutually
-  exclusive, and a failed read remains retryable.
+- The dedicated Seconds history page requests authenticated pages from
+  `GET /seconds-contracts/orders` with `limit=20` and a monotonically advanced
+  `offset`. It keeps the shared `isActiveSecondsOrder` boundary after DTO
+  mapping, renders only non-active rows, preserves unknown result/status source
+  values, and reads entry and settlement prices only from their optional API
+  fields; a missing or invalid price stays unavailable and is never replaced
+  with a live ticker.
+- The history adapter maps the backend `has_more` continuation signal and
+  computes the next offset from the raw number of returned rows, never from the
+  direction-filtered or de-duplicated count. A compatibility payload without
+  `has_more` may infer continuation from a full page, but a page that adds no
+  new order ID must terminate pagination so a legacy server that ignores
+  `offset` cannot create an infinite request loop.
+- A bottom `IntersectionObserver` sentinel requests the next page when it nears
+  the viewport. Loading guards keep one page request in flight. Append merges
+  by order ID, lets the later authoritative row replace the earlier row, and
+  preserves deterministic newest-first presentation. `has_more=false`, an
+  empty page, or no merge progress removes the continuation state.
+- History reads capture the exact authenticated session token and a request
+  generation. They are invalidated on token replacement, logout, retry
+  supersession, or unmount. Initial and append errors are separate: an append
+  failure keeps all loaded cards and exposes a local retry for the same offset.
+  Guest, initial loading, initial error, list, filtered-empty, and empty states
+  remain truthful; a direction filter with no loaded match does not suppress a
+  still-available continuation sentinel.
 - Seconds history profit/loss is a read-only presentation derived only from the
   immutable order snapshot. A `win` displays net profit as
   `stakeAmount * payoutRate`, never principal-inclusive payout; a `loss`
@@ -512,6 +529,12 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 | Seconds history result is `loss` | Show signed loss `-stakeAmount` in `stakeAssetSymbol` |
 | Seconds history result is absent, cancelled, or unknown | Show an unavailable profit/loss amount; do not infer from prices or fabricate zero |
 | Seconds history request settles after logout, retry, or unmount | Ignore the stale response and preserve the newer guest/request state |
+| Seconds history first page succeeds with `has_more=true` | Observe the bottom sentinel and request the returned next offset once |
+| Observer fires repeatedly while an append is active | Keep one in-flight request; do not request the same page twice |
+| A later page overlaps an existing order ID | Keep one row and replace it with the later authoritative payload |
+| A full compatibility page adds no new ID | Mark pagination exhausted; do not loop against a server that ignored offset |
+| A later-page request fails | Keep existing cards, preserve the same offset, and expose a local retry |
+| Exact token changes or follows an A→B→A sequence while a page is in flight | Treat the old page as stale and reset pagination for the current session |
 | Seconds first load contains historical wins/losses | Establish active-order baselines only; enqueue no historical notice |
 | Tracked active Seconds order becomes non-active without a result | Keep tracking and retry reconciliation until a result or cancellation arrives |
 | Tracked Seconds order returns `win|loss` repeatedly or in a reordered list | Enqueue it once for the page session and preserve FIFO display order |
@@ -569,10 +592,15 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   `stakeAmount * payoutRate`, immediate upsert of the returned create order,
   and a delayed refresh rejection that leaves success/order state intact and
   does not enable a second mutation.
-- Seconds history tests must execute delayed request promises to prove guest
-  isolation, latest-request-wins retry, logout/unmount invalidation, and error
-  recovery. They must also exercise shared active filtering, optional invalid
-  prices, known translations, and visible unknown result/status source values.
+- Seconds history tests must execute delayed page promises to prove guest
+  isolation, exact-token/ABA isolation, latest-request-wins retry,
+  logout/unmount invalidation, and initial versus append error recovery. They
+  must exercise `{ limit: 20, offset }` advancement, repeated observer guards,
+  overlap de-duplication with later-row authority, empty/terminal/no-progress
+  exhaustion, shared active filtering, optional invalid prices, known
+  translations, and visible unknown result/status source values. Source/view
+  tests must also prove that an `IntersectionObserver` owns the bottom sentinel
+  and that append failure preserves the rendered list with a local retry.
 - Seconds settlement-notice tests must execute first-load historical results,
   active-to-win/loss transitions, repeated and reordered snapshots, same-batch
   expiry sorting, delayed missing results, cancellation, create-response

@@ -62,6 +62,103 @@ endTime: Number(order.expires_at ?? 0),
 
 The adapter preserves backend timestamps and remains compatible with older payload names.
 
+## Scenario: User Order History Pagination
+
+### 1. Scope / Trigger
+
+- Trigger: changing `GET /api/v1/seconds-contracts/orders`, its user-scoped SQL,
+  or a client that incrementally loads seconds-contract order history.
+- This is a cross-layer contract because query normalization, deterministic SQL
+  ordering, the response continuation signal, and client page advancement must
+  agree exactly.
+
+### 2. Signatures
+
+```text
+GET /api/v1/seconds-contracts/orders?limit=<1..100>&offset=<0..100000>
+Authorization: Bearer <user token>
+
+200 {
+  "orders": SecondsContractOrderResponse[],
+  "has_more": boolean
+}
+```
+
+The existing request without `offset` is equivalent to `offset=0`.
+
+### 3. Contracts
+
+- The authenticated token is the sole user identity source. Neither query
+  parameter may select another user.
+- Normalize `limit` with `route_limit` and `offset` with `route_offset` before
+  entering persistence.
+- SQL orders globally by `orders.created_at DESC, orders.id DESC` before applying
+  `LIMIT` and `OFFSET`; the unique ID tie-breaker is mandatory for stable pages.
+- Application requests one row beyond the normalized page size. It returns at
+  most `limit` rows and sets `has_more=true` only when that extra row exists.
+  Do not run a COUNT query for each mobile history page.
+- Pagination is read-only. It never settles an expired order, mutates a wallet,
+  or writes a ledger/event.
+- Existing clients that read only `orders` remain compatible with the additive
+  `has_more` field.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| `limit` is absent, zero, or above 100 | Apply the shared default/clamp policy |
+| `offset` is absent | Read the first page from offset zero |
+| `offset` exceeds 100000 | Clamp to 100000 before SQL |
+| A page has more than `limit` matching rows available | Return `limit` rows and `has_more=true` |
+| A page is terminal or empty | Return the remaining/empty rows and `has_more=false` |
+| Another user's newer order exists | Exclude it before sorting and pagination |
+| Database read fails | Return the existing database error; do not fabricate an empty terminal page |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**: two rows for the current user requested with `limit=1`; offset zero
+  returns the newest row with `has_more=true`, offset one returns the older row
+  with `has_more=false`.
+- **Base**: an old client sends only `limit=100`, receives the first page and
+  ignores the additional boolean.
+- **Bad**: apply offset before `WHERE user_id = ?`; another user's rows change
+  page boundaries and can hide current-user history.
+- **Bad**: query exactly `limit` rows and infer `has_more` from page fullness;
+  an exact-multiple terminal page then causes an unnecessary extra request.
+
+### 6. Tests Required
+
+- Route integration test with at least two current-user rows and one other-user
+  row; assert two limit-one pages, order, `has_more`, timestamps, and isolation.
+- Preserve unauthenticated rejection and the existing response field tests.
+- Run seconds-contract route tests, `cargo fmt --all -- --check`, backend
+  architecture tests, and `cargo check --all-targets` after production changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+SELECT ... FROM seconds_contract_orders
+WHERE user_id = ?
+ORDER BY created_at DESC
+LIMIT ?
+```
+
+This cannot fetch a second page and is unstable when timestamps are equal.
+
+#### Correct
+
+```rust
+SELECT ... FROM seconds_contract_orders
+WHERE user_id = ?
+ORDER BY created_at DESC, id DESC
+LIMIT ? OFFSET ?
+```
+
+The application supplies `limit + 1`, truncates the response page, and derives
+the continuation signal without an additional count query.
+
 ## Scenario: Safe Order Opening And Settlement Precision
 
 ### 1. Scope / Trigger

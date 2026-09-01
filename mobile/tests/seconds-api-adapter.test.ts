@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { normalizeDecimalText } from '../src/core/decimal.ts'
 import {
@@ -7,6 +8,7 @@ import {
   enqueueSecondsSettlementResults,
   historicalSecondsOrders,
   isActiveSecondsOrder,
+  mapSecondsHistoryPage,
   mapSecondsOrder,
   mergeSecondsOrderReconciliation,
   secondsOrderEstimatedProfit,
@@ -14,9 +16,95 @@ import {
   secondsOrderProgress,
   secondsOrderRemainingMs,
   secondsOrderStatusPresentation,
+  SecondsHistoryPageContractError,
   upsertSecondsOrder,
   type SecondsOrder,
 } from '../src/core/secondsOrder.ts'
+
+const secondsApiSource = readFileSync(new URL('../src/api/seconds.ts', import.meta.url), 'utf8')
+
+test('秒合约历史分页适配器显式发送参数并按原始行数推进 offset', () => {
+  assert.match(
+    secondsApiSource,
+    /fetchSecondsOrdersPage\([\s\S]*?client\.get<unknown>\(requestUrl\('\/seconds-contracts\/orders'\), \{[\s\S]*?params: \{ limit: request\.limit, offset: request\.offset \}/,
+  )
+  assert.match(
+    secondsApiSource,
+    /fetchSecondsOrders\(limit = 50\)[\s\S]*?params: \{ limit \}/,
+  )
+
+  const first = backendOrder(1)
+  const second = backendOrder(2)
+  const page = mapSecondsHistoryPage({ orders: [first, second], has_more: true }, {
+    limit: 2,
+    offset: 20,
+  })
+  assert.deepEqual(page.orders.map(({ id }) => id), [1, 2])
+  assert.equal(page.nextOffset, 22)
+  assert.equal(page.hasMore, true)
+
+  assert.equal(mapSecondsHistoryPage({ orders: [first, second] }, {
+    limit: 2,
+    offset: 22,
+  }).hasMore, true)
+  assert.equal(mapSecondsHistoryPage({ orders: [first] }, {
+    limit: 2,
+    offset: 24,
+  }).hasMore, false)
+  assert.equal(mapSecondsHistoryPage({ orders: [first, second], has_more: false }, {
+    limit: 2,
+    offset: 26,
+  }).hasMore, false)
+})
+
+test('秒合约历史分页适配器拒绝 has_more 与分页包类型异常', () => {
+  const request = { limit: 20, offset: 0 }
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: [], has_more: 'true' }, request),
+    SecondsHistoryPageContractError,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: [], has_more: null }, request),
+    /has_more/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: {} }, request),
+    /orders/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({}, request),
+    /orders/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: [backendOrder(1), backendOrder(2)] }, {
+      limit: 1,
+      offset: 0,
+    }),
+    /orders length/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: [{ ...backendOrder(1), id: 0 }] }, request),
+    /orders item id/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({
+      orders: [{ ...backendOrder(1), created_at: '1722000000000' }],
+    }, request),
+    /orders item created_at/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage(null, request),
+    /payload/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: [] }, { limit: 0, offset: 0 }),
+    /limit/,
+  )
+  assert.throws(
+    () => mapSecondsHistoryPage({ orders: [] }, { limit: 20, offset: -1 }),
+    /offset/,
+  )
+})
 
 test('秒合约订单适配器保留锁单赔率、成交价、结算价和 opened 状态', () => {
   assert.deepEqual(mapSecondsOrder({
@@ -385,6 +473,24 @@ function settlementOrder(
     result,
     createdAt: expiresAt - 60_000,
     expiresAt,
+  }
+}
+
+function backendOrder(id: number): Record<string, unknown> {
+  return {
+    id,
+    symbol: 'BTCUSDT',
+    stake_asset_symbol: 'USDT',
+    direction: id % 2 ? 'up' : 'down',
+    stake_amount: '10.000000000000000000',
+    duration_seconds: 60,
+    payout_rate: '0.80000000',
+    entry_price: '63000.000000000000000000',
+    settlement_price: '63100.000000000000000000',
+    status: 'settled',
+    result: 'win',
+    expires_at: 1_722_000_060_000 + id,
+    created_at: 1_722_000_000_000 + id,
   }
 }
 

@@ -8,12 +8,15 @@ import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 import { goBackOr } from '../src/core/navigation.ts'
 import {
+  createSecondsHistoryPaginationController,
   createSecondsHistoryRequestLifecycle,
   filterSecondsHistoryOrdersByDirection,
   historicalSecondsOrders,
+  mergeSecondsHistoryOrderPage,
   secondsOrderProfitLossPresentation,
   secondsOrderStatusPresentation,
   type SecondsOrder,
+  type SecondsHistoryPage,
 } from '../src/core/secondsOrder.ts'
 
 const routerSource = read('../src/router/index.ts')
@@ -96,8 +99,12 @@ test('交易工作台只留活动订单，历史页通过纯函数按方向过�
   const historySnapshot = historicalSecondsOrders(orders)
   const snapshotOrder = historySnapshot.map(({ id }) => id)
   assert.deepEqual(snapshotOrder, [3, 1])
+  assert.deepEqual(historicalSecondsOrders([
+    order(5, 'settled', 600),
+    order(6, 'settled', 600),
+  ]).map(({ id }) => id), [6, 5])
 
-  assert.match(historySource, /createSecondsHistoryRequestLifecycle\(\{[\s\S]*?fetchOrders: fetchSecondsOrders/)
+  assert.match(historySource, /createSecondsHistoryPaginationController\(\{[\s\S]*?fetchPage: fetchSecondsOrdersPage/)
   assert.match(historySource, /historicalSecondsOrders\(orders\.value\)/)
   assert.match(historySource, /filterSecondsHistoryOrdersByDirection,/)
   assert.match(historySource, /type SecondsHistoryDirectionFilter,/)
@@ -115,51 +122,222 @@ test('交易工作台只留活动订单，历史页通过纯函数按方向过�
   assert.deepEqual(historySnapshot.map(({ id }) => id), snapshotOrder)
 })
 
-test('历史请求生命周期隔离访客、重试、并发旧响应和退出登录', async () => {
-  let authenticated = false
-  const requests: Array<ReturnType<typeof deferred<SecondsOrder[]>>> = []
+test('历史请求生命周期传递分页参数并隔离并发、token ABA、重试、退出和卸载', async () => {
+  let sessionToken = ''
+  let sessionGeneration = 0
+  const requests: Array<{
+    request: { limit: number; offset: number }
+    pending: ReturnType<typeof deferred<SecondsHistoryPage>>
+  }> = []
   const lifecycle = createSecondsHistoryRequestLifecycle({
-    isAuthenticated: () => authenticated,
-    fetchOrders: (limit) => {
-      assert.equal(limit, 100)
-      const request = deferred<SecondsOrder[]>()
-      requests.push(request)
-      return request.promise
+    sessionToken: () => sessionToken,
+    sessionGeneration: () => sessionGeneration,
+    fetchPage: (request) => {
+      const pending = deferred<SecondsHistoryPage>()
+      requests.push({ request, pending })
+      return pending.promise
     },
   })
 
-  assert.deepEqual(await lifecycle.load(), { state: 'guest' })
+  assert.deepEqual(await lifecycle.load({ limit: 20, offset: 0 }), { state: 'guest' })
   assert.equal(requests.length, 0)
 
-  authenticated = true
-  const first = lifecycle.load()
-  const second = lifecycle.load()
-  requests[1].resolve([order(2, 'settled', 200)])
-  assert.deepEqual(await second, { state: 'loaded', orders: [order(2, 'settled', 200)] })
-  requests[0].resolve([order(1, 'settled', 100)])
+  sessionToken = 'TOKEN_A'
+  sessionGeneration = 1
+  const first = lifecycle.load({ limit: 20, offset: 0 })
+  const second = lifecycle.load({ limit: 20, offset: 20 })
+  assert.deepEqual(requests.map(({ request }) => request), [
+    { limit: 20, offset: 0 },
+    { limit: 20, offset: 20 },
+  ])
+  const secondPage = historyPage([order(2, 'settled', 200)], 20, true)
+  requests[1].pending.resolve(secondPage)
+  assert.deepEqual(await second, { state: 'loaded', page: secondPage })
+  requests[0].pending.resolve(historyPage([order(1, 'settled', 100)], 0, true))
   assert.deepEqual(await first, { state: 'stale' })
 
-  const beforeLogout = lifecycle.load()
-  authenticated = false
-  lifecycle.invalidate()
-  requests[2].resolve([order(3, 'settled', 300)])
-  assert.deepEqual(await beforeLogout, { state: 'stale' })
+  const beforeTokenAba = lifecycle.load({ limit: 20, offset: 40 })
+  sessionToken = 'TOKEN_B'
+  sessionGeneration = 2
+  sessionToken = 'TOKEN_A'
+  sessionGeneration = 3
+  requests[2].pending.resolve(historyPage([order(3, 'settled', 300)], 40, false))
+  assert.deepEqual(await beforeTokenAba, { state: 'stale' })
 
-  authenticated = true
-  const failed = lifecycle.load()
+  const failed = lifecycle.load({ limit: 20, offset: 20 })
   const failure = new Error('network down')
-  requests[3].reject(failure)
+  requests[3].pending.reject(failure)
   assert.deepEqual(await failed, { state: 'error', error: failure })
 
-  const retried = lifecycle.load()
-  requests[4].resolve([order(4, 'cancelled', 400)])
-  assert.deepEqual(await retried, { state: 'loaded', orders: [order(4, 'cancelled', 400)] })
+  const retried = lifecycle.load({ limit: 20, offset: 20 })
+  assert.deepEqual(requests[4].request, requests[3].request)
+  const retryPage = historyPage([order(4, 'cancelled', 400)], 20, false)
+  requests[4].pending.resolve(retryPage)
+  assert.deepEqual(await retried, { state: 'loaded', page: retryPage })
 
-  const beforeStop = lifecycle.load()
+  const beforeLogout = lifecycle.load({ limit: 20, offset: 40 })
+  sessionToken = ''
+  sessionGeneration = 4
+  requests[5].pending.resolve(historyPage([order(5, 'settled', 500)], 40, false))
+  assert.deepEqual(await beforeLogout, { state: 'stale' })
+
+  sessionToken = 'TOKEN_C'
+  sessionGeneration = 5
+  const beforeStop = lifecycle.load({ limit: 20, offset: 0 })
   lifecycle.stop()
-  requests[5].resolve([order(5, 'settled', 500)])
+  requests[6].pending.resolve(historyPage([order(6, 'settled', 600)], 0, false))
   assert.deepEqual(await beforeStop, { state: 'stale' })
-  assert.deepEqual(await lifecycle.load(), { state: 'stale' })
+  assert.deepEqual(await lifecycle.load({ limit: 20, offset: 0 }), { state: 'stale' })
+})
+
+test('历史分页按 ID 合并、后页覆盖，并在空页、终页或无新增 ID 时停止', () => {
+  const first = order(1, 'settled', 300, { result: 'loss' })
+  const staleSecond = order(2, 'settled', 200, { result: 'loss' })
+  const authoritativeSecond = order(2, 'settled', 200, { result: 'win' })
+  const duplicateThird = order(3, 'settled', 100, { result: 'loss' })
+  const authoritativeThird = order(3, 'settled', 100, { result: 'win' })
+
+  const merged = mergeSecondsHistoryOrderPage([first, staleSecond], {
+    orders: [authoritativeSecond, duplicateThird, authoritativeThird],
+    nextOffset: 5,
+    hasMore: true,
+  })
+  assert.deepEqual(merged.orders.map(({ id }) => id), [1, 2, 3])
+  assert.equal(merged.orders[1].result, 'win')
+  assert.equal(merged.orders[2].result, 'win')
+  assert.equal(merged.addedCount, 1)
+  assert.equal(merged.nextOffset, 5)
+  assert.equal(merged.hasMore, true)
+
+  const noProgress = mergeSecondsHistoryOrderPage(merged.orders, {
+    orders: [{ ...first, result: 'win' }],
+    nextOffset: 6,
+    hasMore: true,
+  })
+  assert.equal(noProgress.orders[0].result, 'win')
+  assert.equal(noProgress.addedCount, 0)
+  assert.equal(noProgress.hasMore, false)
+
+  assert.equal(mergeSecondsHistoryOrderPage(merged.orders, {
+    orders: [],
+    nextOffset: 5,
+    hasMore: true,
+  }).hasMore, false)
+  assert.equal(mergeSecondsHistoryOrderPage(merged.orders, {
+    orders: [order(4, 'settled', 50)],
+    nextOffset: 6,
+    hasMore: false,
+  }).hasMore, false)
+})
+
+test('历史分页控制器执行单飞追加、分层错误、同 offset 重试与无进展终止', async () => {
+  let sessionToken = 'TOKEN_A'
+  let sessionGeneration = 1
+  const requests: Array<{
+    request: { limit: number; offset: number }
+    pending: ReturnType<typeof deferred<SecondsHistoryPage>>
+  }> = []
+  const controller = createSecondsHistoryPaginationController({
+    sessionToken: () => sessionToken,
+    sessionGeneration: () => sessionGeneration,
+    fetchPage: (request) => {
+      const pending = deferred<SecondsHistoryPage>()
+      requests.push({ request, pending })
+      return pending.promise
+    },
+    pageSize: 20,
+  })
+
+  const initialFailure = new Error('initial unavailable')
+  const failedInitial = controller.loadInitial()
+  assert.equal(controller.snapshot().loading, true)
+  assert.deepEqual(requests[0].request, { limit: 20, offset: 0 })
+  requests[0].pending.reject(initialFailure)
+  assert.equal(await failedInitial, 'error')
+  assert.deepEqual(controller.snapshot(), {
+    orders: [],
+    loading: false,
+    loadingMore: false,
+    nextOffset: 0,
+    hasMore: false,
+    initialError: initialFailure,
+    appendError: null,
+  })
+
+  const first = order(1, 'settled', 300, { result: 'loss' })
+  const second = order(2, 'settled', 200, { result: 'loss' })
+  const retriedInitial = controller.loadInitial()
+  requests[1].pending.resolve(historyPage([first, second], 0, true))
+  assert.equal(await retriedInitial, 'loaded')
+  assert.deepEqual(controller.snapshot().orders.map(({ id }) => id), [1, 2])
+  assert.equal(controller.snapshot().nextOffset, 2)
+  assert.equal(controller.snapshot().hasMore, true)
+
+  const appendFailure = new Error('append unavailable')
+  const failedAppend = controller.loadMore()
+  assert.equal(controller.snapshot().loadingMore, true)
+  assert.deepEqual(requests[2].request, { limit: 20, offset: 2 })
+  assert.equal(await controller.loadMore(), 'ignored')
+  assert.equal(requests.length, 3)
+  requests[2].pending.reject(appendFailure)
+  assert.equal(await failedAppend, 'error')
+  assert.deepEqual(controller.snapshot().orders.map(({ id }) => id), [1, 2])
+  assert.equal(controller.snapshot().nextOffset, 2)
+  assert.equal(controller.snapshot().appendError, appendFailure)
+
+  const authoritativeSecond = order(2, 'settled', 200, { result: 'win' })
+  const third = order(3, 'settled', 100, { result: 'win' })
+  const retriedAppend = controller.retryLoadMore()
+  assert.equal(controller.snapshot().loadingMore, true)
+  assert.equal(controller.snapshot().appendError, appendFailure)
+  assert.deepEqual(requests[3].request, requests[2].request)
+  assert.equal(await controller.retryLoadMore(), 'ignored')
+  assert.equal(requests.length, 4)
+  requests[3].pending.resolve(historyPage([authoritativeSecond, third], 2, true))
+  assert.equal(await retriedAppend, 'loaded')
+  assert.deepEqual(controller.snapshot().orders.map(({ id }) => id), [1, 2, 3])
+  assert.equal(controller.snapshot().orders[1].result, 'win')
+  assert.equal(controller.snapshot().nextOffset, 4)
+  assert.equal(controller.snapshot().appendError, null)
+
+  const noProgressAppend = controller.loadMore()
+  requests[4].pending.resolve(historyPage([{ ...first, result: 'win' }], 4, true))
+  assert.equal(await noProgressAppend, 'loaded')
+  assert.equal(controller.snapshot().orders[0].result, 'win')
+  assert.equal(controller.snapshot().hasMore, false)
+  assert.equal(await controller.loadMore(), 'ignored')
+  assert.equal(requests.length, 5)
+
+  const beforeAba = controller.loadInitial()
+  sessionToken = 'TOKEN_B'
+  sessionGeneration = 2
+  sessionToken = 'TOKEN_A'
+  sessionGeneration = 3
+  controller.reset()
+  requests[5].pending.resolve(historyPage([order(4, 'settled', 400)], 0, false))
+  assert.equal(await beforeAba, 'stale')
+  assert.deepEqual(controller.snapshot().orders, [])
+  controller.stop()
+})
+
+test('历史页每页 20、Observer 连接控制器，筛选空态保留哨兵与可访问重试', () => {
+  assert.match(historySource, /const HISTORY_PAGE_SIZE = 20/)
+  assert.match(historySource, /sessionToken: \(\) => session\.token/)
+  assert.match(historySource, /sessionGeneration: \(\) => session\.generation/)
+  assert.match(historySource, /pageSize: HISTORY_PAGE_SIZE/)
+  assert.match(historySource, /paginationController\.loadInitial\(\)/)
+  assert.match(historySource, /paginationController\.loadMore\(\)/)
+  assert.match(historySource, /paginationController\.retryLoadMore\(\)/)
+  assert.match(historySource, /new IntersectionObserver\([\s\S]*?entry\.isIntersecting && entry\.target === historySentinel\.value[\s\S]*?loadMore\(\)[\s\S]*?rootMargin: '0px 0px 240px 0px'/)
+  assert.match(historyTemplate, /v-if="!loading && !error && hasMore"[\s\S]*?v-if="appendError"[\s\S]*?@click="retryLoadMore"[\s\S]*?ref="historySentinel"/)
+  assert.match(historyTemplate, /v-if="appendError"[\s\S]*?:aria-busy="loadingMore"[\s\S]*?:disabled="loadingMore"/)
+  assert.match(historyTemplate, /data-seconds-history-sentinel="observer"/)
+  assert.ok(
+    historyTemplate.indexOf('seconds-history-state--filtered')
+      < historyTemplate.indexOf('data-seconds-history-sentinel="observer"'),
+  )
+  assert.match(historySource, /watch\(\(\) => \[session\.token, session\.generation\] as const/)
+  assert.match(historySource, /intersectionObserver\?\.disconnect\(\)[\s\S]*?paginationController\.stop\(\)/)
 })
 
 test('历史页完整展示 API 字段且缺失结算价不使用实时价替代', () => {
@@ -497,6 +675,18 @@ function order(id: number, status: string, createdAt: number, overrides: Partial
     payoutRateText: merged.payoutRateText ?? normalizeDecimalText(String(merged.payoutRate)),
     entryPriceText: merged.entryPriceText ?? null,
     settlementPriceText: merged.settlementPriceText ?? null,
+  }
+}
+
+function historyPage(
+  orders: SecondsOrder[],
+  requestOffset: number,
+  hasMore: boolean,
+): SecondsHistoryPage {
+  return {
+    orders,
+    nextOffset: requestOffset + orders.length,
+    hasMore,
   }
 }
 

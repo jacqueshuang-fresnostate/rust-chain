@@ -534,11 +534,12 @@ pub(crate) async fn replace_product_cycles(
 /// 结果同时包含持仓、已结算和等待人工审核的订单，按创建时间倒序，并以订单主键倒序作为同一时刻的稳定次级排序。
 /// `email` 字段固定选为 NULL，用户侧接口不需要也不应回显账号邮箱。
 /// 只读走连接池、不加锁不入事务，返回的 `settlement_price` 与 `result` 对持仓或人工审核订单为空，
-/// 本函数不触发任何结算动作。
+/// LIMIT 与 OFFSET 都在用户过滤和全局排序之后生效；本函数不触发任何结算动作。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
     user_id: u64,
     limit: u32,
+    offset: u32,
 ) -> AppResult<Vec<SecondsContractOrderResponse>> {
     sqlx::query_as::<_, SecondsContractOrderResponse>(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
@@ -554,10 +555,11 @@ pub(crate) async fn list_user_orders(
            INNER JOIN assets ON assets.id = orders.stake_asset
            WHERE orders.user_id = ?
            ORDER BY orders.created_at DESC, orders.id DESC
-           LIMIT ?"#,
+           LIMIT ? OFFSET ?"#,
     )
     .bind(user_id)
     .bind(limit as i64)
+    .bind(offset as i64)
     .fetch_all(pool)
     .await
     .map_err(AppError::from)

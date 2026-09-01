@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "复核后端完整质量门"}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "复核用户订单分页响应与兼容性"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核分层、注释、测试与架构门禁"}
+{"file": ".trellis/spec/mobile/index.md", "reason": "复核 Mobile release gate"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "复核触底分页、会话 ABA 与追加错误语义"}
+{"file": ".trellis/tasks/09-01-mobile-seconds-history-pagination/research/current-pagination-flow.md", "reason": "复核已识别分页竞态与旧服务防循环边界"}

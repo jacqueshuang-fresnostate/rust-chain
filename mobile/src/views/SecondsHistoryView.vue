@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, CircleAlert, FileClock, LoaderCircle, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import { apiErrorMessage } from '@/api/client'
-import { fetchSecondsOrders, type SecondsOrder } from '@/api/seconds'
+import { fetchSecondsOrdersPage, type SecondsOrder } from '@/api/seconds'
 import { formatAmount, formatPrice } from '@/core/format'
 import { goBackOr } from '@/core/navigation'
 import {
-  createSecondsHistoryRequestLifecycle,
+  createSecondsHistoryPaginationController,
+  createSecondsHistoryPaginationState,
   filterSecondsHistoryOrdersByDirection,
   historicalSecondsOrders,
   secondsOrderProfitLossPresentation,
@@ -19,6 +20,7 @@ import {
 import { currentIntlLocale } from '@/i18n'
 import { useSessionStore } from '@/stores/session'
 
+const HISTORY_PAGE_SIZE = 20
 const HISTORY_DIRECTION_FILTERS: Array<{ value: SecondsHistoryDirectionFilter; labelKey: string }> = [
   { value: 'all', labelKey: 'seconds.historyFilterAll' },
   { value: 'up', labelKey: 'seconds.bullish' },
@@ -29,14 +31,28 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const { t } = useI18n()
-const orders = ref<SecondsOrder[]>([])
 const activeDirection = ref<SecondsHistoryDirectionFilter>('all')
-const loading = ref(session.isAuthenticated)
-const error = ref('')
-const requestLifecycle = createSecondsHistoryRequestLifecycle({
-  isAuthenticated: () => session.isAuthenticated,
-  fetchOrders: fetchSecondsOrders,
+const paginationState = ref(createSecondsHistoryPaginationState())
+const historySentinel = ref<HTMLElement | null>(null)
+let intersectionObserver: IntersectionObserver | null = null
+const paginationController = createSecondsHistoryPaginationController({
+  sessionToken: () => session.token,
+  sessionGeneration: () => session.generation,
+  fetchPage: fetchSecondsOrdersPage,
+  pageSize: HISTORY_PAGE_SIZE,
+  onChange: (state) => { paginationState.value = state },
 })
+
+const orders = computed(() => paginationState.value.orders)
+const loading = computed(() => paginationState.value.loading)
+const loadingMore = computed(() => paginationState.value.loadingMore)
+const hasMore = computed(() => paginationState.value.hasMore)
+const error = computed(() => paginationState.value.initialError === null
+  ? ''
+  : apiErrorMessage(paginationState.value.initialError, t('seconds.historyLoadFailed')))
+const appendError = computed(() => paginationState.value.appendError === null
+  ? ''
+  : apiErrorMessage(paginationState.value.appendError, t('seconds.historyLoadFailed')))
 
 const historyOrders = computed(() => historicalSecondsOrders(orders.value))
 const filteredHistoryOrders = computed(() => (
@@ -52,18 +68,40 @@ const historyState = computed(() => {
 })
 
 async function load(): Promise<void> {
-  loading.value = session.isAuthenticated
-  error.value = ''
-  const result = await requestLifecycle.load()
-  if (result.state === 'stale') return
-  if (result.state === 'guest') {
-    orders.value = []
-    loading.value = false
-    return
-  }
-  if (result.state === 'loaded') orders.value = result.orders
-  else error.value = apiErrorMessage(result.error, t('seconds.historyLoadFailed'))
-  loading.value = false
+  const result = await paginationController.loadInitial()
+  if (result === 'loaded') void rearmHistorySentinel()
+}
+
+async function loadMore(): Promise<void> {
+  const result = await paginationController.loadMore()
+  if (result === 'loaded') void rearmHistorySentinel()
+}
+
+function retryLoadMore(): void {
+  void paginationController.retryLoadMore().then((result) => {
+    if (result === 'loaded') void rearmHistorySentinel()
+  })
+}
+
+function resetPaginationState(): void {
+  activeDirection.value = 'all'
+  paginationController.reset()
+}
+
+function observeHistorySentinel(
+  current: HTMLElement | null,
+  previous: HTMLElement | null = null,
+): void {
+  if (previous) intersectionObserver?.unobserve(previous)
+  if (current) intersectionObserver?.observe(current)
+}
+
+async function rearmHistorySentinel(): Promise<void> {
+  await nextTick()
+  const sentinel = historySentinel.value
+  if (!sentinel || !intersectionObserver || !hasMore.value) return
+  intersectionObserver.unobserve(sentinel)
+  intersectionObserver.observe(sentinel)
 }
 
 function closeHistory(): void {
@@ -117,20 +155,29 @@ function formatHistoryTime(value: unknown): string {
   return month && day && hour && minute ? `${month}/${day} ${hour}:${minute}` : '--'
 }
 
-watch(() => session.isAuthenticated, (authenticated) => {
-  requestLifecycle.invalidate()
-  if (authenticated) {
-    void load()
-    return
-  }
-  orders.value = []
-  activeDirection.value = 'all'
-  loading.value = false
-  error.value = ''
+watch(() => [session.token, session.generation] as const, ([token]) => {
+  resetPaginationState()
+  if (token) void load()
+}, { immediate: true })
+
+watch(historySentinel, (current, previous) => {
+  observeHistorySentinel(current, previous)
 })
 
-onMounted(() => { void load() })
-onBeforeUnmount(() => requestLifecycle.stop())
+onMounted(() => {
+  if (typeof IntersectionObserver === 'undefined') return
+  intersectionObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => (
+      entry.isIntersecting && entry.target === historySentinel.value
+    ))) void loadMore()
+  }, { rootMargin: '0px 0px 240px 0px' })
+  observeHistorySentinel(historySentinel.value)
+})
+onBeforeUnmount(() => {
+  intersectionObserver?.disconnect()
+  intersectionObserver = null
+  paginationController.stop()
+})
 </script>
 
 <template>
@@ -140,7 +187,7 @@ onBeforeUnmount(() => requestLifecycle.stop())
     data-seconds-history="dedicated"
     data-responsive-range="320-448"
     :data-history-state="historyState"
-    :aria-busy="session.isAuthenticated && loading"
+    :aria-busy="session.isAuthenticated && (loading || loadingMore)"
   >
     <header class="seconds-history-header">
       <button
@@ -281,6 +328,33 @@ onBeforeUnmount(() => requestLifecycle.stop())
           <strong>{{ t('seconds.historyEmptyTitle') }}</strong>
           <p>{{ t('seconds.historyEmptyDescription') }}</p>
         </section>
+
+        <div v-if="!loading && !error && hasMore" class="seconds-history-pagination">
+          <section
+            v-if="appendError"
+            class="seconds-history-pagination__error"
+            role="alert"
+            :aria-busy="loadingMore"
+          >
+            <strong>{{ t('common.serviceUnavailable') }}</strong>
+            <p>{{ appendError }}</p>
+            <button type="button" :disabled="loadingMore" @click="retryLoadMore">
+              <LoaderCircle v-if="loadingMore" :size="17" class="spin" aria-hidden="true" />
+              <RefreshCw v-else :size="17" aria-hidden="true" />
+              <span>{{ t(loadingMore ? 'seconds.historyLoading' : 'common.retry') }}</span>
+            </button>
+          </section>
+          <div
+            v-else
+            ref="historySentinel"
+            class="seconds-history-pagination__sentinel"
+            data-seconds-history-sentinel="observer"
+            role="status"
+          >
+            <LoaderCircle v-if="loadingMore" :size="20" class="spin" aria-hidden="true" />
+            <span v-if="loadingMore">{{ t('seconds.historyLoading') }}</span>
+          </div>
+        </div>
       </template>
     </div>
   </main>
@@ -349,7 +423,8 @@ onBeforeUnmount(() => requestLifecycle.stop())
 
 .seconds-history-back:focus-visible,
 .seconds-history-filter:focus-visible,
-.seconds-history-state--error button:focus-visible {
+.seconds-history-state--error button:focus-visible,
+.seconds-history-pagination__error button:focus-visible {
   box-shadow: 0 0 0 3px var(--focus-ring);
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -618,6 +693,64 @@ onBeforeUnmount(() => requestLifecycle.stop())
 }
 
 .seconds-history-state--error button {
+  align-items: center;
+  background: var(--history-filter-inactive);
+  border: 0;
+  border-radius: 10px;
+  color: var(--history-positive);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 7px;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 96px;
+  padding: 0 16px;
+}
+
+.seconds-history-pagination {
+  display: grid;
+  min-height: 64px;
+  place-items: center;
+}
+
+.seconds-history-pagination__sentinel {
+  align-items: center;
+  color: var(--history-summary);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  justify-content: center;
+  min-height: 64px;
+  width: 100%;
+}
+
+.seconds-history-pagination__error {
+  align-items: center;
+  background: var(--history-card);
+  border-radius: 16px;
+  box-sizing: border-box;
+  color: var(--history-summary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 112px;
+  padding: 14px 16px;
+  text-align: center;
+  width: 100%;
+}
+
+.seconds-history-pagination__error strong {
+  color: var(--history-negative);
+  font-size: 14px;
+}
+
+.seconds-history-pagination__error p {
+  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.seconds-history-pagination__error button {
   align-items: center;
   background: var(--history-filter-inactive);
   border: 0;

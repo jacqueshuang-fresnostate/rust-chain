@@ -26,14 +26,14 @@ use super::{
     presentation::{
         AdminOrdersQuery, AdminProductsQuery, AdminSecondsContractOrdersResponse,
         AdminSecondsContractProductsResponse, CreateSecondsContractProductRequest,
-        DeleteSecondsContractProductRequest, ListQuery, OpenSecondsContractOrderRequest,
-        OpenSecondsContractOrderResponse, SecondsContractOrderResponse,
-        SecondsContractOrdersResponse, SecondsContractProductResponse,
-        SecondsContractProductsResponse, SettleSecondsContractOrderRequest,
-        SettleSecondsContractOrderResponse, UpdateSecondsContractProductRequest,
-        UpdateSecondsContractProductStatusRequest,
+        DeleteSecondsContractProductRequest, ListOrdersQuery, ListQuery,
+        OpenSecondsContractOrderRequest, OpenSecondsContractOrderResponse,
+        SecondsContractOrderResponse, SecondsContractOrdersResponse,
+        SecondsContractProductResponse, SecondsContractProductsResponse,
+        SettleSecondsContractOrderRequest, SettleSecondsContractOrderResponse,
+        UpdateSecondsContractProductRequest, UpdateSecondsContractProductStatusRequest,
     },
-    service::{admin_id_from_subject, route_limit, user_id_from_subject},
+    service::{admin_id_from_subject, route_limit, route_offset, user_id_from_subject},
 };
 use crate::{
     error::AppResult,
@@ -123,16 +123,22 @@ async fn get_admin_product(
 
 /// 处理用户查询自己秒合约订单历史的请求，同时返回持仓中和已结算的订单。
 /// 用户编号只从令牌 subject 解析，请求参数无法指定他人编号，从源头杜绝越权查看。
-/// 条数经 `route_limit` 归一，本接口不支持偏移分页，只能按最新若干条查看。
+/// 条数与偏移分别经统一规则归一；未传偏移时按零处理，保持旧客户端读取第一页的行为。
 async fn list_orders(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
+    Query(query): Query<ListOrdersQuery>,
 ) -> AppResult<Json<SecondsContractOrdersResponse>> {
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     Ok(Json(
-        list_user_orders_use_case(&pool, user_id, route_limit(query.limit)).await?,
+        list_user_orders_use_case(
+            &pool,
+            user_id,
+            route_limit(query.limit),
+            route_offset(query.offset),
+        )
+        .await?,
     ))
 }
 
