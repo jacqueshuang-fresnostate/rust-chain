@@ -165,6 +165,15 @@ async fn create_user_with_email(pool: &MySqlPool, email: String) -> u64 {
         .last_insert_id()
 }
 
+async fn create_user_without_email(pool: &MySqlPool) -> u64 {
+    sqlx::query("INSERT INTO users (password_hash) VALUES (?)")
+        .bind("not-a-real-hash")
+        .execute(pool)
+        .await
+        .unwrap()
+        .last_insert_id()
+}
+
 async fn create_user_with_login_password(pool: &MySqlPool, password: &str) -> (u64, String) {
     let email = format!("admin-route-login-{}@example.test", Uuid::now_v7().simple());
     let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
@@ -268,6 +277,7 @@ struct AdminMarginLiquidationFixture {
     base_asset: u64,
     margin_asset: u64,
     pair_id: u64,
+    symbol: String,
     product_id: u64,
     position_id: u64,
 }
@@ -280,6 +290,7 @@ async fn seed_margin_liquidation_record(
 ) -> AdminMarginLiquidationFixture {
     let (base_asset, base_symbol) = create_asset_with_symbol(pool, &format!("{prefix}B")).await;
     let (margin_asset, quote_symbol) = create_asset_with_symbol(pool, &format!("{prefix}Q")).await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
     let pair_id = sqlx::query(
         r#"INSERT INTO trading_pairs
            (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
@@ -287,7 +298,7 @@ async fn seed_margin_liquidation_record(
     )
     .bind(base_asset)
     .bind(margin_asset)
-    .bind(format!("{base_symbol}-{quote_symbol}"))
+    .bind(&symbol)
     .bind(decimal("1.000000000000000000"))
     .execute(pool)
     .await
@@ -364,6 +375,7 @@ async fn seed_margin_liquidation_record(
         base_asset,
         margin_asset,
         pair_id,
+        symbol,
         product_id,
         position_id,
     }
@@ -13806,7 +13818,7 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
         Uuid::now_v7().simple()
     );
     let user_id = create_user_with_email(&pool, user_email.clone()).await;
-    let other_user_id = create_user(&pool).await;
+    let other_user_id = create_user_without_email(&pool).await;
     let now = chrono::Utc
         .with_ymd_and_hms(2026, 5, 29, 16, 30, 45)
         .unwrap();
@@ -13840,13 +13852,16 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
         StatusCode::OK,
         "payload: {filtered_payload}"
     );
+    assert_eq!(filtered_payload["total"], 1);
     let liquidations = filtered_payload["liquidations"].as_array().unwrap();
     assert_eq!(liquidations.len(), 1);
     assert_eq!(liquidations[0]["id"], target.record_id);
     assert_eq!(liquidations[0]["position_id"], target.position_id);
     assert_eq!(liquidations[0]["user_id"], user_id);
+    assert_eq!(liquidations[0]["email"], user_email);
     assert_eq!(liquidations[0]["product_id"], target.product_id);
     assert_eq!(liquidations[0]["pair_id"], target.pair_id);
+    assert_eq!(liquidations[0]["symbol"], target.symbol);
     assert_eq!(liquidations[0]["margin_asset"], target.margin_asset);
     assert_eq!(liquidations[0]["direction"], "long");
     assert_eq!(liquidations[0]["margin_amount"], "20.000000000000000000");
@@ -13885,8 +13900,10 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
     assert_eq!(detail_payload["id"], target.record_id);
     assert_eq!(detail_payload["position_id"], target.position_id);
     assert_eq!(detail_payload["user_id"], user_id);
+    assert_eq!(detail_payload["email"], user_email);
     assert_eq!(detail_payload["product_id"], target.product_id);
     assert_eq!(detail_payload["pair_id"], target.pair_id);
+    assert_eq!(detail_payload["symbol"], target.symbol);
     assert_eq!(detail_payload["margin_asset"], target.margin_asset);
     assert_eq!(detail_payload["direction"], "long");
     assert_eq!(detail_payload["margin_amount"], "20.000000000000000000");
@@ -13902,6 +13919,37 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
     assert_eq!(detail_payload["reason"], "maintenance_margin");
     assert_eq!(detail_payload["liquidated_at"], now.timestamp_millis());
     assert!(detail_payload["created_at"].as_i64().is_some());
+    assert_eq!(detail_payload, liquidations[0]);
+
+    for filter in [
+        format!("user_id={user_id}"),
+        format!("email={user_email}"),
+        format!("pair_id={}", target.pair_id),
+        format!("position_id={}", target.position_id),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/admin/api/v1/margin/liquidations?{filter}&limit=10"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status, StatusCode::OK, "filter {filter}: {payload}");
+        assert_eq!(payload["total"], 1, "filter {filter}: {payload}");
+        let rows = payload["liquidations"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "filter {filter}: {payload}");
+        assert_eq!(
+            rows[0]["id"], target.record_id,
+            "filter {filter}: {payload}"
+        );
+    }
 
     let unknown_detail = app
         .clone()
@@ -13915,26 +13963,76 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
         .await?;
     assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
 
-    let all = app
+    assert!(other.record_id > target.record_id);
+    let first_page = app
+        .clone()
         .oneshot(
             Request::builder()
-                .uri("/admin/api/v1/margin/liquidations?limit=2")
+                .uri("/admin/api/v1/margin/liquidations?limit=1&offset=0")
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await?;
-    let all_status = all.status();
-    let all_payload = body_json(all).await?;
-    assert_eq!(all_status, StatusCode::OK, "payload: {all_payload}");
-    assert_eq!(all_payload["liquidations"].as_array().unwrap().len(), 2);
-    assert!(
-        all_payload["liquidations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|record| record["id"] == other.record_id)
+    let first_page_status = first_page.status();
+    let first_page_payload = body_json(first_page).await?;
+    assert_eq!(
+        first_page_status,
+        StatusCode::OK,
+        "payload: {first_page_payload}"
     );
+    assert_eq!(first_page_payload["total"], 2);
+    let first_page_liquidations = first_page_payload["liquidations"].as_array().unwrap();
+    assert_eq!(first_page_liquidations.len(), 1);
+    let other_liquidation = &first_page_liquidations[0];
+    assert_eq!(other_liquidation["id"], other.record_id);
+    assert!(other_liquidation["email"].is_null());
+    assert_eq!(other_liquidation["symbol"], other.symbol);
+
+    let second_page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/margin/liquidations?limit=1&offset=1")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let second_page_status = second_page.status();
+    let second_page_payload = body_json(second_page).await?;
+    assert_eq!(
+        second_page_status,
+        StatusCode::OK,
+        "payload: {second_page_payload}"
+    );
+    assert_eq!(second_page_payload["total"], 2);
+    let second_page_liquidations = second_page_payload["liquidations"].as_array().unwrap();
+    assert_eq!(second_page_liquidations.len(), 1);
+    assert_eq!(second_page_liquidations[0]["id"], target.record_id);
+    assert_eq!(second_page_liquidations[0]["email"], user_email);
+    assert_eq!(second_page_liquidations[0]["symbol"], target.symbol);
+
+    let other_detail = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/margin/liquidations/{}",
+                    other.record_id
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let other_detail_status = other_detail.status();
+    let other_detail_payload = body_json(other_detail).await?;
+    assert_eq!(
+        other_detail_status,
+        StatusCode::OK,
+        "payload: {other_detail_payload}"
+    );
+    assert_eq!(other_detail_payload, *other_liquidation);
 
     delete_margin_liquidation_fixture(&pool, &[target, other], &[user_id, other_user_id]).await?;
     Ok(())

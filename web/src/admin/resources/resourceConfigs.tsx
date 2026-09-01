@@ -82,6 +82,7 @@ const assetFilter: FilterField = { key: 'asset_id', label: '资产ID' };
 
 const orderNoColumn = (prefix: string, title = '订单号'): AdminResourceColumn<ApiRecord> => ({
   key: 'order_no',
+  source: 'derived',
   title,
   render: (record) => <span>{formatBusinessOrderNo(prefix, record)}</span>
 });
@@ -1328,9 +1329,8 @@ export const resourceConfigs = {
     filters: [userFilter, emailFilter, pairFilter, { key: 'position_id', label: '仓位ID' }, limitFilter],
     rowActions: (record, helpers) => <MarginLiquidationRowActions helpers={helpers} record={record} />,
     columns: [
-      { key: 'id', title: '记录ID' },
-      { key: 'position_id', title: '仓位ID' },
-      { key: 'user_id', title: '用户ID' },
+      { key: 'email', title: '邮箱' },
+      { key: 'symbol', title: '交易对' },
       { key: 'mark_price', title: '标记价', type: 'amount' },
       { key: 'equity', title: '权益', type: 'amount' },
       { key: 'interest_amount', title: '累计利息', type: 'amount' },

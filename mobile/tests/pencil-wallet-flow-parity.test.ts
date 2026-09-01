@@ -27,7 +27,7 @@ test('钱包流程声明当前选中浅色与深色 Pencil 画板', () => {
     depositDetail: 'w5htG TCN5A',
     withdrawAsset: 'NGBmq h0WWYC',
     withdraw: 'Qa9dW o8Wsh',
-    ledger: 'y6Y7TW m25xr0 Bcug6 IVMAO',
+    ledger: 'y6Y7TW m25xr0',
     withdrawalRecords: 'DxqMB G3HecO',
     quickRecharge: 'CyRqi cM0eg',
   }
@@ -47,7 +47,8 @@ test('钱包流程声明当前选中浅色与深色 Pencil 画板', () => {
 test('钱包白色与纯黑画布规则位于全局构建入口且 scoped 编译不再吞掉暗色选择器', () => {
   assert.match(mainSource, /import '\.\/styles\/pencil-selected-pages\.css'/)
   assert.match(selectedPageCss, /\.wallet-pencil-page\s*\{[\s\S]*?--page: #ffffff;[\s\S]*?background: var\(--page\);/)
-  assert.match(selectedPageCss, /html\[data-theme='dark'\] \.wallet-pencil-page\s*\{[\s\S]*?--page: #000000;[\s\S]*?background: var\(--page\);/)
+  assert.match(selectedPageCss, /\.wallet-pencil-page\s*\{[\s\S]*?--muted: #7a8b80;[\s\S]*?--page: #ffffff;[\s\S]*?background: var\(--page\);/)
+  assert.match(selectedPageCss, /html\[data-theme='dark'\] \.wallet-pencil-page\s*\{[\s\S]*?--page: #000000;[\s\S]*?--muted: #7a8b80;[\s\S]*?background: var\(--page\);/)
   assert.match(selectedPageCss, /html\[data-theme='dark'\] \.wallet-pencil-page \.deposit-detail__qr\s*\{[\s\S]*?filter: invert\(1\);/)
 
   const globalBuildCss = compileStyle({
@@ -134,12 +135,21 @@ test('提币表单保留真实网络、余额、完整字段焦点、验证和�
 })
 
 test('账单、提币记录和快捷充值按连续列表映射且只消费真实返回数据', () => {
-  assert.match(sources.ledger, /\.ledger-filter \{[\s\S]*?min-height: 44px/)
-  assert.match(sources.ledger, /\.ledger-filter button \{[\s\S]*?height: 44px[\s\S]*?min-height: 44px/)
-  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?min-height: 84px/)
-  assert.match(sources.ledger, /createWalletLedgerRequestLifecycle\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
-  assert.match(sources.ledger, /groupWalletLedgerEntries\(entries\.value\)/)
-  assert.match(sources.ledger, /v-if="decimalSign\(entry\.fee\) > 0"/)
+  assert.match(sources.ledger, /\.ledger-filter-bar \{[\s\S]*?gap: 8px/)
+  assert.match(sources.ledger, /\.ledger-filter-trigger \{[\s\S]*?height: 28px/)
+  assert.match(sources.ledger, /\.ledger-filter-trigger \{[\s\S]*?min-height: 28px/)
+  assert.match(sources.ledger, /\.ledger-filter-trigger::before \{[\s\S]*?inset: -8px 0/)
+  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?height: 56px/)
+  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?min-height: 56px/)
+  assert.match(sources.ledger, /\.ledger-row__copy,[\s\S]*?gap: 3px/)
+  assert.match(sources.ledger, /\.ledger-list \{[\s\S]*?gap: 0/)
+  assert.match(sources.ledger, /createWalletLedgerPaginationController\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
+  assert.match(sources.ledger, /walletAssetSymbols\.value = \[\.\.\.new Set\(accounts\.map/)
+  assert.match(sources.ledger, /v-for="entry in entries"/)
+  assert.match(sources.ledger, /useModalDialog\(filterSheetOpen, filterDialog/)
+  assert.doesNotMatch(sources.ledger, /ledger-account-filter|ledger-group__header|groupWalletLedgerEntries/)
+  assert.doesNotMatch(sources.ledger, /<span class="sr-only">\{\{ entryAccessibleDetails\(entry\) \}\}<\/span>/)
+  assert.doesNotMatch(sources.ledger, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
 
   assert.match(sources.withdrawalRecords, /const recordFilters: RecordFilter\[\] = \['all', 'processing', 'completed', 'failed'\]/)
   assert.match(sources.withdrawalRecords, /const filteredRecords = computed/)

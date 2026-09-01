@@ -5,7 +5,7 @@ use super::{
 use crate::modules::wallet::{
     infrastructure::{
         ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerAccountType,
-        WalletLedgerCategory,
+        WalletLedgerCategory, WalletLedgerDirection,
     },
     presentation::{TodayReturnStatus, WalletLedgerQuery},
 };
@@ -46,12 +46,39 @@ fn wallet_ledger_query(category: Option<&str>) -> WalletLedgerQuery {
         change_type: None,
         category: category.map(str::to_owned),
         account_type: None,
+        direction: None,
         ref_type: None,
         ref_id: None,
         start_time: None,
         end_time: None,
         limit: None,
         offset: None,
+    }
+}
+
+#[test]
+fn wallet_ledger_direction_accepts_only_all_credit_and_debit() {
+    for expected in WalletLedgerDirection::ALL {
+        let mut query = wallet_ledger_query(None);
+        query.direction = Some(expected.as_str().to_owned());
+        let filter = build_wallet_ledger_filter(query).expect("supported direction must pass");
+        assert_eq!(filter.direction, expected);
+    }
+
+    assert_eq!(
+        build_wallet_ledger_filter(wallet_ledger_query(None))
+            .expect("omitted direction must mean all")
+            .direction,
+        WalletLedgerDirection::All
+    );
+
+    for direction in ["", "ALL", "income", "out", "refund"] {
+        let mut query = wallet_ledger_query(None);
+        query.direction = Some(direction.to_owned());
+        assert!(
+            build_wallet_ledger_filter(query).is_err(),
+            "unsupported direction must fail validation: {direction}"
+        );
     }
 }
 
@@ -115,6 +142,7 @@ fn wallet_ledger_filter_keeps_existing_exact_filters_compatible() {
         change_type: Some(" spot_trade_settlement ".to_owned()),
         category: Some(" spot ".to_owned()),
         account_type: Some(" margin ".to_owned()),
+        direction: Some(" credit ".to_owned()),
         ref_type: Some(" spot_trade ".to_owned()),
         ref_id: Some(" 100:200 ".to_owned()),
         start_time: Some(" 2026-08-01T00:00:00Z ".to_owned()),
@@ -129,12 +157,64 @@ fn wallet_ledger_filter_keeps_existing_exact_filters_compatible() {
     assert_eq!(filter.change_type.as_deref(), Some("spot_trade_settlement"));
     assert_eq!(filter.category, Some(WalletLedgerCategory::Spot));
     assert_eq!(filter.account_type, WalletLedgerAccountType::Margin);
+    assert_eq!(filter.direction, WalletLedgerDirection::Credit);
     assert_eq!(filter.ref_type.as_deref(), Some("spot_trade"));
     assert_eq!(filter.ref_id.as_deref(), Some("100:200"));
-    assert_eq!(filter.start_time.as_deref(), Some("2026-08-01T00:00:00Z"));
-    assert_eq!(filter.end_time.as_deref(), Some("2026-08-10T00:00:00Z"));
+    assert_eq!(
+        filter.start_time,
+        Some(Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap())
+    );
+    assert_eq!(
+        filter.end_time,
+        Some(Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap())
+    );
     assert_eq!(filter.limit, 100);
     assert_eq!(filter.offset, 100_000);
+}
+
+#[test]
+fn wallet_ledger_filter_normalizes_offsets_and_mysql_text_to_utc() {
+    let mut offset_query = wallet_ledger_query(None);
+    offset_query.start_time = Some("2026-09-01T08:15:30.123456+08:00".to_owned());
+    offset_query.end_time = Some("2026-09-01T09:15:30.123456+08:00".to_owned());
+    let offset_filter = build_wallet_ledger_filter(offset_query).unwrap();
+    assert_eq!(
+        offset_filter.start_time,
+        Some(
+            Utc.with_ymd_and_hms(2026, 9, 1, 0, 15, 30).unwrap() + TimeDelta::microseconds(123_456)
+        )
+    );
+    assert_eq!(
+        offset_filter.end_time,
+        Some(
+            Utc.with_ymd_and_hms(2026, 9, 1, 1, 15, 30).unwrap() + TimeDelta::microseconds(123_456)
+        )
+    );
+
+    let mut mysql_query = wallet_ledger_query(None);
+    mysql_query.start_time = Some("2026-09-01 00:00:00.654321".to_owned());
+    let mysql_filter = build_wallet_ledger_filter(mysql_query).unwrap();
+    assert_eq!(
+        mysql_filter.start_time,
+        Some(Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap() + TimeDelta::microseconds(654_321))
+    );
+}
+
+#[test]
+fn wallet_ledger_filter_rejects_invalid_or_reversed_time_ranges() {
+    for value in ["2026-02-30T00:00:00Z", "2026-09-01", "not-a-date"] {
+        let mut query = wallet_ledger_query(None);
+        query.start_time = Some(value.to_owned());
+        assert!(
+            build_wallet_ledger_filter(query).is_err(),
+            "invalid date must fail before SQL: {value}"
+        );
+    }
+
+    let mut reversed = wallet_ledger_query(None);
+    reversed.start_time = Some("2026-09-02T00:00:00Z".to_owned());
+    reversed.end_time = Some("2026-09-01T23:59:59Z".to_owned());
+    assert!(build_wallet_ledger_filter(reversed).is_err());
 }
 
 #[test]

@@ -43,7 +43,7 @@ function idToken(value: unknown): string {
 }
 
 export function formatBusinessOrderNo(prefix: string, record: ApiRecord): string {
-  const existing = valueText(record.order_no ?? record.orderNo);
+  const existing = valueText(record.order_no) || valueText(record.orderNo);
   if (existing) {
     return existing;
   }

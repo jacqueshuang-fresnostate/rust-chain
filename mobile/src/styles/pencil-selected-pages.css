@@ -79,12 +79,9 @@ html[data-theme='dark'] .app-stage .mobile-canvas .language-page {
   background: #000000;
 }
 
-/*
- * Wallet pages are selected on a white/black canvas rather than the shared
- * off-white secondary canvas.  Keep this rule global: Vue's scoped-style
- * transform does not reliably emit a selector rooted at html[data-theme].
- */
+/* Wallet pages keep a global white/black canvas because scoped theme roots are unreliable. */
 .wallet-pencil-page {
+  --wallet-ledger-muted: #7a8b80; --muted: #7a8b80;
   --page: #ffffff;
   --surface: #ffffff;
   background: var(--page);
@@ -94,10 +91,13 @@ html[data-theme='dark'] .app-stage .mobile-canvas .language-page {
 
 html[data-theme='dark'] .wallet-pencil-page {
   --page: #000000;
-  --surface: #000000;
+  --surface: #000000; --muted: #7a8b80;
   background: var(--page);
 }
 
+.ledger-filter-sheet {
+  --wallet-ledger-muted: #7a8b80;
+}
 html[data-theme='dark'] .wallet-pencil-page .deposit-detail__qr {
   filter: invert(1);
 }

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AdminResourcePage, toCsv, type AdminResourceColumn } from './AdminResourcePage';
+import { AdminResourcePage, buildAdminResourceRowContract, toCsv, type AdminResourceColumn } from './AdminResourcePage';
 import { listAdminResource } from '../../api/adminResources';
 
 vi.mock('../../api/adminResources', () => ({
@@ -68,6 +68,49 @@ const columns: Array<AdminResourceColumn<TestRecord>> = [
 describe('AdminResourcePage', () => {
   beforeEach(() => {
     listAdminResourceMock.mockReset();
+  });
+
+  it('builds the strict response contract from API columns only', () => {
+    const rowContract = buildAdminResourceRowContract<TestRecord>([
+      { key: 'id', title: 'ID' },
+      { key: 'name', source: 'api', title: '名称' },
+      { key: 'amount', title: '数量', type: 'amount' },
+      { key: 'total_balance', source: 'derived', title: '展示余额', type: 'amount' }
+    ]);
+
+    expect(rowContract).toEqual({
+      decimalFields: ['amount'],
+      requiredFields: ['id', 'name', 'amount']
+    });
+  });
+
+  it('passes the API-only row contract to the list boundary and renders a missing derived field', async () => {
+    const derivedColumns: Array<AdminResourceColumn<TestRecord>> = [
+      { key: 'id', title: 'ID' },
+      { key: 'amount', title: '数量', type: 'amount' },
+      {
+        key: 'total_balance',
+        source: 'derived',
+        title: '展示余额',
+        type: 'amount',
+        render: (record) => <span>合计 {record.amount}</span>
+      }
+    ];
+    listAdminResourceMock.mockResolvedValueOnce({
+      rows: [{ id: 1, name: '派生字段', enabled: true, amount: '2.5', created_at: 1_735_732_800_000 }],
+      raw: { items: [] }
+    });
+
+    render(<AdminResourcePage<TestRecord> title="派生字段资源" endpoint="/admin/derived" responseKey="items" columns={derivedColumns} />);
+
+    expect(await screen.findByText('合计 2.5')).toBeInTheDocument();
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/derived', 'items', {}, {
+      rowContract: {
+        decimalFields: ['amount'],
+        requiredFields: ['id', 'amount']
+      },
+      signal: expect.any(AbortSignal)
+    });
   });
 
   it('loads and renders resource rows with shared formatters without static helper copy', async () => {

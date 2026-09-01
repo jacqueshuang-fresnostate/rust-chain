@@ -271,3 +271,93 @@ GET/PATCH response: product_id, margin_mode, leverage, long_leverage, short_leve
 - Migration tests execute the exact `0120` SQL against a legacy fixture and assert nullable `DECIMAL(18,8)` metadata, exact backfill, and both positive checks.
 - Route round-trip tests cover legacy and directional PATCH, GET readback, legacy-long synchronization, invalid-shape pre-write rejection, one-invalid-side atomic rollback, mode preservation, and user isolation.
 - When MySQL is unavailable, integration branches may skip explicitly, but the migration contract and route target must still compile.
+
+## Scenario: Admin Liquidation Evidence Projection
+
+### 1. Scope / Trigger
+
+- Trigger: changing the Admin margin-liquidation list/detail DTO or the query
+  used by `/admin/api/v1/margin/liquidations`.
+- This projection is read-only evidence after liquidation. It must not rerun
+  risk evaluation, settlement, wallet mutation, or position transitions.
+
+### 2. Signatures
+
+```text
+GET /admin/api/v1/margin/liquidations?user_id&email&pair_id&position_id&limit&offset
+GET /admin/api/v1/margin/liquidations/:id
+
+AdminMarginLiquidationResponse {
+  id, position_id, user_id,
+  email: string | null,
+  product_id, pair_id,
+  symbol: string,
+  ...immutable liquidation snapshot fields
+}
+```
+
+### 3. Contracts
+
+- List and detail share one DTO and one row query, so `email`, `symbol`, IDs,
+  amounts, reason, and timestamps cannot drift between the two endpoints.
+- `email` comes from the record's user foreign key and remains null when the
+  user has no email. Never synthesize a phone, user ID, or placeholder in the
+  API response.
+- `symbol` comes from the record's trading-pair foreign key and is non-null.
+  Do not reconstruct it from current asset-directory requests in the client.
+- The additive fields do not remove `id`, `position_id`, or `user_id`; Admin
+  row actions and existing integrations may still require those identifiers.
+- Qualify liquidation columns after joining `users` and `trading_pairs`.
+  COUNT uses the same user/email/pair/position predicates and pagination still
+  orders by `liquidation.id DESC` before applying offset/limit.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| User email is null | Serialize `email: null`; retain the record |
+| Pair relation resolves | Serialize the stored pair `symbol` |
+| Requested liquidation ID is absent | Existing `NOT_FOUND` behavior |
+| Database/JOIN mapping fails | Existing database error; never return a partial fabricated row |
+| One filter is present | Apply it identically to rows and total |
+| No filter is present | Stable `id DESC` pagination with the full matching total |
+
+### 5. Good / Base / Bad Cases
+
+- Good: an administrator sees a nullable email and `BTC-USDT` while hidden IDs
+  remain available to open the exact detail record.
+- Base: old consumers ignore the two additive fields and continue reading the
+  unchanged snapshot and identifier fields.
+- Bad: remove IDs from the response because the table hides them; this breaks
+  detail actions and compatibility.
+- Bad: fetch users and trading pairs once per rendered row; this introduces
+  N+1 requests, cache races, and display drift.
+
+### 6. Tests Required
+
+- MySQL route tests seed records with and without email, assert list/detail
+  equality, email/symbol values, old IDs, every existing filter, total,
+  offset/limit, and deterministic `id DESC` ordering.
+- Admin row-contract tests require both keys while accepting `email: null`.
+- Render tests assert the two business columns, hidden internal-ID headers,
+  shared null presentation, and detail lookup through the hidden record ID.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+SELECT liquidation.* FROM margin_liquidation_records liquidation;
+-- The client then performs per-row user and pair lookups.
+```
+
+#### Correct
+
+```sql
+SELECT liquidation.id, liquidation.position_id, liquidation.user_id,
+       liquidation_user.email, liquidation.pair_id, liquidation_pair.symbol, ...
+FROM margin_liquidation_records AS liquidation
+JOIN users AS liquidation_user ON liquidation_user.id = liquidation.user_id
+JOIN trading_pairs AS liquidation_pair ON liquidation_pair.id = liquidation.pair_id
+ORDER BY liquidation.id DESC;
+```

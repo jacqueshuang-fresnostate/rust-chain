@@ -126,6 +126,14 @@ async fn mysql_pool() -> Option<MySqlPool> {
 
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
+        .after_connect(|connection, _metadata| {
+            Box::pin(async move {
+                sqlx::query("SET time_zone = '+00:00'")
+                    .execute(&mut *connection)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(&database_url)
         .await
         .unwrap();
@@ -513,6 +521,14 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (asset_id, asset_logo_url) = create_asset(&pool).await;
+    sqlx::query("UPDATE assets SET precision_scale = 6 WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    let asset_symbol: String = sqlx::query_scalar("SELECT symbol FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .fetch_one(&pool)
+        .await?;
     let ref_id = format!("wallet-route-{}", Uuid::now_v7().simple());
     let convert_quote_id = format!("wallet-convert-{}", Uuid::now_v7().simple());
     let recharge_ref_id = format!("wallet-recharge-{}", Uuid::now_v7().simple());
@@ -652,6 +668,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(ledger["entries"][0]["ref_id"], ref_id);
     assert_eq!(ledger["entries"][0]["category"], "funding");
     assert_eq!(ledger["entries"][0]["account_type"], "spot");
+    assert_eq!(ledger["entries"][0]["precision_scale"], 6);
     assert_eq!(ledger["entries"][0]["amount"], "12.500000000000000000");
     assert_eq!(
         decimal(ledger["entries"][0]["fee"].as_str().unwrap()),
@@ -837,6 +854,34 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
         account_types,
         std::collections::BTreeSet::from(["margin", "spot"])
     );
+
+    for (direction, expected_account_type, expected_amount) in [
+        ("credit", "margin", "2.500000000000000000"),
+        ("debit", "spot", "-2.500000000000000000"),
+    ] {
+        let filtered = body_json(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/wallet/ledger?asset_symbol={asset_symbol}&direction={direction}&ref_id={margin_transfer_ref_id}&start_time=2026-08-31T08%3A00%3A00%2B08%3A00&end_time=2026-09-01T07%3A59%3A59%2B08%3A00&limit=10"
+                        ))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await?,
+        )
+        .await?;
+        assert_eq!(filtered["page"]["total_elements"], 1);
+        assert_eq!(filtered["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            filtered["entries"][0]["account_type"],
+            expected_account_type
+        );
+        assert_eq!(filtered["entries"][0]["amount"], expected_amount);
+        assert_eq!(filtered["entries"][0]["precision_scale"], 6);
+    }
 
     let other = body_json(
         app.oneshot(

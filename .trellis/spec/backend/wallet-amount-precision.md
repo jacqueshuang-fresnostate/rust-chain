@@ -187,3 +187,118 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
   overlapping numeric IDs, combined filters, filtered total/page metadata,
   authoritative response category/account source, and unchanged 18-place
   decimal serialization.
+
+## Scenario: Precision-Aware Wallet Ledger Filtering
+
+### 1. Scope / Trigger
+
+- Apply this contract when changing `GET /api/v1/wallet/ledger`, its query DTO,
+  the combined spot/margin ledger read model, or the asset precision returned
+  to clients. It prevents page-local filtering, row/count drift, implicit MySQL
+  time conversion, and display precision inferred from `DECIMAL(38,18)` text.
+
+### 2. Signatures
+
+```http
+GET /api/v1/wallet/ledger?asset_symbol=BTC&direction=credit&start_time=2026-09-01%2000:00:00.000&end_time=2026-09-01%2023:59:59.999&limit=30&offset=0
+```
+
+```rust
+struct WalletLedgerFilter {
+    asset_symbol: Option<String>,
+    direction: WalletLedgerDirection, // all | credit | debit
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+    limit: u32,
+    offset: u32,
+    // existing account/category/reference filters remain composable
+}
+
+struct WalletLedgerEntryResponse {
+    symbol: String,
+    precision_scale: i32,
+    amount: BigDecimal,
+    balance_after: BigDecimal,
+    fee: BigDecimal,
+    // existing authoritative fields remain unchanged
+}
+```
+
+- The row query joins `assets` and selects `a.precision_scale`; both row and
+  count queries use the same `WalletLedgerFilter` and shared predicate builder.
+
+### 3. Contracts
+
+- `direction` is exactly `all|credit|debit`. Credit means `amount > 0`, debit
+  means `amount < 0`, and zero-valued rows are visible only for `all`.
+- `start_time` and `end_time` are inclusive UTC boundaries. Accept RFC3339 or
+  `YYYY-MM-DD HH:MM:SS[.fraction]`, parse before pool access, then bind typed
+  `DateTime<Utc>` values through SQLx.
+- Asset, direction, time, account, category, change-type, and reference filters
+  compose with AND semantics and execute before global ordering and pagination.
+- List and COUNT must use the same combined ledger source and the same predicate
+  builder. Empty results return `total_pages=1`; otherwise total pages are the
+  ceiling of filtered rows divided by page size.
+- Every response row carries the joined asset's authoritative
+  `precision_scale` in `0..=18`. An out-of-range stored value is an internal
+  data-contract failure, not a value to clamp or infer.
+- This read model never rounds or recalculates `amount`, `balance_after`, fee,
+  or bucket snapshots; precision metadata is additive presentation context.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Omitted direction/time | Normalize to `all` and unbounded time |
+| Direction outside `all|credit|debit` | HTTP 400 validation error before pool access |
+| Empty optional time text | Normalize to no boundary |
+| Malformed time text | HTTP 400 validation error before pool access |
+| `start_time > end_time` | HTTP 400 validation error before pool access |
+| Invalid asset symbol | HTTP 400 validation error before pool access |
+| Stored `precision_scale < 0` or `> 18` | Internal data-contract error; emit no malformed row |
+| Filtered result has zero rows | Empty `entries`, `total_elements=0`, `total_pages=1` |
+
+### 5. Good / Base / Bad Cases
+
+- Good: combine BTC, credit, UTC range, account, and category filters; SQL
+  returns only matching rows, COUNT describes the same set, and each row carries
+  BTC's stored precision.
+- Base: omit all optional filters; return the existing globally ordered combined
+  spot/margin ledger without changing decimal values.
+- Bad: fetch an unfiltered page and remove debit rows in Rust or the client,
+  because page totals and later offsets then describe a different collection.
+- Bad: derive display precision by counting the 18 fractional storage digits or
+  silently clamp a damaged `precision_scale`.
+
+### 6. Tests Required
+
+- Unit-test direction whitelist/defaults, both supported time syntaxes, empty
+  optional values, malformed/reversed boundaries, and validation before pool
+  acquisition.
+- Assert generated row and COUNT SQL share asset/direction/time predicates and
+  use typed time binds; cover positive, negative, and zero amount semantics.
+- Assert response mapping preserves exact BigDecimal text, emits stored precision
+  for both ledger sources, and rejects precision outside `0..=18`.
+- Integration-test combined filters, filtered pagination metadata, and the empty
+  page contract against MySQL when `DATABASE_URL` is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let rows = fetch_page_without_direction(pool, offset, limit).await?;
+let entries = rows.into_iter().filter(|row| row.amount > 0).collect();
+let precision_scale = 18; // inferred from storage schema
+```
+
+#### Correct
+
+```rust
+push_wallet_ledger_filters(&mut row_query, &filter);
+push_wallet_ledger_filters(&mut count_query, &filter);
+let precision_scale = row.precision_scale;
+if !(0..=18).contains(&precision_scale) {
+    return Err(AppError::Internal("invalid asset precision".into()));
+}
+```

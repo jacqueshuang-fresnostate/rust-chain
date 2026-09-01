@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/admin/index.md", "reason": "遵守 Admin 完整质量门与现有资源页约定"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "保持资源表列、空值、详情动作和可访问交互一致"}
+{"file": ".trellis/spec/backend/index.md", "reason": "遵守后端分层与完整质量门"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "保持杠杆强平快照与只读查询业务合同"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "遵守 DTO、基础设施、注释和测试规范"}
+{"file": ".trellis/tasks/09-01-admin-liquidation-record-columns/research/current-liquidation-record-flow.md", "reason": "了解现有前后端字段链路和同文件未提交改动边界"}

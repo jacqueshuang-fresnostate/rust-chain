@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/admin/index.md", "reason": "复核 Admin 全量质量门"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "复核资源表业务字段、空值和详情动作"}
+{"file": ".trellis/spec/backend/index.md", "reason": "复核后端架构和质量门"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "复核强平记录只读快照与兼容性"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核跨层 DTO/SQL、注释和测试质量"}
+{"file": ".trellis/tasks/09-01-admin-liquidation-record-columns/research/current-liquidation-record-flow.md", "reason": "复核目标列、后端字段及未提交 Admin 文件隔离"}

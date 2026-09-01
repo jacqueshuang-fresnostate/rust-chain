@@ -28,7 +28,7 @@ test('all eight saved light and dark Pencil pairs are declared by production roo
     [sources.assets, 'v6phV TuWXq'],
     [sources.help, 'UouET FM5tp'],
     [sources.orders, 'e5Qs1 hxe8l'],
-    [sources.ledger, 'Bcug6 IVMAO'],
+    [sources.ledger, 'y6Y7TW m25xr0'],
     [sources.messages, 't7j6n eSMHf'],
     [sources.prediction, 'CzpTv ZvGMv'],
     [sources.earn, 'nqP6W aXxul'],
@@ -188,7 +188,7 @@ test('wallet ledger and message center keep error, loading, cached-data, and emp
   const ledgerBranches = [
     'v-if="error && !entries.length"',
     'v-else-if="loading && !entries.length"',
-    'v-else-if="groupedEntries.length"',
+    'v-else-if="entries.length"',
     'v-else class="ledger-state ledger-state--empty"',
   ].map((branch) => sources.ledger.indexOf(branch))
   assert.ok(ledgerBranches.every((index) => index >= 0))
@@ -236,9 +236,9 @@ test('new coin, ledger, and messages preserve their authoritative APIs', () => {
   assert.match(sources.newCoinRecords, /\.record-list article[\s\S]*?min-height: 72px;/)
   assert.match(sources.newCoinRecords, /\.record-icon[\s\S]*?height: 36px;[\s\S]*?width: 36px;/)
 
-  assert.match(sources.ledger, /createWalletLedgerRequestLifecycle\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
-  assert.match(sources.ledger, /requestLifecycle\.load\(offset, PAGE_SIZE\)/)
-  assert.match(sources.ledger, /advanceWalletLedgerPagination\(offset, result\.value\)/)
+  assert.match(sources.ledger, /createWalletLedgerPaginationController\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
+  assert.match(sources.ledger, /paginationController\.loadInitial\(\)/)
+  assert.match(sources.ledger, /paginationController\.retryLoadMore\(\)/)
   assert.match(sources.messages, /messages\.value = await fetchNews\(40\)/)
   assert.match(sources.messages, /hippo_mobile_message_read_ids/)
   assert.doesNotMatch(sources.messages, /@\/api\/(?:wallet|trading|user)/)

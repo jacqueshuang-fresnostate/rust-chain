@@ -16,7 +16,8 @@ use crate::{
             infrastructure,
             infrastructure::{
                 ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow,
-                WalletLedgerAccountType, WalletLedgerCategory, WalletLedgerFilter,
+                WalletLedgerAccountType, WalletLedgerCategory, WalletLedgerDirection,
+                WalletLedgerFilter,
             },
             presentation::{
                 AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
@@ -36,7 +37,7 @@ use crate::{
     state::AppState,
 };
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeDelta, Utc};
 use mongodb::Database;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
@@ -631,9 +632,9 @@ pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
     }
 }
 
-/// 把账本查询 DTO 规范为资产、账户、分类、引用、时间及分页过滤器。
-/// 账户只接受 all/spot/margin，分类必须精确匹配十类之一；未知取值返回带完整候选清单的校验错误。
-/// 资产代码走统一归一并可能报错，其余文本条件只做裁剪与空值归一，起止时间原样保留交由 SQL 比较。
+/// 把账本查询 DTO 规范为资产、账户、收支方向、分类、引用、时间及分页过滤器。
+/// 账户只接受 all/spot/margin，方向只接受 all/credit/debit，分类必须精确匹配十类之一；未知取值返回带完整候选清单的校验错误。
+/// 资产代码走统一归一并可能报错，其余文本条件做裁剪与空值归一；起止时间在进入 SQL 前统一解析为 UTC。
 /// 分页在此完成钳制，页大小落在一到一百之间，偏移封顶十万，因此过滤器交给基础设施时已是安全边界。
 /// 未知分类、非法资产代码在执行 SQL 前拒绝；行查询与计数随后复用同一过滤器以保证总数与数据一致。
 pub(crate) fn build_wallet_ledger_filter(
@@ -670,6 +671,33 @@ pub(crate) fn build_wallet_ledger_filter(
             })
         })
         .transpose()?;
+    let direction = query
+        .direction
+        .map(|value| {
+            WalletLedgerDirection::parse(value.trim()).ok_or_else(|| {
+                AppError::Validation(format!(
+                    "unsupported wallet ledger direction; expected one of: {}",
+                    WalletLedgerDirection::ALL
+                        .iter()
+                        .map(|direction| direction.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })
+        })
+        .transpose()?
+        .unwrap_or(WalletLedgerDirection::All);
+    let start_time = normalize_wallet_ledger_time(query.start_time, "start_time")?;
+    let end_time = normalize_wallet_ledger_time(query.end_time, "end_time")?;
+    if start_time
+        .as_ref()
+        .zip(end_time.as_ref())
+        .is_some_and(|(start_time, end_time)| start_time > end_time)
+    {
+        return Err(AppError::Validation(
+            "wallet ledger start_time must not be after end_time".to_owned(),
+        ));
+    }
 
     Ok(WalletLedgerFilter {
         asset_id: query.asset_id,
@@ -680,13 +708,39 @@ pub(crate) fn build_wallet_ledger_filter(
         change_type: normalize_optional_query_string(query.change_type),
         category,
         account_type,
+        direction,
         ref_type: normalize_optional_query_string(query.ref_type),
         ref_id: normalize_optional_query_string(query.ref_id),
-        start_time: normalize_optional_query_string(query.start_time),
-        end_time: normalize_optional_query_string(query.end_time),
+        start_time,
+        end_time,
         limit: route_limit(query.limit),
         offset: route_offset(query.offset),
     })
+}
+
+/// 把账本时间边界解析为 UTC 时刻，兼容带时区的 RFC3339 和旧调用方的 MySQL 无时区文本。
+/// 无时区文本按 UTC 解释；空值表示不过滤，非法日期在取数据库连接前返回校验错误。
+/// 返回强类型 `DateTime<Utc>` 供 SQLx 编码，不把带 `Z` 的 RFC3339 字符串直接交给 MySQL 隐式转换。
+fn normalize_wallet_ledger_time(
+    value: Option<String>,
+    field: &'static str,
+) -> AppResult<Option<DateTime<Utc>>> {
+    let Some(value) = normalize_optional_query_string(value) else {
+        return Ok(None);
+    };
+
+    if let Ok(value) = DateTime::parse_from_rfc3339(&value) {
+        return Ok(Some(value.with_timezone(&Utc)));
+    }
+    for format in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S"] {
+        if let Ok(value) = NaiveDateTime::parse_from_str(&value, format) {
+            return Ok(Some(value.and_utc()));
+        }
+    }
+
+    Err(AppError::Validation(format!(
+        "invalid wallet ledger {field}; expected RFC3339 or UTC YYYY-MM-DD HH:MM:SS[.fraction]"
+    )))
 }
 
 /// 生成并持久化服务端权威提现报价。金额先按资产精度向零截断，再用规范化阶梯计费；

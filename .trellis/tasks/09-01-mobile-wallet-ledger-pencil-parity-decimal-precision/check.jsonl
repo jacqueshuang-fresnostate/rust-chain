@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify Pencil parity, responsive layout, accessibility, and release gate"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Verify strict DecimalText, pagination, filters, and stale-response isolation"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Verify back behavior and complete bilingual copy"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend checklist and affected feature contracts"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Verify assets.precision_scale remains authoritative and calculations unchanged"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify focused tests, architecture, lint, and comments"}
+{"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-ledger-and-precision.md", "reason": "Compare implementation with exact Pencil geometry and root-cause decision"}

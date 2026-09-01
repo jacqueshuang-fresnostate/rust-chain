@@ -1039,9 +1039,10 @@ fetchWalletLedger(options?: {
   totals. A selected account/category response containing another value is a
   contract error and must not enter page state.
 - Amount, post-change balance, and positive fee presentation uses one
-  locale-aware ledger formatter with up to 8 fractional digits. The smallest
-  supported positive unit (`0.00000001`) must remain visible rather than round
-  to zero; negative zero is normalized to neutral zero.
+  locale-aware ledger formatter with the entry's authoritative
+  `precisionScale` in `0..=18`. Insignificant trailing zeroes are removed, the
+  smallest positive unit at the declared scale remains visible, and negative
+  zero is normalized to neutral zero.
 - Initial load, cached refresh errors, load-more errors, empty state, and
   exhaustion remain distinct. Pagination advances its offset by response rows
   consumed, not by the deduplicated visible-entry count, and an empty page is
@@ -1060,7 +1061,7 @@ fetchWalletLedger(options?: {
 Required tests cover exact account/category unions, strict response mapping,
 account/category mismatch, overlapping numeric IDs, row-based offset/exhaustion,
 local-date ordering, account/filter/session/unmount stale responses,
-known/unknown type presentation, pluralization, signed zero, 8-place
+known/unknown type presentation, pluralization, signed zero, declared-scale
 amount/balance/positive-fee precision, state branches, 44px controls, and 320px
 horizontal-overflow guards.
 
@@ -1913,4 +1914,141 @@ const review = createSpotOrderReviewSnapshot({ ...input, quantity: form.amount }
 const lease = sessionOwner.capture()
 sessionOwner.commitRefresh(lease, await refresh(lease.signal))
 await createOrder({ quantity: review.quantity })
+```
+
+## 20. Mobile Wallet Ledger Read Model
+
+### 1. Scope / Trigger
+
+- Apply this contract when changing `/assets/ledger`, its three Pencil filters,
+  ledger response mapping, precision-aware formatting, or infinite pagination.
+- The static source of truth is `mobile/pencil/hippo-mobile-uiux.pen`: light
+  frame `y6Y7TW` and dark frame `m25xr0`.
+
+### 2. Signatures
+
+```ts
+type WalletLedgerDirection = 'all' | 'credit' | 'debit'
+type WalletLedgerDatePreset = 'all' | 'today' | 'last7Days' | 'last30Days'
+
+interface WalletLedgerFetchOptions {
+  limit: number
+  offset: number
+  assetSymbol?: string
+  direction: WalletLedgerDirection
+  startTime?: string
+  endTime?: string
+}
+
+interface WalletLedgerEntry {
+  symbol: string
+  precisionScale: number // required integer, 0..18
+  amount: DecimalText
+  balanceAfter: DecimalText
+  fee: DecimalText
+  createdAt: number
+}
+
+createWalletLedgerPaginationController(input): WalletLedgerPaginationController
+formatWalletLedgerDecimal(value, locale, precisionScale): string
+```
+
+- Transport names are `asset_symbol`, `direction`, `start_time`, `end_time`,
+  `limit`, and `offset`. UTC boundaries are emitted as MySQL-safe
+  `YYYY-MM-DD HH:mm:ss.SSS` text.
+
+### 3. Contracts
+
+- The closed-sheet baseline is exactly a 60px header with `20px` horizontal
+  padding and `40px / 1fr / 40px` tracks, followed by body padding
+  `6px 20px 20px`, three intrinsic 28px pills with 8px gaps, and continuous
+  56px rows with no cards or date-group headings.
+- Light colors are page `#FFFFFF`, ink `#111714`, muted `#7A8B80`, selected
+  `#D9F9EB/#087B52`; dark colors are page `#000000`, ink `#F2F7F4`, muted
+  `#7A8B80`, selected `#103326/#61F1B6`.
+- Asset options come from the authenticated wallet directory. Asset, direction,
+  and date selections are server filters, never filters over the current page.
+- Every filter change invalidates the current generation, clears old rows, and
+  reloads offset zero. Session identity, session generation, asset, direction,
+  date preset, and exact date range must still match before a result commits.
+- Initial and append errors are separate. An append retry reuses the failed raw
+  offset; the next offset advances by response row count before deduplication.
+  Identity is `accountType:id`, and an empty response exhausts pagination.
+- `precision_scale` is required and maps to `precisionScale` only when it is an
+  integer in `0..18`. Amounts stay `DecimalText`; formatting trims insignificant
+  zeroes at the declared scale without `Number`, `parseFloat`, or `toFixed`.
+- The visible amount column may adapt its font and width, while its `title` and
+  accessible details retain the exact decimal text. A 320px viewport must not
+  create document-level horizontal overflow.
+- Filter sheets are modal dialogs with a labelled title, current selection,
+  focus trap, Escape/overlay close, focus restoration, body scroll lock, and
+  effective touch targets of at least 44px.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing/invalid `precision_scale` | Throw `WalletLedgerContractError`; render localized initial/append error |
+| Invalid direction/date/asset/time range | Reject before transport; send no malformed request |
+| Guest or logout during request | Clear protected rows and classify result as guest/stale |
+| Older filter/session response arrives last | Discard it without changing any loading/error/page state |
+| Initial page fails | Show retryable full-page error and no stale rows |
+| Append page fails | Keep existing rows and failed offset; show append retry |
+| Empty first page | Show localized empty state and mark pagination exhausted |
+| Response total/page metadata is inconsistent | Reject as a contract error |
+
+### 5. Good / Base / Bad Cases
+
+- Good: select BTC, credit, and last 7 days; offset zero reloads with all three
+  server predicates, subsequent pages retain them, and BTC precision controls
+  display while exact text remains accessible.
+- Base: all three filters are `all`; the page renders the unfiltered ledger in
+  the Pencil baseline without old account/category controls.
+- Good: open a filter sheet by keyboard, select an option, then restore focus to
+  its 28px visual pill whose pseudo hit area remains at least 44px.
+- Bad: derive precision from the number of decimal characters, convert amounts
+  to JavaScript numbers, or filter only `entries` already loaded.
+
+### 6. Tests Required
+
+- Adapter tests assert exact query names/time encoding, strict
+  `precision_scale`, page metadata, account/category authority, and DecimalText
+  preservation.
+- Lifecycle tests assert asset/direction/date/session ABA isolation, logout and
+  unmount invalidation, initial/append error separation, exact-offset retry,
+  row-count offset progression, and empty-page exhaustion.
+- View/source tests assert Pencil geometry/colors, absence of legacy controls,
+  localized light/dark/loading/empty/error/guest states, 44px modal interaction,
+  and no forbidden number conversion in the financial path.
+- Browser verification covers 320px, 390px, and 448px widths in light and dark
+  themes, including modal focus/scroll behavior and horizontal overflow.
+- Required gate: `npm --prefix mobile run release:gate`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+const visible = page.entries.filter((entry) => Number(entry.amount) > 0)
+const amount = Number(entry.amount).toFixed(8)
+nextOffset += visible.length
+```
+
+#### Correct
+
+```ts
+const page = await fetchWalletLedger({
+  offset,
+  limit,
+  assetSymbol,
+  direction,
+  startTime,
+  endTime,
+})
+const amount = formatWalletLedgerDecimal(
+  entry.amount,
+  locale,
+  entry.precisionScale,
+)
+nextOffset = offset + page.entries.length
 ```

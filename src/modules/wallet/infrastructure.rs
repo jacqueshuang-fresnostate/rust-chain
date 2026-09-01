@@ -19,8 +19,8 @@ pub use deposits::{
 pub use withdrawals::HttpWalletChainGateway;
 
 pub(crate) use accounts_ledger::{
-    WalletLedgerAccountType, WalletLedgerCategory, WalletLedgerFilter, list_wallet_accounts,
-    list_wallet_ledger,
+    WalletLedgerAccountType, WalletLedgerCategory, WalletLedgerDirection, WalletLedgerFilter,
+    list_wallet_accounts, list_wallet_ledger,
 };
 pub(crate) use deposits::{
     assign_deposit_address_in_tx, ensure_deposit_enabled_asset, list_active_deposit_networks,

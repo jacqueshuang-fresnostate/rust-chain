@@ -19,14 +19,11 @@ import {
   type ReturnHistoryPeriodDays,
 } from '@/core/returnHistory'
 import {
-  isWalletLedgerAccountFilter,
-  isWalletLedgerCategory,
+  createWalletLedgerRequestParams,
   mapWalletLedgerResponse,
-  WalletLedgerContractError,
   type BackendWalletLedgerResponse,
-  type WalletLedgerAccountFilter,
-  type WalletLedgerCategory,
   type WalletLedgerPage,
+  type WalletLedgerRequestOptions,
 } from '@/core/walletLedger'
 
 import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from '@/core/types'
@@ -87,7 +84,10 @@ export type {
 } from '@/core/returnHistory'
 export {
   advanceWalletLedgerPagination,
+  createWalletLedgerPaginationController,
+  createWalletLedgerPaginationState,
   createWalletLedgerRequestLifecycle,
+  createWalletLedgerRequestParams,
   formatWalletLedgerDecimal,
   formatWalletLedgerGroupHeading,
   formatWalletLedgerTime,
@@ -96,17 +96,25 @@ export {
   isWalletLedgerAccountType,
   isWalletLedgerContractError,
   isWalletLedgerCategory,
+  isWalletLedgerDatePreset,
+  isWalletLedgerDirection,
   mapWalletLedgerResponse,
   mergeWalletLedgerEntries,
+  normalizeWalletLedgerAssetSymbol,
   WALLET_LEDGER_ACCOUNT_FILTERS,
   WALLET_LEDGER_ACCOUNT_TYPES,
   WALLET_LEDGER_CATEGORIES,
+  WALLET_LEDGER_DATE_PRESETS,
+  WALLET_LEDGER_DIRECTIONS,
   WALLET_LEDGER_FILTERS,
   WALLET_LEDGER_KNOWN_CHANGE_TYPES,
   WALLET_LEDGER_MAX_FRACTION_DIGITS,
   walletLedgerAmountSign,
   walletLedgerAccountTranslationKey,
   walletLedgerCategoryTranslationKey,
+  walletLedgerDatePresetTranslationKey,
+  walletLedgerDateRange,
+  walletLedgerDirectionTranslationKey,
   walletLedgerEntryIdentity,
   walletLedgerTypePresentation,
   WalletLedgerContractError,
@@ -116,10 +124,18 @@ export type {
   WalletLedgerAccountType,
   WalletLedgerCategory,
   WalletLedgerDateGroup,
+  WalletLedgerDatePreset,
+  WalletLedgerDateRange,
+  WalletLedgerDirection,
   WalletLedgerEntry,
   WalletLedgerFilter,
   WalletLedgerPage,
+  WalletLedgerPageProgress,
+  WalletLedgerPaginationController,
+  WalletLedgerPaginationOperation,
   WalletLedgerPaginationState,
+  WalletLedgerRequestOptions,
+  WalletLedgerRequestParams,
   WalletLedgerRequestLifecycle,
   WalletLedgerRequestResult,
 } from '@/core/walletLedger'
@@ -539,37 +555,12 @@ function createWithdrawalIdempotencyKey(quoteId: string): string {
   return `mobile-withdraw-${quoteId}`
 }
 
-export async function fetchWalletLedger(options: {
-  limit?: number
-  offset?: number
-  category?: WalletLedgerCategory
-  accountType?: WalletLedgerAccountFilter
-  changeType?: string
-} = {}): Promise<WalletLedgerPage> {
-  const limit = options.limit ?? 30
-  const offset = options.offset ?? 0
-  if (!Number.isSafeInteger(limit) || limit < 1) {
-    throw new WalletLedgerContractError('invalid wallet ledger limit')
-  }
-  if (!Number.isSafeInteger(offset) || offset < 0) {
-    throw new WalletLedgerContractError('invalid wallet ledger offset')
-  }
-  if (options.category !== undefined && !isWalletLedgerCategory(options.category)) {
-    throw new WalletLedgerContractError('invalid wallet ledger category')
-  }
-  const accountType = options.accountType ?? 'all'
-  if (!isWalletLedgerAccountFilter(accountType)) {
-    throw new WalletLedgerContractError('invalid wallet ledger account type')
-  }
-  const changeType = options.changeType?.trim()
+export async function fetchWalletLedger(
+  options: WalletLedgerRequestOptions = {},
+): Promise<WalletLedgerPage> {
+  const params = createWalletLedgerRequestParams(options)
   const response = await client.get<BackendWalletLedgerResponse>(requestUrl('/wallet/ledger'), {
-    params: {
-      limit,
-      offset,
-      category: options.category,
-      account_type: accountType,
-      change_type: changeType || undefined,
-    },
+    params,
   })
   return mapWalletLedgerResponse(response.data)
 }

@@ -6,10 +6,10 @@
 //! 查询入口一律不持有资金行锁，返回值仅供审计与展示；真正的扣款必须走持有行锁的调用方事务。
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     modules::wallet::{
-        BalanceBucket, LedgerBatch, LockPosition, WalletAccount, WalletLedgerEntry,
-        WalletRepository, WalletServiceError,
+        BalanceBucket, LedgerBatch, LockPosition, MAX_ASSET_PRECISION_SCALE, WalletAccount,
+        WalletLedgerEntry, WalletRepository, WalletServiceError,
         presentation::{
             WalletAccountResponse, WalletLedgerEntryResponse, WalletLedgerPageResponse,
             WalletLedgerResponse,
@@ -179,6 +179,7 @@ pub(super) struct WalletLedgerEntryRow {
     pub(super) user_id: u64,
     pub(super) asset_id: u64,
     pub(super) symbol: String,
+    pub(super) precision_scale: i32,
     pub(super) change_type: String,
     pub(super) amount: BigDecimal,
     pub(super) balance_type: String,
@@ -198,10 +199,11 @@ pub(crate) struct WalletLedgerFilter {
     pub(crate) change_type: Option<String>,
     pub(crate) category: Option<WalletLedgerCategory>,
     pub(crate) account_type: WalletLedgerAccountType,
+    pub(crate) direction: WalletLedgerDirection,
     pub(crate) ref_type: Option<String>,
     pub(crate) ref_id: Option<String>,
-    pub(crate) start_time: Option<String>,
-    pub(crate) end_time: Option<String>,
+    pub(crate) start_time: Option<DateTime<Utc>>,
+    pub(crate) end_time: Option<DateTime<Utc>>,
     pub(crate) limit: u32,
     pub(crate) offset: u32,
 }
@@ -232,6 +234,35 @@ impl WalletLedgerAccountType {
         Self::ALL
             .into_iter()
             .find(|account_type| account_type.as_str() == value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 流水金额方向筛选：credit 只含正数入账，debit 只含负数出账，零值只在 all 中可见。
+/// 方向完全由账本权威 amount 符号决定，不从 change_type、余额桶或业务分类推断。
+pub(crate) enum WalletLedgerDirection {
+    All,
+    Credit,
+    Debit,
+}
+
+impl WalletLedgerDirection {
+    pub(crate) const ALL: [Self; 3] = [Self::All, Self::Credit, Self::Debit];
+
+    /// 返回查询参数使用的稳定小写字符串。
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Credit => "credit",
+            Self::Debit => "debit",
+        }
+    }
+
+    /// 只接受 all/credit/debit 白名单，未知值由应用层在查询数据库前拒绝。
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|direction| direction.as_str() == value)
     }
 }
 
@@ -763,7 +794,7 @@ pub(crate) async fn list_wallet_ledger(
         .await?
         .into_iter()
         .map(wallet_ledger_entry_response)
-        .collect();
+        .collect::<AppResult<Vec<_>>>()?;
     let total_pages = if total == 0 {
         1
     } else {
@@ -801,10 +832,10 @@ async fn count_wallet_ledger(
         .max(0) as u64)
 }
 
-/// 把资产、分类、引用和时间条件同时追加到流水行查询或计数查询。
+/// 把资产、分类、方向、引用和时间条件同时追加到流水行查询或计数查询。
 /// 所有可选条件都以并且关系叠加，未提供的条件不追加谓词，因此空过滤器等价于只按用户筛选。
 /// 资产符号按大写比较，调用方需先完成归一化；变更类型、引用类型和引用编号一律按精确值匹配，不支持模糊查询。
-/// 起止时间直接以字符串绑定并与创建时间做闭区间比较，时区与格式由调用方保证，本函数不做解析或校验。
+/// 起止时间是应用层已校验的 UTC 强类型时刻，由 SQLx 编码后与创建时间做闭区间比较。
 /// 调用方必须对行与总数复用该构造器，确保分页统计与返回数据一致。
 pub(super) fn push_wallet_ledger_filters<'args>(
     builder: &mut QueryBuilder<'args, MySql>,
@@ -829,6 +860,15 @@ pub(super) fn push_wallet_ledger_filters<'args>(
         builder.push(" AND wl.account_type = ");
         builder.push_bind(filter.account_type.as_str());
     }
+    match filter.direction {
+        WalletLedgerDirection::All => {}
+        WalletLedgerDirection::Credit => {
+            builder.push(" AND wl.amount > 0");
+        }
+        WalletLedgerDirection::Debit => {
+            builder.push(" AND wl.amount < 0");
+        }
+    }
     if let Some(ref_type) = filter.ref_type.as_deref() {
         builder.push(" AND wl.ref_type = ");
         builder.push_bind(ref_type);
@@ -837,11 +877,11 @@ pub(super) fn push_wallet_ledger_filters<'args>(
         builder.push(" AND wl.ref_id = ");
         builder.push_bind(ref_id);
     }
-    if let Some(start_time) = filter.start_time.as_deref() {
+    if let Some(start_time) = filter.start_time.as_ref() {
         builder.push(" AND wl.created_at >= ");
         builder.push_bind(start_time);
     }
-    if let Some(end_time) = filter.end_time.as_deref() {
+    if let Some(end_time) = filter.end_time.as_ref() {
         builder.push(" AND wl.created_at <= ");
         builder.push_bind(end_time);
     }
@@ -940,7 +980,8 @@ pub(super) fn push_wallet_ledger_union_source<'args>(
 
 /// 返回联合账本行查询的投影前缀，保留权威账户来源与全部定点快照字段。
 fn wallet_ledger_select_prefix() -> &'static str {
-    r#"SELECT wl.id, wl.account_type, wl.user_id, wl.asset_id, a.symbol, wl.change_type, wl.amount,
+    r#"SELECT wl.id, wl.account_type, wl.user_id, wl.asset_id, a.symbol, a.precision_scale,
+              wl.change_type, wl.amount,
               wl.balance_type, wl.balance_after, wl.available_after, wl.frozen_after,
               wl.locked_after,
               COALESCE(
@@ -1012,8 +1053,15 @@ fn wallet_account_response(row: WalletAccountRow) -> WalletAccountResponse {
 /// 将数据库流水行映射为 API 条目，并按 change_type 补充稳定业务分类。
 /// 分类在此按内存规则现算而非读取存量列，与 SQL 侧分类筛选共用同一套规则，保证筛选结果与展示标签一致。
 /// 手续费取自查询阶段左连接的择一结果，未匹配业务单据时为零，该字段是展示补充而非账本自身的资金腿。
-/// 映射保留三桶账后快照和业务引用，不重新计算或改变任何资金金额。
-pub(super) fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletLedgerEntryResponse {
+/// 映射保留三桶账后快照和业务引用，并在响应边界拒绝超出零到十八的损坏资产精度。
+pub(super) fn wallet_ledger_entry_response(
+    row: WalletLedgerEntryRow,
+) -> AppResult<WalletLedgerEntryResponse> {
+    if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&row.precision_scale) {
+        return Err(AppError::Internal(
+            "wallet ledger asset precision is outside the supported range".to_owned(),
+        ));
+    }
     let account_type = match row.account_type.as_str() {
         "spot" => WalletLedgerAccountType::Spot.as_str(),
         "margin" => WalletLedgerAccountType::Margin.as_str(),
@@ -1023,12 +1071,13 @@ pub(super) fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletL
     let category = classify_wallet_ledger_change_type(&row.change_type)
         .as_str()
         .to_owned();
-    WalletLedgerEntryResponse {
+    Ok(WalletLedgerEntryResponse {
         id: row.id,
         account_type,
         user_id: row.user_id,
         asset_id: row.asset_id,
         symbol: row.symbol,
+        precision_scale: row.precision_scale,
         change_type: row.change_type,
         category,
         amount: row.amount,
@@ -1041,5 +1090,5 @@ pub(super) fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletL
         ref_type: row.ref_type,
         ref_id: row.ref_id,
         created_at: row.created_at,
-    }
+    })
 }

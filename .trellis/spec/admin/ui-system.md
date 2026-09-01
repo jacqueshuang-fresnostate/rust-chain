@@ -51,6 +51,12 @@ DetailDrawer
   deliberate minimum content area.
 - The density button describes the target state: `切换到自适应` or
   `切换到紧凑`.
+- The `强平记录` resource exposes business-identifying `邮箱` and `交易对`
+  columns before its financial snapshot. `记录ID`, `仓位ID`, and `用户ID`
+  remain in the API row for detail/filter behavior but are not visible table
+  leaves. `email` is a required response key whose value may be null and then
+  uses the shared `-` empty-cell presentation; `symbol` is required and
+  non-null. The page must not issue per-row user or market-directory requests.
 
 ## Semi Table Contract
 

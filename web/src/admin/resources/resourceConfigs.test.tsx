@@ -8,6 +8,7 @@ import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
 import { authStore } from '../../auth/authStore';
 import { batchStatusSummary } from './actions/agents';
+import { buildAdminResourceRowContract } from './AdminResourcePage';
 import { ResourcePage, resourceConfigs, type ResourceConfig } from './resourceConfigs';
 
 vi.mock('../../api/adminResources', () => ({
@@ -1134,21 +1135,59 @@ describe('resourceConfigs create actions', () => {
     });
   });
 
-  it('uses generated business order numbers for visible order columns', () => {
-    expect(resourceConfigs.loanOrders.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '订单号' }));
-    expect(resourceConfigs.spotOrders.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '订单号' }));
-    expect(resourceConfigs.secondsOrders.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '订单号' }));
-    expect(resourceConfigs.convertOrders.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '订单号' }));
-    expect(resourceConfigs.predictionOrders.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '订单号' }));
-    expect(resourceConfigs.earnSubscriptions.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '申购号' }));
-    expect(resourceConfigs.newCoinSubscriptions.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '申购号' }));
-    expect(resourceConfigs.newCoinPurchases.columns[0]).toEqual(expect.objectContaining({ key: 'order_no', title: '订单号' }));
-    expect(resourceConfigs.spotTrades.columns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: 'buy_order_id', title: '买单号' }),
-        expect.objectContaining({ key: 'sell_order_id', title: '卖单号' })
-      ])
-    );
+  it('excludes all eight generated order numbers while keeping related order IDs in the wire contract', () => {
+    const businessOrderResources = [
+      [resourceConfigs.loanOrders, '订单号'],
+      [resourceConfigs.predictionOrders, '订单号'],
+      [resourceConfigs.spotOrders, '订单号'],
+      [resourceConfigs.newCoinSubscriptions, '申购号'],
+      [resourceConfigs.newCoinPurchases, '订单号'],
+      [resourceConfigs.convertOrders, '订单号'],
+      [resourceConfigs.secondsOrders, '订单号'],
+      [resourceConfigs.earnSubscriptions, '申购号']
+    ] as const;
+
+    businessOrderResources.forEach(([resource, title]) => {
+      const column = resource.columns[0];
+      expect(column).toEqual(expect.objectContaining({ key: 'order_no', source: 'derived', title }));
+      expect(buildAdminResourceRowContract(resource.columns).requiredFields).not.toContain('order_no');
+    });
+
+    const relatedOrderFields = [
+      [resourceConfigs.spotTrades, 'buy_order_id', '买单号'],
+      [resourceConfigs.spotTrades, 'sell_order_id', '卖单号'],
+      [resourceConfigs.newCoinDistributions, 'subscription_id', '申购号']
+    ] as const;
+    relatedOrderFields.forEach(([resource, key, title]) => {
+      const column = resource.columns.find((candidate) => candidate.key === key);
+      expect(column).toEqual(expect.objectContaining({ key, title }));
+      expect(column?.source).not.toBe('derived');
+      expect(buildAdminResourceRowContract(resource.columns).requiredFields).toContain(key);
+    });
+  });
+
+  it('prefers backend order numbers and keeps seconds and earn fallbacks stable', () => {
+    const backendOrderColumn: ResourceConfig['columns'][number] = resourceConfigs.predictionOrders.columns[0];
+    const secondsOrderColumn: ResourceConfig['columns'][number] = resourceConfigs.secondsOrders.columns[0];
+    const earnOrderColumn: ResourceConfig['columns'][number] = resourceConfigs.earnSubscriptions.columns[0];
+    const view = testingLibraryRender(<>{backendOrderColumn.render?.({ id: 42, created_at: 1_735_732_800_000, order_no: 'PM-BACKEND-001' })}</>);
+
+    expect(view.container).toHaveTextContent('PM-BACKEND-001');
+    view.rerender(<>{backendOrderColumn.render?.({ id: 42, created_at: 1_735_732_800_000, order_no: '  ', orderNo: 'PM-CAMEL-001' })}</>);
+    expect(view.container).toHaveTextContent('PM-CAMEL-001');
+
+    const fallbackCases = [
+      [secondsOrderColumn, { id: 42, created_at: 1_735_732_800_000 }, 'SC'],
+      [earnOrderColumn, { id: 42, subscribed_at: 1_735_732_800_000 }, 'EA']
+    ] as const;
+    fallbackCases.forEach(([column, row, prefix]) => {
+      view.rerender(<>{column.render?.(row)}</>);
+      const generatedOrderNumber = view.container.textContent;
+      expect(generatedOrderNumber).toMatch(new RegExp(`^${prefix}(?!00000000)[0-9]{8}[0-9A-Z]{6}$`));
+
+      view.rerender(<>{column.render?.(row)}</>);
+      expect(view.container.textContent).toBe(generatedOrderNumber);
+    });
   });
 
   it('registers prediction resources with localized filters and market row actions', () => {
@@ -3179,7 +3218,46 @@ describe('resourceConfigs create actions', () => {
     await expectFormattedDetail('margin-position-detail', /"detail": "margin-position-detail"/);
   });
 
-  it('opens margin liquidation record details from row actions', async () => {
+  it('requires margin liquidation display fields while accepting a nullable email', async () => {
+    const actualAdminResources = await vi.importActual<typeof import('../../api/adminResources')>('../../api/adminResources');
+    const rowContract = buildAdminResourceRowContract(resourceConfigs.marginLiquidations.columns);
+    const row = {
+      id: 31,
+      position_id: 21,
+      user_id: 99,
+      email: null,
+      symbol: 'BTC-USDT',
+      mark_price: '84.0000',
+      equity: '2.7500',
+      interest_amount: '1.2500',
+      payout_amount: '2.7500',
+      reason: 'maintenance_margin',
+      liquidated_at: 1_735_732_800_000
+    };
+    const withoutField = (field: 'email' | 'symbol') => Object.fromEntries(Object.entries(row).filter(([key]) => key !== field));
+
+    expect(rowContract).toEqual({
+      decimalFields: ['mark_price', 'equity', 'interest_amount', 'payout_amount'],
+      requiredFields: ['email', 'symbol', 'mark_price', 'equity', 'interest_amount', 'payout_amount', 'reason', 'liquidated_at']
+    });
+
+    apiRequestMock.mockResolvedValueOnce({ liquidations: [row], total: 1 });
+    await expect(
+      actualAdminResources.listAdminResource('/admin/api/v1/margin/liquidations', 'liquidations', {}, { rowContract })
+    ).resolves.toMatchObject({ rows: [expect.objectContaining({ email: null, symbol: 'BTC-USDT' })], total: 1 });
+
+    apiRequestMock.mockResolvedValueOnce({ liquidations: [withoutField('email')], total: 1 });
+    await expect(
+      actualAdminResources.listAdminResource('/admin/api/v1/margin/liquidations', 'liquidations', {}, { rowContract })
+    ).rejects.toThrow('缺少必填字段 email');
+
+    apiRequestMock.mockResolvedValueOnce({ liquidations: [withoutField('symbol')], total: 1 });
+    await expect(
+      actualAdminResources.listAdminResource('/admin/api/v1/margin/liquidations', 'liquidations', {}, { rowContract })
+    ).rejects.toThrow('缺少必填字段 symbol');
+  });
+
+  it('opens margin liquidation record details from hidden row IDs', async () => {
     const user = userEvent.setup();
     listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
       if (endpoint === '/admin/api/v1/margin/liquidations') {
@@ -3188,14 +3266,30 @@ describe('resourceConfigs create actions', () => {
             id: 31,
             position_id: 21,
             user_id: 99,
+            email: 'liquidated-user@example.test',
+            symbol: 'BTC-USDT',
             mark_price: '84.0000',
             equity: '2.7500',
             interest_amount: '1.2500',
             payout_amount: '2.7500',
-            reason: 'maintenance_margin'
+            reason: 'maintenance_margin',
+            liquidated_at: 1_735_732_800_000
+          },
+          {
+            id: 32,
+            position_id: 22,
+            user_id: 100,
+            email: null,
+            symbol: 'ETH-USDT',
+            mark_price: '92.0000',
+            equity: '0.0000',
+            interest_amount: '2.5000',
+            payout_amount: '0.0000',
+            reason: 'cross_margin',
+            liquidated_at: 1_735_732_860_000
           }
         ];
-        return { rows, raw: { [responseKey]: rows } };
+        return { rows, raw: { [responseKey]: rows, total: 2 }, total: 2 };
       }
 
       return { rows: [], raw: {} };
@@ -3210,9 +3304,19 @@ describe('resourceConfigs create actions', () => {
 
     render(<ResourcePage config={resourceConfigs.marginLiquidations} />);
 
-    expect(await screen.findByText('maintenance_margin')).toBeInTheDocument();
+    expect(await screen.findByRole('columnheader', { name: '邮箱' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '交易对' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: '记录ID' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: '仓位ID' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: '用户ID' })).not.toBeInTheDocument();
+    expect(screen.getByText('liquidated-user@example.test')).toBeInTheDocument();
+    expect(screen.getByText('BTC-USDT')).toBeInTheDocument();
+    const nullableEmailRow = screen.getByText('ETH-USDT').closest('tr');
+    expect(nullableEmailRow).toBeInTheDocument();
+    expect(within(nullableEmailRow as HTMLElement).getByText('-')).toBeInTheDocument();
+    expect(screen.getByText('maintenance_margin')).toBeInTheDocument();
     await waitForLazyResourceActions();
-    await user.click(screen.getByRole('button', { name: '查看详情' }));
+    await user.click(screen.getAllByRole('button', { name: '查看详情' })[0]);
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/liquidations/31');

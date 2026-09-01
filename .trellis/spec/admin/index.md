@@ -7,6 +7,7 @@
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Admin UI System](./ui-system.md) | Shell, resource pages, filters, tables, confirmation actions, tabs, responsive layout, and browser verification | Active |
+| [Resource Response Contract](./resource-response-contract.md) | API-backed versus derived table columns, strict row validation, and business order-number fallbacks | Active |
 | [Admin Authentication Turnstile](./auth-turnstile.md) | Explicit-render script loading, React SPA widget lifecycle, token ownership, and two-factor cleanup | Active |
 | [Backend Origin and Integrated Image](./backend-origin.md) | Vite compile-time API mode, integrated Docker same-origin wiring, validation, and release checks | Active |
 

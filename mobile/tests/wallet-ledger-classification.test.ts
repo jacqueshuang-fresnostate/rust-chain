@@ -4,6 +4,8 @@ import test from 'node:test'
 import { createI18n } from 'vue-i18n'
 import {
   advanceWalletLedgerPagination,
+  createWalletLedgerPaginationController,
+  createWalletLedgerRequestParams,
   createWalletLedgerRequestLifecycle,
   formatWalletLedgerDecimal,
   formatWalletLedgerGroupHeading,
@@ -13,18 +15,25 @@ import {
   mapWalletLedgerResponse,
   mergeWalletLedgerEntries,
   WALLET_LEDGER_ACCOUNT_FILTERS,
+  WALLET_LEDGER_DATE_PRESETS,
+  WALLET_LEDGER_DIRECTIONS,
   WALLET_LEDGER_FILTERS,
   WALLET_LEDGER_KNOWN_CHANGE_TYPES,
   WALLET_LEDGER_MAX_FRACTION_DIGITS,
   walletLedgerAmountSign,
   walletLedgerAccountTranslationKey,
   walletLedgerCategoryTranslationKey,
+  walletLedgerDatePresetTranslationKey,
+  walletLedgerDateRange,
+  walletLedgerDirectionTranslationKey,
   walletLedgerEntryIdentity,
   walletLedgerTypePresentation,
   type WalletLedgerAccountFilter,
   type WalletLedgerAccountType,
+  type WalletLedgerDatePreset,
+  type WalletLedgerDirection,
   type WalletLedgerEntry,
-  type WalletLedgerFilter,
+  type WalletLedgerFetchOptions,
   type WalletLedgerPage,
 } from '../src/core/walletLedger.ts'
 import { normalizeDecimalText } from '../src/core/decimal.ts'
@@ -79,6 +88,22 @@ test('账单适配器严格消费权威账户、分类、分页、金额、手�
     },
   })
 
+  assert.throws(
+    () => mapWalletLedgerResponse({
+      entries: [backendEntry({ precision_scale: undefined })],
+      page: pageFixture(),
+    }),
+    /precision_scale/,
+  )
+  for (const precisionScale of [null, -1, 19, 1.5, '8']) {
+    assert.throws(
+      () => mapWalletLedgerResponse({
+        entries: [backendEntry({ precision_scale: precisionScale })],
+        page: pageFixture(),
+      }),
+      /precision_scale/,
+    )
+  }
   assert.throws(
     () => mapWalletLedgerResponse({ entries: [], page: undefined }),
     (error) => isWalletLedgerContractError(error) && /page/.test(error.message),
@@ -222,7 +247,7 @@ test('本地日历分组按日期和组内时间倒序，并区分今天、昨�
   assert.match(formatWalletLedgerTime(entries[0].createdAt, 'en-US'), /08:00|8:00/)
 })
 
-test('业务与账户筛选项、全部已知变动类型在中英文中都有对称文案', () => {
+test('方向与日期筛选、兼容分类以及全部已知变动类型均有双语文案', () => {
   assert.deepEqual(WALLET_LEDGER_FILTERS, [
     'all',
     'funding',
@@ -237,6 +262,8 @@ test('业务与账户筛选项、全部已知变动类型在中英文中都有�
     'other',
   ])
   assert.deepEqual(WALLET_LEDGER_ACCOUNT_FILTERS, ['all', 'spot', 'margin'])
+  assert.deepEqual(WALLET_LEDGER_DIRECTIONS, ['all', 'credit', 'debit'])
+  assert.deepEqual(WALLET_LEDGER_DATE_PRESETS, ['all', 'today', 'last7Days', 'last30Days'])
   assert.deepEqual([...WALLET_LEDGER_KNOWN_CHANGE_TYPES].sort(), [
     'admin_recharge',
     'agent_commission_payout',
@@ -288,6 +315,8 @@ test('业务与账户筛选项、全部已知变动类型在中英文中都有�
   const translationKeys = new Set<string>([
     ...WALLET_LEDGER_FILTERS.map(walletLedgerCategoryTranslationKey),
     ...WALLET_LEDGER_ACCOUNT_FILTERS.map(walletLedgerAccountTranslationKey),
+    ...WALLET_LEDGER_DIRECTIONS.map(walletLedgerDirectionTranslationKey),
+    ...WALLET_LEDGER_DATE_PRESETS.map(walletLedgerDatePresetTranslationKey),
     ...WALLET_LEDGER_KNOWN_CHANGE_TYPES.map((type) => (
       walletLedgerTypePresentation(type).translationKey
     )),
@@ -298,6 +327,13 @@ test('业务与账户筛选项、全部已知变动类型在中英文中都有�
     'ledger.sourceType',
     'ledger.typeOther',
     'ledger.accountFilterLabel',
+    'ledger.assetFilterLabel',
+    'ledger.directionFilterLabel',
+    'ledger.dateFilterLabel',
+    'ledger.filterBarLabel',
+    'ledger.filterClose',
+    'ledger.amountExact',
+    'ledger.entryDetails',
   ])
   for (const key of translationKeys) {
     assert.equal(typeof resolveMessage(zhCN, key), 'string', `zh-CN missing ${key}`)
@@ -334,7 +370,7 @@ test('账单金额仅为正数添加加号，零值保持中性且不带加号',
   assert.equal(walletLedgerAmountSign(normalizeDecimalText('-8')), '')
 })
 
-test('账单金额、余额和手续费保留最多 18 位精度且不经过 IEEE-754', () => {
+test('账单金额只依据必填资产精度截取展示且不经过 IEEE-754', () => {
   assert.equal(WALLET_LEDGER_MAX_FRACTION_DIGITS, 18)
   assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.00125'), 'en-US'), '0.00125')
   assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US'), '0.000000000000000001')
@@ -347,20 +383,76 @@ test('账单金额、余额和手续费保留最多 18 位精度且不经过 IEE
     '9,007,199,254,740,993.123456789012345678',
   )
   assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('-0'), 'en-US'), '0')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('12.340000000000000000'), 'en-US', 2), '12.34')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('12.999999999999999999'), 'en-US', 2), '12.99')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US', 2), '0')
 })
 
-test('账单请求生命周期阻止旧账户、旧分类、旧会话和卸载后的响应写回', async () => {
+test('本地日期预设冻结为服务端可用的 UTC 区间', () => {
+  const now = new Date(2026, 8, 1, 15, 30, 45, 123)
+  assert.deepEqual(walletLedgerDateRange('all', now), {})
+
+  const today = walletLedgerDateRange('today', now)
+  assert.equal(today.endTime, now.toISOString())
+  const todayStart = new Date(today.startTime || '')
+  assert.deepEqual(
+    [todayStart.getFullYear(), todayStart.getMonth(), todayStart.getDate(), todayStart.getHours()],
+    [2026, 8, 1, 0],
+  )
+
+  const last7Start = new Date(walletLedgerDateRange('last7Days', now).startTime || '')
+  const last30Start = new Date(walletLedgerDateRange('last30Days', now).startTime || '')
+  assert.deepEqual([last7Start.getMonth(), last7Start.getDate(), last7Start.getHours()], [7, 26, 0])
+  assert.deepEqual([last30Start.getMonth(), last30Start.getDate(), last30Start.getHours()], [7, 3, 0])
+})
+
+test('账单查询把带时区日期规范为 MySQL 安全 UTC 文本并拒绝坏边界', () => {
+  assert.deepEqual(createWalletLedgerRequestParams({
+    limit: 30,
+    offset: 60,
+    assetSymbol: ' usdt ',
+    direction: 'credit',
+    startTime: '2026-09-01T08:00:00.123+08:00',
+    endTime: '2026-09-02T07:59:59.999+08:00',
+  }), {
+    limit: 30,
+    offset: 60,
+    category: undefined,
+    account_type: 'all',
+    change_type: undefined,
+    asset_symbol: 'USDT',
+    direction: 'credit',
+    start_time: '2026-09-01 00:00:00.123',
+    end_time: '2026-09-01 23:59:59.999',
+  })
+
+  for (const options of [
+    { startTime: '2026-02-30T00:00:00Z' },
+    { startTime: '2026-09-01 00:00:00' },
+    { startTime: '2026-09-02T00:00:00Z', endTime: '2026-09-01T23:59:59Z' },
+  ]) {
+    assert.throws(() => createWalletLedgerRequestParams(options), /wallet ledger/)
+  }
+})
+
+test('账单请求生命周期阻止旧资产、旧方向、旧日期、旧会话和卸载响应写回', async () => {
   let sessionKey = ''
-  let selectedFilter: WalletLedgerFilter = 'all'
-  let selectedAccountType: WalletLedgerAccountFilter = 'all'
+  let sessionGeneration = 0
+  let selectedAssetSymbol: string | undefined
+  let selectedDirection: WalletLedgerDirection = 'all'
+  let selectedDatePreset: WalletLedgerDatePreset = 'all'
+  let selectedDateRange = walletLedgerDateRange('all')
   const requests: Array<{
-    options: { limit: number; offset: number; category?: string; accountType: WalletLedgerAccountFilter }
+    options: WalletLedgerFetchOptions
     deferred: ReturnType<typeof deferred<WalletLedgerPage>>
   }> = []
   const lifecycle = createWalletLedgerRequestLifecycle({
     sessionKey: () => sessionKey,
-    selectedFilter: () => selectedFilter,
-    selectedAccountType: () => selectedAccountType,
+    sessionGeneration: () => sessionGeneration,
+    selectedAssetSymbol: () => selectedAssetSymbol,
+    selectedDirection: () => selectedDirection,
+    selectedDatePreset: () => selectedDatePreset,
+    selectedDateRange: () => selectedDateRange,
     fetchPage: (options) => {
       const pending = deferred<WalletLedgerPage>()
       requests.push({ options, deferred: pending })
@@ -372,106 +464,173 @@ test('账单请求生命周期阻止旧账户、旧分类、旧会话和卸载�
   assert.equal(requests.length, 0)
 
   sessionKey = 'TOKEN_A'
-  selectedFilter = 'funding'
-  const funding = lifecycle.load(0, 30)
+  sessionGeneration = 1
+  selectedAssetSymbol = 'USDT'
+  selectedDirection = 'credit'
+  selectedDatePreset = 'today'
+  selectedDateRange = {
+    startTime: '2026-09-01T00:00:00.000Z',
+    endTime: '2026-09-01T23:59:59.999Z',
+  }
+  const usdtCredit = lifecycle.load(0, 30)
   assert.deepEqual(requests[0].options, {
     limit: 30,
     offset: 0,
-    category: 'funding',
-    accountType: 'all',
+    assetSymbol: 'USDT',
+    direction: 'credit',
+    startTime: '2026-09-01T00:00:00.000Z',
+    endTime: '2026-09-01T23:59:59.999Z',
   })
 
-  selectedFilter = 'spot'
-  const spot = lifecycle.load(0, 30)
-  requests[0].deferred.resolve(pageResult(1, 'funding'))
-  assert.deepEqual(await funding, { state: 'stale' })
-  requests[1].deferred.resolve(pageResult(2, 'spot'))
-  assert.equal((await spot).state, 'loaded')
+  selectedAssetSymbol = 'BTC'
+  const btcCredit = lifecycle.load(0, 30)
+  requests[0].deferred.resolve(pageResult(1, { symbol: 'USDT', amount: '1', createdAt: Date.parse('2026-09-01T12:00:00Z') }))
+  assert.deepEqual(await usdtCredit, { state: 'stale' })
+  requests[1].deferred.resolve(pageResult(2, { symbol: 'BTC', amount: '0.1', createdAt: Date.parse('2026-09-01T12:00:00Z') }))
+  assert.equal((await btcCredit).state, 'loaded')
 
-  selectedAccountType = 'spot'
-  const spotAccount = lifecycle.load(0, 30)
-  selectedAccountType = 'margin'
-  const marginAccount = lifecycle.load(0, 30)
-  requests[2].deferred.resolve(pageResult(3, 'spot', 'spot'))
-  assert.deepEqual(await spotAccount, { state: 'stale' })
-  requests[3].deferred.resolve(pageResult(4, 'spot', 'margin'))
-  assert.equal((await marginAccount).state, 'loaded')
-
-  selectedFilter = 'funding'
-  const mismatched = lifecycle.load(0, 30)
-  requests[4].deferred.resolve(pageResult(5, 'spot', 'margin'))
-  const mismatchResult = await mismatched
-  assert.equal(mismatchResult.state, 'error')
-  assert.ok(mismatchResult.state === 'error' && isWalletLedgerContractError(mismatchResult.error))
-
-  selectedFilter = 'all'
-  selectedAccountType = 'spot'
-  const mismatchedAccount = lifecycle.load(0, 30)
-  requests[5].deferred.resolve(pageResult(6, 'other', 'margin'))
-  const accountMismatchResult = await mismatchedAccount
-  assert.equal(accountMismatchResult.state, 'error')
+  selectedDirection = 'debit'
+  const mismatchedDirection = lifecycle.load(0, 30)
+  requests[2].deferred.resolve(pageResult(3, { symbol: 'BTC', amount: '1', createdAt: Date.parse('2026-09-01T12:00:00Z') }))
+  const directionMismatchResult = await mismatchedDirection
+  assert.equal(directionMismatchResult.state, 'error')
   assert.ok(
-    accountMismatchResult.state === 'error'
-      && isWalletLedgerContractError(accountMismatchResult.error),
+    directionMismatchResult.state === 'error'
+      && isWalletLedgerContractError(directionMismatchResult.error),
   )
 
-  selectedFilter = 'all'
-  selectedAccountType = 'all'
-  const all = lifecycle.load(30, 30)
-  assert.deepEqual(requests[6].options, {
+  selectedDirection = 'all'
+  selectedDatePreset = 'last7Days'
+  selectedDateRange = {
+    startTime: '2026-08-26T00:00:00.000Z',
+    endTime: '2026-09-01T23:59:59.999Z',
+  }
+  const dated = lifecycle.load(30, 30)
+  assert.deepEqual(requests[3].options, {
     limit: 30,
     offset: 30,
-    category: undefined,
-    accountType: 'all',
+    assetSymbol: 'BTC',
+    direction: 'all',
+    startTime: '2026-08-26T00:00:00.000Z',
+    endTime: '2026-09-01T23:59:59.999Z',
   })
   sessionKey = 'TOKEN_B'
-  requests[6].deferred.resolve(pageResult(7, 'other'))
-  assert.deepEqual(await all, { state: 'stale' })
+  sessionGeneration = 2
+  requests[3].deferred.resolve(pageResult(4, { symbol: 'BTC', amount: '-1', createdAt: Date.parse('2026-08-30T12:00:00Z') }))
+  assert.deepEqual(await dated, { state: 'stale' })
+
+  sessionKey = 'TOKEN_A'
+  sessionGeneration = 3
+  const sameTokenOldGeneration = lifecycle.load(0, 30)
+  sessionGeneration = 4
+  requests[4].deferred.resolve(pageResult(5, { symbol: 'BTC', amount: '-1', createdAt: Date.parse('2026-08-30T12:00:00Z') }))
+  assert.deepEqual(await sameTokenOldGeneration, { state: 'stale' })
 
   const beforeUnmount = lifecycle.load(0, 30)
   lifecycle.stop()
-  requests[7].deferred.resolve(pageResult(8, 'other'))
+  requests[5].deferred.resolve(pageResult(6, { symbol: 'BTC', amount: '-1', createdAt: Date.parse('2026-08-30T12:00:00Z') }))
   assert.deepEqual(await beforeUnmount, { state: 'stale' })
   assert.deepEqual(await lifecycle.load(0, 30), { state: 'stale' })
 })
 
-test('页面和 API 源码保留分页、状态分支、手续费、原始未知类型与窄屏合同', () => {
+test('分页控制器隔离初始错误与追加错误并按原偏移重试且保留既有行', async () => {
+  const requests: Array<{
+    options: WalletLedgerFetchOptions
+    deferred: ReturnType<typeof deferred<WalletLedgerPage>>
+  }> = []
+  const controller = createWalletLedgerPaginationController({
+    sessionKey: () => 'TOKEN',
+    sessionGeneration: () => 1,
+    selectedAssetSymbol: () => undefined,
+    selectedDirection: () => 'all',
+    selectedDatePreset: () => 'all',
+    selectedDateRange: () => ({}),
+    pageSize: 2,
+    fetchPage: (options) => {
+      const pending = deferred<WalletLedgerPage>()
+      requests.push({ options, deferred: pending })
+      return pending.promise
+    },
+  })
+
+  const initialFailure = new Error('initial failed')
+  const first = controller.loadInitial()
+  assert.equal(controller.snapshot().loading, true)
+  requests[0].deferred.reject(initialFailure)
+  assert.equal(await first, 'error')
+  assert.equal(controller.snapshot().initialError, initialFailure)
+
+  const retryInitial = controller.loadInitial()
+  requests[1].deferred.resolve(ledgerPage([1, 2], 0, 4, 2))
+  assert.equal(await retryInitial, 'loaded')
+  assert.deepEqual(controller.snapshot().entries.map((entry) => entry.id), [1, 2])
+  assert.equal(controller.snapshot().nextOffset, 2)
+
+  const appendFailure = new Error('append failed')
+  const append = controller.loadMore()
+  assert.equal(await controller.loadMore(), 'ignored')
+  assert.equal(requests[2].options.offset, 2)
+  requests[2].deferred.reject(appendFailure)
+  assert.equal(await append, 'error')
+  assert.deepEqual(controller.snapshot().entries.map((entry) => entry.id), [1, 2])
+  assert.equal(controller.snapshot().nextOffset, 2)
+  assert.equal(controller.snapshot().appendError, appendFailure)
+
+  const retryAppend = controller.retryLoadMore()
+  assert.equal(requests[3].options.offset, 2)
+  requests[3].deferred.resolve(ledgerPage([2, 3], 1, 4, 2))
+  assert.equal(await retryAppend, 'loaded')
+  assert.deepEqual(controller.snapshot().entries.map((entry) => entry.id), [1, 2, 3])
+  assert.equal(controller.snapshot().appendError, null)
+  assert.equal(controller.snapshot().exhausted, true)
+})
+
+test('页面和 API 源码实施三筛选、连续 56px 行、可访问 Sheet 与精确小数合同', () => {
   assert.match(walletApiSource, /client\.get<BackendWalletLedgerResponse>\(requestUrl\('\/wallet\/ledger'\)/)
-  assert.match(walletApiSource, /category: options\.category/)
-  assert.match(walletApiSource, /account_type: accountType/)
-  assert.match(walletApiSource, /change_type: changeType \|\| undefined/)
+  assert.match(walletApiSource, /const params = createWalletLedgerRequestParams\(options\)/)
   assert.match(walletApiSource, /return mapWalletLedgerResponse\(response\.data\)/)
 
-  assert.match(viewSource, /v-for="filter in WALLET_LEDGER_FILTERS"/)
-  assert.match(viewSource, /v-for="accountType in WALLET_LEDGER_ACCOUNT_FILTERS"/)
-  assert.match(viewSource, /selectedAccountType: \(\) => activeAccountType\.value/)
-  assert.match(viewSource, /groupWalletLedgerEntries\(entries\.value\)/)
-  assert.match(viewSource, /t\('ledger\.groupCount', group\.entries\.length\)/)
-  assert.match(viewSource, /categoryLabel\(entry\.category\)/)
-  assert.match(viewSource, /accountLabel\(entry\.accountType\)/)
+  assert.match(viewSource, /fetchWalletAccounts\(\)/)
+  assert.match(viewSource, /selectedAssetSymbol: \(\) => activeAssetSymbol\.value/)
+  assert.match(viewSource, /selectedDirection: \(\) => activeDirection\.value/)
+  assert.match(viewSource, /selectedDatePreset: \(\) => activeDatePreset\.value/)
+  assert.match(viewSource, /v-for="entry in entries"/)
   assert.match(viewSource, /:key="walletLedgerEntryIdentity\(entry\)"/)
-  assert.match(viewSource, /mergeWalletLedgerEntries\(entries\.value, result\.value\.entries\)/)
-  assert.match(viewSource, /v-if="decimalSign\(entry\.fee\) > 0"/)
-  assert.match(viewSource, /t\('ledger\.sourceType', \{ type: entrySource\(entry\) \}\)/)
-  assert.match(viewSource, /advanceWalletLedgerPagination\(offset, result\.value\)/)
+  assert.match(viewSource, /createWalletLedgerPaginationController\(\{/)
   assert.match(walletCoreSource, /nextOffset >= result\.page\.totalElements/)
   assert.match(walletCoreSource, /result\.page\.number \+ 1 >= result\.page\.totalPages/)
-  assert.match(viewSource, /isWalletLedgerContractError\(result\.error\)/)
+  assert.match(viewSource, /isWalletLedgerContractError\(reason\)/)
   assert.match(viewSource, /walletLedgerAmountSign\(entry\.amount\)/)
   assert.match(viewSource, /ledgerDecimal\(entry\.amount, entry\.precisionScale\)/)
   assert.match(viewSource, /ledgerDecimal\(entry\.balanceAfter, entry\.precisionScale\)/)
-  assert.match(viewSource, /ledgerDecimal\(entry\.fee, entry\.precisionScale\)/)
+  assert.match(viewSource, /:title="exactAmountTitle\(entry\)"/)
+  assert.match(viewSource, /entryAccessibleDetails\(entry\)/)
   assert.doesNotMatch(viewSource, /formatAmount\(entry\.(?:amount|balanceAfter|fee)/)
+  assert.doesNotMatch(walletCoreSource, /(?:Number|parseFloat)\([^\n]*(?:amount|fee|balanceAfter)/)
+  assert.doesNotMatch(walletCoreSource, /(?:amount|fee|balanceAfter)[^\n]*\.toFixed\(/)
   assert.match(viewSource, /v-if="error && !entries\.length"/)
   assert.match(viewSource, /v-else-if="loading && !entries\.length"/)
-  assert.match(viewSource, /v-else-if="groupedEntries\.length"/)
+  assert.match(viewSource, /v-else-if="entries\.length"/)
   assert.match(viewSource, /v-if="error && entries\.length"/)
   assert.match(viewSource, /@click="load\(false\)"/)
-  assert.match(viewSource, /\.ledger-filter button \{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
-  assert.match(viewSource, /\.ledger-filter \{[\s\S]*?overflow-x: auto;/)
+  assert.match(viewSource, /useModalDialog\(filterSheetOpen, filterDialog/)
+  assert.match(viewSource, /<Teleport to="body">/)
+  assert.match(viewSource, /role="dialog"/)
+  assert.match(viewSource, /aria-modal="true"/)
+  assert.match(viewSource, /\.ledger-filter-trigger \{[\s\S]*?height: 28px;/)
+  assert.match(viewSource, /\.ledger-filter-trigger \{[\s\S]*?min-height: 28px;/)
+  assert.match(viewSource, /\.ledger-filter-trigger::before \{[\s\S]*?inset: -8px 0;/)
+  assert.match(viewSource, /\.ledger-row \{[\s\S]*?height: 56px;/)
+  assert.match(viewSource, /\.ledger-row \{[\s\S]*?min-height: 56px;/)
+  assert.match(viewSource, /\.ledger-row__copy,[\s\S]*?gap: 3px;/)
+  assert.match(viewSource, /\.ledger-list \{[\s\S]*?gap: 0;/)
+  assert.match(viewSource, /padding: 6px 20px calc\(20px \+ env\(safe-area-inset-bottom\)\);/)
   assert.match(viewSource, /\.ledger-page \{[\s\S]*?min-width: 0;[\s\S]*?overflow-x: hidden;/)
-  assert.match(viewSource, /@media \(max-width: 340px\)/)
-  assert.doesNotMatch(viewSource, /spot_trade_settlement.*activeFilter|margin_position_open.*activeFilter/)
+  assert.doesNotMatch(viewSource, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
+  assert.doesNotMatch(viewSource, /<span class="sr-only">\{\{ entryAccessibleDetails\(entry\) \}\}<\/span>/)
+  assert.doesNotMatch(viewSource, /#actions|RefreshCw|eyebrow=|subtitle=/)
+  assert.doesNotMatch(viewSource, /ledger-account-filter|WALLET_LEDGER_FILTERS|WALLET_LEDGER_ACCOUNT_FILTERS/)
+  assert.doesNotMatch(viewSource, /ledger-group__header|groupWalletLedgerEntries/)
 })
 
 function backendEntry(overrides: Record<string, unknown> = {}) {
@@ -484,6 +643,7 @@ function backendEntry(overrides: Record<string, unknown> = {}) {
     amount: '10.000000000000000000',
     fee: '0.000000000000000000',
     balance_after: '110.000000000000000000',
+    precision_scale: 18,
     created_at: 1_786_307_400_000,
     ...overrides,
   }
@@ -517,18 +677,39 @@ function ledgerEntry(
   }
 }
 
-function pageResult(
-  id: number,
-  category: WalletLedgerEntry['category'],
-  accountType: WalletLedgerAccountType = 'spot',
-): WalletLedgerPage {
+function pageResult(id: number, overrides: {
+  symbol?: string
+  amount?: string
+  createdAt?: number
+} = {}): WalletLedgerPage {
   return {
-    entries: [{ ...ledgerEntry(id, new Date(2026, 7, 10, id).getTime(), accountType), category }],
+    entries: [{
+      ...ledgerEntry(id, overrides.createdAt ?? new Date(2026, 7, 10, id).getTime()),
+      symbol: overrides.symbol ?? 'USDT',
+      amount: normalizeDecimalText(overrides.amount ?? String(id)),
+    }],
     page: {
       number: 0,
       size: 30,
       totalElements: 1,
       totalPages: 1,
+    },
+  }
+}
+
+function ledgerPage(
+  ids: number[],
+  number: number,
+  totalElements: number,
+  size: number,
+): WalletLedgerPage {
+  return {
+    entries: ids.map((id) => ledgerEntry(id, Date.parse('2026-09-01T12:00:00Z'))),
+    page: {
+      number,
+      size,
+      totalElements,
+      totalPages: Math.max(1, Math.ceil(totalElements / size)),
     },
   }
 }

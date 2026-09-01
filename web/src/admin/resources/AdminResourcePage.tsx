@@ -3,7 +3,7 @@ import { Button, Card, Space, Switch, Tooltip, Typography } from '@douyinfe/semi
 import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { listAdminResource } from '../../api/adminResources';
+import { listAdminResource, type AdminResourceRowContract } from '../../api/adminResources';
 import type { ApiRecord } from '../../api/types';
 import { PageHeader } from '../../layouts/PageHeader';
 import { AmountText } from '../../shared/AmountText';
@@ -17,15 +17,26 @@ import { TimestampText } from '../../shared/TimestampText';
 
 const { Text } = Typography;
 
+export type AdminResourceColumnSource = 'api' | 'derived';
+
 export type AdminResourceColumn<T extends ApiRecord> = {
   asset?: string;
   key: Extract<keyof T, string>;
   precision?: number;
   render?: (record: T) => ReactNode;
+  source?: AdminResourceColumnSource;
   title: string;
   type?: 'amount' | 'json' | 'status' | 'text' | 'timestamp';
   valueMap?: Record<string, string>;
 };
+
+export function buildAdminResourceRowContract<T extends ApiRecord>(columns: Array<AdminResourceColumn<T>>): AdminResourceRowContract {
+  const apiColumns = columns.filter((column) => column.source !== 'derived');
+  return {
+    decimalFields: [...new Set(apiColumns.filter((column) => column.type === 'amount').map((column) => column.key))],
+    requiredFields: [...new Set(apiColumns.map((column) => column.key))]
+  };
+}
 
 type AdminResourceActionHelpers = {
   reload: () => void;
@@ -222,13 +233,7 @@ export function AdminResourcePage<T extends ApiRecord>({
     }),
     [filterValues, page, pageSize, serverPaged, toolbarFilterValues]
   );
-  const rowContract = useMemo(
-    () => ({
-      decimalFields: [...new Set(columns.filter((column) => column.type === 'amount').map((column) => column.key))],
-      requiredFields: [...new Set(columns.map((column) => column.key))]
-    }),
-    [columns]
-  );
+  const rowContract = useMemo(() => buildAdminResourceRowContract(columns), [columns]);
 
   useEffect(() => {
     let active = true;

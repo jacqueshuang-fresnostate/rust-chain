@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile Pencil production-parity, touch-target, responsive, and release-gate contracts"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "DecimalText DTO, authenticated request generation, pagination, and stale-response contracts"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Secondary-page back navigation and bilingual locale contracts"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend pre-development and feature-contract routing"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Asset precision-scale source-of-truth and wallet ledger snapshot contracts"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Route, architecture, documentation, and validation requirements"}
+{"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-ledger-and-precision.md", "reason": "Exact Pencil y6Y7TW geometry and diagnosed precision root cause"}

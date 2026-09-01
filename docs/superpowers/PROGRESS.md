@@ -8160,9 +8160,30 @@
 - 验证结果：Admin production-policy 15/15、lint、typecheck、Docker 合同 4/4、`cargo fmt --all -- --check` 与 `git diff --check` 通过；从 `git ls-files web` 生成且确认不存在 `.env*` 的临时干净目录执行 `npm ci` 和仅注入 `VITE_API_SAME_ORIGIN=true` 的生产构建通过（3770 modules）。真实浏览器加载该制品后，登录页及模拟登录后的仪表盘初始化无 console error，同一 `127.0.0.1:43871` Origin 实际收到 `POST /admin/api/v1/auth/login`、`GET /admin/api/v1/access/me`、`GET /admin/api/v1/dashboard`；交易对页实际向同一 Origin 发起 `GET /ws/public` WebSocket 握手，HTTPS/WSS 与 HTTP/WS 派生另由模块测试覆盖。`docker buildx build --check .` 已尝试，但本机 OrbStack Docker daemon 未运行；临时服务器、浏览器测试页、临时构建目录及误生成的仓库根 `node_modules/` 均已清理。
 - 后续事项：真实完整镜像构建仍由 Docker 发布 CI 的原生 AMD64/ARM64 job 验证；本次未提交或推送。
 
+## 2026-09-01 19:54 - 修复 Admin 业务订单号响应合同
+
+- 完成内容：确认秒合约与理财后端 DTO/SQL 均未定义 `order_no`，根因是 Admin 将展示层合成订单号误纳入接口必填行合同。为资源列增加 `api/derived` 来源语义，只从真实 API 列构建必填与 Decimal 合同；将统一订单号列标记为派生，一次覆盖借贷、预测、现货、新币、闪兑、秒合约和理财 8 个资源。补强页面到列表边界、全部派生订单号、真实关联订单 ID、后端订单号优先和秒合约/理财稳定回退测试，并修复空白 `order_no` 遮蔽非空 `orderNo` 别名的边界问题。
+- 修改文件：`web/src/admin/resources/AdminResourcePage.tsx`、`web/src/admin/resources/AdminResourcePage.test.tsx`、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/shared/orderNo.ts`、`.trellis/spec/admin/index.md`、`.trellis/spec/admin/resource-response-contract.md`、`.trellis/tasks/09-01-fix-admin-business-order-number-contract/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 94/94、Admin 全量测试 434/434、生产策略 15/15、覆盖率任务 23/23 通过；`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`npm --prefix web run budget` 与 `git diff --check` 均通过。独立 Trellis 检查无遗留问题；构建只保留既有 `lottie-web` direct-eval 与大 chunk 警告。
+- 后续事项：等待确认本地提交计划；尚未推送。
+
 ## 2026-09-01 20:45 - 完成手机端秒合约历史订单分页与独立复核
 
 - 完成内容：用户秒合约订单接口增加归一化 `offset`、`limit + 1` 续页判断和稳定 `created_at DESC, id DESC` 分页；Mobile 历史页以 20 条首屏和 `IntersectionObserver` 自动追加，按原始行数推进 offset、按 ID 去重并以后页权威行覆盖。独立复核进一步修复缺失 `orders` 被误判为空终页、同时间订单缺少显式 ID 次序、追加竞态仅由源码断言覆盖等问题；分页控制器现统一保证精确 token/generation 隔离、单飞、追加错误保留与同 offset 重试、空页/终页/无新增 ID 停止，局部重试保持可访问忙碌状态。
 - 修改文件：`src/modules/seconds_contract/{application,infrastructure,presentation,routes}.rs`、`tests/seconds_contract_routes.rs`、`mobile/src/api/seconds.ts`、`mobile/src/core/secondsOrder.ts`、`mobile/src/views/SecondsHistoryView.vue`、`mobile/tests/{seconds-api-adapter,seconds-history-view}.test.ts`、`.trellis/spec/backend/seconds-contracts.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/09-01-mobile-seconds-history-pagination/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Mobile 聚焦测试 24/24、完整 `npm --prefix mobile run release:gate` 612/612、应用/测试类型检查、PWA/Tauri 双构建、制品、bundle/source-size/test-quality 门禁全部通过；`cargo fmt --all -- --check`、后端架构测试 11/11、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 通过。秒合约分页路由定向测试 1/1 编译并通过，但本机未配置 `DATABASE_URL`，真实 MySQL 数据断言按测试合同跳过。
 - 后续事项：部署前在 MySQL 8.x 环境执行 `seconds_contract_paginates_current_user_orders_with_timestamp`，补证同时间 ID 次序、跨用户隔离与 `has_more` 的真实 SQL 分页；本轮未提交或推送。
+
+## 2026-09-01 22:03 - 优化后台强平记录业务字段
+
+- 完成内容：后台强平列表隐藏记录 ID、仓位 ID、用户 ID 三个内部标识列，新增邮箱与交易对业务列；强平列表和详情接口通过用户、交易对外键统一返回可空 `email` 与非空 `symbol`，继续保留全部旧 ID 供筛选、详情与兼容调用。独立复核补齐空邮箱、真实行合同、四类筛选、总数、分页、稳定排序和隐藏 ID 详情动作测试。
+- 修改文件：`src/modules/admin/{presentation/dashboard_audit,infrastructure/margin}.rs`、`tests/admin_routes.rs`、`web/src/admin/resources/{resourceConfigs,resourceConfigs.test}.tsx`、`.trellis/spec/{admin/ui-system,backend/margin-trading-actions}.md`、`.trellis/tasks/09-01-admin-liquidation-record-columns/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、后端架构 11/11、无 `DATABASE_URL` 聚焦路由 1/1 通过；Admin typecheck、lint、全量 435/435、production-policy 15/15、coverage 23/23、production build 与 bundle budget 全部通过。真实 MySQL 测试因当前 `.env` 凭据被数据库拒绝，JOIN 数据断言已编写并完成编译。
+- 后续事项：部署前使用可用 MySQL 测试凭据执行 `admin_margin_liquidations_list_filters_seeded_records`，补证真实 JOIN、空邮箱和分页行为；本轮未提交或推送。
+
+## 2026-09-02 01:21 - 完成手机端资金账单 Pencil 1:1 复刻与精度筛选合同
+
+- 完成内容：依据 Pencil `y6Y7TW/m25xr0` 将 `/assets/ledger` 重构为 60px 二级 Header、三枚 28px 筛选胶囊和连续 56px 流水行，精确落实明暗主题色、320–448px 响应式与可访问底部 Sheet；资产、收支方向和日期均改为服务端分页前筛选，分页控制器隔离 session/filter ABA、首屏与追加错误并按原始行数推进 offset。后端流水响应新增资产权威 `precision_scale`，方向/UTC 时间范围在取连接池前校验并以强类型绑定，Mobile 全程保留 DecimalText，不再从 18 位存储字符串推断展示精度。
+- 修改文件：`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`src/modules/wallet/infrastructure/accounts_ledger.rs`、钱包后端测试；`mobile/src/{api/wallet,core/walletLedger}.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/styles/pencil-selected-pages.css`、中英文资源及账单测试；`.trellis/spec/{backend/wallet-amount-precision,mobile/backend-integration}.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check`、`cargo clippy --all-targets -- -D warnings` 与账本后端聚焦测试通过；最终 `npm --prefix mobile run release:gate` 通过，Mobile 615/615、PWA/Tauri 双构建、制品、bundle/source-size/test-quality 门禁全部绿色；`git diff --check` 通过。Ego Browser 在 320/390/448px 明暗主题复核无横向溢出，Header/胶囊/行高与 Pencil 一致，并验证真实资产选择、Escape 关闭、焦点恢复和滚动锁。MySQL 路由数据分支因本机未配置 `DATABASE_URL` 按测试合同跳过。
+- 后续事项：部署前在 MySQL 8.x 环境执行 `cargo test wallet_ledger --tests`，补证真实联合账本的组合筛选与分页 SQL；本轮未提交或推送。

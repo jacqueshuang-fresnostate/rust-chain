@@ -50,7 +50,7 @@ test('financial input range and percentage shortcuts remain exact beyond IEEE-75
   assert.equal(decimalMinimum('9007199254740993', '9007199254740992.999999999999999999'), '9007199254740992.999999999999999999')
 })
 
-test('wallet ledger keeps source decimals and uses inferred or explicit asset precision', () => {
+test('wallet ledger keeps source decimals and requires explicit authoritative asset precision', () => {
   const result = mapWalletLedgerResponse({
     entries: [{
       id: 1,
@@ -70,6 +70,21 @@ test('wallet ledger keeps source decimals and uses inferred or explicit asset pr
   assert.equal(entry.amount, '0.000000000000000001')
   assert.equal(formatWalletLedgerDecimal(entry.amount, 'en-US', entry.precisionScale), '0.000000000000000001')
   assert.equal(formatWalletLedgerDecimal(entry.balanceAfter, 'en-US', entry.precisionScale), '9,007,199,254,740,993.000000000000000001')
+
+  assert.throws(() => mapWalletLedgerResponse({
+    entries: [{
+      id: 2,
+      account_type: 'spot',
+      symbol: 'USDT',
+      change_type: 'deposit',
+      category: 'funding',
+      amount: '1.000000000000000000',
+      fee: '0.000000000000000000',
+      balance_after: '2.000000000000000000',
+      created_at: 1_786_307_400,
+    }],
+    page: { number: 0, size: 30, total_elements: 1, total_pages: 1 },
+  }), /precision_scale/)
 })
 
 test('orders lifecycle aborts superseded generations and ignores their late completion', async () => {

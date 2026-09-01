@@ -5,7 +5,6 @@ import {
 } from './realizedReturn.ts'
 import {
   decimalCompare,
-  decimalFractionDigits,
   decimalSign,
   formatDecimalText,
   normalizeDecimalText,
@@ -28,12 +27,21 @@ export const WALLET_LEDGER_CATEGORIES = [
 export const WALLET_LEDGER_FILTERS = ['all', ...WALLET_LEDGER_CATEGORIES] as const
 export const WALLET_LEDGER_ACCOUNT_TYPES = ['spot', 'margin'] as const
 export const WALLET_LEDGER_ACCOUNT_FILTERS = ['all', ...WALLET_LEDGER_ACCOUNT_TYPES] as const
+export const WALLET_LEDGER_DIRECTIONS = ['all', 'credit', 'debit'] as const
+export const WALLET_LEDGER_DATE_PRESETS = ['all', 'today', 'last7Days', 'last30Days'] as const
 export const WALLET_LEDGER_MAX_FRACTION_DIGITS = 18
 
 export type WalletLedgerCategory = typeof WALLET_LEDGER_CATEGORIES[number]
 export type WalletLedgerFilter = typeof WALLET_LEDGER_FILTERS[number]
 export type WalletLedgerAccountType = typeof WALLET_LEDGER_ACCOUNT_TYPES[number]
 export type WalletLedgerAccountFilter = typeof WALLET_LEDGER_ACCOUNT_FILTERS[number]
+export type WalletLedgerDirection = typeof WALLET_LEDGER_DIRECTIONS[number]
+export type WalletLedgerDatePreset = typeof WALLET_LEDGER_DATE_PRESETS[number]
+
+export interface WalletLedgerDateRange {
+  startTime?: string
+  endTime?: string
+}
 
 export interface BackendWalletLedgerEntry {
   id: unknown
@@ -44,7 +52,7 @@ export interface BackendWalletLedgerEntry {
   amount: unknown
   fee: unknown
   balance_after: unknown
-  precision_scale?: unknown
+  precision_scale: unknown
   created_at: unknown
 }
 
@@ -83,7 +91,7 @@ export interface WalletLedgerPage {
   }
 }
 
-export interface WalletLedgerPaginationState {
+export interface WalletLedgerPageProgress {
   nextOffset: number
   exhausted: boolean
 }
@@ -103,14 +111,81 @@ export interface WalletLedgerTypePresentation {
 export interface WalletLedgerFetchOptions {
   limit: number
   offset: number
+  assetSymbol?: string
+  direction: WalletLedgerDirection
+  startTime?: string
+  endTime?: string
   category?: WalletLedgerCategory
-  accountType: WalletLedgerAccountFilter
+  accountType?: WalletLedgerAccountFilter
+  changeType?: string
+}
+
+export interface WalletLedgerRequestOptions {
+  limit?: number
+  offset?: number
+  assetSymbol?: string
+  direction?: WalletLedgerDirection
+  startTime?: string
+  endTime?: string
+  category?: WalletLedgerCategory
+  accountType?: WalletLedgerAccountFilter
+  changeType?: string
+}
+
+export interface WalletLedgerRequestParams {
+  limit: number
+  offset: number
+  asset_symbol?: string
+  direction: WalletLedgerDirection
+  start_time?: string
+  end_time?: string
+  category?: WalletLedgerCategory
+  account_type: WalletLedgerAccountFilter
+  change_type?: string
+}
+
+export interface WalletLedgerPaginationState {
+  entries: WalletLedgerEntry[]
+  loading: boolean
+  loadingMore: boolean
+  nextOffset: number
+  exhausted: boolean
+  initialError: unknown | null
+  appendError: unknown | null
+}
+
+export type WalletLedgerPaginationOperation =
+  | 'loaded'
+  | 'error'
+  | 'guest'
+  | 'stale'
+  | 'ignored'
+
+export interface WalletLedgerPaginationController {
+  snapshot: () => WalletLedgerPaginationState
+  loadInitial: () => Promise<WalletLedgerPaginationOperation>
+  loadMore: () => Promise<WalletLedgerPaginationOperation>
+  retryLoadMore: () => Promise<WalletLedgerPaginationOperation>
+  reset: () => void
+  stop: () => void
 }
 
 export type WalletLedgerRequestResult =
   | { state: 'guest' }
-  | { state: 'loaded'; filter: WalletLedgerFilter; accountType: WalletLedgerAccountFilter; value: WalletLedgerPage }
-  | { state: 'error'; filter: WalletLedgerFilter; accountType: WalletLedgerAccountFilter; error: unknown }
+  | {
+    state: 'loaded'
+    assetSymbol?: string
+    direction: WalletLedgerDirection
+    datePreset: WalletLedgerDatePreset
+    value: WalletLedgerPage
+  }
+  | {
+    state: 'error'
+    assetSymbol?: string
+    direction: WalletLedgerDirection
+    datePreset: WalletLedgerDatePreset
+    error: unknown
+  }
   | { state: 'stale' }
 
 export interface WalletLedgerRequestLifecycle {
@@ -141,6 +216,19 @@ const ACCOUNT_TRANSLATION_KEYS: Record<WalletLedgerAccountFilter, string> = {
   all: 'ledger.accountAll',
   spot: 'ledger.accountSpot',
   margin: 'ledger.accountMargin',
+}
+
+const DIRECTION_TRANSLATION_KEYS: Record<WalletLedgerDirection, string> = {
+  all: 'ledger.directionAll',
+  credit: 'ledger.directionCredit',
+  debit: 'ledger.directionDebit',
+}
+
+const DATE_PRESET_TRANSLATION_KEYS: Record<WalletLedgerDatePreset, string> = {
+  all: 'ledger.dateAll',
+  today: 'ledger.dateToday',
+  last7Days: 'ledger.dateLast7Days',
+  last30Days: 'ledger.dateLast30Days',
 }
 
 const CHANGE_TYPE_TRANSLATION_KEYS = {
@@ -210,6 +298,16 @@ export function isWalletLedgerAccountFilter(value: unknown): value is WalletLedg
     && (WALLET_LEDGER_ACCOUNT_FILTERS as readonly string[]).includes(value)
 }
 
+export function isWalletLedgerDirection(value: unknown): value is WalletLedgerDirection {
+  return typeof value === 'string'
+    && (WALLET_LEDGER_DIRECTIONS as readonly string[]).includes(value)
+}
+
+export function isWalletLedgerDatePreset(value: unknown): value is WalletLedgerDatePreset {
+  return typeof value === 'string'
+    && (WALLET_LEDGER_DATE_PRESETS as readonly string[]).includes(value)
+}
+
 export function walletLedgerCategoryTranslationKey(filter: WalletLedgerFilter): string {
   return CATEGORY_TRANSLATION_KEYS[filter]
 }
@@ -218,6 +316,94 @@ export function walletLedgerAccountTranslationKey(
   accountType: WalletLedgerAccountFilter,
 ): string {
   return ACCOUNT_TRANSLATION_KEYS[accountType]
+}
+
+export function walletLedgerDirectionTranslationKey(
+  direction: WalletLedgerDirection,
+): string {
+  return DIRECTION_TRANSLATION_KEYS[direction]
+}
+
+export function walletLedgerDatePresetTranslationKey(
+  preset: WalletLedgerDatePreset,
+): string {
+  return DATE_PRESET_TRANSLATION_KEYS[preset]
+}
+
+export function normalizeWalletLedgerAssetSymbol(value: unknown): string {
+  try {
+    return normalizeRealizedReturnAssetSymbol(value, 'asset_symbol', 'wallet ledger')
+  } catch {
+    throw new WalletLedgerContractError('invalid wallet ledger asset_symbol')
+  }
+}
+
+export function walletLedgerDateRange(
+  preset: WalletLedgerDatePreset,
+  now = new Date(),
+): WalletLedgerDateRange {
+  if (!isWalletLedgerDatePreset(preset) || Number.isNaN(now.getTime())) {
+    throw new WalletLedgerContractError('invalid wallet ledger date preset')
+  }
+  if (preset === 'all') return {}
+
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  if (preset === 'last7Days') start.setDate(start.getDate() - 6)
+  if (preset === 'last30Days') start.setDate(start.getDate() - 29)
+  return {
+    startTime: start.toISOString(),
+    endTime: now.toISOString(),
+  }
+}
+
+/**
+ * Build the exact transport query and encode UTC boundaries as MySQL-safe
+ * `YYYY-MM-DD HH:mm:ss.SSS` text. The backend also parses into a typed UTC
+ * value, so neither layer relies on MySQL accepting an RFC3339 `Z` suffix.
+ */
+export function createWalletLedgerRequestParams(
+  options: WalletLedgerRequestOptions = {},
+): WalletLedgerRequestParams {
+  const limit = options.limit ?? 30
+  const offset = options.offset ?? 0
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new WalletLedgerContractError('invalid wallet ledger limit')
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new WalletLedgerContractError('invalid wallet ledger offset')
+  }
+  if (options.category !== undefined && !isWalletLedgerCategory(options.category)) {
+    throw new WalletLedgerContractError('invalid wallet ledger category')
+  }
+
+  const accountType = options.accountType ?? 'all'
+  if (!isWalletLedgerAccountFilter(accountType)) {
+    throw new WalletLedgerContractError('invalid wallet ledger account type')
+  }
+  const assetSymbol = options.assetSymbol === undefined
+    ? undefined
+    : normalizeWalletLedgerAssetSymbol(options.assetSymbol)
+  const direction = options.direction ?? 'all'
+  if (!isWalletLedgerDirection(direction)) {
+    throw new WalletLedgerContractError('invalid wallet ledger direction')
+  }
+  const start = normalizeWalletLedgerRequestTime(options.startTime, 'start_time')
+  const end = normalizeWalletLedgerRequestTime(options.endTime, 'end_time')
+  if (start && end && start.timestamp > end.timestamp) {
+    throw new WalletLedgerContractError('invalid wallet ledger date range')
+  }
+
+  return {
+    limit,
+    offset,
+    category: options.category,
+    account_type: accountType,
+    change_type: options.changeType?.trim() || undefined,
+    asset_symbol: assetSymbol,
+    direction,
+    start_time: start?.mysqlText,
+    end_time: end?.mysqlText,
+  }
 }
 
 export function walletLedgerEntryIdentity(
@@ -269,7 +455,7 @@ export function mapWalletLedgerResponse(payload: BackendWalletLedgerResponse): W
 export function advanceWalletLedgerPagination(
   requestOffset: number,
   result: WalletLedgerPage,
-): WalletLedgerPaginationState {
+): WalletLedgerPageProgress {
   if (!Number.isSafeInteger(requestOffset) || requestOffset < 0) {
     throw new WalletLedgerContractError('invalid wallet ledger request offset')
   }
@@ -380,7 +566,7 @@ export function formatWalletLedgerDecimal(
   try {
     return formatDecimalText(value, locale, {
       maximumFractionDigits: precisionScale,
-      preserveNonZero: true,
+      preserveNonZero: false,
     })
   } catch {
     throw new WalletLedgerContractError('invalid wallet ledger display amount')
@@ -389,8 +575,11 @@ export function formatWalletLedgerDecimal(
 
 export function createWalletLedgerRequestLifecycle(input: {
   sessionKey: () => string
-  selectedFilter: () => WalletLedgerFilter
-  selectedAccountType: () => WalletLedgerAccountFilter
+  sessionGeneration: () => number
+  selectedAssetSymbol: () => string | undefined
+  selectedDirection: () => WalletLedgerDirection
+  selectedDatePreset: () => WalletLedgerDatePreset
+  selectedDateRange: () => WalletLedgerDateRange
   fetchPage: (options: WalletLedgerFetchOptions) => Promise<WalletLedgerPage>
 }): WalletLedgerRequestLifecycle {
   let requestVersion = 0
@@ -402,36 +591,47 @@ export function createWalletLedgerRequestLifecycle(input: {
       if (!active) return { state: 'stale' }
       const sessionKey = input.sessionKey()
       if (!sessionKey) return { state: 'guest' }
-      const filter = input.selectedFilter()
-      const accountType = input.selectedAccountType()
-      const category = filter === 'all' ? undefined : filter
+      const sessionGeneration = input.sessionGeneration()
+      const assetSymbol = input.selectedAssetSymbol()
+      const direction = input.selectedDirection()
+      const datePreset = input.selectedDatePreset()
+      const selectedRange = input.selectedDateRange()
+      const startTime = selectedRange.startTime
+      const endTime = selectedRange.endTime
 
       try {
-        const value = await input.fetchPage({ offset, limit, category, accountType })
-        if (category && value.entries.some((entry) => entry.category !== category)) {
-          throw new WalletLedgerContractError('invalid wallet ledger filtered category')
-        }
-        if (accountType !== 'all'
-          && value.entries.some((entry) => entry.accountType !== accountType)) {
-          throw new WalletLedgerContractError('invalid wallet ledger filtered account type')
-        }
+        const value = await input.fetchPage({
+          offset,
+          limit,
+          ...(assetSymbol ? { assetSymbol } : {}),
+          direction,
+          ...(startTime ? { startTime } : {}),
+          ...(endTime ? { endTime } : {}),
+        })
         if (!active
           || version !== requestVersion
           || input.sessionKey() !== sessionKey
-          || input.selectedFilter() !== filter
-          || input.selectedAccountType() !== accountType) {
+          || input.sessionGeneration() !== sessionGeneration
+          || input.selectedAssetSymbol() !== assetSymbol
+          || input.selectedDirection() !== direction
+          || input.selectedDatePreset() !== datePreset
+          || !sameWalletLedgerDateRange(input.selectedDateRange(), { startTime, endTime })) {
           return { state: 'stale' }
         }
-        return { state: 'loaded', filter, accountType, value }
+        assertWalletLedgerFilteredPage(value, { assetSymbol, direction, startTime, endTime })
+        return { state: 'loaded', assetSymbol, direction, datePreset, value }
       } catch (error) {
         if (!active
           || version !== requestVersion
           || input.sessionKey() !== sessionKey
-          || input.selectedFilter() !== filter
-          || input.selectedAccountType() !== accountType) {
+          || input.sessionGeneration() !== sessionGeneration
+          || input.selectedAssetSymbol() !== assetSymbol
+          || input.selectedDirection() !== direction
+          || input.selectedDatePreset() !== datePreset
+          || !sameWalletLedgerDateRange(input.selectedDateRange(), { startTime, endTime })) {
           return { state: 'stale' }
         }
-        return { state: 'error', filter, accountType, error }
+        return { state: 'error', assetSymbol, direction, datePreset, error }
       }
     },
     invalidate(): void {
@@ -440,6 +640,153 @@ export function createWalletLedgerRequestLifecycle(input: {
     stop(): void {
       active = false
       requestVersion += 1
+    },
+  }
+}
+
+export function createWalletLedgerPaginationState(): WalletLedgerPaginationState {
+  return {
+    entries: [],
+    loading: false,
+    loadingMore: false,
+    nextOffset: 0,
+    exhausted: false,
+    initialError: null,
+    appendError: null,
+  }
+}
+
+/**
+ * Own initial and append state as one executable lifecycle. Append failures
+ * retain the loaded snapshot and offset, retries reuse that exact offset, and
+ * stale session/filter responses never toggle state owned by a newer request.
+ */
+export function createWalletLedgerPaginationController(input: {
+  sessionKey: () => string
+  sessionGeneration: () => number
+  selectedAssetSymbol: () => string | undefined
+  selectedDirection: () => WalletLedgerDirection
+  selectedDatePreset: () => WalletLedgerDatePreset
+  selectedDateRange: () => WalletLedgerDateRange
+  fetchPage: (options: WalletLedgerFetchOptions) => Promise<WalletLedgerPage>
+  pageSize?: number
+  onChange?: (state: WalletLedgerPaginationState) => void
+}): WalletLedgerPaginationController {
+  const pageSize = input.pageSize ?? 30
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new WalletLedgerContractError('invalid wallet ledger page size')
+  }
+  const requests = createWalletLedgerRequestLifecycle(input)
+  let state = createWalletLedgerPaginationState()
+  let active = true
+
+  const snapshot = (): WalletLedgerPaginationState => ({
+    ...state,
+    entries: [...state.entries],
+  })
+  const replaceState = (next: WalletLedgerPaginationState): void => {
+    state = next
+    input.onChange?.(snapshot())
+  }
+
+  async function loadInitial(): Promise<WalletLedgerPaginationOperation> {
+    if (!active) return 'stale'
+    if (!input.sessionKey()) {
+      requests.invalidate()
+      replaceState(createWalletLedgerPaginationState())
+      return 'guest'
+    }
+    replaceState({
+      ...createWalletLedgerPaginationState(),
+      loading: true,
+    })
+
+    const result = await requests.load(0, pageSize)
+    if (result.state === 'stale') return 'stale'
+    if (result.state === 'guest') {
+      replaceState(createWalletLedgerPaginationState())
+      return 'guest'
+    }
+    if (result.state === 'error') {
+      replaceState({
+        ...createWalletLedgerPaginationState(),
+        initialError: result.error,
+      })
+      return 'error'
+    }
+
+    const entries = mergeWalletLedgerEntries([], result.value.entries)
+    const pagination = advanceWalletLedgerPagination(0, result.value)
+    replaceState({
+      ...createWalletLedgerPaginationState(),
+      entries,
+      nextOffset: pagination.nextOffset,
+      exhausted: pagination.exhausted,
+    })
+    return 'loaded'
+  }
+
+  async function append(retry: boolean): Promise<WalletLedgerPaginationOperation> {
+    if (!active) return 'stale'
+    if (!input.sessionKey()) {
+      requests.invalidate()
+      replaceState(createWalletLedgerPaginationState())
+      return 'guest'
+    }
+    if (state.loading
+      || state.loadingMore
+      || state.exhausted
+      || state.entries.length === 0
+      || (retry ? state.appendError === null : state.appendError !== null)) {
+      return 'ignored'
+    }
+
+    const requestState = state
+    const offset = state.nextOffset
+    replaceState({ ...state, loadingMore: true })
+    const result = await requests.load(offset, pageSize)
+    if (result.state === 'stale') return 'stale'
+    if (result.state === 'guest') {
+      replaceState(createWalletLedgerPaginationState())
+      return 'guest'
+    }
+    if (result.state === 'error') {
+      replaceState({
+        ...requestState,
+        loadingMore: false,
+        appendError: result.error,
+      })
+      return 'error'
+    }
+
+    const entries = mergeWalletLedgerEntries(requestState.entries, result.value.entries)
+    const pagination = advanceWalletLedgerPagination(offset, result.value)
+    const madeProgress = entries.length > requestState.entries.length
+    replaceState({
+      ...requestState,
+      entries,
+      loadingMore: false,
+      nextOffset: pagination.nextOffset,
+      exhausted: pagination.exhausted || (result.value.entries.length > 0 && !madeProgress),
+      initialError: null,
+      appendError: null,
+    })
+    return 'loaded'
+  }
+
+  return {
+    snapshot,
+    loadInitial,
+    loadMore: () => append(false),
+    retryLoadMore: () => append(true),
+    reset(): void {
+      requests.invalidate()
+      replaceState(createWalletLedgerPaginationState())
+    },
+    stop(): void {
+      active = false
+      requests.stop()
+      replaceState(createWalletLedgerPaginationState())
     },
   }
 }
@@ -483,23 +830,15 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
     `entries[${index}].balance_after`,
     'wallet ledger',
   )
-  const inferredScale = Math.max(
-    decimalSourceScale(entry.amount),
-    decimalSourceScale(entry.fee),
-    decimalSourceScale(entry.balance_after),
+  const precisionScale = requiredPrecisionScale(
+    entry.precision_scale,
+    `entries[${index}].precision_scale`,
   )
-  const precisionScale = entry.precision_scale === null || entry.precision_scale === undefined
-    ? inferredScale
-    : requiredPrecisionScale(entry.precision_scale, `entries[${index}].precision_scale`)
 
   return {
     id: requiredInteger(entry.id, `entries[${index}].id`, 1),
     accountType: entry.account_type,
-    symbol: normalizeRealizedReturnAssetSymbol(
-      entry.symbol,
-      `entries[${index}].symbol`,
-      'wallet ledger',
-    ),
+    symbol: normalizeWalletLedgerAssetSymbol(entry.symbol),
     changeType,
     category: entry.category,
     amount,
@@ -510,12 +849,78 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
   }
 }
 
-function decimalSourceScale(value: unknown): number {
-  if (typeof value !== 'string') throw new WalletLedgerContractError('invalid wallet ledger decimal')
-  try {
-    return Math.min(18, decimalFractionDigits(value))
-  } catch {
-    throw new WalletLedgerContractError('invalid wallet ledger decimal')
+function sameWalletLedgerDateRange(
+  left: WalletLedgerDateRange,
+  right: WalletLedgerDateRange,
+): boolean {
+  return left.startTime === right.startTime && left.endTime === right.endTime
+}
+
+function normalizeWalletLedgerRequestTime(
+  value: string | undefined,
+  field: string,
+): { timestamp: number; mysqlText: string } | undefined {
+  if (value === undefined) return undefined
+  const normalized = value.trim()
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.exec(normalized)
+  if (!match) {
+    throw new WalletLedgerContractError(`invalid wallet ledger ${field}`)
+  }
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number)
+  const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second))
+  if (year < 1000
+    || wallClock.getUTCFullYear() !== year
+    || wallClock.getUTCMonth() !== month - 1
+    || wallClock.getUTCDate() !== day
+    || wallClock.getUTCHours() !== hour
+    || wallClock.getUTCMinutes() !== minute
+    || wallClock.getUTCSeconds() !== second) {
+    throw new WalletLedgerContractError(`invalid wallet ledger ${field}`)
+  }
+  const timestamp = Date.parse(normalized)
+  if (!Number.isFinite(timestamp)) {
+    throw new WalletLedgerContractError(`invalid wallet ledger ${field}`)
+  }
+  return {
+    timestamp,
+    mysqlText: new Date(timestamp).toISOString().slice(0, 23).replace('T', ' '),
+  }
+}
+
+function assertWalletLedgerFilteredPage(
+  value: WalletLedgerPage,
+  filter: {
+    assetSymbol?: string
+    direction: WalletLedgerDirection
+    startTime?: string
+    endTime?: string
+  },
+): void {
+  if (filter.assetSymbol
+    && value.entries.some((entry) => entry.symbol !== filter.assetSymbol)) {
+    throw new WalletLedgerContractError('invalid wallet ledger filtered asset')
+  }
+  if (filter.direction === 'credit'
+    && value.entries.some((entry) => decimalSign(entry.amount) <= 0)) {
+    throw new WalletLedgerContractError('invalid wallet ledger filtered direction')
+  }
+  if (filter.direction === 'debit'
+    && value.entries.some((entry) => decimalSign(entry.amount) >= 0)) {
+    throw new WalletLedgerContractError('invalid wallet ledger filtered direction')
+  }
+
+  const start = filter.startTime ? Date.parse(filter.startTime) : undefined
+  const end = filter.endTime ? Date.parse(filter.endTime) : undefined
+  if ((start !== undefined && !Number.isFinite(start))
+    || (end !== undefined && !Number.isFinite(end))
+    || (start !== undefined && end !== undefined && start > end)) {
+    throw new WalletLedgerContractError('invalid wallet ledger filtered date')
+  }
+  if (value.entries.some((entry) => (
+    (start !== undefined && entry.createdAt < start)
+    || (end !== undefined && entry.createdAt > end)
+  ))) {
+    throw new WalletLedgerContractError('invalid wallet ledger filtered date')
   }
 }
 

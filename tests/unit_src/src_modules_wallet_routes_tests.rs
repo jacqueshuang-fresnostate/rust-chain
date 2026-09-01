@@ -342,6 +342,57 @@ async fn wallet_ledger_route_rejects_unsupported_account_type_before_database_ac
     assert_eq!(payload["code"], "VALIDATION_ERROR");
 }
 
+#[tokio::test]
+async fn wallet_ledger_route_rejects_unsupported_direction_before_database_access() {
+    let state = test_state();
+    let token = bearer_token(&state);
+    let app = routes().with_state(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/ledger?direction=refund")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["code"], "VALIDATION_ERROR");
+}
+
+#[tokio::test]
+async fn wallet_ledger_route_rejects_invalid_times_before_database_access() {
+    let state = test_state();
+    let token = bearer_token(&state);
+    let app = routes().with_state(state);
+
+    for query in [
+        "start_time=not-a-date",
+        "start_time=2026-09-02T00%3A00%3A00Z&end_time=2026-09-01T00%3A00%3A00Z",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/wallet/ledger?{query}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "query: {query}");
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], "VALIDATION_ERROR");
+    }
+}
+
 #[test]
 fn wallet_ledger_limit_is_clamped() {
     assert_eq!(wallet_route_limit(None), 50);

@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/admin/index.md", "reason": "Admin 质量门与总规范"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Admin 资源页、表格与响应契约约束"}
+{"file": ".trellis/tasks/09-01-fix-admin-business-order-number-contract/research/root-cause.md", "reason": "订单号派生列加载失败的根因与完整影响面"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "派生列与 API 响应行契约的可执行规范"}

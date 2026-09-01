@@ -1,7 +1,7 @@
 use super::{
     WALLET_LEDGER_STABLE_ORDER_SQL, WalletLedgerAccountType, WalletLedgerCategory,
-    WalletLedgerEntryRow, WalletLedgerFilter, classify_broadcast_http_status,
-    classify_wallet_ledger_change_type, push_wallet_ledger_filters,
+    WalletLedgerDirection, WalletLedgerEntryRow, WalletLedgerFilter,
+    classify_broadcast_http_status, classify_wallet_ledger_change_type, push_wallet_ledger_filters,
     push_wallet_ledger_union_source, return_history_historical_close_if_valid,
     return_history_kline_document_close_if_valid, today_return_ticker_price_if_current,
     wallet_ledger_entry_response,
@@ -69,10 +69,11 @@ fn wallet_ledger_filter(category: WalletLedgerCategory) -> WalletLedgerFilter {
         change_type: Some("spot_trade_settlement".to_owned()),
         category: Some(category),
         account_type: WalletLedgerAccountType::Margin,
+        direction: WalletLedgerDirection::Credit,
         ref_type: Some("spot_trade".to_owned()),
         ref_id: Some("100:200".to_owned()),
-        start_time: Some("2026-08-01T00:00:00Z".to_owned()),
-        end_time: Some("2026-08-10T00:00:00Z".to_owned()),
+        start_time: Some(Utc.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap()),
+        end_time: Some(Utc.with_ymd_and_hms(2026, 8, 10, 0, 0, 0).unwrap()),
         limit: 50,
         offset: 0,
     }
@@ -122,6 +123,7 @@ fn wallet_ledger_filter_sql_combines_category_with_existing_exact_predicates() {
         " AND wl.change_type = ?",
         "LEFT(BINARY wl.change_type, ?) = ?",
         "wl.account_type = ?",
+        "wl.amount > 0",
         "wl.ref_type = ?",
         "wl.ref_id = ?",
         "wl.created_at >= ?",
@@ -168,6 +170,7 @@ fn wallet_ledger_entry_response_includes_authoritative_category_and_exact_decima
         user_id: 2,
         asset_id: 3,
         symbol: "USDT".to_owned(),
+        precision_scale: 6,
         change_type: "future_wallet_adjustment".to_owned(),
         amount: decimal("0.123456789012345678"),
         balance_type: "available".to_owned(),
@@ -179,15 +182,46 @@ fn wallet_ledger_entry_response_includes_authoritative_category_and_exact_decima
         ref_type: "wallet_route_fixture".to_owned(),
         ref_id: "fixture-1".to_owned(),
         created_at: Utc.with_ymd_and_hms(2026, 8, 10, 1, 2, 3).unwrap(),
-    });
+    })
+    .unwrap();
     let payload = serde_json::to_value(response).unwrap();
 
     assert_eq!(payload["change_type"], "future_wallet_adjustment");
     assert_eq!(payload["account_type"], "margin");
     assert_eq!(payload["category"], "other");
+    assert_eq!(payload["precision_scale"], 6);
     assert_eq!(payload["amount"], "0.123456789012345678");
     assert_eq!(payload["balance_after"], "10.123456789012345678");
     assert_eq!(payload["fee"], "0.010000000000000000");
+}
+
+#[test]
+fn wallet_ledger_entry_response_rejects_out_of_range_asset_precision() {
+    for precision_scale in [-1, 19] {
+        let result = wallet_ledger_entry_response(WalletLedgerEntryRow {
+            id: 1,
+            account_type: "spot".to_owned(),
+            user_id: 2,
+            asset_id: 3,
+            symbol: "USDT".to_owned(),
+            precision_scale,
+            change_type: "deposit".to_owned(),
+            amount: decimal("1"),
+            balance_type: "available".to_owned(),
+            balance_after: decimal("1"),
+            available_after: decimal("1"),
+            frozen_after: decimal("0"),
+            locked_after: decimal("0"),
+            fee: decimal("0"),
+            ref_type: "fixture".to_owned(),
+            ref_id: "fixture-1".to_owned(),
+            created_at: Utc.with_ymd_and_hms(2026, 8, 10, 1, 2, 3).unwrap(),
+        });
+        assert!(
+            result.is_err(),
+            "precision must fail closed: {precision_scale}"
+        );
+    }
 }
 
 #[test]
