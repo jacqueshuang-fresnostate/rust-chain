@@ -1,97 +1,130 @@
-# 手机交易记录 kcP5D/A85if 复刻与账本精度合同
+# 手机交易记录全模块 Pencil 1:1 复刻
 
-## 用户更正（2026-09-02）
+## 用户最终更正（2026-09-02）
 
-此前以 `y6Y7TW/m25xr0` 为视觉真值的“资金账单”目标已被用户明确更正并废止。旧目标中的 60px Header、三个 28px 胶囊筛选和 56px 紧凑流水行不再构成本任务验收依据，也不得保留其已完成勾选作为新验收证据。
+用户明确要求以 Pencil 当前选中的“07 / 订单”整组画板为唯一视觉真值，完整复刻交易记录模块，并允许补充后端接口来承载画板所需的真实业务字段。本要求替代本任务此前的“独立圆角卡片”方案：记录行必须恢复为 Pencil 的满宽、白/黑底、细分隔线布局，不再使用 12px 外边距、10px 卡片间距、16px 圆角或额外画布底色。
 
-本轮视觉与文案唯一权威是 Pencil `mobile/pencil/hippo-mobile-uiux.pen` 的 `kcP5D`（浅色）和 `A85if`（深色）。此前已完成的真实账本分页、服务端筛选、鉴权、DecimalText、`precision_scale`、错误状态和请求代际隔离继续有效，本轮只更正 Mobile 页面、入口文案、i18n、聚焦测试和任务文档，不改 Admin、PC、后端资金逻辑或 `OrdersView`。
+当前选区已从 Pen UI 正式导出为 `/private/tmp/pencil-orders-module.html`，包含 14 个 390×920 浅/深主题画板：
+
+1. `08 / 订单`：交易账单；
+2. `08b / 订单 · 杠杆`：历史仓位；
+3. `08c / 订单 · 空状态`；
+4. `08d / 订单 · 关联订单`；
+5. `08e / 订单 · 历史委托`；
+6. `08f / 订单 · 当前委托`；
+7. `08g / 订单 · 当前仓位和资产`；
+8. 上述每页均有浅色与深色主题。
 
 ## Goal
 
-将手机端 `/assets/ledger` 从“资金账单”更正为“交易记录”（英文 `Transaction Records`），按 `kcP5D/A85if` 1:1 重构页面可见结构，同时只展示真实 API/资产元数据并保留现有账本行为合同。
+把 `/orders` 与 `/assets/ledger` 收敛为同一个真实交易记录工作区：按照 Pencil 精确实现当前委托、历史委托、当前仓位和资产、历史仓位、交易账单与关联订单，并让所有可展示字段来自现有或新增的 Rust API；不得把 Pencil 演示金额、币种、状态、时间或订单编号写入生产模板。
 
 ## Requirements
 
-### Header 与安全区
+### 1. 共同页面骨架
 
-- 页面本身不绘制 Pencil 的 28px 系统状态栏；继续由现有 `.page` 安全区处理顶部 inset。
-- Header 内容区固定 58px，左右 padding 16px，轨道为 `26px minmax(0, 1fr) 26px`。
-- 左侧使用 Lucide `chevron-left`，视觉框 26×26，实际点击目标至少 44×44；不得修改其他页面共享 `PageHeader` 的默认返回图标。
-- 标题居中，中文“交易记录”、英文 `Transaction Records`，字号 22px、字重 700；右侧保留 26×26 空占位。
-- 返回行为继续通过 `goBackOr(router, route.meta.backFallback || { name: 'assets' })`。
+- 不绘制 Pencil 的 28px 演示状态栏；由 `.page` 与安全区处理原生状态栏。
+- 内容 Header 高 58px、左右 padding 16px；返回 Lucide `chevron-left` 视觉尺寸 26px、点击目标至少 44×44；标题 `交易记录 / Transaction Records` 为 22px、700、绝对居中；右侧使用等宽占位。
+- 浅色根面为 `#FFFFFF`，深色根面为 `#000000`；Header、标签栏和内容连续，不增加浮卡、重阴影、毛玻璃或渐变。
+- Pencil 导出记录节点的 `h-[…]` 是 `box-sizing: content-box` 下的内容高度，不是屏幕上的完整行高。生产实现继续使用不会横向溢出的 `border-box`/自适应宽度，但必须把垂直 padding、1px 底线与 `-0.5px` 画板重叠计入可见外框 advance；不得直接把导出的 content height 当成 `min-height`。
+- 一级标签栏高 52px、底部 1px 分隔、active 3px `#18D38D`。内部保留七个 canonical 状态，但每个画板只绘制 Pencil 指定的四项窗口：当前委托/历史委托/当前仓位和资产使用“当前委托、历史委托、当前仓位和资产、历史仓位”；历史仓位使用“当前委托、当前仓位和资产、历史仓位、交易账单”；交易账单与空态使用“历史仓位、交易账单、当前策略、历史策略”。每项约占 390px 画板四分之一宽，不把七项全部压进或横滑在同一画板中。
+- `/orders?tab=current|history|positions|position-history|ledger|current-strategy|strategy-history` 与 `/assets/ledger` 均映射到有效状态；`/assets/ledger` 继续可直接访问且默认打开交易账单。
+- 所有固定文案使用 `vue-i18n`，中文与英文键对称；未知后端枚举保留原值，不伪造翻译。
 
-### 四栏导航与筛选
+### 2. 当前委托（08f）
 
-- Header 下方四栏固定高 52px：历史仓位、交易账单（active）、当前策略、历史策略；文本 13px，active 下划线 3px、`#18D38D`。
-- 四栏必须指向现有真实页面，不创建死链接：历史仓位 → `orders?tab=positions`，交易账单 → `wallet-ledger`，当前策略 → `orders?tab=margin`，历史策略 → `orders?tab=history`。
-- 不改 `OrdersView`；仅使用其现有 `positions | margin | history` 查询参数合同。
-- 筛选条固定高 58px、左右 padding 16px、gap 24px；可见项为“币种”下拉、“交易类型”下拉和右侧 Lucide `list-filter` 24px。
-- 复用现有资产、收支方向、日期三个可访问 Sheet；所有触发器点击目标至少 44px，仍保留遮罩、Escape、焦点陷阱和关闭后焦点恢复。
+- 一级标签下增加 44px 委托类型栏：全部、限价｜市价、高级限价委托、止盈止损；当前业务仅支持的类别可正常筛选，未实现能力以不可用状态表达，不伪造订单。
+- 52px 筛选栏使用 16px/600 的“全部交易类型”触发器及右侧 Lucide `list-filter`。
+- 现货与杠杆待成交委托统一按 Pencil 结构混排并按时间倒序：标题行（交易对/永续、等待成交）、标签时间行、三列指标（委托价格、委托数量、已成交量）、两枚 42px 高按钮。
+- 每条满宽记录的可见外框 advance 为 238px（导出 content 209.5px + 垂直 padding 28px + 底线 1px - 0.5px 重叠），水平 padding 18px、垂直 padding 14px、gap 12px、底部分隔 `#EDF1EF / #17221C`。
+- 撤单继续使用真实现货/杠杆撤单接口和可访问确认弹窗。修改按钮只有在存在真实可执行修改流程时才启用；否则保留 Pencil 几何但清楚标记不可用，不执行伪修改。
 
-### 连续交易记录行
+### 3. 历史委托（08e）
 
-- 列表从筛选条后连续开始；每行固定 166px，无卡片、无日期分组，仅有 bottom 1px 分隔线。
-- 行 padding 为 `12px 18px`，纵向 gap 9px；四行网格分别为 30px、22px、22px、19px，对应内容 y=12/51/82/113。
-- 第一行：真实资产 logo/既有 `AssetMark` 元数据回退，30px；symbol 20/650；右侧带符号总额 18/500。
-- 第二行：左侧 15/600 使用现有本地化 `entryLabel(entry)` 展示真实交易事项；数量标签 13/500 muted、数量 15/500。当前账本 API 没有交易对字段，不得拼出演示交易对，也不得让全部真实记录永久显示 `--`。
-- 第三行：真实账户类型 14/600；中间 15/650 必须按 amount 符号展示现有本地化“收入/支出”，零值显示 `--`，不得再次重复交易事项或把它伪装成买入/卖出 side；成交元信息与手续费 12/500。
-- 后端 fee 是非负手续费合同；可见费用按扣除语义展示，非零值在 DecimalText 前加 `-`，零保持 `0`，不得经过浮点数转换。
-- 第四行：本地时间 13/400；余额标签 13/500、余额值 14/500。
-- 金额、手续费、余额继续走 DecimalText 与资产 `precision_scale`，不得经过 `Number`、`parseFloat` 或 `toFixed`；长值在 320px 下截断可见文本但保留精确 title/可访问描述。
-- 任何 API 缺失字段使用语义化 `--`，不复制 Pencil 演示资产、金额、时间或交易状态。
+- 保留同一 44px 类型栏；52px 筛选栏包含交易类型与时间范围。
+- 现货和杠杆历史委托混排并按时间倒序。现货记录可见外框 advance 为 174px（导出 content 149.5px），显示交易对、完全成交/已撤销状态、类型、方向、时间、委托数量、已成交量、成交均价。
+- 杠杆记录可见外框 advance 为 214px（导出 content 189.5px），额外显示永续、全仓/逐仓、倍数、平仓收益和收益率；不存在的真实字段显示 `--`。
+- 价格、数量、收益等金融值必须沿 DecimalText/后端 DECIMAL 文本链路格式化，禁止 `parseFloat/toFixed` 参与权威值计算。
 
-### 主题与响应式
+### 4. 当前仓位和资产（08g）
 
-- 浅色：背景 `#FFFFFF`、主字 `#111714`、tab muted `#7B8680`、行 muted `#8A948F`、tab 底线 `#EEF1EF`、行底线 `#EDF1EF`、active `#18D38D`、买入/正向 `#0DBE7B`、卖出/负向 `#FF5878`。
-- 深色：背景 `#000000`、主字 `#F3F7F5`、tab/行 muted `#8F9B94`、tab 底线 `#18231D`、行底线 `#17221C`、active `#18D38D`、买入/正向 `#45EFAE`、卖出/负向 `#FF5878`。
-- 320px、390px、448px 均不得出现页面级横向溢出；使用 Lucide-only，不新增 emoji 或手写 SVG。
+- 52px 筛选栏使用“全部交易类型”、收益显隐图标和 Lucide `list-filter`。
+- 当前仓位记录可见外框 advance 为 334px（导出 content 309.5px），显示永续标题、收益额与收益率、方向、模式、倍数、持仓量、保证金、维持保证金率、开仓均价、标记价格、预估强平价，以及 44px 的止盈止损、平仓、市价全平按钮。
+- 风险值来自 `/margin/positions/:id/risk`；请求失败时保持仓位并对缺失指标显示 `--`，不得显示 0 或演示值。爆仓/平仓后的列表必须以服务端快照重新对账。
+- 资产记录可见外框 advance 为 228px（导出 content 199.5px），使用后台 `logo_url` 的 30px 圆形 Logo，显示币种权益、成本价、最新价、余额、浮动收益、可用/占用/冻结。字段由 `/margin/wallets`、风险快照和真实行情组合；无法权威得到的成本价显示 `--`。
+- 平仓与市价全平继续走现有幂等、部分平仓和确认流程；未实现的止盈止损能力保持不可用，不提交虚构请求。
 
-### 既有生产行为
+### 5. 历史仓位（08b）
 
-- 保留真实账本 offset 分页、资产/方向/日期服务端筛选、登录态、首次加载、空态、首屏错误、已有数据追加错误、重试与加载更多。
-- 保留 session generation、filter generation、请求单飞、陈旧响应丢弃和原 offset 重试合同。
-- 资产 logo 只来自 `fetchWalletAccounts()` 返回的后台 URL/已有资产元数据；请求结果必须经过 token 与 generation 校验后才能写入。
-- 本轮不改账本 API、后端金额/余额/手续费、数据库或资金结算行为。
+- 58px 筛选栏使用“全部交易类型”。
+- 每条历史仓位可见外框 advance 为 398px（导出 content 363.5px），显示永续名称、终态、方向、模式、倍数、开仓均价、已实现收益、最大持仓量、平仓均价、已实现收益率、平仓量、开仓时间、平仓时间和 52px 关联订单按钮。
+- 数值只能从仓位落库值和真实平仓执行记录推导；缺失值显示 `--`。列表底部保留真实可说明的历史范围文案，不写死不符合接口范围的日期。
+- 点击“关联订单”进入 `/orders/positions/:id/associated`。
+
+### 6. 关联订单（08d）
+
+- 独立页面 Header 高 62px，返回按钮、居中永续标题和方向标签、右侧 Lucide 分享图标；不绘制演示状态栏。
+- 顶部摘要约 267px：已实现收益、平仓量、平仓收益、交易手续费、资金/利息费用、开仓时间和平仓时间。缺失交易手续费显示 `--`，不得把零或其他费用冒充手续费。
+- 8px 分区面使用 `#F6F8F7 / #0B120E`；“历史委托”标题行高 60px。
+- 关联记录包含一条由真实仓位开仓快照派生的开仓记录，以及 `/margin/positions/:id/executions` 返回的每次部分/全部平仓执行；展示方向、时间、金额、成交量、均价、费用与稳定编号。
+- 每条关联执行记录可见外框 advance 为 218px（导出 content 189.5px + 垂直 padding 28px + 底线 1px - 0.5px 重叠）。
+- 该接口必须按 JWT 用户和仓位联合过滤，不能凭 position id 读取其他用户数据。
+
+### 7. 交易账单与空状态（08 / 08c）
+
+- 58px 筛选栏包含币种、交易类型和 Lucide `list-filter`；复用现有可访问 Sheet、Escape、焦点陷阱、滚动锁与焦点恢复。
+- 账单记录恢复 Pencil 满宽行：可见外框 advance 为 190px（导出 content 165.5px + 垂直 padding 24px + 底线 1px - 0.5px 重叠），padding `12px 18px`、gap 9px、仅底部分隔；首行 30px Logo/20px symbol/18px 总变动，后续依次显示真实交易事项/数量、账户与收支/成交元信息/手续费、完整本地时间/账户余额。
+- 真实 API 没有交易对或买卖方向时使用已存在的语义化事项，不把 `BTC/USDT`、买入/卖出等演示内容写入生产页面。
+- 保留账本 offset 分页、服务端筛选、首屏错误、追加错误、重试、鉴权、session/filter generation 与陈旧响应丢弃。
+- 空状态使用 Pencil 居中的 Lucide `receipt-text`：64×64 圆形底板、30px 图标、18px 正常字重标题和 13px 正常字重说明，浅深主题一致。
+
+### 8. 后端最小兼容扩展
+
+- 在 `MarginPositionResponse` 增加真实 `opened_at`、`created_at`，保留现有字段和 JSON 命名，属于向后兼容的响应扩展；所有 SQLx 投影必须同步。
+- 新增用户接口 `GET /margin/positions/:id/executions`，返回该用户该仓位的平仓执行列表，按 `created_at ASC, id ASC` 稳定排序；响应金额继续以 DECIMAL 字符串序列化。
+- 接口只读，不触发计提、行情重估、钱包写入或状态变更；不存在或不属于当前用户统一返回 NotFound。
+- 不修改已应用迁移；本轮复用已有 `margin_position_close_executions` 表，不新增虚假字段。
+
+### 9. 响应式、主题与可访问性
+
+- 320、390、448px 均无页面级横向溢出；Pencil 的三列指标在窄屏仍保持三列，字段内部独立省略并通过 `title`/ARIA 提供完整值。
+- 触控按钮至少 44px；active、disabled、focus-visible、reduced-motion 完整。
+- 仅使用 Lucide 图标和后台 Logo；禁止 emoji、手写图标 SVG、新外部 UI 依赖。
+- 所有列表使用语义化 `article`/`role=list`，加载、空态、错误和操作反馈均可被辅助技术感知。
 
 ## Acceptance Criteria
 
-- [x] `/assets/ledger` 源码声明 `kcP5D A85if`，不再把 `y6Y7TW/m25xr0` 当作该页合同。
-- [x] 专用 Header 达到 58px、16px、26px chevron、22/700 标题和 44px 返回点击目标，且返回仍走 `goBackOr`。
-- [x] 52px 四栏导航与 58px 筛选条按权威几何实现，四个入口全部映射到现有有效路由。
-- [x] 连续流水行达到 166px、`12px 18px`、9px gap、四层固定高度和仅 bottom 1px 分隔线。
-- [x] 入口、路由标题和页面状态文案均改为“交易记录”/`Transaction Records`，中英文键对称。
-- [x] 页面消费真实账本与资产 logo 元数据；第二行显示真实本地化交易事项，第三行显示 amount 对应的收入/支出，非零 fee 以负号呈现，未写入 Pencil 演示数据。
-- [x] 既有分页、三筛选 Sheet、鉴权、DecimalText、错误/空/加载和 session/filter generation 隔离继续由聚焦测试覆盖。
-- [x] Mobile 聚焦测试 5 文件 44/44 与应用/测试类型检查通过，并以行为测试覆盖资产目录乱序、token/generation、退出和卸载隔离。
-- [x] 主会话完成 320/390/448px 浅色/深色浏览器视觉复核，确认无横向溢出及安全区重复；最终 390px 复核同时确认默认日期为“全部日期”、Sheet 滚动锁和焦点恢复。
-- [x] 主会话完成最终 `npm --prefix mobile run release:gate`：617/617、PWA/Tauri 双构建、制品与全部质量预算通过。
+- [x] 当前 Pen 选中 14 个画板已形成可审计的页面/几何/字段清单，并在研究文档中记录导出来源与像素基准。
+- [x] `/orders` 的 Header、各状态精确四项标签窗口、类型栏、筛选栏、满宽记录、字号、颜色、间距和分隔线与 Pencil 08b/08e/08f/08g 对齐。
+- [x] 记录行按 content-box 导出值换算后的可见外框 advance 固定为当前委托 238、历史现货 174、历史杠杆 214、当前仓位 334、资产 228、历史仓位 398、账单 190、关联执行 218px；320/390/448px 不复制 390px 内容宽且无横向溢出。
+- [x] `/assets/ledger` 与 `/orders?tab=ledger` 的交易账单和空态与 Pencil 08/08c 对齐，且此前独立圆角卡片视觉已移除。
+- [x] 当前委托、历史委托将现货和杠杆真实数据按时间混排，状态、方向、数量、均价与收益不使用演示值。
+- [x] 当前仓位风险指标与资产快照来自现有权威 API；缺失值为 `--`，平仓后能重新对账。
+- [x] 历史仓位展示真实开平仓时间与收益，关联订单按钮进入真实详情页。
+- [x] Rust 响应补齐仓位时间并提供用户隔离的执行列表接口；无迁移、无资金副作用、DECIMAL 文本不退化。
+- [x] 关联订单页同时展示真实开仓快照与每次平仓执行，费用缺失时不伪造。
+- [x] 新增和修改文案均中英文对称；有效路由、返回语义、筛选 Sheet、确认弹窗和 44px 触控合同不退化。
+- [x] Mobile 聚焦测试、`type-check`、`type-check:tests`、后端 margin 路由测试、`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 与 `git diff --check` 通过。
+- [x] Ego 在 320/390/448px 的浅/深主题逐页复核无横向溢出，关键画板截图与 Pencil 基准完成视觉比对。
 
 ## Definition of Done
 
-- Mobile 页面、入口文案、i18n 和聚焦源码/行为合同完成。
-- 当前 PRD/research 明确记录用户更正，不继续使用旧画板的错误验收。
-- `docs/superpowers/PROGRESS.md` 记录每个交付切片及验证结果。
-- 最终浏览器视觉复核和发布门禁已由主会话收口。
+- Mobile、Rust API、路由、i18n、测试与规范同步完成。
+- `docs/superpowers/PROGRESS.md` 对每个可交付切片记录文件与验证结果。
+- 不提交或推送，除非用户另行明确要求。
 
 ## Decision (ADR-lite)
 
-**Context**：旧 `y6Y7TW/m25xr0` 画板描述的是另一套紧凑资金流水页面，和用户指定的 `kcP5D/A85if` 交易记录页在标题、Header、顶栏、筛选和行高上均不一致；账本 API 不提供交易对或交易 side，但有真实变动类型、amount 方向和非负 fee。
+**Context**：现有 `OrdersView.vue` 使用“现货/杠杆 × 当前/历史/持仓”的两级简化导航和 64px 记录行；现有 `/assets/ledger` 又被上一轮改成独立圆角卡片。两者都不符合当前 Pencil 的统一交易记录信息架构。历史仓位还缺开仓时间，关联订单没有用户接口，但数据库已有不可变的部分平仓执行。
 
-**Decision**：废止旧视觉验收，以 `kcP5D/A85if` 为唯一视觉真值；在本页实现专用 Header，不改变共享 `PageHeader`；四栏复用现有 Orders 查询参数；第二行用本地化变动类型作为真实交易事项，第三行用 amount 符号映射收入/支出，非零 fee 转成 DecimalText 扣除展示。
+**Decision**：以 Pencil 导出的 14 个画板为唯一视觉真值，将订单与账单收敛为一个保留七个 canonical 状态、按页面呈现四项标签窗口的交易记录工作区；现有业务请求保持分域，UI 只做统一读模型与稳定排序。后端仅做向后兼容的时间字段补充和只读执行列表接口，不改资金写入和数据库结构。
 
-**Consequences**：页面与新 Pencil 合同一致且不会影响其他 Header/Orders 页面；生产数据不会伪造交易对或买卖方向，也不会让第二行永久空白。已有账本精度与并发安全合同保持不变。
+**Consequences**：Mobile 能真实承载 Pencil 的六个业务页面与空态；关联订单不再靠演示数据；现有 `/assets/ledger` 链接保持有效。代价是需要拆分当前单体 `OrdersView`，并对 Mobile/后端接口同时增加聚焦回归。
 
 ## Out of Scope
 
-- 重构 `mobile/src/views/OrdersView.vue` 或修改它现有紧凑 64px 布局。
-- 修改 Admin、PC、后端钱包、账本 SQL、资金结算或数据库结构。
-- 为追求演示图一致而伪造交易对、买卖 side、时间、金额、手续费或余额。
-- 修改其他页面共享 `PageHeader` 的默认 ArrowLeft 22px 行为。
-- 在本轮提交或推送代码。
-
-## Technical Notes
-
-- Pencil：`mobile/pencil/hippo-mobile-uiux.pen`，浅色 `kcP5D`、深色 `A85if`。
-- Mobile：`mobile/src/views/WalletLedgerView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`。
-- 聚焦合同：`mobile/tests/wallet-ledger-classification.test.ts`、`mobile/tests/pencil-wallet-flow-parity.test.ts`、`mobile/tests/pencil-selected-page-parity-20260807.test.ts`，并回归钱包二级页与路由可访问性测试。
-- 已完成但本轮未改的精度链路：`mobile/src/{api/wallet,core/walletLedger}.ts` 与后端钱包 `precision_scale` 合同。
+- 新建或修改真实止盈止损/高级策略订单业务；未支持能力只呈现禁用状态。
+- 实现需要重新冻结/解冻资金的现货“修改订单”写接口。
+- 修改 PC 或 Admin 页面。
+- 改写已应用迁移、现货/杠杆结算公式或钱包账本写入。
+- 将 Pencil 演示状态栏、演示数据或占位订单写入生产页面。

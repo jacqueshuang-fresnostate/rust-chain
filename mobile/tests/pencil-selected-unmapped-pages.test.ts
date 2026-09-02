@@ -24,6 +24,9 @@ const mainSource = read('../src/main.ts')
 const routerSource = read('../src/router/index.ts')
 const pageHeaderSource = read('../src/components/PageHeader.vue')
 const selectedCss = read('../src/styles/pencil-selected-pages.css')
+const recordsLayout = read('../src/components/TransactionRecordsLayout.vue')
+const transactionOrderRecord = read('../src/components/TransactionOrderRecord.vue')
+const transactionRecordsData = read('../src/composables/useTransactionRecords.ts')
 
 test('此前未映射页面均声明当前 Pencil 选中画板来源', () => {
   const expected: Record<keyof typeof views, string> = {
@@ -56,7 +59,7 @@ test('选中稿共享头部、字段、弹层和根壳职责保持一致', () =>
   assert.match(selectedCss, /@media \(max-width: 340px\)/)
   assert.match(selectedCss, /@media \(prefers-reduced-motion: reduce\)/)
   assert.match(appSource, /\['home', 'markets'\]\.includes\(String\(route\.name \|\| ''\)\)/)
-  assert.match(routerSource, /path: '\/orders'[\s\S]*?meta: \{ depth: 1, backFallback: '\/' \}/)
+  assert.match(routerSource, /path: '\/orders'[\s\S]*?meta: \{ showBottomNav: false, depth: 1, backFallback: '\/' \}/)
 })
 
 test('资产与我的页面锁定 390px 选中稿几何和 Lucide 图标', () => {
@@ -88,17 +91,15 @@ test('资产与我的页面锁定 390px 选中稿几何和 Lucide 图标', () =>
   assert.doesNotMatch(views.profile, /<Settings2/)
 })
 
-test('订单页标签边界和 64px 数据行与选中稿一致', () => {
-  assert.match(views.orders, /--pencil-root-header-margin: 4px/)
-  assert.match(views.orders, /\.orders-pencil__content[\s\S]*?padding-top: 4px/)
-  assert.match(views.orders, /\.orders-market-tabs[\s\S]*?height: 45px/)
-  assert.match(views.orders, /\.orders-state-tabs[\s\S]*?height: 34px[\s\S]*?margin-top: 4px/)
-  assert.match(views.orders, /\.orders-list,[\s\S]*?margin-top: 4px/)
-  assert.match(views.orders, /\.orders-row \{[\s\S]*?grid-template-rows: 20px 16px[\s\S]*?height: 64px/)
-  assert.match(views.orders, /t\('orders\.historyOrdersTab'\)/)
-  assert.doesNotMatch(views.orders, /class="orders-toolbar"/)
-  const actions = views.orders.match(/<template #actions>([\s\S]*?)<\/template>/)?.[1] || ''
-  assert.equal((actions.match(/<button\b/g) || []).length, 1)
+test('订单页固定四栏窗口和通栏记录与正式选中稿一致', () => {
+  assert.match(views.orders, /<TransactionRecordsLayout/)
+  assert.match(recordsLayout, /height: 58px;[\s\S]*?padding: 0 16px;/)
+  assert.match(recordsLayout, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/)
+  assert.match(recordsLayout, /return \['current', 'history', 'positions', 'position-history'\]/)
+  assert.match(recordsLayout, /return \['current', 'positions', 'position-history', 'ledger'\]/)
+  assert.match(transactionOrderRecord, /min-height: 238px;[\s\S]*?padding: 14px 18px;/)
+  assert.match(transactionOrderRecord, /min-height: 174px;[\s\S]*?padding: 12px 18px;/)
+  assert.doesNotMatch(views.orders, /orders-market-tabs|orders-state-tabs|height: 64px/)
 })
 
 test('登录注册页锁定品牌、标题、字段和动作纵向坐标', () => {
@@ -135,7 +136,7 @@ test('登录注册页锁定品牌、标题、字段和动作纵向坐标', () =>
 test('视觉重构没有移除真实接口、状态与危险操作复核', () => {
   assert.match(views.assets, /fetchWalletAccounts\(\)[\s\S]*?fetchMarginWallets\(\)/)
   assert.match(views.profile, /fetchUserProfile\(\)[\s\S]*?fetchKycStatus\(\)/)
-  assert.match(views.orders, /fetchOpenSpotOrders\(30, signal\)[\s\S]*?fetchMarginPositions\('opened', 30, signal\)/)
+  assert.match(transactionRecordsData, /fetchOpenSpotOrders\(30, signal\)[\s\S]*?fetchMarginPositions\('opened', 30, signal\)/)
   assert.match(views.login, /loginWithPassword\(account\.value, password\.value(?:,\s*cfTurnstileToken\.value\s*\|\|\s*undefined)?\)/)
   assert.match(views.register, /registerWithEmail\(\{ email: email\.value, password: password\.value/)
   assert.match(views.news, /rows\.value = await fetchNews\(50\)/)

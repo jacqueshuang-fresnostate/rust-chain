@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import {
   Check,
   ChevronDown,
-  ChevronLeft,
   CircleAlert,
-  FileSearch,
   ListFilter,
   LoaderCircle,
   X,
@@ -14,6 +11,8 @@ import {
 import { useI18n } from 'vue-i18n'
 import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
+import TransactionRecordEmptyState from '@/components/TransactionRecordEmptyState.vue'
+import TransactionRecordsLayout from '@/components/TransactionRecordsLayout.vue'
 import { apiErrorMessage } from '@/api/client'
 import {
   createWalletLedgerAssetDirectoryRequestLifecycle,
@@ -24,8 +23,10 @@ import {
   isWalletLedgerContractError,
   WALLET_LEDGER_DATE_PRESETS,
   WALLET_LEDGER_DIRECTIONS,
+  WALLET_LEDGER_FILTERS,
   walletLedgerAccountTranslationKey,
   walletLedgerAmountSign,
+  walletLedgerCategoryTranslationKey,
   walletLedgerDatePresetTranslationKey,
   walletLedgerDateRange,
   walletLedgerDirectionForAmount,
@@ -37,22 +38,21 @@ import {
   type WalletLedgerDateRange,
   type WalletLedgerDirection,
   type WalletLedgerEntry,
+  type WalletLedgerFilter,
 } from '@/api/wallet'
 import { currentIntlLocale } from '@/i18n'
-import { decimalAbsolute, decimalSign, type DecimalText } from '@/core/decimal'
+import { decimalSign, type DecimalText } from '@/core/decimal'
 import { useModalDialog } from '@/core/modalDialog'
-import { goBackOr } from '@/core/navigation'
 import { useSessionStore } from '@/stores/session'
 
 const PAGE_SIZE = 30
-type FilterSheet = 'asset' | 'direction' | 'date'
+type FilterSheet = 'asset' | 'category' | 'more'
 
-const route = useRoute()
-const router = useRouter()
 const session = useSessionStore()
 const { locale, t } = useI18n()
 const entries = ref<WalletLedgerEntry[]>([])
 const activeAssetSymbol = ref<string>()
+const activeCategory = ref<WalletLedgerFilter>('all')
 const activeDirection = ref<WalletLedgerDirection>('all')
 const activeDatePreset = ref<WalletLedgerDatePreset>('all')
 const activeDateRange = ref<WalletLedgerDateRange>(walletLedgerDateRange('all'))
@@ -69,40 +69,14 @@ const openSheet = ref<FilterSheet | null>(null)
 const filterSheetOpen = computed(() => openSheet.value !== null)
 const filterDialog = ref<HTMLElement | null>(null)
 const assetTrigger = ref<HTMLElement | null>(null)
-const directionTrigger = ref<HTMLElement | null>(null)
-const dateTrigger = ref<HTMLElement | null>(null)
-
-const recordTabs = computed(() => [
-  {
-    key: 'positions',
-    label: t('ledger.positionHistoryTab'),
-    to: { name: 'orders', query: { tab: 'positions' } },
-    active: false,
-  },
-  {
-    key: 'ledger',
-    label: t('ledger.transactionLedgerTab'),
-    to: { name: 'wallet-ledger' },
-    active: true,
-  },
-  {
-    key: 'current-strategy',
-    label: t('ledger.currentStrategyTab'),
-    to: { name: 'orders', query: { tab: 'margin' } },
-    active: false,
-  },
-  {
-    key: 'strategy-history',
-    label: t('ledger.strategyHistoryTab'),
-    to: { name: 'orders', query: { tab: 'history' } },
-    active: false,
-  },
-])
+const categoryTrigger = ref<HTMLElement | null>(null)
+const moreTrigger = ref<HTMLElement | null>(null)
 
 const paginationController = createWalletLedgerPaginationController({
   sessionKey: () => session.token,
   sessionGeneration: () => session.generation,
   selectedAssetSymbol: () => activeAssetSymbol.value,
+  selectedCategory: () => activeCategory.value,
   selectedDirection: () => activeDirection.value,
   selectedDatePreset: () => activeDatePreset.value,
   selectedDateRange: () => activeDateRange.value,
@@ -130,23 +104,22 @@ const { trapFocus: trapFilterFocus, setReturnFocus } = useModalDialog(
 
 const filterSheetTitle = computed(() => {
   if (openSheet.value === 'asset') return t('ledger.assetPickerTitle')
-  if (openSheet.value === 'direction') return t('ledger.directionPickerTitle')
-  return t('ledger.datePickerTitle')
+  if (openSheet.value === 'category') return t('ledger.categoryPickerTitle')
+  return t('ledger.morePickerTitle')
 })
 
 const currentFilterLabel = computed(() => {
   if (openSheet.value === 'asset') return assetSheetLabel(activeAssetSymbol.value)
-  if (openSheet.value === 'direction') return directionLabel(activeDirection.value)
-  return dateSheetLabel(activeDatePreset.value)
+  if (openSheet.value === 'category') return categoryLabel(activeCategory.value)
+  return t('ledger.moreFilterSummary', {
+    direction: directionLabel(activeDirection.value),
+    date: dateSheetLabel(activeDatePreset.value),
+  })
 })
 
 const error = computed(() => ledgerErrorMessage(
   entries.value.length ? appendError.value : initialError.value,
 ))
-
-function backToAssets(): void {
-  void goBackOr(router, route.meta.backFallback || { name: 'assets' })
-}
 
 function ledgerErrorMessage(reason: unknown | null): string {
   if (reason === null) return ''
@@ -207,6 +180,15 @@ function selectDirection(direction: WalletLedgerDirection): void {
   reloadForFilterChange()
 }
 
+function selectCategory(category: WalletLedgerFilter): void {
+  if (category === activeCategory.value) {
+    closeFilterSheet()
+    return
+  }
+  activeCategory.value = category
+  reloadForFilterChange()
+}
+
 function selectDate(preset: WalletLedgerDatePreset): void {
   if (preset === activeDatePreset.value) {
     closeFilterSheet()
@@ -221,7 +203,7 @@ function openFilterSheet(kind: FilterSheet): void {
   if (!session.isAuthenticated) return
   const trigger = kind === 'asset'
     ? assetTrigger.value
-    : kind === 'direction' ? directionTrigger.value : dateTrigger.value
+    : kind === 'category' ? categoryTrigger.value : moreTrigger.value
   setReturnFocus(trigger)
   openSheet.value = kind
 }
@@ -246,8 +228,12 @@ function directionLabel(direction: WalletLedgerDirection): string {
   return t(walletLedgerDirectionTranslationKey(direction))
 }
 
-function directionTriggerLabel(direction: WalletLedgerDirection): string {
-  return direction === 'all' ? t('ledger.transactionTypeFilterTrigger') : directionLabel(direction)
+function categoryLabel(category: WalletLedgerFilter): string {
+  return t(walletLedgerCategoryTranslationKey(category))
+}
+
+function categoryTriggerLabel(category: WalletLedgerFilter): string {
+  return category === 'all' ? t('ledger.transactionTypeFilterTrigger') : categoryLabel(category)
 }
 
 function dateLabel(preset: WalletLedgerDatePreset): string {
@@ -269,9 +255,8 @@ function entryLabel(entry: WalletLedgerEntry): string {
 }
 
 function entryExecutionMeta(entry: WalletLedgerEntry): string {
-  const amount = `${ledgerDecimal(decimalAbsolute(entry.amount), entry.precisionScale)} ${entry.symbol}`
   const source = walletLedgerTypePresentation(entry.changeType).source
-  return source ? `${source} · ${amount}` : amount
+  return source || entry.changeType
 }
 
 function entryPair(entry: WalletLedgerEntry): string {
@@ -299,7 +284,10 @@ function signedAmount(entry: WalletLedgerEntry): string {
 }
 
 function quantity(entry: WalletLedgerEntry): string {
-  return ledgerDecimal(decimalAbsolute(entry.amount), entry.precisionScale)
+  // The current ledger contract exposes the net account delta, not an authoritative gross fill.
+  // Keep the Pencil field present without relabeling the net delta as transaction quantity.
+  void entry
+  return '--'
 }
 
 function entryDirectionLabel(entry: WalletLedgerEntry): string {
@@ -313,11 +301,17 @@ function directionTone(entry: WalletLedgerEntry): 'is-buy' | 'is-sell' | 'is-ink
 }
 
 function feeAmount(entry: WalletLedgerEntry): string {
-  return ledgerDecimal(walletLedgerFeeDebitAmount(entry.fee), entry.precisionScale)
+  return feeIsKnown(entry)
+    ? ledgerDecimal(walletLedgerFeeDebitAmount(entry.fee), entry.precisionScale)
+    : '--'
 }
 
 function exactFeeAmount(entry: WalletLedgerEntry): string {
-  return `${walletLedgerFeeDebitAmount(entry.fee)} ${entry.symbol}`
+  return feeIsKnown(entry) ? `${walletLedgerFeeDebitAmount(entry.fee)} ${entry.symbol}` : '--'
+}
+
+function feeIsKnown(entry: WalletLedgerEntry): boolean {
+  return decimalSign(entry.fee) !== 0
 }
 
 function feeTone(entry: WalletLedgerEntry): 'is-sell' | 'is-ink' {
@@ -329,10 +323,8 @@ function exactAmountTitle(entry: WalletLedgerEntry): string {
 }
 
 function exactQuantityTitle(entry: WalletLedgerEntry): string {
-  return t('ledger.amountExact', {
-    amount: decimalAbsolute(entry.amount),
-    symbol: entry.symbol,
-  })
+  void entry
+  return '--'
 }
 
 function entryAccessibleDetails(entry: WalletLedgerEntry): string {
@@ -352,6 +344,7 @@ function resetSessionState(): void {
   assetDirectoryController.invalidate()
   closeFilterSheet()
   activeAssetSymbol.value = undefined
+  activeCategory.value = 'all'
   activeDirection.value = 'all'
   activeDatePreset.value = 'all'
   activeDateRange.value = walletLedgerDateRange('all')
@@ -376,32 +369,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main
-    class="page page--plain pencil-page wallet-pencil-page wallet-ledger-pencil"
+  <TransactionRecordsLayout
+    class="wallet-pencil-page wallet-ledger-pencil"
+    active-tab="ledger"
+    :back-fallback="{ name: 'assets' }"
     data-pencil-source="kcP5D A85if"
   >
-    <header class="ledger-header">
-      <button class="ledger-header__back" type="button" :aria-label="t('common.back')" @click="backToAssets">
-        <ChevronLeft :size="26" aria-hidden="true" />
-      </button>
-      <h1>{{ t('ledger.title') }}</h1>
-      <span class="ledger-header__placeholder" aria-hidden="true" />
-    </header>
-
-    <nav class="ledger-record-tabs" :aria-label="t('ledger.recordTabsLabel')">
-      <RouterLink
-        v-for="tab in recordTabs"
-        :key="tab.key"
-        class="ledger-record-tab"
-        :class="{ 'is-active': tab.active }"
-        :to="tab.to"
-        :aria-current="tab.active ? 'page' : undefined"
-      >
-        <span>{{ tab.label }}</span>
-        <i aria-hidden="true" />
-      </RouterLink>
-    </nav>
-
     <nav class="ledger-filter-bar" :aria-label="t('ledger.filterBarLabel')">
       <button
         ref="assetTrigger"
@@ -418,30 +391,30 @@ onBeforeUnmount(() => {
         <ChevronDown :size="16" aria-hidden="true" />
       </button>
       <button
-        ref="directionTrigger"
+        ref="categoryTrigger"
         class="ledger-filter-trigger"
-        :class="{ 'is-active': activeDirection !== 'all' }"
+        :class="{ 'is-active': activeCategory !== 'all' }"
         type="button"
         :disabled="!session.isAuthenticated"
-        :aria-label="filterSelectionLabel(t('ledger.transactionTypeFilterTrigger'), directionLabel(activeDirection))"
+        :aria-label="filterSelectionLabel(t('ledger.transactionTypeFilterTrigger'), categoryLabel(activeCategory))"
         aria-haspopup="dialog"
-        :aria-expanded="openSheet === 'direction'"
-        @click="openFilterSheet('direction')"
+        :aria-expanded="openSheet === 'category'"
+        @click="openFilterSheet('category')"
       >
-        <span>{{ directionTriggerLabel(activeDirection) }}</span>
+        <span>{{ categoryTriggerLabel(activeCategory) }}</span>
         <ChevronDown :size="16" aria-hidden="true" />
       </button>
       <span class="ledger-filter-bar__spacer" aria-hidden="true" />
       <button
-        ref="dateTrigger"
+        ref="moreTrigger"
         class="ledger-filter-more"
-        :class="{ 'is-active': activeDatePreset !== 'all' }"
+        :class="{ 'is-active': activeDirection !== 'all' || activeDatePreset !== 'all' }"
         type="button"
         :disabled="!session.isAuthenticated"
-        :aria-label="filterSelectionLabel(t('ledger.dateFilterTrigger'), dateSheetLabel(activeDatePreset))"
+        :aria-label="t('ledger.morePickerTitle')"
         aria-haspopup="dialog"
-        :aria-expanded="openSheet === 'date'"
-        @click="openFilterSheet('date')"
+        :aria-expanded="openSheet === 'more'"
+        @click="openFilterSheet('more')"
       >
         <ListFilter :size="24" aria-hidden="true" />
       </button>
@@ -472,7 +445,7 @@ onBeforeUnmount(() => {
             role="listitem"
             :aria-label="entryAccessibleDetails(entry)"
           >
-            <div class="ledger-row__line ledger-row__line--asset">
+            <header class="ledger-row__header">
               <div class="ledger-row__asset">
                 <AssetMark :symbol="entry.symbol" :src="entryLogoUrl(entry)" :size="30" />
                 <strong>{{ entry.symbol }}</strong>
@@ -480,17 +453,15 @@ onBeforeUnmount(() => {
               <strong class="ledger-row__total numeric" :title="exactAmountTitle(entry)">
                 {{ signedAmount(entry) }}
               </strong>
-            </div>
+            </header>
 
-            <div class="ledger-row__line ledger-row__line--quantity">
-              <strong class="ledger-row__pair">{{ entryPair(entry) }}</strong>
+            <div class="ledger-row__details">
+              <strong class="ledger-row__pair" :title="entryPair(entry)">{{ entryPair(entry) }}</strong>
               <div class="ledger-row__quantity">
                 <span>{{ t('ledger.quantity') }}</span>
                 <strong class="numeric" :title="exactQuantityTitle(entry)">{{ quantity(entry) }}</strong>
               </div>
-            </div>
 
-            <div class="ledger-row__line ledger-row__line--execution">
               <div class="ledger-row__execution">
                 <span>{{ t(walletLedgerAccountTranslationKey(entry.accountType)) }} ·</span>
                 <strong :class="directionTone(entry)">{{ entryDirectionLabel(entry) }}</strong>
@@ -504,22 +475,18 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="ledger-row__line ledger-row__line--balance">
-              <time :datetime="new Date(entry.createdAt).toISOString()">{{ entryTime(entry) }}</time>
+            <footer class="ledger-row__footer">
+              <time class="numeric" :datetime="new Date(entry.createdAt).toISOString()" :title="entryTime(entry)">{{ entryTime(entry) }}</time>
               <div class="ledger-row__balance">
                 <span>{{ t('ledger.accountBalance') }}</span>
                 <strong class="numeric" :title="`${entry.balanceAfter} ${entry.symbol}`">
                   {{ ledgerDecimal(entry.balanceAfter, entry.precisionScale) }}
                 </strong>
               </div>
-            </div>
+            </footer>
           </article>
         </div>
-        <div v-else class="ledger-state ledger-state--empty" role="status">
-          <span class="ledger-state__plate"><FileSearch :size="24" aria-hidden="true" /></span>
-          <strong>{{ t('ledger.empty') }}</strong>
-          <span>{{ t('ledger.emptyDescription') }}</span>
-        </div>
+        <TransactionRecordEmptyState v-else :title="t('ledger.empty')" :description="t('ledger.emptyDescription')" />
 
         <div v-if="error && entries.length" class="ledger-inline-error" role="alert">
           <CircleAlert :size="16" aria-hidden="true" />
@@ -577,21 +544,34 @@ onBeforeUnmount(() => {
             <p v-else-if="!walletAssetSymbols.length" class="ledger-filter-sheet__state" role="status">{{ t('ledger.assetEmpty') }}</p>
           </div>
 
-          <div v-else-if="openSheet === 'direction'" class="ledger-filter-options" role="list" :aria-label="t('ledger.filterOptionsLabel', { filter: t('ledger.directionPickerTitle') })">
-            <button v-for="direction in WALLET_LEDGER_DIRECTIONS" :key="direction" type="button" :class="{ 'is-selected': activeDirection === direction }" :aria-pressed="activeDirection === direction" :data-dialog-initial="activeDirection === direction ? '' : undefined" @click="selectDirection(direction)">
-              <span>{{ directionLabel(direction) }}</span><Check v-if="activeDirection === direction" :size="18" aria-hidden="true" />
+          <div v-else-if="openSheet === 'category'" class="ledger-filter-options" role="list" :aria-label="t('ledger.filterOptionsLabel', { filter: t('ledger.categoryPickerTitle') })">
+            <button v-for="category in WALLET_LEDGER_FILTERS" :key="category" type="button" :class="{ 'is-selected': activeCategory === category }" :aria-pressed="activeCategory === category" :data-dialog-initial="activeCategory === category ? '' : undefined" @click="selectCategory(category)">
+              <span>{{ categoryLabel(category) }}</span><Check v-if="activeCategory === category" :size="18" aria-hidden="true" />
             </button>
           </div>
 
-          <div v-else class="ledger-filter-options" role="list" :aria-label="t('ledger.filterOptionsLabel', { filter: t('ledger.datePickerTitle') })">
-            <button v-for="preset in WALLET_LEDGER_DATE_PRESETS" :key="preset" type="button" :class="{ 'is-selected': activeDatePreset === preset }" :aria-pressed="activeDatePreset === preset" :data-dialog-initial="activeDatePreset === preset ? '' : undefined" @click="selectDate(preset)">
-              <span>{{ preset === 'all' ? t('ledger.dateAll') : dateLabel(preset) }}</span><Check v-if="activeDatePreset === preset" :size="18" aria-hidden="true" />
-            </button>
+          <div v-else class="ledger-more-filters">
+            <section>
+              <h3>{{ t('ledger.directionPickerTitle') }}</h3>
+              <div class="ledger-filter-options" role="list" :aria-label="t('ledger.filterOptionsLabel', { filter: t('ledger.directionPickerTitle') })">
+                <button v-for="direction in WALLET_LEDGER_DIRECTIONS" :key="direction" type="button" :class="{ 'is-selected': activeDirection === direction }" :aria-pressed="activeDirection === direction" :data-dialog-initial="activeDirection === direction ? '' : undefined" @click="selectDirection(direction)">
+                  <span>{{ directionLabel(direction) }}</span><Check v-if="activeDirection === direction" :size="18" aria-hidden="true" />
+                </button>
+              </div>
+            </section>
+            <section>
+              <h3>{{ t('ledger.datePickerTitle') }}</h3>
+              <div class="ledger-filter-options" role="list" :aria-label="t('ledger.filterOptionsLabel', { filter: t('ledger.datePickerTitle') })">
+                <button v-for="preset in WALLET_LEDGER_DATE_PRESETS" :key="preset" type="button" :class="{ 'is-selected': activeDatePreset === preset }" :aria-pressed="activeDatePreset === preset" @click="selectDate(preset)">
+                  <span>{{ preset === 'all' ? t('ledger.dateAll') : dateLabel(preset) }}</span><Check v-if="activeDatePreset === preset" :size="18" aria-hidden="true" />
+                </button>
+              </div>
+            </section>
           </div>
         </section>
       </div>
     </Teleport>
-  </main>
+  </TransactionRecordsLayout>
 </template>
 
 <style scoped>
@@ -601,14 +581,16 @@ onBeforeUnmount(() => {
   --positive: var(--wallet-record-buy);
   --wallet-record-active: #18d38d;
   --wallet-record-buy: #0dbe7b;
+  --wallet-record-canvas: #ffffff;
+  --wallet-record-card: #ffffff;
+  --wallet-record-chrome: #ffffff;
   --wallet-record-ink: #111714;
-  --wallet-record-page: #ffffff;
   --wallet-record-row-line: #edf1ef;
   --wallet-record-row-muted: #8a948f;
   --wallet-record-sell: #ff5878;
   --wallet-record-tab-line: #eef1ef;
   --wallet-record-tab-muted: #7b8680;
-  background: var(--wallet-record-page);
+  background: var(--wallet-record-canvas);
   color: var(--wallet-record-ink);
   min-width: 0;
   overflow-x: clip;
@@ -616,129 +598,19 @@ onBeforeUnmount(() => {
 
 :global(html[data-theme='dark'] .wallet-ledger-pencil) {
   --wallet-record-buy: #45efae;
+  --wallet-record-canvas: #000000;
+  --wallet-record-card: #000000;
+  --wallet-record-chrome: #000000;
   --wallet-record-ink: #f3f7f5;
-  --wallet-record-page: #000000;
   --wallet-record-row-line: #17221c;
   --wallet-record-row-muted: #8f9b94;
   --wallet-record-tab-line: #18231d;
   --wallet-record-tab-muted: #8f9b94;
 }
 
-.ledger-header {
-  align-items: center;
-  background: var(--wallet-record-page);
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 26px;
-  height: 58px;
-  min-height: 58px;
-  padding: 0 16px;
-  position: sticky;
-  top: env(safe-area-inset-top);
-  z-index: var(--layer-sticky-header);
-}
-
-.ledger-header h1 {
-  color: var(--wallet-record-ink);
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 30px;
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ledger-header__back {
-  align-items: center;
-  background-color: transparent;
-  border: 0;
-  color: var(--wallet-record-ink);
-  display: grid;
-  height: 26px;
-  justify-content: center;
-  overflow: visible;
-  padding: 0;
-  place-items: center;
-  position: relative;
-  width: 26px;
-}
-
-.ledger-header__back::before {
-  content: '';
-  height: 44px;
-  left: 50%;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 44px;
-}
-
-.ledger-header__back svg {
-  height: 26px;
-  width: 26px;
-}
-
-.ledger-header__placeholder {
-  height: 26px;
-  width: 26px;
-}
-
-.ledger-record-tabs {
-  background: var(--wallet-record-page);
-  border-bottom: 1px solid var(--wallet-record-tab-line);
-  box-sizing: border-box;
-  display: grid;
-  gap: 2px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  height: 52px;
-  min-height: 52px;
-  padding: 0 10px;
-}
-
-.ledger-record-tab {
-  color: var(--wallet-record-tab-muted);
-  display: grid;
-  font-size: 13px;
-  font-weight: 500;
-  gap: 9px;
-  grid-template-rows: minmax(0, 1fr) 3px;
-  height: 51px;
-  line-height: 18px;
-  min-width: 0;
-  text-align: center;
-  text-decoration: none;
-}
-
-.ledger-record-tab span {
-  align-self: end;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ledger-record-tab i {
-  background: transparent;
-  display: block;
-  height: 3px;
-  width: 100%;
-}
-
-.ledger-record-tab.is-active {
-  color: var(--wallet-record-ink);
-  font-weight: 700;
-}
-
-.ledger-record-tab.is-active i {
-  background: var(--wallet-record-active);
-}
-
 .ledger-filter-bar {
   align-items: center;
-  background: var(--wallet-record-page);
+  background: var(--wallet-record-chrome);
   box-sizing: border-box;
   display: flex;
   gap: 24px;
@@ -804,8 +676,6 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-.ledger-header__back:focus-visible,
-.ledger-record-tab:focus-visible,
 .ledger-filter-trigger:focus-visible,
 .ledger-filter-more:focus-visible,
 .ledger-state button:focus-visible,
@@ -817,56 +687,61 @@ onBeforeUnmount(() => {
 }
 
 .ledger-content {
+  background: var(--wallet-record-canvas);
   min-width: 0;
   overflow-x: clip;
-  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
 }
 
 .ledger-list {
-  display: grid;
-  gap: 0;
+  box-sizing: border-box;
+  display: block;
   min-width: 0;
+  padding: 0;
 }
 
 .ledger-row {
-  align-content: start;
+  align-items: stretch;
+  background: var(--wallet-record-card);
   border: 0;
   border-bottom: 1px solid var(--wallet-record-row-line);
+  border-radius: 0;
   box-sizing: border-box;
+  box-shadow: none;
   display: grid;
   gap: 9px;
-  grid-template-rows: 30px 22px 22px 19px;
-  height: 166px;
-  max-height: 166px;
-  min-height: 166px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  justify-content: stretch;
+  min-height: 190px;
   min-width: 0;
   overflow: hidden;
   padding: 12px 18px;
   width: 100%;
 }
 
-.ledger-row__line {
+.ledger-row__header {
   align-items: center;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  min-height: 30px;
   min-width: 0;
 }
 
-.ledger-row__line > * {
+.ledger-row__header > *,
+.ledger-row__details > *,
+.ledger-row__footer > * {
   min-width: 0;
 }
 
-.ledger-row__line--asset {
-  height: 30px;
-}
-
-.ledger-row__line--quantity,
-.ledger-row__line--execution {
-  height: 22px;
-}
-
-.ledger-row__line--balance {
-  height: 19px;
+.ledger-row__details {
+  display: grid;
+  gap: 8px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+  min-width: 0;
+  padding-top: 0;
 }
 
 .ledger-row__asset {
@@ -889,11 +764,10 @@ onBeforeUnmount(() => {
 
 .ledger-row__total {
   color: var(--wallet-record-ink);
-  flex: 0 1 auto;
   font-size: 18px;
   font-weight: 500;
   line-height: 24px;
-  max-width: 58%;
+  min-width: 0;
   overflow: hidden;
   text-align: right;
   text-overflow: ellipsis;
@@ -901,11 +775,13 @@ onBeforeUnmount(() => {
 }
 
 .ledger-row__pair {
+  align-self: center;
   color: var(--wallet-record-ink);
-  flex: 1 1 auto;
+  display: block;
   font-size: 15px;
   font-weight: 600;
   line-height: 22px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -915,17 +791,17 @@ onBeforeUnmount(() => {
 .ledger-row__fee,
 .ledger-row__balance {
   align-items: center;
-  display: flex;
-  flex: 0 1 auto;
-  gap: 7px;
-  justify-content: flex-end;
-  max-width: 68%;
+  display: grid;
   min-width: 0;
+}
+
+.ledger-row__quantity {
+  gap: 6px;
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .ledger-row__quantity > span {
   color: var(--wallet-record-row-muted);
-  flex: 0 0 auto;
   font-size: 13px;
   font-weight: 500;
   line-height: 19px;
@@ -938,22 +814,23 @@ onBeforeUnmount(() => {
   line-height: 22px;
   min-width: 0;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ledger-row__execution {
   align-items: center;
-  display: flex;
-  flex: 1 1 auto;
-  gap: 4px;
+  column-gap: 4px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 20px 18px;
   min-width: 0;
   overflow: hidden;
 }
 
 .ledger-row__execution > span {
   color: var(--wallet-record-ink);
-  flex: 0 0 auto;
   font-size: 14px;
   font-weight: 600;
   line-height: 20px;
@@ -961,7 +838,6 @@ onBeforeUnmount(() => {
 }
 
 .ledger-row__execution > strong {
-  flex: 0 1 auto;
   font-size: 15px;
   font-weight: 650;
   line-height: 22px;
@@ -973,9 +849,9 @@ onBeforeUnmount(() => {
 
 .ledger-row__execution > small {
   color: var(--wallet-record-row-muted);
-  flex: 1 1 auto;
   font-size: 12px;
   font-weight: 500;
+  grid-column: 1 / -1;
   line-height: 18px;
   min-width: 0;
   overflow: hidden;
@@ -984,14 +860,14 @@ onBeforeUnmount(() => {
 }
 
 .ledger-row__fee {
-  gap: 4px;
-  margin-left: 8px;
-  max-width: 42%;
+  align-content: start;
+  gap: 2px;
+  grid-template-rows: 16px 18px;
+  justify-items: end;
 }
 
 .ledger-row__fee span {
   color: var(--wallet-record-row-muted);
-  flex: 0 0 auto;
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -1001,30 +877,42 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-row__footer {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+  min-width: 0;
+  padding-top: 0;
+}
+
+.ledger-row__footer time {
+  color: var(--wallet-record-row-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 19px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ledger-row__line--balance time {
-  color: var(--wallet-record-row-muted);
-  flex: 1 1 auto;
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 19px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ledger-row__balance {
-  max-width: 58%;
+  gap: 6px;
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .ledger-row__balance span {
   color: var(--wallet-record-row-muted);
-  flex: 0 0 auto;
   font-size: 13px;
   font-weight: 500;
   line-height: 19px;
@@ -1037,6 +925,7 @@ onBeforeUnmount(() => {
   line-height: 19px;
   min-width: 0;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1222,6 +1111,27 @@ onBeforeUnmount(() => {
   color: var(--positive);
 }
 
+.ledger-more-filters {
+  display: grid;
+  gap: 18px;
+  max-height: min(520px, calc(100dvh - 190px - env(safe-area-inset-bottom)));
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.ledger-more-filters section {
+  min-width: 0;
+}
+
+.ledger-more-filters h3 {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  margin: 0;
+  padding: 0 4px 4px;
+}
+
 .ledger-filter-sheet__state {
   align-items: center;
   color: var(--muted);
@@ -1290,6 +1200,36 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 340px) {
+  .ledger-list {
+    padding-inline: 0;
+  }
+
+  .ledger-row {
+    padding: 12px 18px;
+  }
+
+  .ledger-row__header {
+    gap: 10px;
+    grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
+  }
+
+  .ledger-row__details {
+    gap: 8px 12px;
+  }
+
+  .ledger-row__footer {
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ledger-row__footer time {
+    font-size: 12px;
+  }
+
+  .ledger-row__balance {
+    width: 100%;
+  }
+
   .wallet-login-prompt {
     align-items: center;
     grid-template-columns: 34px minmax(0, 1fr);

@@ -86,6 +86,30 @@ pub(crate) async fn load_margin_close_execution_by_key_readonly(
     .map_err(AppError::from)
 }
 
+/// 按 JWT 用户与仓位主键联合读取不可变平仓执行，两个条件都会下推到 SQL，避免跨用户暴露执行明细。
+/// 调用方须先确认仓位归属以区分合法空列表和不可见仓位；本查询再以相同用户边界做纵深校验。
+/// 结果固定按 `created_at ASC, id ASC` 返回；只走连接池读取，不开事务、不加锁，也不触碰仓位、钱包或流水。
+pub(crate) async fn list_user_margin_position_close_executions(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    position_id: u64,
+) -> AppResult<Vec<MarginPositionCloseExecutionResponse>> {
+    sqlx::query_as::<_, MarginPositionCloseExecutionResponse>(
+        r#"SELECT id, position_id, idempotency_key, close_percentage,
+                  close_margin_amount, close_notional_amount, close_borrowed_amount,
+                  close_interest_amount, exit_price, realized_pnl, settlement_amount,
+                  fully_closed, created_at
+           FROM margin_position_close_executions
+           WHERE user_id = ? AND position_id = ?
+           ORDER BY created_at ASC, id ASC"#,
+    )
+    .bind(user_id)
+    .bind(position_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::from)
+}
+
 /// 把一次显式平仓结果写入调用方事务，成功返回自增主键；唯一冲突保留原始 SQLx 错误供应用层回滚重放。
 /// 插入应位于所有金额计算之后、钱包结算之前，确保同键并发败方在产生资金写入前退出。
 pub(crate) async fn insert_margin_close_execution(

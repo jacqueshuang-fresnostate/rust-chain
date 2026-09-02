@@ -38,6 +38,14 @@ async fn closed_event_keeps_interest_adjusted_payout_json() {
         limit_price: None,
         exit_price: Some(decimal("110")),
         realized_pnl: Some(decimal("10")),
+        opened_at: Utc
+            .timestamp_millis_opt(1_699_999_000_123)
+            .single()
+            .expect("valid opened timestamp"),
+        created_at: Utc
+            .timestamp_millis_opt(1_699_998_000_456)
+            .single()
+            .expect("valid created timestamp"),
         closed_at: Some(
             Utc.timestamp_millis_opt(1_700_000_000_000)
                 .single()
@@ -46,6 +54,9 @@ async fn closed_event_keeps_interest_adjusted_payout_json() {
         status: "closed".to_owned(),
         idempotency_key: "margin-close-test".to_owned(),
     };
+    let position_json = serde_json::to_value(&position).expect("serializable position");
+    assert_eq!(position_json["opened_at"], 1_699_999_000_123_i64);
+    assert_eq!(position_json["created_at"], 1_699_998_000_456_i64);
 
     publish_margin_position_closed_event(&hub, 7, &position);
 
@@ -88,6 +99,8 @@ async fn partial_close_event_is_post_commit_refresh_context_and_replay_is_silent
             limit_price: None,
             exit_price: None,
             realized_pnl: Some(decimal("5")),
+            opened_at: created_at,
+            created_at,
             closed_at: None,
             status: "opened".to_owned(),
             idempotency_key: "margin-open-test".to_owned(),

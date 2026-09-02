@@ -37,6 +37,7 @@ const EXPECTED_ROUTE_NAMES = [
   'seconds',
   'seconds-history',
   'orders',
+  'position-associated-orders',
   'profile',
   'help-support',
   'support-chat',

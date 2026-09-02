@@ -2,6 +2,7 @@ export interface OrdersRequestSnapshot {
   sessionGeneration: number
   market: 'spot' | 'margin'
   state: 'current' | 'history' | 'positions'
+  workspace?: string
 }
 
 export type LatestOrdersRequestResult<T> =

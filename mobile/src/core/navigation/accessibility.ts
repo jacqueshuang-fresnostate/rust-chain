@@ -28,6 +28,7 @@ export const ROUTE_ACCESSIBILITY_TITLE_KEYS = Object.freeze({
   seconds: 'routeAccessibility.titles.seconds',
   'seconds-history': 'routeAccessibility.titles.secondsHistory',
   orders: 'routeAccessibility.titles.orders',
+  'position-associated-orders': 'routeAccessibility.titles.positionAssociatedOrders',
   profile: 'routeAccessibility.titles.profile',
   'help-support': 'routeAccessibility.titles.helpSupport',
   'support-chat': 'routeAccessibility.titles.supportChat',

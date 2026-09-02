@@ -14,7 +14,8 @@ mod settlement;
 mod transfers;
 
 pub(crate) use close_executions::{
-    MarginCloseExecutionWrite, insert_margin_close_execution, load_margin_close_execution_by_id,
+    MarginCloseExecutionWrite, insert_margin_close_execution,
+    list_user_margin_position_close_executions, load_margin_close_execution_by_id,
     load_margin_close_execution_by_key_readonly, lock_margin_close_execution_by_key,
 };
 pub(crate) use cross_accounts::{

@@ -20,6 +20,8 @@ const sources = {
   earnApi: read('../src/api/earn.ts'),
   modalDialog: read('../src/core/modalDialog.ts'),
   router: read('../src/router/index.ts'),
+  transactionEmpty: read('../src/components/TransactionRecordEmptyState.vue'),
+  transactionOrder: read('../src/components/TransactionOrderRecord.vue'),
 }
 
 test('all eight saved light and dark Pencil pairs are declared by production roots', () => {
@@ -58,20 +60,17 @@ test('help route fixes Profile intent and exposes internal chat plus configured 
   assert.match(sources.help, /height: 64px;/)
 })
 
-test('selected empty branches have independent 56px plates, two-line copy, and truthful retry behavior', () => {
-  assert.match(sources.orders, /<ClipboardList :size="24"/)
-  assert.match(sources.orders, /class="orders-empty-state" role="status"/)
+test('selected empty branches keep formal receipt geometry and truthful retry behavior', () => {
+  assert.match(sources.orders, /<TransactionRecordEmptyState/)
   assert.match(sources.orders, /orders\.emptyDescription/)
-  assert.match(sources.orders, /class="orders-empty-action"[\s\S]*?orders\.goTrade/)
-  assert.match(sources.orders, /\.orders-empty-state__plate[\s\S]*?height: 56px;[\s\S]*?width: 56px;/)
-  assert.match(sources.orders, /\.orders-empty-action[\s\S]*?height: 50px;/)
-  assert.equal(sources.orders.match(/v-else-if="!error" class="orders-empty-branch"/g)?.length, 4)
+  assert.match(sources.transactionEmpty, /<ReceiptText :size="30"/)
+  assert.match(sources.transactionEmpty, /\.records-empty__plate[\s\S]*?height: 64px;[\s\S]*?width: 64px;/)
+  assert.match(sources.transactionEmpty, /\.records-empty strong[\s\S]*?font-size: 18px;[\s\S]*?font-weight: 400;/)
 
-  assert.match(sources.ledger, /<FileSearch :size="24"/)
+  assert.match(sources.ledger, /<TransactionRecordEmptyState/)
   assert.match(sources.ledger, /ledger\.emptyDescription/)
   assert.match(sources.ledger, /v-if="error && !entries\.length"/)
   assert.match(sources.ledger, /v-if="error && entries\.length"/)
-  assert.match(sources.ledger, /\.ledger-state__plate[\s\S]*?height: 56px;[\s\S]*?width: 56px;/)
 
   assert.match(sources.messages, /<BellOff :size="24"/)
   assert.match(sources.messages, /class="message-empty-state" role="status"/)
@@ -79,11 +78,10 @@ test('selected empty branches have independent 56px plates, two-line copy, and t
   assert.match(sources.messages, /<strong>\{\{ emptyTitle \}\}<\/strong>[\s\S]*?<small>\{\{ emptyDescription \}\}<\/small>/)
 })
 
-test('orders CTA opens the persisted spot pair without merging trade modes', () => {
-  assert.match(sources.orders, /const navigation = useNavigationStore\(\)/)
-  assert.match(sources.orders, /router\.push\(\{ name: 'trade', params: \{ symbol: navigation\.lastTradeSymbol \} \}\)/)
-  const openSpotTrade = sources.orders.match(/function openSpotTrade\(\): void \{([\s\S]*?)\n\}/)?.[1] || ''
-  assert.doesNotMatch(openSpotTrade, /mode|contract|seconds/)
+test('orders legacy market query maps to canonical current state and a real filter', () => {
+  assert.match(sources.orders, /if \(tab === 'spot'\) orderFilter\.value = 'spot'/)
+  assert.match(sources.orders, /else if \(tab === 'margin'\) orderFilter\.value = 'margin'/)
+  assert.match(sources.orders, /normalizeTransactionRecordTab\(tab\)/)
 })
 
 test('资金划转按 Pencil 主弹窗与资产选择弹窗渲染，并保留真实钱包和可访问性合同', () => {
@@ -189,7 +187,7 @@ test('wallet ledger and message center keep error, loading, cached-data, and emp
     'v-if="error && !entries.length"',
     'v-else-if="loading && !entries.length"',
     'v-else-if="entries.length"',
-    'v-else class="ledger-state ledger-state--empty"',
+    '<TransactionRecordEmptyState v-else',
   ].map((branch) => sources.ledger.indexOf(branch))
   assert.ok(ledgerBranches.every((index) => index >= 0))
   assert.deepEqual([...ledgerBranches].sort((left, right) => left - right), ledgerBranches)
@@ -213,7 +211,8 @@ test('compact actions expose effective 44px pointer targets', () => {
   assert.match(sources.help, /\.help-support-search[\s\S]*?height: 44px;/)
   assert.match(sources.help, /\.help-support-row[\s\S]*?height: 64px;[\s\S]*?min-height: 64px;/)
   assert.match(sources.newCoinRecords, /\.record-tabs button[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
-  assert.match(sources.orders, /button\.orders-row__state::before[\s\S]*?inset: -12px -8px;/)
+  assert.match(sources.transactionOrder, /\.transaction-order-record__actions button \{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
+  assert.match(sources.transactionOrder, /\.transaction-order-record__actions button::before[\s\S]*?inset: 1px 0;/)
   assert.match(sources.messages, /\.message-filter-bar button::before[\s\S]*?inset: -9px -4px;/)
   assert.match(sources.prediction, /\.prediction-tabs button::before[\s\S]*?inset: -9px 0 -8px;/)
   assert.match(sources.prediction, /\.prediction-outcomes button::before[\s\S]*?inset: -3px 0;/)

@@ -39,6 +39,7 @@ const sources = Object.fromEntries(viewNames.map((name) => [
   readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8'),
 ])) as Record<(typeof viewNames)[number], string>
 const pageHeaderSource = readFileSync(new URL('../src/components/PageHeader.vue', import.meta.url), 'utf8')
+const transactionRecordsLayoutSource = readFileSync(new URL('../src/components/TransactionRecordsLayout.vue', import.meta.url), 'utf8')
 const routerSource = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
 const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
 const prototypeManagedContent = new Set(['LoanView', 'MessageCenterView', 'SecurityView'])
@@ -74,9 +75,10 @@ test('二级页面使用场景 Header 或完整认证身份区', () => {
       continue
     }
     if (name === 'WalletLedgerView') {
-      assert.match(source, /<header class="ledger-header">/)
-      assert.match(source, /class="ledger-header__back"[\s\S]*?@click="backToAssets"/)
-      assert.match(source, /goBackOr\(router, route\.meta\.backFallback \|\| \{ name: 'assets' \}\)/)
+      assert.match(source, /<TransactionRecordsLayout/)
+      assert.match(source, /active-tab="ledger"/)
+      assert.match(source, /:back-fallback="\{ name: 'assets' \}"/)
+      assert.match(transactionRecordsLayoutSource, /goBackOr\(router, route\.meta\.backFallback \|\| props\.backFallback\)/)
       assert.doesNotMatch(source, /<PageHeader/)
       continue
     }

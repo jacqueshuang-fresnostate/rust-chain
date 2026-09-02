@@ -337,6 +337,12 @@ pub(crate) struct MarginPositionCloseExecutionResponse {
     pub(crate) created_at: DateTime<Utc>,
 }
 
+/// 用户指定仓位的不可变平仓执行列表；顺序由基础设施查询固定为创建时间、执行主键升序。
+#[derive(Debug, Serialize)]
+pub(crate) struct MarginPositionCloseExecutionsResponse {
+    pub(crate) executions: Vec<MarginPositionCloseExecutionResponse>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct CloseAllMarginPositionsResponse {
     pub(crate) positions: Vec<MarginPositionResponse>,
@@ -387,6 +393,12 @@ pub(crate) struct MarginPositionResponse {
     pub(crate) exit_price: Option<BigDecimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) realized_pnl: Option<BigDecimal>,
+    /// 已成交仓位的真实成交时刻；待成交限价单会在首次成交事务中从委托时刻更新为成交时刻。
+    #[serde(with = "unix_millis")]
+    pub(crate) opened_at: DateTime<Utc>,
+    /// 仓位或委托最初落库的不可变创建时刻。
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
     #[serde(
         default,
         with = "option_unix_millis",

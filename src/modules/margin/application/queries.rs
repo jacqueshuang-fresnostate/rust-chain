@@ -20,6 +20,7 @@ use crate::{
             MarginRiskPositionRow, MarginRiskTicker, cached_margin_risk_ticker,
             list_admin_interest_summary, list_admin_margin_positions, list_margin_wallet_accounts,
             list_user_cross_margin_accounts, list_user_cross_margin_risk_positions,
+            list_user_margin_position_close_executions as list_user_margin_position_close_execution_rows,
             list_user_margin_positions as list_user_margin_positions_rows,
             load_admin_margin_position_by_id, load_user_cross_margin_wallet_available,
             load_user_position_by_id, load_user_risk_position_by_id,
@@ -27,8 +28,9 @@ use crate::{
         presentation::{
             AdminInterestSummaryQuery, AdminInterestSummaryResponse, AdminListPositionsQuery,
             AdminMarginPositionResponse, AdminMarginPositionsResponse, MarginCrossAccountRisk,
-            MarginPositionDetailResponse, MarginPositionsResponse, MarginRiskSnapshot,
-            MarginRiskSnapshotResponse, MarginWalletsResponse,
+            MarginPositionCloseExecutionsResponse, MarginPositionDetailResponse,
+            MarginPositionsResponse, MarginRiskSnapshot, MarginRiskSnapshotResponse,
+            MarginWalletsResponse,
         },
     },
     workers::margin_liquidation::{MarginLiquidationRiskState, margin_liquidation_risk_state},
@@ -103,6 +105,22 @@ pub(crate) async fn get_user_margin_position(
         .await?
         .ok_or(AppError::NotFound)?;
     Ok(MarginPositionDetailResponse { position })
+}
+
+/// 返回指定用户仓位的全部不可变平仓执行；先联合用户与仓位主键确认归属，再读取执行明细。
+/// 仓位不存在与属于他人统一返回 NotFound，合法仓位没有执行时返回空列表，避免泄漏主键是否存在。
+/// 本用例只编排两个连接池读取，不访问行情、不启动事务，也不触发计提、重估、钱包、流水或状态写入。
+pub(crate) async fn list_user_margin_position_close_executions(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    position_id: u64,
+) -> AppResult<MarginPositionCloseExecutionsResponse> {
+    load_user_position_by_id(pool, user_id, position_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let executions =
+        list_user_margin_position_close_execution_rows(pool, user_id, position_id).await?;
+    Ok(MarginPositionCloseExecutionsResponse { executions })
 }
 
 /// 后台跨账户检索杠杆仓位历史，支持用户标识、邮箱、交易对和状态四维组合筛选并分页。

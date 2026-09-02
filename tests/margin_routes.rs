@@ -3,7 +3,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bigdecimal::BigDecimal;
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use exchange_api::{
     config::Settings,
     modules::{
@@ -308,6 +308,44 @@ async fn seed_margin_position(
     .bind(notional_amount)
     .bind(entry_price.map(decimal))
     .bind(format!("margin-action-{}", Uuid::now_v7().simple()))
+    .execute(&mut **tx)
+    .await
+    .unwrap()
+    .last_insert_id()
+}
+
+async fn seed_margin_close_execution(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    position_id: u64,
+    idempotency_key: &str,
+    close_percentage: u16,
+    close_margin_amount: &str,
+    created_at: NaiveDateTime,
+) -> u64 {
+    let close_margin_amount = decimal(close_margin_amount);
+    let close_notional_amount = close_margin_amount.clone() * decimal("2");
+    sqlx::query(
+        r#"INSERT INTO margin_position_close_executions
+           (user_id, position_id, idempotency_key, close_percentage,
+            close_margin_amount, close_notional_amount, close_borrowed_amount,
+            close_interest_amount, exit_price, realized_pnl, settlement_amount,
+            fully_closed, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(position_id)
+    .bind(idempotency_key)
+    .bind(close_percentage)
+    .bind(&close_margin_amount)
+    .bind(close_notional_amount)
+    .bind(&close_margin_amount)
+    .bind(decimal("0.000000000000000123"))
+    .bind(decimal("12345.678901234567890123"))
+    .bind(decimal("-0.123456789012345678"))
+    .bind(decimal("9.876543210987654321"))
+    .bind(close_percentage == 100)
+    .bind(created_at)
     .execute(&mut **tx)
     .await
     .unwrap()
@@ -1411,6 +1449,37 @@ async fn margin_routes_require_expected_scope() {
         .await
         .unwrap();
     assert_eq!(admin_on_user_open.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn margin_position_execution_history_requires_user_scope() {
+    let settings = test_settings();
+    let admin_token = issue_token(&settings, "admin:7", TokenScope::Admin, 900).unwrap();
+    let app = user_routes().with_state(AppState::new(settings));
+
+    let anonymous = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/positions/1/executions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+    let admin = app
+        .oneshot(
+            Request::builder()
+                .uri("/margin/positions/1/executions")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -3123,6 +3192,17 @@ async fn margin_position_queries_return_only_authenticated_user_positions()
     .execute(&mut *fixture_tx)
     .await?
     .last_insert_id();
+    let created_at =
+        NaiveDateTime::parse_from_str("2026-09-01 01:02:03.123456", "%Y-%m-%d %H:%M:%S%.f")?;
+    let opened_at =
+        NaiveDateTime::parse_from_str("2026-09-01 04:05:06.654321", "%Y-%m-%d %H:%M:%S%.f")?;
+    sqlx::query("UPDATE margin_positions SET opened_at = ?, created_at = ? WHERE id IN (?, ?)")
+        .bind(opened_at)
+        .bind(created_at)
+        .bind(opened_id)
+        .bind(closed_id)
+        .execute(&mut *fixture_tx)
+        .await?;
     fixture_tx.commit().await?;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
@@ -3149,6 +3229,14 @@ async fn margin_position_queries_return_only_authenticated_user_positions()
             .any(|position| position["id"] == other_position_id)
     );
     assert_eq!(positions[0]["entry_price"], "100.000000000000000000");
+    assert_eq!(
+        positions[0]["opened_at"],
+        opened_at.and_utc().timestamp_millis()
+    );
+    assert_eq!(
+        positions[0]["created_at"],
+        created_at.and_utc().timestamp_millis()
+    );
 
     let detail_response = app
         .clone()
@@ -3174,6 +3262,14 @@ async fn margin_position_queries_return_only_authenticated_user_positions()
         "12.000000000000000000"
     );
     assert!(detail_payload["position"]["closed_at"].as_i64().is_some());
+    assert_eq!(
+        detail_payload["position"]["opened_at"],
+        opened_at.and_utc().timestamp_millis()
+    );
+    assert_eq!(
+        detail_payload["position"]["created_at"],
+        created_at.and_utc().timestamp_millis()
+    );
 
     let other_detail = app
         .oneshot(
@@ -3185,6 +3281,287 @@ async fn margin_position_queries_return_only_authenticated_user_positions()
         )
         .await?;
     assert_eq!(other_detail.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn margin_position_execution_history_is_scoped_sorted_and_read_only()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let other_user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "EXB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "EXQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_margin_product(&mut fixture_tx, pair_id, quote_asset).await;
+    let position_id = seed_margin_position(
+        &mut fixture_tx,
+        user_id,
+        product_id,
+        pair_id,
+        quote_asset,
+        "40.000000000000000000",
+        Some("100.000000000000000000"),
+    )
+    .await;
+    let empty_position_id = seed_margin_position(
+        &mut fixture_tx,
+        user_id,
+        product_id,
+        pair_id,
+        quote_asset,
+        "30.000000000000000000",
+        Some("100.000000000000000000"),
+    )
+    .await;
+    let other_position_id = seed_margin_position(
+        &mut fixture_tx,
+        other_user_id,
+        product_id,
+        pair_id,
+        quote_asset,
+        "20.000000000000000000",
+        Some("100.000000000000000000"),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("321.123456789012345678"))
+    .bind(decimal("2.000000000000000000"))
+    .bind(decimal("3.000000000000000000"))
+    .execute(&mut *fixture_tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available, frozen, locked) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("123.987654321098765432"))
+    .bind(decimal("4.000000000000000000"))
+    .bind(decimal("5.000000000000000000"))
+    .execute(&mut *fixture_tx)
+    .await?;
+
+    let early =
+        NaiveDateTime::parse_from_str("2026-09-02 01:02:03.111111", "%Y-%m-%d %H:%M:%S%.f")?;
+    let late = NaiveDateTime::parse_from_str("2026-09-02 04:05:06.222222", "%Y-%m-%d %H:%M:%S%.f")?;
+    let late_id = seed_margin_close_execution(
+        &mut fixture_tx,
+        user_id,
+        position_id,
+        &format!("execution-late-{}", Uuid::now_v7().simple()),
+        10,
+        "4.000000000000000001",
+        late,
+    )
+    .await;
+    let early_first_id = seed_margin_close_execution(
+        &mut fixture_tx,
+        user_id,
+        position_id,
+        &format!("execution-early-a-{}", Uuid::now_v7().simple()),
+        20,
+        "3.000000000000000002",
+        early,
+    )
+    .await;
+    let early_second_id = seed_margin_close_execution(
+        &mut fixture_tx,
+        user_id,
+        position_id,
+        &format!("execution-early-b-{}", Uuid::now_v7().simple()),
+        30,
+        "2.000000000000000003",
+        early,
+    )
+    .await;
+    seed_margin_close_execution(
+        &mut fixture_tx,
+        other_user_id,
+        other_position_id,
+        &format!("execution-other-{}", Uuid::now_v7().simple()),
+        100,
+        "19.000000000000000004",
+        early,
+    )
+    .await;
+    fixture_tx.commit().await?;
+
+    let position_before: (BigDecimal, String, NaiveDateTime) = sqlx::query_as(
+        "SELECT margin_amount, status, updated_at FROM margin_positions WHERE id = ?",
+    )
+    .bind(position_id)
+    .fetch_one(&pool)
+    .await?;
+    let spot_wallet_before: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+        sqlx::query_as(
+            "SELECT available, frozen, locked, updated_at FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(quote_asset)
+        .fetch_one(&pool)
+        .await?;
+    let margin_wallet_before: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+        sqlx::query_as(
+            "SELECT available, frozen, locked, updated_at FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(quote_asset)
+        .fetch_one(&pool)
+        .await?;
+    let ledger_counts_before: (i64, i64) = sqlx::query_as(
+        r#"SELECT
+              (SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ?),
+              (SELECT COUNT(*) FROM margin_wallet_ledger WHERE user_id = ?)"#,
+    )
+    .bind(user_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    let execution_count_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_position_close_executions WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{position_id}/executions"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    let executions = payload["executions"].as_array().unwrap();
+    let execution_ids = executions
+        .iter()
+        .map(|execution| execution["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        execution_ids,
+        vec![early_first_id, early_second_id, late_id]
+    );
+    assert_eq!(
+        executions[0]["created_at"],
+        early.and_utc().timestamp_millis()
+    );
+    assert_eq!(
+        executions[1]["created_at"],
+        early.and_utc().timestamp_millis()
+    );
+    assert_eq!(
+        executions[2]["created_at"],
+        late.and_utc().timestamp_millis()
+    );
+    assert_eq!(executions[0]["close_margin_amount"], "3.000000000000000002");
+    assert_eq!(executions[0]["realized_pnl"], "-0.123456789012345678");
+    for execution in executions {
+        for field in [
+            "close_margin_amount",
+            "close_notional_amount",
+            "close_borrowed_amount",
+            "close_interest_amount",
+            "exit_price",
+            "realized_pnl",
+            "settlement_amount",
+        ] {
+            assert!(
+                execution[field].is_string(),
+                "{field} must remain a decimal string: {execution}"
+            );
+        }
+    }
+
+    let empty_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{empty_position_id}/executions"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let empty_status = empty_response.status();
+    let empty_payload = body_json(empty_response).await?;
+    assert_eq!(empty_status, StatusCode::OK, "payload: {empty_payload}");
+    assert_eq!(empty_payload["executions"], serde_json::json!([]));
+
+    let mut hidden_payloads = Vec::new();
+    for hidden_position_id in [other_position_id, u64::MAX] {
+        let hidden = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/margin/positions/{hidden_position_id}/executions"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        let hidden_status = hidden.status();
+        let hidden_payload = body_json(hidden).await?;
+        assert_eq!(hidden_status, StatusCode::NOT_FOUND);
+        hidden_payloads.push(hidden_payload);
+    }
+    assert_eq!(hidden_payloads[0], hidden_payloads[1]);
+
+    let position_after: (BigDecimal, String, NaiveDateTime) = sqlx::query_as(
+        "SELECT margin_amount, status, updated_at FROM margin_positions WHERE id = ?",
+    )
+    .bind(position_id)
+    .fetch_one(&pool)
+    .await?;
+    let spot_wallet_after: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+        sqlx::query_as(
+            "SELECT available, frozen, locked, updated_at FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(quote_asset)
+        .fetch_one(&pool)
+        .await?;
+    let margin_wallet_after: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+        sqlx::query_as(
+            "SELECT available, frozen, locked, updated_at FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(quote_asset)
+        .fetch_one(&pool)
+        .await?;
+    let ledger_counts_after: (i64, i64) = sqlx::query_as(
+        r#"SELECT
+              (SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ?),
+              (SELECT COUNT(*) FROM margin_wallet_ledger WHERE user_id = ?)"#,
+    )
+    .bind(user_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    let execution_count_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_position_close_executions WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(position_after, position_before);
+    assert_eq!(spot_wallet_after, spot_wallet_before);
+    assert_eq!(margin_wallet_after, margin_wallet_before);
+    assert_eq!(ledger_counts_after, ledger_counts_before);
+    assert_eq!(execution_count_after, execution_count_before);
 
     Ok(())
 }

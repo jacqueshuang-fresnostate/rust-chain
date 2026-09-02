@@ -18,6 +18,8 @@
 - Settings: `GET /api/v1/margin/settings/{product_id}` plus leverage/mode PATCH routes.
 - Product catalog: anonymous `GET /api/v1/margin/products`; it contains no user funds or settings. Wallets, settings, risk, and every mutation remain user-authenticated.
 - Position risk: authenticated `GET /api/v1/margin/positions/{id}/risk`, scoped by both position id and JWT user id.
+- Position close history: authenticated `GET /api/v1/margin/positions/{id}/executions`
+  returns `{ executions: [...] }`, scoped by both position id and JWT user id.
 - Persistence: `margin_positions.wallet_scope`,
   `margin_position_close_executions(user_id, idempotency_key, position_id,
   close_percentage, allocated amounts, mark, PnL, settlement, terminal flag)`,
@@ -37,6 +39,18 @@
 - Cancel and ticker-fill use the same position-first lock order. Exactly one may transition a pending order; repeated tickers, retries, and competing service instances produce no duplicate mutation.
 - Pending limits have `interest_accrued_at = NULL`, create no cross account, commission, or filled event, and are excluded by every interest, position/risk/return aggregate, and isolated/cross liquidation query. User/admin order-history lists intentionally retain them so they remain cancelable and auditable. The fill transaction sets both `opened_at` and the interest start to the real database fill time, while `created_at` remains the original placement time; it then creates the cross account when needed, inserts one commission, and publishes one post-commit filled event.
 - `MarginPositionResponse`, user/admin reads, and private filled events preserve real `order_type`, optional `limit_price`, and optional `entry_price`. Clients classify filled holdings by positive non-null `entry_price` and pending orders by opened/null entry price.
+- `MarginPositionResponse` additively exposes the row's real `opened_at` and
+  immutable `created_at` as Unix-millisecond JSON integers. Existing fields and
+  names remain unchanged; every SQLx projection into that response selects both
+  timestamps. A pending limit retains its placement-time `created_at`, while
+  its `opened_at` moves to the authoritative database fill time on first fill.
+- Position close history first proves ownership with `(JWT user_id,
+  position_id)`, then reads `margin_position_close_executions` with both keys.
+  A missing or foreign position is the same NotFound response; an owned
+  position without executions returns an empty list. Rows are ordered by
+  `created_at ASC, id ASC`, all DECIMAL amounts remain strings, and the read
+  never accrues interest, reads a ticker, revalues risk, opens a transaction,
+  writes a wallet/ledger, or changes position state.
 - `wallet_scope` snapshots whether collateral came from spot or margin. Active close, cancel, and isolated liquidation return funds to that same scope. Account-level cross liquidation is the explicit exception: it only consumes the shared margin wallet's `available` bucket and never credits a position payout.
 - Position state, wallet balance, and ledger entry commit in one transaction.
 - An explicit single-close percentage allocates that share of the currently
@@ -91,6 +105,9 @@
 
 - Missing/stale/non-positive ticker on open/close -> `VALIDATION_ERROR`, no financial mutation.
 - Anonymous access to the product catalog is allowed; anonymous access to wallets, settings, risk, open, close, cancel, bulk actions, or transfer remains `UNAUTHORIZED`.
+- Anonymous access to position close history -> `UNAUTHORIZED`; an admin token
+  on the user route remains forbidden, and a foreign or absent position ->
+  `NOT_FOUND`.
 - Unsupported leverage or margin mode -> `VALIDATION_ERROR`.
 - Unknown `order_type`, a market request with `price`, a limit request without positive `price`, or either type with `trigger_price` -> `VALIDATION_ERROR`.
 - Limit `price` exceeds pair `price_precision` -> `VALIDATION_ERROR`; never round or rewrite the client's trigger boundary.
@@ -150,6 +167,11 @@
 - Bulk tests process more than 100 rows, retain prior successes/events, report a failed row, and continue to later rows.
 - Settings tests cover user isolation, leverage round-trip, mode round-trip, and cross acceptance for a product configured with `cross`.
 - Route tests prove the product catalog works without a bearer token while private margin routes still reject anonymous callers.
+- Position read-model tests cover Unix-millisecond `opened_at`/`created_at`,
+  anonymous rejection, user isolation with indistinguishable NotFound,
+  owned-position empty history, deterministic execution ordering, exact
+  DECIMAL-string serialization, and unchanged positions, wallets, ledgers, and
+  execution counts after reads.
 - Risk tests cover the legacy PnL alias, new unrealized PnL, quantity, return/margin ratios, isolated liquidation price/distance, and omitted cross object for isolated mode.
 - Cross route tests cover exact account-row scope, all-or-nothing unique-pair marks, multi-pair aggregation, min/max mark times, partial-hedge solving, exact-hedge null status, and null legacy isolated estimate fields.
 - Domain tests cover combined PnL/interest/maintenance arithmetic, the equality liquidation boundary, named near-zero threshold, partial long/short hedge roots, exact/near hedge nulls, already-triggered/non-positive/wrong-direction statuses, and full-consumption settlement/bad-debt arithmetic.

@@ -25,7 +25,8 @@ pub(crate) use product_config::{
 pub(crate) use queries::{
     get_admin_margin_position, get_margin_position_risk_snapshot, get_user_margin_position,
     list_admin_margin_interest_summary, list_admin_margin_position_history,
-    list_user_margin_positions, list_user_margin_wallets,
+    list_user_margin_position_close_executions, list_user_margin_positions,
+    list_user_margin_wallets,
 };
 pub(crate) use support::{mysql_pool, route_limit};
 pub use trigger_limit_orders::execute_triggered_margin_limit_orders_with_hub;

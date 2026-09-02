@@ -254,17 +254,35 @@ lastTradePath: ComputedRef<string>
   symmetric `ledger.*` keys in `zh-CN` and `en`. An unknown `change_type`
   renders localized `ledger.typeOther` as its primary label and keeps the raw
   enum visible as secondary technical information.
-- The `/assets/ledger` route and all of its entry points use the symmetric title
-  `交易记录` / `Transaction Records`. Its four tabs use symmetric labels for
-  Position history, Transaction ledger, Current strategy, and Strategy history.
+- The `/orders` and `/assets/ledger` routes form one transaction-records
+  workspace and use the symmetric title `交易记录` / `Transaction Records`.
+  Internally the workspace keeps seven canonical route keys: current orders,
+  order history, current positions and assets, position history, transaction
+  ledger, current strategies, and strategy history. The visible primary tab
+  rail is a Pencil-defined four-item window rather than seven compressed tabs:
+  current/history/positions show the first four items; position history shows
+  current orders, current positions and assets, position history, and ledger;
+  ledger shows position history, ledger, current strategies, and strategy
+  history. Every visible label uses symmetric locale keys.
+- Switching among those visible windows, including the `/orders?tab=ledger`
+  compatibility replacement, preserves an existing scalar `symbol` query so
+  Trade and Market Detail callers do not lose their real pair context.
+- `/orders/positions/:id/associated` is the dedicated associated-order detail.
+  It hides the root Dock, keeps the source history view as its back destination,
+  and never substitutes another user's or a demo position when the read fails.
 - Wallet ledger account type is shown inline as Spot or Margin; it is not a
   visible filter or badge in the `kcP5D/A85if` design. Account source remains
   separate from business category, and unknown account values are contract
   errors rather than values inferred from `change_type`.
-- Wallet records render as continuous rows without date grouping. Each row uses
-  the runtime-local full timestamp, localized change type, localized Income /
-  Expense derived from the authoritative amount sign, and symmetric filter
-  sheet copy. The default date selection is All dates / 全部日期.
+- Wallet records render as Pencil full-width rows without date grouping,
+  floating cards, card gaps, corner radii, or a tinted page canvas. Each row
+  uses the runtime-local full timestamp, localized change type, authoritative
+  account source and exact decimal amounts. Missing trade pair/direction/gross
+  execution context remains unavailable instead of being inferred from the
+  amount sign. Individual cells may truncate visually only when a title/ARIA
+  surface preserves the complete value. The empty successful result uses the
+  localized ReceiptText state from the selected Pencil artboard; loading,
+  failure, guest, and empty are separate states.
 
 ## 4. Validation & Error Matrix
 

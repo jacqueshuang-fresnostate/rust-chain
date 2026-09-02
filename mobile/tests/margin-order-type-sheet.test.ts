@@ -16,7 +16,7 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 const apiSource = read('../src/api/trading.ts')
 const sheetsSource = read('../src/components/ContractTradeSheets.vue')
 const tradeSource = read('../src/views/TradeView.vue')
-const ordersSource = read('../src/views/OrdersView.vue')
+const transactionRecordsSource = read('../src/composables/useTransactionRecords.ts')
 
 test('杠杆订单类型只保留后端能力，失效时按 Pencil 默认优先回落限价或首个真实能力', () => {
   assert.deepEqual(parseMarginOrderTypes(undefined), [])
@@ -112,8 +112,8 @@ test('BBO 做多回填卖一、做空回填买一，持仓与挂单按可空入�
   assert.equal(isFilledMarginPosition({ entryPrice: 99 }), true)
   assert.equal(isPendingMarginPosition({ entryPrice: null, status: 'opened' }), true)
   assert.equal(isPendingMarginPosition({ entryPrice: null, status: 'canceled' }), false)
-  assert.match(ordersSource, /cancelablePositions = computed\(\(\) => openedPositions\.value\.filter\(isPendingMarginPosition\)\)/)
-  assert.match(ordersSource, /closablePositions = computed\(\(\) => openedPositions\.value\.filter\(isFilledMarginPosition\)\)/)
+  assert.match(transactionRecordsSource, /pendingMargin = computed\(\(\) => currentMargin\.value\.filter\(isPendingMarginPosition\)\)/)
+  assert.match(transactionRecordsSource, /openPositions = computed\(\(\) => currentMargin\.value\.filter\(isFilledMarginPosition\)\)/)
   assert.match(tradeSource, /filledMarginPositions = computed\(\(\) => marginPositions\.value\.filter\(\(position\) => \([\s\S]*?isFilledMarginPosition\(position\)/)
   assert.match(tradeSource, /pendingMarginOrders = computed\(\(\) => marginPositions\.value\.filter\(\(position\) => \([\s\S]*?isPendingMarginPosition\(position\)/)
   assert.match(tradeSource, /visibleMarginPositions = computed[\s\S]*?filledMarginPositions\.value/)

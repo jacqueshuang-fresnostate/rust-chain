@@ -21,6 +21,7 @@ const NewCoinDetailView = () => import('@/views/NewCoinDetailView.vue')
 const NewCoinRecordsView = () => import('@/views/NewCoinRecordsView.vue')
 const KycView = () => import('@/views/KycView.vue')
 const OrdersView = () => import('@/views/OrdersView.vue')
+const PositionAssociatedOrdersView = () => import('@/views/PositionAssociatedOrdersView.vue')
 const ProfileView = () => import('@/views/ProfileView.vue')
 const ProductHubView = () => import('@/views/ProductHubView.vue')
 const PredictionView = () => import('@/views/PredictionView.vue')
@@ -59,7 +60,8 @@ const router = createRouter({
     { path: '/products/prediction', name: 'prediction', component: PredictionView, meta: { showBottomNav: false, depth: 2, backFallback: '/products' } },
     { path: '/seconds', alias: '/products/seconds', name: 'seconds', component: SecondsView, meta: { showBottomNav: false, depth: 1, backFallback: '/' } },
     { path: '/seconds/history', name: 'seconds-history', component: SecondsHistoryView, meta: { showBottomNav: false, depth: 2, backFallback: '/seconds' } },
-    { path: '/orders', name: 'orders', component: OrdersView, meta: { depth: 1, backFallback: '/' } },
+    { path: '/orders', name: 'orders', component: OrdersView, meta: { showBottomNav: false, depth: 1, backFallback: '/' } },
+    { path: '/orders/positions/:id/associated', name: 'position-associated-orders', component: PositionAssociatedOrdersView, props: true, meta: { showBottomNav: false, depth: 2, backFallback: { name: 'orders', query: { tab: 'position-history' } } } },
     { path: '/profile', name: 'profile', component: ProfileView, meta: { depth: 0 } },
     { path: '/profile/help', name: 'help-support', component: HelpSupportView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
     { path: '/profile/help/chat', name: 'support-chat', component: SupportChatView, meta: { showBottomNav: false, depth: 2, backFallback: '/profile/help' } },

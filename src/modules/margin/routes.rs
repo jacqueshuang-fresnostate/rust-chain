@@ -28,6 +28,7 @@ use crate::{
                 list_admin_margin_interest_summary as list_admin_margin_interest_summary_use_case,
                 list_admin_margin_position_history as list_admin_margin_position_history_use_case,
                 list_admin_margin_products as list_admin_margin_products_use_case,
+                list_user_margin_position_close_executions as list_user_margin_position_close_executions_use_case,
                 list_user_margin_positions as list_user_margin_positions_use_case,
                 list_user_margin_wallets as list_user_margin_wallets_use_case, mysql_pool,
                 open_margin_position_with_events as open_margin_position_with_events_use_case,
@@ -44,13 +45,13 @@ use crate::{
                 CancelAllMarginPositionsResponse, CancelMarginPositionResponse,
                 CloseAllMarginPositionsResponse, CloseMarginPositionRequest,
                 CloseMarginPositionResponse, CreateMarginProductRequest, ListPositionsQuery,
-                ListQuery, MarginPositionDetailResponse, MarginPositionsResponse,
-                MarginProductResponse, MarginProductsResponse, MarginRiskSnapshotResponse,
-                MarginUserSettingResponse, MarginWalletsResponse, OpenMarginPositionRequest,
-                OpenMarginPositionResponse, ProductActionRequest, TransferMarginFundsRequest,
-                TransferMarginFundsResponse, UpdateMarginProductRequest,
-                UpdateMarginProductStatusRequest, UpdateUserLeverageRequest,
-                UpdateUserMarginModeRequest,
+                ListQuery, MarginPositionCloseExecutionsResponse, MarginPositionDetailResponse,
+                MarginPositionsResponse, MarginProductResponse, MarginProductsResponse,
+                MarginRiskSnapshotResponse, MarginUserSettingResponse, MarginWalletsResponse,
+                OpenMarginPositionRequest, OpenMarginPositionResponse, ProductActionRequest,
+                TransferMarginFundsRequest, TransferMarginFundsResponse,
+                UpdateMarginProductRequest, UpdateMarginProductStatusRequest,
+                UpdateUserLeverageRequest, UpdateUserMarginModeRequest,
             },
         },
     },
@@ -83,6 +84,10 @@ pub fn user_routes() -> Router<AppState> {
         .route("/margin/positions/close-all", post(close_all_positions))
         .route("/margin/positions/cancel-all", post(cancel_all_positions))
         .route("/margin/positions/:id", get(get_position))
+        .route(
+            "/margin/positions/:id/executions",
+            get(list_position_close_executions),
+        )
         .route("/margin/positions/:id/risk", get(get_position_risk))
         .route("/margin/positions/:id/close", post(close_position))
         .route("/margin/positions/:id/cancel", post(cancel_position))
@@ -328,6 +333,25 @@ async fn get_position(
     let user_id = user_id_from_subject(&claims.sub)?;
     Ok(Json(
         get_user_margin_position_use_case(&mysql_pool(&state)?, user_id, position_id).await?,
+    ))
+}
+
+/// 读取当前用户名下指定仓位的不可变平仓执行历史，用户标识只取自 JWT，路径只提供仓位主键。
+/// 仓位不存在或属于他人都由应用层统一映射为 404；合法但从未部分或显式全平的仓位返回空数组。
+/// 执行按创建时间、主键升序稳定返回；该入口不读取 Redis，不触发计提、重估、资金或仓位写入。
+async fn list_position_close_executions(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Path(position_id): Path<u64>,
+) -> AppResult<Json<MarginPositionCloseExecutionsResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        list_user_margin_position_close_executions_use_case(
+            &mysql_pool(&state)?,
+            user_id,
+            position_id,
+        )
+        .await?,
     ))
 }
 

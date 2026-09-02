@@ -5,3 +5,5 @@
 {"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Verify assets.precision_scale remains authoritative and calculations unchanged"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify focused tests, architecture, lint, and comments"}
 {"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-ledger-and-precision.md", "reason": "Compare implementation with exact Pencil geometry and root-cause decision"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "Verify additive margin response fields and user-scoped execution history endpoint"}
+{"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-orders-module-14-artboards-api-audit.md", "reason": "按正式导出核验四标签窗口、空态与API语义"}

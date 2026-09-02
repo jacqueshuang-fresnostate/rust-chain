@@ -8215,3 +8215,108 @@
 - 修改文件：`mobile/src/{api/wallet,core/walletLedger}.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{wallet-ledger-classification,pencil-wallet-flow-parity,pencil-selected-page-parity-20260807,wallet-secondary-views,ui-prototype-alignment-secondary}.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：聚焦测试 5 文件 44/44、应用与测试类型检查、source-size、test-quality、`git diff --check` 全部通过；完整 `npm --prefix mobile run release:gate` 通过，Mobile 617/617、PWA/Tauri 双构建、制品检查与 bundle/source-size/test-quality 预算全部绿色。Ego Browser 已复核 320/390/448px 明暗主题无横向溢出；最终 390px 实测 Header/Tabs/Filter/Row 为 58/52/58/166px，日期 ARIA 为“日期：全部日期”，Sheet 锁定滚动、Escape 关闭并恢复焦点。
 - 后续事项：无；本轮未提交或推送。
+
+## 2026-09-02 10:54 - 优化手机端交易记录独立卡片布局
+
+- 完成内容：按用户最新更正，保留 `/assets/ledger` 的 58px Header、52px 四栏导航、58px 筛选条与全部真实账本行为，将记录区改为 12px 左右边距、10px 间距、16px 圆角的独立明暗卡片；用 header、两列详情 Grid 和稳定 footer 取代固定 166px 裁切，340px 及以下 footer 改为两行，并显式隔离旧全局 ledger 样式对 Grid 的干扰。
+- 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/{wallet-ledger-classification,pencil-wallet-flow-parity}.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,research/pencil-ledger-and-precision.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦 5 文件 44/44、`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests` 与 `git diff --check` 全部通过。Ego 在 320×720、390×844、448×900 明暗主题复核：三种宽度均无页面级横向溢出，卡片 x=12、gap=10、radius=16px、`backdrop-filter: none`；320px footer 两行，390/448px 时间左起点与余额右边界在各卡之间一致。本轮 Pencil transport 断开，没有读取 Pencil。
+- 后续事项：无；本轮未提交或推送。
+
+## 2026-09-02 11:16 - 独立复核手机端交易记录卡片布局
+
+- 完成内容：独立逐项复核 Header/四栏/三筛选 Sheet、有效路由、账本分页与会话隔离、DecimalText、真实 Logo、ARIA、320/390/448px Grid 收缩和明暗卡片层次；修复记录画布色透入 `.page` 顶部安全区的问题，由 sticky Header 仅按真实 `safe-area-inset-top` 向上延伸白/黑 chrome。补强聚焦负面合同，直接读取 `prototype-base.css` 的 legacy `.ledger-list article` Flex 规则，验证卡片完整重置，并拒绝任意断点固定卡片高度、标准/前缀卡片 backdrop filter 及缺失的长数值单元省略边界。确认本轮未读取 Pencil，未改页面脚本业务链路、依赖或范围外功能。
+- 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/{wallet-ledger-classification,pencil-wallet-flow-parity}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,research/pencil-ledger-and-precision.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：独立检查及主会话最终复跑均确认聚焦 5 文件 44/44、`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`、`npm --prefix mobile run check:source-size`、`npm --prefix mobile run check:test-quality` 与 `git diff --check` 全部通过；`npm --prefix mobile run lint --if-present` 成功退出，项目未定义 lint 脚本。未重复完整 `release:gate`，也未重复 Pencil 复核；多宽度 Ego 证据见上一条记录。
+- 后续事项：无；当前改动仍未提交或推送。
+
+## 2026-09-02 15:54 - 交易记录全模块 Pencil 真值采集与合同更正
+
+- 完成内容：通过 Pen UI 导出当前选中的 14 个订单模块画板，并使用 Ego Browser 按 390×920 渲染为像素基准；确认用户最新选择要求的是白/黑全幅画布、分隔线连续记录行和七个一级业务视图，废止上一轮“独立圆角卡片”合同。重写当前任务 PRD，补入当前委托、历史委托、订单、关联订单、当前仓位和资产、历史仓位及交易账本的真实数据与空态合同，并将杠杆执行历史后端规范加入实现/检查上下文。
+- 修改文件：`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,research/pencil-ledger-and-precision.md,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Trellis 任务 implement/check 上下文均通过 `task.py validate`；Pen 当前选择成功导出 14/14 个画板，Ego Browser 成功生成 14/14 张 390×920 对照截图。
+- 后续事项：完成 Mobile 与 Rust 后端实现，补齐自动化测试，并按 320/390/448px、明暗主题执行浏览器 1:1 复核。
+
+## 2026-09-02 16:22 - 补齐杠杆仓位时间与关联订单执行接口
+
+- 完成内容：为用户杠杆仓位响应向后兼容补充真实 `opened_at`、`created_at` 毫秒时间，并同步所有 SQLx 投影；新增认证只读接口 `GET /api/v1/margin/positions/:id/executions`，先以 JWT 用户与仓位联合校验归属，再按 `created_at ASC, id ASC` 返回该仓位不可变的部分/全部平仓执行。外部不存在与跨用户仓位统一 NotFound，合法空历史返回空数组，DECIMAL 金额继续以字符串序列化，读取过程不访问行情、不启动资金事务或写入仓位、钱包、流水。
+- 修改文件：`src/modules/margin/{application.rs,presentation.rs,routes.rs,infrastructure.rs}`、`src/modules/margin/application/queries.rs`、`src/modules/margin/infrastructure/{close_executions.rs,position_queries.rs,positions.rs,settlement.rs}`、`tests/{margin_routes.rs,unit_src/src_modules_margin_service_tests.rs}`、`.trellis/spec/backend/margin-trading-actions.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：实现切片已通过 `cargo fmt --all -- --check`、Margin 路由测试 42/42、Margin 单元测试 28/28、后端架构测试 11/11、中文合同门禁 1/1、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 与 `git diff --check`；当前未配置 `DATABASE_URL`，真实 MySQL 排序/隔离/无副作用分支按既有合同显式跳过但已编译。
+- 后续事项：将新接口接入 Mobile 关联订单页，并在主会话重跑后端门禁与跨层视觉验收。
+
+## 2026-09-02 16:28 - 完成交易记录 14 画板跨层审计
+
+- 完成内容：逐画板记录 14 个浅深主题的坐标、几何、色彩、字段和四项标签窗口，完成现货订单、杠杆仓位/执行、钱包账本、风险与资产字段的前后端映射及不可用语义审计；明确手续费、成本价和缺失成交上下文不得由客户端猜算。依据正式导出将任务合同从“七项同时横滑”更正为各状态精确四项窗口，并把空态更正为 64px 圆底、30px Lucide `ReceiptText`、18/13px 文案。
+- 修改文件：`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,implement.jsonl,check.jsonl,research/pencil-orders-module-14-artboards-api-audit.md}`、`.trellis/spec/mobile/navigation-and-localization.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：研究文件记录导出 SHA-256、14/14 画板行号与 API/字段缺口；Trellis implement/check 上下文更新为 9 条并再次通过 `task.py validate`。
+- 后续事项：按更正后的四项窗口完成 Mobile 实现并执行自动化及 Ego 多宽度明暗主题验收。
+
+## 2026-09-02 16:51 - 实现手机交易记录完整工作区首个切片
+
+- 完成内容：将 `/orders` 重构为共享交易记录工作区，接入当前委托、历史委托、当前仓位和资产、历史仓位、策略不可用态及真实取消/部分平仓流程；新增复用布局、订单/仓位/资产/空态记录组件、会话隔离数据 composable 与 DecimalText 展示 helper。新增 `/orders/positions/:id/associated` 关联订单页，消费真实仓位、平仓执行、产品与交易对接口；`/assets/ledger` 恢复 Pencil 通栏分隔行，并把可见筛选改为币种/交易类型/更多。主导航按画板状态呈现精确四项窗口，空态切换为 64px 圆底与 30px Lucide `ReceiptText`。
+- 修改文件：`mobile/src/api/trading.ts`、`mobile/src/components/{MarginAssetRecord,MarginHistoryPositionRecord,MarginPositionRecord,TransactionOrderRecord,TransactionRecordEmptyState,TransactionRecordsLayout}.vue`、`mobile/src/composables/useTransactionRecords.ts`、`mobile/src/core/{ordersRequest,transactionRecords,walletLedger}.ts`、`mobile/src/core/navigation/accessibility.ts`、`mobile/src/i18n/messages/{en,zh-CN}.ts`、`mobile/src/router/index.ts`、`mobile/src/views/{OrdersView,PositionAssociatedOrdersView,WalletLedgerView}.vue`、相关 Mobile tests、`docs/superpowers/PROGRESS.md`。
+- 验证结果：实现切片已通过 `npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`，transaction-records/wallet 聚焦测试 30/30 通过。
+- 后续事项：主会话继续逐像素审查字段语义与按钮/芯片细节，运行完整 Mobile 门禁，并使用 Ego 对 320/390/448px 明暗主题执行视觉比对。
+
+## 2026-09-02 17:57 - 收口手机交易记录字段语义与 DecimalText 精度
+
+- 完成内容：按 Pencil 390px 真值补齐 44px/14px 委托类型胶囊栏、7px 等待点、标签顺序与灰/粉操作按钮；移除四等分主标签的 5px 内容内边距，使“当前仓位和资产”在 390px 完整显示并保留 320px 单元内省略及页面横向裁切。杠杆委托、历史仓位与关联订单改用 DecimalText 重建原始/已平名义金额、保证金、数量及收益率；关联摘要区分仓位累计收益与 execution 平仓收益，费用未知继续显示 `--`，记录编号改为稳定不透明业务展示号。仓位改用 `marginRatioText`、方向色和三枚灰按钮；资产标题改为 Logo/币种/箭头，并按基础资产与计价资产分别输出严格 3×2 真实指标。
+- 修改文件：`mobile/src/components/{TransactionRecordsLayout,TransactionOrderRecord,MarginPositionRecord,MarginHistoryPositionRecord,MarginAssetRecord}.vue`、`mobile/src/views/{OrdersView,PositionAssociatedOrdersView}.vue`、`mobile/src/core/transactionRecords.ts`、`mobile/src/composables/useTransactionRecords.ts`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/transaction-records-pencil-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests` 通过；交易记录聚焦测试 9/9、相关页面/钱包/订单聚焦测试 107/107、Mobile 全量测试 627/627 通过；`check:source-size`、`check:test-quality` 与 `git diff --check` 全部通过。
+- 后续事项：无；保留工作区全部既有未提交修改，本轮未提交或推送。
+
+## 2026-09-02 19:23 - 完成交易记录 14 画板最终细节校正
+
+- 完成内容：修正订单资产权益与占用的权威字段边界；统一杠杆合约标题、短方向标签和动态单位标签；重建关联订单 190px 全宽执行明细并按平仓时间倒序、开仓末位展示；补齐历史委托/历史仓位 Web Share 与剪贴板回退、稳定不透明编号、当前委托提示、历史仓位筛选按钮及“近 1 年”禁用范围控件。历史仓位增加标题箭头、灰色终态、主色等宽时间，当前仓位收益额与收益率同行；历史杠杆委托增加 Share2 与三列平仓收益行，资产数值不再重复币种后缀。
+- 修改文件：`mobile/src/views/{OrdersView,PositionAssociatedOrdersView}.vue`、`mobile/src/components/{TransactionOrderRecord,MarginPositionRecord,MarginHistoryPositionRecord}.vue`、`mobile/src/core/transactionRecords.ts`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/transaction-records-pencil-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`、`npm --prefix mobile run check:source-size`、`npm --prefix mobile run check:test-quality` 全部通过；交易记录聚焦测试 10/10、相关订单/钱包/Pencil 测试 100/100 通过；`git diff --check` 通过。
+- 后续事项：无；保留工作区全部既有未提交修改，本轮未提交或推送。
+
+## 2026-09-02 19:32 - 纠正交易记录终态边界与标题行几何
+
+- 完成内容：将当前仓位标题恢复为单行横向 Flex，合约与箭头居左、收益标签及金额/收益率居右；移除历史仓位状态与 Share2 之间多余的竖分隔线，仅保留 12px 间距；关联订单编号改为编号文本本身可点击复制，不再显示 Copy 图标或占用额外可见宽度。严格拆分历史委托与历史仓位状态：历史委托继续单独请求并保留 canceled/cancelled，`isTerminalMarginPosition` 仅接受 closed/liquidated，取消单不再按全部平仓重建 exposure；closed 状态继续使用 Pencil muted 色。
+- 修改文件：`mobile/src/components/{MarginPositionRecord,MarginHistoryPositionRecord}.vue`、`mobile/src/views/{OrdersView,PositionAssociatedOrdersView}.vue`、`mobile/src/core/transactionRecords.ts`、`mobile/src/composables/useTransactionRecords.ts`、`mobile/tests/transaction-records-pencil-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`、`npm --prefix mobile run check:source-size`、`npm --prefix mobile run check:test-quality` 全部通过；交易记录聚焦测试 10/10、相关订单/钱包/Pencil 测试 100/100 通过；`git diff --check` 通过。
+- 后续事项：无；保留工作区全部既有未提交修改，本轮未提交或推送。
+
+## 2026-09-02 19:53 - 校正交易记录 content-box 可见外框高度
+
+- 完成内容：按 Pencil 导出类的 content-box 语义，将当前委托、历史现货委托、历史杠杆委托、当前仓位、资产、历史仓位、账单与关联执行行的可见 advance 分别校正为 238/174/214/334/228/398/190/218px；继续使用响应式 border-box 宽度，未引入 Pencil 在 390px 的横向溢出。当前仓位标题与收益保持单行，完整合约标题及箭头优先保留，由右侧收益内容先收缩省略；同步更正任务 PRD、14 画板审计与 Mobile 后端集成规范对“内容高度”和“可见外框高度”的定义。
+- 修改文件：`mobile/src/components/{TransactionOrderRecord,MarginPositionRecord,MarginAssetRecord,MarginHistoryPositionRecord}.vue`、`mobile/src/views/{PositionAssociatedOrdersView,WalletLedgerView}.vue`、`mobile/tests/{transaction-records-pencil-parity,pencil-selected-unmapped-pages,pencil-wallet-flow-parity,wallet-ledger-classification}.test.ts`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,research/pencil-orders-module-14-artboards-api-audit.md}`、`.trellis/spec/mobile/backend-integration.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：交易记录/钱包聚焦测试 42/42、Mobile 全量测试 629/629 通过；`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`、`npm --prefix mobile run check:source-size`、`npm --prefix mobile run check:test-quality`、Trellis 任务上下文校验与 `git diff --check` 全部通过。
+- 后续事项：无；保留工作区全部既有未提交修改，本轮未提交或推送。
+
+## 2026-09-02 20:12 - 纠正历史杠杆委托分享按钮高度回归
+
+- 完成内容：根据最终 Ego 运行时证据，为历史杠杆委托标题行的 Share2 按钮显式设置本地 `min-height: 20px` 与 `min-width: 20px`，阻止全局按钮 `min-height: 44px` 将标题行撑高；按钮视觉尺寸保持 20px，既有 `::before { inset: -12px; }` 继续提供真实 44px 命中区。标题行恢复为 26px，历史杠杆委托外框稳定为精确 214px。
+- 修改文件：`mobile/src/components/TransactionOrderRecord.vue`、`mobile/tests/transaction-records-pencil-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增源码合同同时验证 20px 本地最小尺寸、44px 命中区与 214px 外框计算；交易记录聚焦测试 12/12、`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests` 与 `git diff --check` 全部通过。
+- 后续事项：无；保留工作区全部既有未提交修改，本轮未提交或推送。
+
+## 2026-09-02 20:26 - 固定 320px 历史杠杆指标行高度
+
+- 完成内容：根据 320px Ego 运行时证据，为交易记录指标标签补齐 `min-width: 0`、单行、裁切与安全省略约束；“平仓收益 (USDT)”等动态单位标签在约 86.67px 的三等分单元内不再换行，指标行保持 44px，历史杠杆委托外框继续满足精确 214px，同时未放宽页面或网格宽度。
+- 修改文件：`mobile/src/components/TransactionOrderRecord.vue`、`mobile/tests/transaction-records-pencil-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增 320px 源码合同验证三栏单元宽度、标签 no-wrap/ellipsis、44px 指标行和 214px 外框计算；交易记录聚焦测试 13/13、`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests` 与 `git diff --check` 全部通过。
+- 后续事项：无；保留工作区全部既有未提交修改，本轮未提交或推送。
+
+## 2026-09-02 21:00 - 完成交易记录 14 画板最终 Trellis 质量审查
+
+- 完成内容：依据 14 画板审计、主会话绿色门禁和最终 Ego 证据完成跨层复核；修正当前仓位误用保证金率、历史执行加载失败被当成空历史、部分平仓均价/利息/收益聚合、钱包余额被误标为权益/占用、历史混排时间、窄屏三列标签换行、标签切换丢失 `symbol` 以及 Margin 详情适配器未校验路径归属等真实问题。同步 Mobile 规范、研究与测试，并按证据勾选 PRD 全部验收项。
+- 修改文件：`mobile/src/{api/trading,core/transactionRecords}.ts`、`mobile/src/components/{TransactionRecordsLayout,TransactionOrderRecord,MarginPositionRecord,MarginAssetRecord,MarginHistoryPositionRecord}.vue`、`mobile/src/views/{OrdersView,PositionAssociatedOrdersView}.vue`、`mobile/tests/transaction-records-pencil-parity.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,research/pencil-ledger-and-precision.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：本轮 Mobile 聚焦 39/39、`type-check`、`type-check:tests`、source-size、test-quality 与 `lint --if-present` 均通过；`cargo fmt --all -- --check` 和 Margin 执行历史定向路由测试 2/2 通过，真实 MySQL 分支因未配置 `DATABASE_URL` 按合同跳过。结合主会话既有 Mobile 全量 629/629、Rust Margin 路由 42/42、单元 28/28、架构 11/11、`cargo check`/Clippy 绿色证据，以及 Ego 的 390px 全路由明暗精确比对、320/448px 无横向溢出、214/218px 行高和筛选弹窗/焦点/关联导航证据，全部验收项获得支持；Trellis 上下文校验与 `git diff --check` 通过。
+- 后续事项：无代码遗留；本轮未提交或推送。
+
+## 2026-09-02 21:19 - 最终聚焦复核交易记录跨层合同
+
+- 完成内容：复读任务 PRD、变更的 Mobile/Rust 实现与聚焦测试，确认 238/174/214/334/228/398/190/218px 外框 advance、320px 历史指标单行省略、各状态四标签窗口、无演示金融值和 JWT 用户+仓位双重过滤的平仓执行接口均与 PRD/规范一致；未发现需要追加修复的任务范围缺陷，PRD 已勾选的验收项保持不变。
+- 修改文件：`docs/superpowers/PROGRESS.md`（仅追加本复核记录）。
+- 验证结果：`npm --prefix mobile run lint --if-present`、`type-check`、`type-check:tests` 通过；Mobile 聚焦测试 3 文件 36/36 通过；`cargo fmt --all -- --check` 通过；`cargo test --test margin_routes margin_position_execution_history -- --nocapture` 2/2 通过（未配置 `DATABASE_URL`，MySQL 实库分支按既有合同跳过）。
+- 后续事项：无代码事项；按用户要求不提交/不推送，且 Trellis 流程仅在归档时标记 `completed`，因此当前任务元数据保持 `in_progress`。
+
+## 2026-09-02 21:37 - 完成交易记录模块最终发布门禁
+
+- 完成内容：完成当前委托、历史委托、订单、关联订单、当前仓位、资产与交易流水 14 张 Pencil 画板对应实现的最终发布核验；确认窄屏/明暗主题、筛选弹窗、关联订单跳转、真实金融字段与后端平仓执行历史接口均保持既定合同，并关闭本轮 Ego 浏览器调试任务空间。
+- 修改文件：`docs/superpowers/PROGRESS.md`（仅追加最终发布核验记录）。
+- 验证结果：`npm --prefix mobile run release:gate` 全链路通过，Mobile 633/633 测试、Vue/测试类型检查、PWA 与 Tauri 构建及产物检查、Bundle/源码尺寸/关键测试质量门禁全部绿色；`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test --test margin_routes` 42/42 通过；Trellis 上下文 18 条记录校验和 `git diff --check` 通过；Ego 任务空间已成功清理。
+- 后续事项：无代码事项；提交与推送按后续用户指令执行。

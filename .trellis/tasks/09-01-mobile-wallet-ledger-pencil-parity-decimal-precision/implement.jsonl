@@ -5,3 +5,5 @@
 {"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Asset precision-scale source-of-truth and wallet ledger snapshot contracts"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Route, architecture, documentation, and validation requirements"}
 {"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-ledger-and-precision.md", "reason": "Corrected Pencil kcP5D/A85if transaction-record geometry, real DTO mapping, and retained precision contract"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "Margin position read-model, risk, close execution, authorization, and financial contracts"}
+{"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-orders-module-14-artboards-api-audit.md", "reason": "Pencil 14画板几何、字段、API缺口与禁止伪造真值"}

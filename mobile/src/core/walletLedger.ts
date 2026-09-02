@@ -613,6 +613,7 @@ export function createWalletLedgerRequestLifecycle(input: {
   sessionKey: () => string
   sessionGeneration: () => number
   selectedAssetSymbol: () => string | undefined
+  selectedCategory?: () => WalletLedgerFilter
   selectedDirection: () => WalletLedgerDirection
   selectedDatePreset: () => WalletLedgerDatePreset
   selectedDateRange: () => WalletLedgerDateRange
@@ -629,6 +630,7 @@ export function createWalletLedgerRequestLifecycle(input: {
       if (!sessionKey) return { state: 'guest' }
       const sessionGeneration = input.sessionGeneration()
       const assetSymbol = input.selectedAssetSymbol()
+      const category = input.selectedCategory?.() ?? 'all'
       const direction = input.selectedDirection()
       const datePreset = input.selectedDatePreset()
       const selectedRange = input.selectedDateRange()
@@ -640,6 +642,7 @@ export function createWalletLedgerRequestLifecycle(input: {
           offset,
           limit,
           ...(assetSymbol ? { assetSymbol } : {}),
+          ...(category !== 'all' ? { category } : {}),
           direction,
           ...(startTime ? { startTime } : {}),
           ...(endTime ? { endTime } : {}),
@@ -649,12 +652,13 @@ export function createWalletLedgerRequestLifecycle(input: {
           || input.sessionKey() !== sessionKey
           || input.sessionGeneration() !== sessionGeneration
           || input.selectedAssetSymbol() !== assetSymbol
+          || (input.selectedCategory?.() ?? 'all') !== category
           || input.selectedDirection() !== direction
           || input.selectedDatePreset() !== datePreset
           || !sameWalletLedgerDateRange(input.selectedDateRange(), { startTime, endTime })) {
           return { state: 'stale' }
         }
-        assertWalletLedgerFilteredPage(value, { assetSymbol, direction, startTime, endTime })
+        assertWalletLedgerFilteredPage(value, { assetSymbol, category, direction, startTime, endTime })
         return { state: 'loaded', assetSymbol, direction, datePreset, value }
       } catch (error) {
         if (!active
@@ -662,6 +666,7 @@ export function createWalletLedgerRequestLifecycle(input: {
           || input.sessionKey() !== sessionKey
           || input.sessionGeneration() !== sessionGeneration
           || input.selectedAssetSymbol() !== assetSymbol
+          || (input.selectedCategory?.() ?? 'all') !== category
           || input.selectedDirection() !== direction
           || input.selectedDatePreset() !== datePreset
           || !sameWalletLedgerDateRange(input.selectedDateRange(), { startTime, endTime })) {
@@ -762,6 +767,7 @@ export function createWalletLedgerPaginationController(input: {
   sessionKey: () => string
   sessionGeneration: () => number
   selectedAssetSymbol: () => string | undefined
+  selectedCategory?: () => WalletLedgerFilter
   selectedDirection: () => WalletLedgerDirection
   selectedDatePreset: () => WalletLedgerDatePreset
   selectedDateRange: () => WalletLedgerDateRange
@@ -988,6 +994,7 @@ function assertWalletLedgerFilteredPage(
   value: WalletLedgerPage,
   filter: {
     assetSymbol?: string
+    category: WalletLedgerFilter
     direction: WalletLedgerDirection
     startTime?: string
     endTime?: string
@@ -996,6 +1003,10 @@ function assertWalletLedgerFilteredPage(
   if (filter.assetSymbol
     && value.entries.some((entry) => entry.symbol !== filter.assetSymbol)) {
     throw new WalletLedgerContractError('invalid wallet ledger filtered asset')
+  }
+  if (filter.category !== 'all'
+    && value.entries.some((entry) => entry.category !== filter.category)) {
+    throw new WalletLedgerContractError('invalid wallet ledger filtered category')
   }
   if (filter.direction === 'credit'
     && value.entries.some((entry) => decimalSign(entry.amount) <= 0)) {

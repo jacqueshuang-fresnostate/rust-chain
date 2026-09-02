@@ -1920,12 +1920,14 @@ await createOrder({ quantity: review.quantity })
 
 ### 1. Scope / Trigger
 
-- Apply this contract when changing `/assets/ledger` (user-facing name:
-  `交易记录` / `Transaction Records`), its three filters, ledger mapping,
-  precision-aware formatting, asset logos, or infinite pagination.
-- The only visual source of truth is `mobile/pencil/hippo-mobile-uiux.pen`:
-  light frame `kcP5D` and dark frame `A85if`. Frames `y6Y7TW/m25xr0` are an
-  obsolete design and must not be used for this route.
+- Apply this contract when changing the `/orders` + `/assets/ledger`
+  transaction-record workspace (user-facing name: `交易记录` /
+  `Transaction Records`), its record geometry, three ledger filters, ledger
+  mapping, precision-aware formatting, asset logos, or infinite pagination.
+- Frames `kcP5D/A85if` remain the declared source for the 58px Header, four-tab
+  navigation, filter bars, and flush divider-only record rows. Pencil's
+  exported `h-[…]` values are content heights under `box-sizing: content-box`,
+  not visible outer row heights. Frames `y6Y7TW/m25xr0` remain obsolete.
 
 ### 2. Signatures
 
@@ -1964,19 +1966,55 @@ formatWalletLedgerDecimal(value, locale, precisionScale): string
 
 - The route renders a 58px header (`16px` horizontal padding,
   `26px minmax(0,1fr) 26px` tracks), a 52px four-tab record navigation, a
-  58px filter bar, then continuous 166px rows. The app does not draw Pencil's
-  28px operating-system status bar; `.page` owns the safe-area inset.
+  58px filter bar, then the full-width record canvas. The app does not
+  draw Pencil's 28px operating-system status bar; `.page` owns the safe-area
+  inset. The sticky Header's white/black chrome must cover that dynamic inset;
+  the record-canvas color must not leak into the status-area band, and no fixed
+  mock status-bar height may replace `env(safe-area-inset-top)`.
 - Visible filters are Currency, Transaction type, and a 24px ListFilter date
   trigger. Their sheets retain authenticated asset, direction, and date server
   filters; default date sheet/ARIA copy is All dates, not `Date: Date`.
-- Each row uses `12px 18px` padding, 9px gap, fixed
-  `30px 22px 22px 19px` tracks, and only a bottom divider. No cards or date
-  group headings are rendered.
-- Light colors are page `#FFFFFF`, ink `#111714`, row muted `#8A948F`, tab
-  muted `#7B8680`, row line `#EDF1EF`, and tab line `#EEF1EF`. Dark colors are
-  page `#000000`, ink `#F3F7F5`, muted `#8F9B94`, row line `#17221C`, and tab
-  line `#18231D`. Active is `#18D38D`; negative is `#FF5878`; positive is
-  `#0DBE7B` light and `#45EFAE` dark.
+- Production rows retain `border-box` and responsive width to prevent
+  horizontal overflow. Their minimum outer advances are calculated from the
+  exported content-box nodes as `content height + vertical padding + 1px
+  border - 0.5px overlap`: current order 238px, historical spot order 174px,
+  historical margin order 214px, current position 334px, margin asset 228px,
+  historical position 398px, ledger row 190px, and associated execution 218px.
+  Never copy Pencil's fixed 390px content width plus horizontal padding.
+- Three-column metric labels remain one line at 320px with a local
+  `min-width: 0`/ellipsis boundary and an exact `title`; a long translated
+  label must not wrap and increase the converted outer advance. Values use the
+  same local shrink boundary and retain their complete text in `title`/ARIA.
+- Current-position maintenance margin rate consumes only
+  `risk.maintenance_margin_rate`. `risk.margin_ratio` is equity divided by
+  maintenance margin and must never be relabelled as that rate. Historical
+  average close price is weighted from immutable execution notional/exit-price
+  slices plus a real legacy terminal residual; if execution-history loading
+  fails, execution-derived quantity, return, and average fields render `--`
+  instead of treating the terminal residual row as the whole position.
+- Margin wallet buckets directly authorize Balance, Available, and Frozen.
+  Cross-account `equity` authorizes Currency equity only when that object is
+  present. Until the backend defines portfolio `occupied` and isolated equity,
+  neither wallet `locked` nor total balance may be relabelled as those fields;
+  render `--` rather than client-computing a product definition.
+- The ledger list has no horizontal gutter or inter-row gap. Every record remains a
+  semantic full-width `article[role=listitem]` with square corners, no shadow,
+  and only a one-pixel bottom divider. Scrolling rows never use
+  `backdrop-filter` or floating-card decoration.
+- A ledger row uses the exact 190px minimum outer height and may grow only when
+  the <=340px footer wraps for accessibility. Its structure is an asset/signed-total
+  header, a two-column detail grid (item/quantity and account plus
+  direction/meta/fee), and a time/balance footer grid. Every data cell uses a
+  `minmax(0, 1fr)` shrink boundary rather than sharing one crowded flex row.
+  The row itself must explicitly reset the legacy global `.ledger-list article`
+  layout with a single `minmax(0, 1fr)` track and
+  stretch alignment so content width cannot vary with record length.
+- Light uses white Header/filter/row canvas, ink `#111714`, row muted
+  `#8A948F`, and tab muted `#7B8680`. Dark uses black chrome/row canvas, ink
+  `#F3F7F5`, and muted
+  `#8F9B94`. Active is `#18D38D`; negative is `#FF5878`; positive is
+  `#0DBE7B` light and `#45EFAE` dark. Do not restore the retired `#0b1811` /
+  `rgba(11, 24, 17, ...)` family.
 - Asset options and row logos come only from the authenticated wallet directory.
   Directory requests are latest-wins and must match both exact session token and
   session generation before symbols or logo URLs enter view state.
@@ -1988,11 +2026,19 @@ formatWalletLedgerDecimal(value, locale, precisionScale): string
   Identity is `accountType:id`, and an empty response exhausts pagination.
 - `precision_scale` is required and maps only from an integer in `0..18`.
   Amounts remain `DecimalText`; no `Number`, `parseFloat`, or `toFixed` is
-  allowed in the financial path. Quantity is the absolute amount and its exact
-  title must also be absolute; total retains the authoritative signed amount.
+  allowed in the financial path. Total retains the authoritative signed net
+  account delta. The current API has no gross execution quantity, so the
+  Pencil Quantity field and its title remain `--`; the absolute net delta must
+  not be relabelled as a fill quantity.
 - The API has no pair or buy/sell side. Row two therefore shows the localized
   real change type; row three shows account type and amount-derived Income /
   Expense. Non-zero, non-negative API fee is presented as a DecimalText debit.
+- At 390px and 448px, footer time starts at the fixed left row inset while the
+  balance stays right-aligned in its own grid cell. At 340px and below, the
+  footer becomes two rows so time and balance cannot squeeze one another.
+  Amount, quantity, fee, time, and balance retain mono/tabular presentation;
+  each may ellipsize only inside its own cell while exact `title` and row ARIA
+  text retain the complete value.
 - Filter sheets are labelled modal dialogs with focus trap, Escape/overlay
   close, focus restoration, body scroll lock, and at least 44px touch targets.
   The 320px, 390px, and 448px layouts must not create horizontal overflow.
@@ -2017,11 +2063,14 @@ formatWalletLedgerDecimal(value, locale, precisionScale): string
   server predicates, later pages retain them, and the latest authenticated BTC
   logo/precision control the row.
 - Base: all filters are `all`; the filter bar says Currency / Transaction type,
-  the date sheet says All dates, and rows remain continuous without groups.
-- Good: an expense amount `-1.25` renders signed total `-1.25`, quantity `1.25`
-  with an exact `1.25` title, Expense, and a `0.01` fee as `-0.01`.
-- Bad: invent a trading pair/side, use a stale wallet-directory logo, format
-  through IEEE-754, or filter only entries already loaded.
+  the date sheet says All dates, and full-width divider rows render without date
+  group headings.
+- Good: an expense amount `-1.25` renders signed total `-1.25`, Quantity `--`,
+  Expense, and a known non-zero `0.01` fee as `-0.01`.
+- Bad: treat Pencil's 165.5px ledger content height as its outer height, restore
+  floating cards/gutters, place all details in one flex line, invent a
+  trading pair/side, use a stale wallet-directory logo, format through
+  IEEE-754, or filter only loaded rows.
 
 ### 6. Tests Required
 
@@ -2030,11 +2079,16 @@ formatWalletLedgerDecimal(value, locale, precisionScale): string
 - Lifecycle tests assert ledger filter/session ABA isolation and wallet-directory
   out-of-order/token/generation/logout/unmount isolation, plus error separation,
   exact-offset retry, row-count offset progression, and exhaustion.
-- View/source tests assert `kcP5D/A85if`, exact geometry/colors, valid four-tab
-  routes, localized title/default filter copy, absolute quantity title, 44px
-  modal interaction, real logo use, and no forbidden number conversion.
+- View/source tests assert `kcP5D/A85if`, unchanged Header/tab/filter geometry,
+  dynamic safe-area chrome, the exact converted outer row advances, full-width
+  divider rows, two-column detail/footer grids, the <=340px two-row footer,
+  light/dark row tokens, valid routes, localized title/default filter copy,
+  exact titles, 44px modal interaction, real logo use, explicit reset of the
+  legacy `.ledger-list article` declarations, and no forbidden number
+  conversion or backdrop filter (including prefixed forms).
 - Browser verification covers 320px, 390px, and 448px in light/dark themes,
-  modal focus/scroll behavior, title centering, and zero horizontal overflow.
+  exact row advances, stable footer alignment, modal focus/scroll behavior,
+  title centering, and zero horizontal overflow.
 - Required gate: `npm --prefix mobile run release:gate`.
 
 ### 7. Wrong vs Correct
@@ -2051,11 +2105,7 @@ walletAssetLogoUrls.value = staleDirectory.logoUrls
 
 ```ts
 const amount = formatWalletLedgerDecimal(entry.amount, locale, entry.precisionScale)
-const quantity = formatWalletLedgerDecimal(
-  decimalAbsolute(entry.amount),
-  locale,
-  entry.precisionScale,
-)
+const quantity = '--' // net account delta is not a gross execution quantity
 const directory = await directoryLifecycle.load()
 if (directory.state === 'loaded') {
   walletAssetLogoUrls.value = directory.value.logoUrls

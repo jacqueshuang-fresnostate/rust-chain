@@ -141,7 +141,8 @@ pub(crate) async fn list_user_margin_positions(
                   positions.direction, positions.order_type, positions.margin_amount, positions.leverage,
                   positions.notional_amount, positions.borrowed_amount, positions.interest_amount,
                   positions.entry_price, positions.limit_price, positions.exit_price, positions.realized_pnl,
-                  positions.closed_at, positions.status, positions.idempotency_key
+                  positions.opened_at, positions.created_at, positions.closed_at,
+                  positions.status, positions.idempotency_key
            FROM margin_positions positions
            WHERE positions.user_id = "#,
     );
@@ -231,7 +232,7 @@ pub(crate) async fn load_user_position_by_id(
     sqlx::query_as::<_, MarginPositionResponse>(
         r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, order_type, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price, limit_price,
-                  exit_price, realized_pnl, closed_at, status, idempotency_key
+                  exit_price, realized_pnl, opened_at, created_at, closed_at, status, idempotency_key
            FROM margin_positions
            WHERE id = ? AND user_id = ?
            LIMIT 1"#,

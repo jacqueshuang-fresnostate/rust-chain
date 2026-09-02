@@ -33,10 +33,12 @@ import {
   walletLedgerTypePresentation,
   type WalletLedgerAccountFilter,
   type WalletLedgerAccountType,
+  type WalletLedgerCategory,
   type WalletLedgerDatePreset,
   type WalletLedgerDirection,
   type WalletLedgerEntry,
   type WalletLedgerFetchOptions,
+  type WalletLedgerFilter,
   type WalletLedgerPage,
 } from '../src/core/walletLedger.ts'
 import { normalizeDecimalText } from '../src/core/decimal.ts'
@@ -46,6 +48,8 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 const walletApiSource = readFileSync(new URL('../src/api/wallet.ts', import.meta.url), 'utf8')
 const walletCoreSource = readFileSync(new URL('../src/core/walletLedger.ts', import.meta.url), 'utf8')
 const viewSource = readFileSync(new URL('../src/views/WalletLedgerView.vue', import.meta.url), 'utf8')
+const transactionRecordsLayoutSource = readFileSync(new URL('../src/components/TransactionRecordsLayout.vue', import.meta.url), 'utf8')
+const transactionRecordEmptySource = readFileSync(new URL('../src/components/TransactionRecordEmptyState.vue', import.meta.url), 'utf8')
 
 test('账单适配器严格消费权威账户、分类、分页、金额、手续费和时间', () => {
   const mapped = mapWalletLedgerResponse({
@@ -342,6 +346,9 @@ test('方向与日期筛选、兼容分类以及全部已知变动类型均有�
     'ledger.strategyHistoryTab',
     'ledger.currencyFilterTrigger',
     'ledger.transactionTypeFilterTrigger',
+    'ledger.categoryPickerTitle',
+    'ledger.morePickerTitle',
+    'ledger.moreFilterSummary',
     'ledger.filterSelectionLabel',
     'ledger.quantity',
     'ledger.feeLabel',
@@ -458,6 +465,7 @@ test('账单查询把带时区日期规范为 MySQL 安全 UTC 文本并拒绝�
     start_time: '2026-09-01 00:00:00.123',
     end_time: '2026-09-01 23:59:59.999',
   })
+  assert.equal(createWalletLedgerRequestParams({ category: 'margin' }).category, 'margin')
 
   for (const options of [
     { startTime: '2026-02-30T00:00:00Z' },
@@ -466,6 +474,45 @@ test('账单查询把带时区日期规范为 MySQL 安全 UTC 文本并拒绝�
   ]) {
     assert.throws(() => createWalletLedgerRequestParams(options), /wallet ledger/)
   }
+})
+
+test('账单业务分类直接传给服务端并隔离过期分类响应', async () => {
+  let selectedCategory: WalletLedgerFilter = 'funding'
+  const requests: Array<{
+    options: WalletLedgerFetchOptions
+    deferred: ReturnType<typeof deferred<WalletLedgerPage>>
+  }> = []
+  const lifecycle = createWalletLedgerRequestLifecycle({
+    sessionKey: () => 'TOKEN',
+    sessionGeneration: () => 1,
+    selectedAssetSymbol: () => undefined,
+    selectedCategory: () => selectedCategory,
+    selectedDirection: () => 'all',
+    selectedDatePreset: () => 'all',
+    selectedDateRange: () => ({}),
+    fetchPage: (options) => {
+      const pending = deferred<WalletLedgerPage>()
+      requests.push({ options, deferred: pending })
+      return pending.promise
+    },
+  })
+
+  const funding = lifecycle.load(0, 30)
+  assert.equal(requests[0].options.category, 'funding')
+  selectedCategory = 'spot'
+  requests[0].deferred.resolve(pageResult(1, { category: 'funding' }))
+  assert.deepEqual(await funding, { state: 'stale' })
+
+  const spot = lifecycle.load(0, 30)
+  assert.equal(requests[1].options.category, 'spot')
+  requests[1].deferred.resolve(pageResult(2, { category: 'spot' }))
+  assert.equal((await spot).state, 'loaded')
+
+  const mismatched = lifecycle.load(0, 30)
+  requests[2].deferred.resolve(pageResult(3, { category: 'margin' }))
+  const result = await mismatched
+  assert.equal(result.state, 'error')
+  assert.ok(result.state === 'error' && isWalletLedgerContractError(result.error))
 })
 
 test('账单请求生命周期阻止旧资产、旧方向、旧日期、旧会话和卸载响应写回', async () => {
@@ -676,21 +723,54 @@ test('资产目录请求隔离乱序响应、会话代际、退出登录与卸�
   assert.deepEqual(await lifecycle.load(), { state: 'stale' })
 })
 
-test('页面和 API 源码实施 kcP5D/A85if 四栏导航、三筛选、166px 流水行与精确小数合同', () => {
+test('页面和 API 源码实施固定四栏导航、三筛选、通栏行与精确小数合同', () => {
   assert.match(walletApiSource, /client\.get<BackendWalletLedgerResponse>\(requestUrl\('\/wallet\/ledger'\)/)
   assert.match(walletApiSource, /const params = createWalletLedgerRequestParams\(options\)/)
   assert.match(walletApiSource, /return mapWalletLedgerResponse\(response\.data\)/)
 
   assert.match(viewSource, /fetchWalletAccounts\(\)/)
   assert.match(viewSource, /selectedAssetSymbol: \(\) => activeAssetSymbol\.value/)
+  assert.match(viewSource, /selectedCategory: \(\) => activeCategory\.value/)
   assert.match(viewSource, /selectedDirection: \(\) => activeDirection\.value/)
   assert.match(viewSource, /selectedDatePreset: \(\) => activeDatePreset\.value/)
-  assert.match(viewSource, /v-for="entry in entries"/)
-  assert.match(viewSource, /:key="walletLedgerEntryIdentity\(entry\)"/)
   assert.match(viewSource, /createWalletLedgerPaginationController\(\{/)
   assert.match(walletCoreSource, /nextOffset >= result\.page\.totalElements/)
   assert.match(walletCoreSource, /result\.page\.number \+ 1 >= result\.page\.totalPages/)
   assert.match(viewSource, /isWalletLedgerContractError\(reason\)/)
+  assert.match(viewSource, /v-if="error && !entries\.length"/)
+  assert.match(viewSource, /v-else-if="loading && !entries\.length"/)
+  assert.match(viewSource, /v-else-if="entries\.length"/)
+  assert.match(viewSource, /v-if="error && entries\.length"/)
+  assert.match(viewSource, /@click="load\(false\)"/)
+
+  assert.match(viewSource, /<TransactionRecordsLayout/)
+  assert.match(viewSource, /active-tab="ledger"/)
+  assert.match(viewSource, /:back-fallback="\{ name: 'assets' \}"/)
+  assert.match(viewSource, /data-pencil-source="kcP5D A85if"/)
+  assert.match(transactionRecordsLayoutSource, /return \['position-history', 'ledger', 'current-strategy', 'strategy-history'\]/)
+  assert.match(transactionRecordsLayoutSource, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/)
+  assert.match(transactionRecordsLayoutSource, /\.records-tab i \{[\s\S]*?height: 3px;[\s\S]*?width: 100%;/)
+  assert.doesNotMatch(viewSource, /<PageHeader|<header class="ledger-header">/)
+  assert.match(viewSource, /ref="assetTrigger"[\s\S]*?openFilterSheet\('asset'\)/)
+  assert.match(viewSource, /ref="categoryTrigger"[\s\S]*?categoryLabel\(activeCategory\)[\s\S]*?openFilterSheet\('category'\)/)
+  assert.match(viewSource, /ref="moreTrigger"[\s\S]*?<ListFilter :size="24"/)
+  assert.match(viewSource, /v-for="category in WALLET_LEDGER_FILTERS"/)
+  assert.match(viewSource, /v-else class="ledger-more-filters"[\s\S]*?v-for="direction in WALLET_LEDGER_DIRECTIONS"[\s\S]*?v-for="preset in WALLET_LEDGER_DATE_PRESETS"/)
+  assert.doesNotMatch(viewSource, /ref="directionTrigger"|openFilterSheet\('direction'\)/)
+  assert.match(walletCoreSource, /\.\.\.\(category !== 'all' \? \{ category \} : \{\}\)/)
+  assert.match(walletCoreSource, /input\.selectedCategory\?\.\(\) \?\? 'all'/)
+
+  assert.match(viewSource, /useModalDialog\(\s*filterSheetOpen,\s*filterDialog/)
+  assert.match(viewSource, /<Teleport to="body">/)
+  assert.match(viewSource, /role="dialog"/)
+  assert.match(viewSource, /aria-modal="true"/)
+  assert.match(viewSource, /<ListFilter :size="24"/)
+  assert.match(viewSource, /createWalletLedgerAssetDirectoryRequestLifecycle\(\{/)
+  assert.match(viewSource, /walletAssetLogoUrls\.value = result\.value\.logoUrls/)
+  assert.match(viewSource, /<AssetMark :symbol="entry\.symbol" :src="entryLogoUrl\(entry\)" :size="30"/)
+
+  assert.match(viewSource, /v-for="entry in entries"/)
+  assert.match(viewSource, /:key="walletLedgerEntryIdentity\(entry\)"/)
   assert.match(viewSource, /walletLedgerAmountSign\(entry\.amount\)/)
   assert.match(viewSource, /ledgerDecimal\(entry\.amount, entry\.precisionScale\)/)
   assert.match(viewSource, /ledgerDecimal\(entry\.balanceAfter, entry\.precisionScale\)/)
@@ -699,65 +779,33 @@ test('页面和 API 源码实施 kcP5D/A85if 四栏导航、三筛选、166px �
   assert.doesNotMatch(viewSource, /formatAmount\(entry\.(?:amount|balanceAfter|fee)/)
   assert.doesNotMatch(walletCoreSource, /(?:Number|parseFloat)\([^\n]*(?:amount|fee|balanceAfter)/)
   assert.doesNotMatch(walletCoreSource, /(?:amount|fee|balanceAfter)[^\n]*\.toFixed\(/)
-  assert.match(viewSource, /v-if="error && !entries\.length"/)
-  assert.match(viewSource, /v-else-if="loading && !entries\.length"/)
-  assert.match(viewSource, /v-else-if="entries\.length"/)
-  assert.match(viewSource, /v-if="error && entries\.length"/)
-  assert.match(viewSource, /@click="load\(false\)"/)
-  assert.match(viewSource, /useModalDialog\(\s*filterSheetOpen,\s*filterDialog/)
-  assert.match(viewSource, /<Teleport to="body">/)
-  assert.match(viewSource, /role="dialog"/)
-  assert.match(viewSource, /aria-modal="true"/)
-  assert.match(viewSource, /data-pencil-source="kcP5D A85if"/)
-  assert.match(viewSource, /<header class="ledger-header">/)
-  assert.match(viewSource, /<ChevronLeft :size="26"/)
-  assert.match(viewSource, /goBackOr\(router, route\.meta\.backFallback \|\| \{ name: 'assets' \}\)/)
-  assert.doesNotMatch(viewSource, /<PageHeader/)
-  assert.match(viewSource, /to: \{ name: 'orders', query: \{ tab: 'positions' \} \}/)
-  assert.match(viewSource, /to: \{ name: 'wallet-ledger' \}/)
-  assert.match(viewSource, /to: \{ name: 'orders', query: \{ tab: 'margin' \} \}/)
-  assert.match(viewSource, /to: \{ name: 'orders', query: \{ tab: 'history' \} \}/)
-  assert.match(viewSource, /<ListFilter :size="24"/)
-  assert.match(viewSource, /createWalletLedgerAssetDirectoryRequestLifecycle\(\{/)
-  assert.match(viewSource, /walletAssetLogoUrls\.value = result\.value\.logoUrls/)
-  assert.match(viewSource, /<AssetMark :symbol="entry\.symbol" :src="entryLogoUrl\(entry\)" :size="30"/)
-  assert.match(viewSource, /function entryPair\(entry: WalletLedgerEntry\): string \{\s*return entryLabel\(entry\)\s*\}/)
+
+  assert.match(viewSource, /function quantity\(entry: WalletLedgerEntry\): string \{[\s\S]*?void entry[\s\S]*?return '--'/)
+  assert.match(viewSource, /function exactQuantityTitle\(entry: WalletLedgerEntry\): string \{[\s\S]*?void entry[\s\S]*?return '--'/)
   assert.match(viewSource, /const direction = walletLedgerDirectionForAmount\(entry\.amount\)/)
   assert.match(viewSource, /return direction \? directionLabel\(direction\) : '--'/)
-  assert.match(viewSource, /\{\{ entryDirectionLabel\(entry\) \}\}/)
-  assert.match(viewSource, /ledgerDecimal\(walletLedgerFeeDebitAmount\(entry\.fee\), entry\.precisionScale\)/)
+  assert.match(viewSource, /feeIsKnown\(entry\)[\s\S]*?walletLedgerFeeDebitAmount\(entry\.fee\)/)
   assert.match(viewSource, /:title="exactFeeAmount\(entry\)"/)
-  assert.match(viewSource, /:title="exactQuantityTitle\(entry\)"/)
-  assert.match(viewSource, /dateSheetLabel\(activeDatePreset\)/)
-  assert.doesNotMatch(viewSource, /function entryPair\(_entry:[\s\S]*?return '--'/)
-  assert.match(viewSource, /\.ledger-header \{[\s\S]*?grid-template-columns: 26px minmax\(0, 1fr\) 26px;[\s\S]*?height: 58px;[\s\S]*?padding: 0 16px;/)
-  assert.match(viewSource, /\.ledger-header h1 \{[\s\S]*?font-size: 22px;[\s\S]*?font-weight: 700;/)
-  assert.match(viewSource, /\.ledger-header__back::before \{[\s\S]*?height: 44px;[\s\S]*?width: 44px;/)
-  assert.match(viewSource, /\.ledger-record-tabs \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*?height: 52px;/)
-  assert.match(viewSource, /\.ledger-record-tab \{[\s\S]*?font-size: 13px;[\s\S]*?grid-template-rows: minmax\(0, 1fr\) 3px;/)
-  assert.match(viewSource, /\.ledger-filter-bar \{[\s\S]*?gap: 24px;[\s\S]*?height: 58px;[\s\S]*?padding: 0 16px;/)
-  assert.match(viewSource, /\.ledger-filter-trigger,[\s\S]*?\.ledger-filter-more \{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
-  assert.match(viewSource, /\.ledger-row \{[\s\S]*?border-bottom: 1px solid var\(--wallet-record-row-line\);[\s\S]*?gap: 9px;[\s\S]*?grid-template-rows: 30px 22px 22px 19px;[\s\S]*?height: 166px;[\s\S]*?min-height: 166px;[\s\S]*?padding: 12px 18px;/)
-  assert.match(viewSource, /\.ledger-row__asset strong \{[\s\S]*?font-size: 20px;[\s\S]*?font-weight: 650;/)
-  assert.match(viewSource, /\.ledger-row__total \{[\s\S]*?font-size: 18px;[\s\S]*?font-weight: 500;/)
-  assert.match(viewSource, /\.ledger-row__pair \{[\s\S]*?font-size: 15px;[\s\S]*?font-weight: 600;/)
-  assert.match(viewSource, /\.ledger-row__quantity > span \{[\s\S]*?font-size: 13px;[\s\S]*?font-weight: 500;/)
-  assert.match(viewSource, /\.ledger-row__quantity strong \{[\s\S]*?font-size: 15px;[\s\S]*?font-weight: 500;/)
-  assert.match(viewSource, /\.ledger-row__execution > span \{[\s\S]*?font-size: 14px;[\s\S]*?font-weight: 600;/)
-  assert.match(viewSource, /\.ledger-row__execution > strong \{[\s\S]*?font-size: 15px;[\s\S]*?font-weight: 650;/)
-  assert.match(viewSource, /\.ledger-row__execution > small \{[\s\S]*?font-size: 12px;[\s\S]*?font-weight: 500;/)
-  assert.match(viewSource, /\.ledger-row__line--balance time \{[\s\S]*?font-size: 13px;[\s\S]*?font-weight: 400;/)
-  assert.match(viewSource, /\.ledger-row__balance span \{[\s\S]*?font-size: 13px;[\s\S]*?font-weight: 500;/)
-  assert.match(viewSource, /\.ledger-row__balance strong \{[\s\S]*?font-size: 14px;[\s\S]*?font-weight: 500;/)
-  assert.match(viewSource, /\.ledger-list \{[\s\S]*?gap: 0;/)
-  assert.match(viewSource, /\.wallet-ledger-pencil \{[\s\S]*?overflow-x: clip;/)
-  assert.match(viewSource, /\.wallet-ledger-pencil\s*\{[\s\S]*?--wallet-record-active: #18d38d;[\s\S]*?--wallet-record-buy: #0dbe7b;[\s\S]*?--wallet-record-ink: #111714;[\s\S]*?--wallet-record-page: #ffffff;[\s\S]*?--wallet-record-row-line: #edf1ef;[\s\S]*?--wallet-record-row-muted: #8a948f;[\s\S]*?--wallet-record-sell: #ff5878;[\s\S]*?--wallet-record-tab-line: #eef1ef;[\s\S]*?--wallet-record-tab-muted: #7b8680;/)
-  assert.match(viewSource, /:global\(html\[data-theme='dark'\] \.wallet-ledger-pencil\)\s*\{[\s\S]*?--wallet-record-buy: #45efae;[\s\S]*?--wallet-record-ink: #f3f7f5;[\s\S]*?--wallet-record-page: #000000;[\s\S]*?--wallet-record-row-line: #17221c;[\s\S]*?--wallet-record-row-muted: #8f9b94;[\s\S]*?--wallet-record-tab-line: #18231d;[\s\S]*?--wallet-record-tab-muted: #8f9b94;/)
-  assert.doesNotMatch(viewSource, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
-  assert.doesNotMatch(viewSource, /<span class="sr-only">\{\{ entryAccessibleDetails\(entry\) \}\}<\/span>/)
-  assert.doesNotMatch(viewSource, /#actions|RefreshCw|eyebrow=|subtitle=/)
-  assert.doesNotMatch(viewSource, /ledger-account-filter|WALLET_LEDGER_FILTERS|WALLET_LEDGER_ACCOUNT_FILTERS/)
-  assert.doesNotMatch(viewSource, /ledger-group__header|groupWalletLedgerEntries/)
+  assert.match(viewSource, /function entryPair\(entry: WalletLedgerEntry\): string \{\s*return entryLabel\(entry\)\s*\}/)
+
+  assert.match(viewSource, /<article[\s\S]*?class="ledger-row"[\s\S]*?role="listitem"/)
+  assert.match(viewSource, /<header class="ledger-row__header">/)
+  assert.match(viewSource, /<div class="ledger-row__details">/)
+  assert.match(viewSource, /<footer class="ledger-row__footer">/)
+  assert.match(viewSource, /\.ledger-list \{[\s\S]*?display: block;[\s\S]*?padding: 0;/)
+  assert.match(viewSource, /\.ledger-row \{[\s\S]*?border-bottom: 1px solid var\(--wallet-record-row-line\);[\s\S]*?border-radius: 0;[\s\S]*?box-shadow: none;[\s\S]*?gap: 9px;[\s\S]*?min-height: 190px;[\s\S]*?padding: 12px 18px;[\s\S]*?width: 100%;/)
+  assert.match(viewSource, /\.ledger-row__details \{[\s\S]*?display: grid;[\s\S]*?gap: 8px 16px;[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
+  assert.match(viewSource, /\.ledger-row__footer \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
+  assert.match(viewSource, /--wallet-record-canvas: #ffffff;[\s\S]*?--wallet-record-card: #ffffff;/)
+  assert.match(viewSource, /:global\(html\[data-theme='dark'\] \.wallet-ledger-pencil\)[\s\S]*?--wallet-record-canvas: #000000;[\s\S]*?--wallet-record-card: #000000;/)
+  assert.doesNotMatch(viewSource, /--wallet-record-canvas: #f4f6f5|border-radius: 16px/)
+
+  assert.match(transactionRecordEmptySource, /import \{ ReceiptText \}/)
+  assert.match(transactionRecordEmptySource, /<ReceiptText :size="30"/)
+  assert.match(transactionRecordEmptySource, /height: 64px;[\s\S]*?width: 64px;/)
+  assert.match(transactionRecordEmptySource, /\.records-empty strong \{[\s\S]*?font-size: 18px;[\s\S]*?font-weight: 400;/)
+  assert.match(transactionRecordEmptySource, /span:not\(\.records-empty__plate\) \{[\s\S]*?font-size: 13px;[\s\S]*?font-weight: 400;/)
+  assert.doesNotMatch(viewSource, /ledger-group__header|groupWalletLedgerEntries\(|WALLET_LEDGER_ACCOUNT_FILTERS/)
 })
 
 function backendEntry(overrides: Record<string, unknown> = {}) {
@@ -808,12 +856,14 @@ function pageResult(id: number, overrides: {
   symbol?: string
   amount?: string
   createdAt?: number
+  category?: WalletLedgerCategory
 } = {}): WalletLedgerPage {
   return {
     entries: [{
       ...ledgerEntry(id, overrides.createdAt ?? new Date(2026, 7, 10, id).getTime()),
       symbol: overrides.symbol ?? 'USDT',
       amount: normalizeDecimalText(overrides.amount ?? String(id)),
+      category: overrides.category ?? 'funding',
     }],
     page: {
       number: 0,

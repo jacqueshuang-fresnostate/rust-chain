@@ -18,6 +18,8 @@ const prototypeCss = source('../src/styles/prototype-base.css')
 const secondsSource = source('../src/views/SecondsView.vue')
 const marketDetailSource = source('../src/views/MarketDetailView.vue')
 const ordersSource = source('../src/views/OrdersView.vue')
+const transactionRecordsLayoutSource = source('../src/components/TransactionRecordsLayout.vue')
+const transactionOrderRecordSource = source('../src/components/TransactionOrderRecord.vue')
 const productionSources = [
   chartSource,
   lightweightChartSource,
@@ -151,20 +153,22 @@ test('百分比数量使用真实可用余额并区分现货买卖与保证金�
   }), '0')
 })
 
-test('订单中心展示 Pencil 双层分类、访客状态和紧凑真实数据面', () => {
-  const tabsAt = ordersSource.indexOf('<nav class="pencil-segmented orders-market-tabs"')
+test('订单中心展示 Pencil 固定四栏窗口、访客状态和真实通栏数据面', () => {
+  const tabsAt = ordersSource.indexOf('<TransactionRecordsLayout')
   const authAt = ordersSource.indexOf('v-if="!session.isAuthenticated"')
   assert.ok(tabsAt > 0 && authAt > tabsAt, 'tabs should remain visible before the guest state')
   assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4 e5Qs1 hxe8l"/)
-  assert.match(ordersSource, /<PageHeader :back="false" :pencil="true"/)
-  assert.match(ordersSource, /class="pencil-segmented orders-state-tabs"/)
-  assert.match(ordersSource, /class="orders-row"/)
-  assert.match(ordersSource, /class="orders-row orders-row--history"/)
-  assert.match(ordersSource, /const result = await cancelAllSpotOrders\(\)[\s\S]*const committed = commitSpotCancelAllResult\(spotOrders\.value, result\)[\s\S]*const outcome = committed\.outcome/)
+  assert.match(transactionRecordsLayoutSource, /v-for="tab in visibleTabs"/)
+  assert.match(transactionRecordsLayoutSource, /return \['current', 'history', 'positions', 'position-history'\]/)
+  assert.match(ordersSource, /class="orders-type-tabs"/)
+  assert.match(ordersSource, /class="orders-filter-bar"/)
+  assert.match(ordersSource, /<TransactionOrderRecord/)
+  assert.match(transactionOrderRecordSource, /class="transaction-order-record"/)
+  assert.match(ordersSource, /batchFailures = \(await cancelAllSpotOrders\(\)\)\.failures\.length/)
   assert.match(ordersSource, /await cancelAllMarginPositions\(\)/)
   assert.match(ordersSource, /await closeAllMarginPositions\(\)/)
-  assert.match(ordersSource, /route\.query\.tab === 'positions'/)
-  assert.match(ordersSource, /route\.query\.tab === 'history'/)
+  assert.match(ordersSource, /normalizeTransactionRecordTab\(route\.query\.tab\)/)
+  assert.match(ordersSource, /mergeTransactionOrders\(records\.currentSpot\.value, records\.pendingMargin\.value\)/)
 })
 
 test('交易切片遵守 i18n、Lucide、焦点和窄屏视觉合同', () => {
