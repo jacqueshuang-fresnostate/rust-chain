@@ -1818,3 +1818,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 54: 完成手机交易记录 Pencil 跨层复刻
+
+**Date**: 2026-09-02
+**Task**: 完成手机交易记录 Pencil 跨层复刻
+**Branch**: `main`
+
+### Summary
+
+完成当前与历史委托、关联订单、当前仓位、资产和交易流水的 Pencil 复刻，补充杠杆平仓执行历史接口与真实时间字段，并通过 Mobile 发布门禁及 Rust 全量质量检查。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3e682c6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
