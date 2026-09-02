@@ -8320,3 +8320,10 @@
 - 修改文件：`docs/superpowers/PROGRESS.md`（仅追加最终发布核验记录）。
 - 验证结果：`npm --prefix mobile run release:gate` 全链路通过，Mobile 633/633 测试、Vue/测试类型检查、PWA 与 Tauri 构建及产物检查、Bundle/源码尺寸/关键测试质量门禁全部绿色；`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 与 `cargo test --test margin_routes` 42/42 通过；Trellis 上下文 18 条记录校验和 `git diff --check` 通过；Ego 任务空间已成功清理。
 - 后续事项：无代码事项；提交与推送按后续用户指令执行。
+
+## 2026-09-03 00:12 - 统一后台与手机端金融数字显示精度
+
+- 完成内容：定位 `1,134.331253942506787192 USDT` 为后端 18 位审计/计算精度直接泄漏到展示层，而非整数溢出；保留数据库、API、下单、结算、账本与 CSV 原始 Decimal，不修改后端计算。Mobile 新增基于 `DecimalText` 的资产显示策略与字符串级四舍五入：USDT/USDC/常见法币最多 2 位，其他资产最多 8 位并服从更低业务精度，极小非零值显示阈值；接入今日收益、收益历史、账单、提现、借贷、理财、新币、快速充值、交易与秒合约。Admin 通用金融值改为最少 2 位/最多 6 位，资产金额按稳定币 2 位、其他资产 8 位显示；资源表格从同行字段推断显示资产但不重复资产标签、不改变严格 DTO 或原始 CSV。
+- 修改文件：`mobile/src/core/{decimal,financialDisplay,todayReturnPresentation,walletLedger,tradeFinancial,secondsFinancial}.ts`、`mobile/src/views/{Home,WalletLedger,Withdraw,Loan,Earn,NewCoinDetail,QuickRecharge,Trade,Seconds}View.vue`、`mobile/tests/{financial-display,today-return,finance-decimal-lifecycle,wallet-ledger-classification,trade-seconds-decimal-derivations}.test.ts`、`web/src/shared/{decimal,numberFormat}.ts`、`web/src/shared/AmountText.tsx`、`web/src/admin/resources/{AdminResourcePage,resourceConfigs}.tsx` 及测试、`.trellis/spec/{mobile/backend-integration,admin/ui-system}.md`、`.trellis/tasks/09-02-financial-display-precision-governance/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile `npm --prefix mobile run release:gate` 全链路通过（全量测试、类型检查、PWA/Tauri 构建与产物、Bundle、源码尺寸和关键测试质量门禁）；Admin `typecheck`、`lint`、全量测试 61 文件/437 项、生产策略 15 项、覆盖率 23 项、生产构建和 Bundle 预算全部通过；`git diff --check` 与 Trellis implement/check 上下文校验通过。
+- 后续事项：无代码事项；本轮未提交或推送，等待用户明确指令。

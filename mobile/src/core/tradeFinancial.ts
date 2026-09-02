@@ -11,6 +11,7 @@ import {
   type DecimalBoundary,
   type DecimalText,
 } from './decimal.ts'
+import { formatFinancialAmount } from './financialDisplay.ts'
 
 export type TradeFinancialOrderType = 'limit' | 'market'
 
@@ -264,11 +265,9 @@ export function formatTradeFinancial(
   maximumFractionDigits = 8,
   unavailable = '--',
 ): string {
-  const normalized = decimalTextFromBoundary(value)
-  if (!normalized) return unavailable
-  return formatDecimalText(normalized, locale, {
+  return formatFinancialAmount(value, locale, {
     maximumFractionDigits,
-    preserveNonZero: true,
+    unavailable,
   })
 }
 
@@ -293,7 +292,7 @@ export function formatTradeRatePercent(
 export function createTradeFinancialPresentation(options: TradeFinancialPresentationOptions) {
   const formatValue = (
     value: DecimalBoundary,
-    maximumFractionDigits = 18,
+    maximumFractionDigits = 8,
     unavailable = '--',
   ) => formatTradeFinancial(value, options.locale(), maximumFractionDigits, unavailable)
   const walletAmount = (

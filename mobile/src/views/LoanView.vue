@@ -37,11 +37,11 @@ import {
   decimalTextFromBoundary,
   decimalTextFromFiniteNumber,
   decimalWithinRange,
-  formatDecimalText,
   normalizeDecimalText,
   positiveDecimalInput,
   type DecimalText,
 } from '@/core/decimal'
+import { formatFinancialAmount } from '@/core/financialDisplay'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
@@ -145,7 +145,9 @@ const estimatedRepayment = computed(() => amountText.value
   : normalizeDecimalText('0'))
 
 function formatMoney(value: DecimalText): string {
-  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+  return formatFinancialAmount(value, locale.value === 'en' ? 'en-US' : 'zh-CN', {
+    assetSymbol: selected.value?.assetSymbol,
+  })
 }
 async function load(): Promise<void> {
   loading.value = true

@@ -8,10 +8,10 @@ import {
   decimalCompare,
   decimalNegate,
   decimalSign,
-  formatDecimalText,
   normalizeDecimalText,
   type DecimalText,
 } from './decimal.ts'
+import { formatFinancialAmount } from './financialDisplay.ts'
 
 export const WALLET_LEDGER_CATEGORIES = [
   'funding',
@@ -595,14 +595,15 @@ export function formatWalletLedgerDecimal(
   value: DecimalText,
   locale: string,
   precisionScale = WALLET_LEDGER_MAX_FRACTION_DIGITS,
+  assetSymbol?: string,
 ): string {
   if (!Number.isSafeInteger(precisionScale) || precisionScale < 0 || precisionScale > 18) {
     throw new WalletLedgerContractError('invalid wallet ledger display precision')
   }
   try {
-    return formatDecimalText(value, locale, {
-      maximumFractionDigits: precisionScale,
-      preserveNonZero: false,
+    return formatFinancialAmount(value, locale, {
+      assetSymbol,
+      precisionScale,
     })
   } catch {
     throw new WalletLedgerContractError('invalid wallet ledger display amount')

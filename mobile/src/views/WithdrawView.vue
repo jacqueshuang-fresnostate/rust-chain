@@ -23,11 +23,11 @@ import { formatAmount } from '@/core/format'
 import {
   decimalAdd,
   decimalTextFromBoundary,
-  formatDecimalText,
   normalizeDecimalText,
   positiveDecimalInput,
   type DecimalText,
 } from '@/core/decimal'
+import { formatFinancialAmount } from '@/core/financialDisplay'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 import type { DepositNetwork, WalletAccount } from '@/core/types'
@@ -114,7 +114,10 @@ function useMaximum(): void {
 }
 
 function formatMoney(value: DecimalText): string {
-  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+  return formatFinancialAmount(value, locale.value === 'en' ? 'en-US' : 'zh-CN', {
+    assetSymbol: asset.value?.symbol,
+    precisionScale: asset.value?.precisionScale,
+  })
 }
 
 async function requestSubmit(): Promise<void> {

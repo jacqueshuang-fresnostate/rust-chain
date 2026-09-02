@@ -4,7 +4,7 @@ import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage
 import { normalizeTickerSymbol, subscribeMarketTicker, type MarketTickerSnapshot } from '../../api/marketTickerSocket';
 import type { FilterField } from '../../shared/FilterBar';
 import { AdminImageCell } from '../../shared/AdminImageUpload';
-import { formatAdminNumber } from '../../shared/numberFormat';
+import { formatAdminAmount, formatAdminNumber } from '../../shared/numberFormat';
 import { formatBusinessOrderNo } from '../../shared/orderNo';
 import type { ApiRecord } from '../../api/types';
 import { AdminRequestActionBoundary, adminPermissionForRequest, hasAdminPermission, useOptionalAdminAccess } from '../access';
@@ -545,7 +545,8 @@ function MarketPairLatestPrice({ symbol }: { symbol: unknown }) {
 }
 
 function InlineAmount({ unit, value }: { unit: unknown; value: unknown }) {
-  const amount = typeof value === 'number' || typeof value === 'string' ? formatAdminNumber(value) : null;
+  const asset = typeof unit === 'string' ? unit : undefined;
+  const amount = typeof value === 'number' || typeof value === 'string' ? formatAdminAmount(value, { asset }) : null;
   const suffix = typeof unit === 'string' && unit.trim() ? ` ${unit.toUpperCase()}` : '';
   return <span>{amount ? `${amount}${suffix}` : '-'}</span>;
 }

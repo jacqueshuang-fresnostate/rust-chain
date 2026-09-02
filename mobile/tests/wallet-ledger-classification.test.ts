@@ -410,22 +410,23 @@ test('交易方向来自真实金额符号且非零手续费以 DecimalText 扣�
   assert.equal(walletLedgerFeeDebitAmount(normalizeDecimalText('-0')), '0')
 })
 
-test('账单金额只依据必填资产精度截取展示且不经过 IEEE-754', () => {
+test('账单保留权威资产精度，但可见文本使用独立精度并进行十进制舍入', () => {
   assert.equal(WALLET_LEDGER_MAX_FRACTION_DIGITS, 18)
   assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.00125'), 'en-US'), '0.00125')
-  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US'), '0.000000000000000001')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US'), '<0.00000001')
   assert.equal(
     formatWalletLedgerDecimal(normalizeDecimalText('12.123456789012345678'), 'en-US'),
-    '12.123456789012345678',
+    '12.12345679',
   )
   assert.equal(
     formatWalletLedgerDecimal(normalizeDecimalText('9007199254740993.123456789012345678'), 'en-US'),
-    '9,007,199,254,740,993.123456789012345678',
+    '9,007,199,254,740,993.12345679',
   )
   assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('-0'), 'en-US'), '0')
   assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('12.340000000000000000'), 'en-US', 2), '12.34')
-  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('12.999999999999999999'), 'en-US', 2), '12.99')
-  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US', 2), '0')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('12.999999999999999999'), 'en-US', 2), '13')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('0.000000000000000001'), 'en-US', 2), '<0.01')
+  assert.equal(formatWalletLedgerDecimal(normalizeDecimalText('1134.331253942506787192'), 'en-US', 18, 'USDT'), '1,134.33')
 })
 
 test('本地日期预设冻结为服务端可用的 UTC 区间', () => {
@@ -772,8 +773,8 @@ test('页面和 API 源码实施固定四栏导航、三筛选、通栏行与精
   assert.match(viewSource, /v-for="entry in entries"/)
   assert.match(viewSource, /:key="walletLedgerEntryIdentity\(entry\)"/)
   assert.match(viewSource, /walletLedgerAmountSign\(entry\.amount\)/)
-  assert.match(viewSource, /ledgerDecimal\(entry\.amount, entry\.precisionScale\)/)
-  assert.match(viewSource, /ledgerDecimal\(entry\.balanceAfter, entry\.precisionScale\)/)
+  assert.match(viewSource, /ledgerDecimal\(entry\.amount, entry\.precisionScale, entry\.symbol\)/)
+  assert.match(viewSource, /ledgerDecimal\(entry\.balanceAfter, entry\.precisionScale, entry\.symbol\)/)
   assert.match(viewSource, /:title="exactAmountTitle\(entry\)"/)
   assert.match(viewSource, /entryAccessibleDetails\(entry\)/)
   assert.doesNotMatch(viewSource, /formatAmount\(entry\.(?:amount|balanceAfter|fee)/)

@@ -1160,7 +1160,7 @@ onBeforeUnmount(() => {
                   ? t('seconds.balanceMinimum', {
                     available: moneyText(walletAvailable(account)),
                     asset: selected.stakeAssetSymbol,
-                    minimum: moneyText(cycleMin(cycle), 18, '0'),
+                    minimum: moneyText(cycleMin(cycle), 8, '0'),
                   })
                   : t('seconds.loginDescription') }}
               </small>

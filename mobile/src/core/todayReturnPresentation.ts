@@ -1,9 +1,9 @@
 import {
   decimalMultiply,
   decimalSign,
-  formatDecimalText,
   normalizeDecimalText,
 } from './decimal.ts'
+import { formatFinancialAmount } from './financialDisplay.ts'
 import { isCompleteTodayReturn, type TodayReturn } from './todayReturn.ts'
 
 export type TodayReturnViewState = 'idle' | 'loading' | 'complete' | 'partial' | 'error'
@@ -35,14 +35,16 @@ export function resolveTodayReturnPresentation(input: {
 
   if (input.state === 'complete' && isCompleteTodayReturn(input.value)) {
     const amountSign = decimalSign(input.value.amount)
+    const locale = input.locale || 'en-US'
+    const amount = formatFinancialAmount(input.value.amount, locale, {
+      assetSymbol: input.value.reportingAsset,
+    })
     return {
-      amount: `${amountSign > 0 ? '+' : ''}${formatDecimalText(input.value.amount, input.locale || 'en-US', {
-        maximumFractionDigits: 18,
-      })} ${input.value.reportingAsset}`,
-      detail: `${formatDecimalText(
+      amount: `${amountSign > 0 && !amount.startsWith('<') ? '+' : ''}${amount} ${input.value.reportingAsset}`,
+      detail: `${formatFinancialAmount(
         decimalMultiply(input.value.rate, normalizeDecimalText('100')),
-        input.locale || 'en-US',
-        { maximumFractionDigits: 8 },
+        locale,
+        { maximumFractionDigits: 2, useGrouping: false },
       )}%`,
       tone: amountSign > 0 ? 'positive' : amountSign < 0 ? 'negative' : '',
     }

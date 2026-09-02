@@ -2237,7 +2237,7 @@ onBeforeUnmount(() => {
 
             <dl class="contract-open-meta contract-open-meta--long">
               <div><dt>{{ t('trade.openLongAvailable') }}</dt><dd class="numeric">{{ moneyText(contractQuantity) }} {{ baseAsset }}</dd></div>
-              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(quantity, 18, '0') }} {{ availableAsset }}</dd></div>
+              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(quantity, 8, '0') }} {{ availableAsset }}</dd></div>
             </dl>
 
             <p
@@ -2260,7 +2260,7 @@ onBeforeUnmount(() => {
             </button>
             <dl class="contract-open-meta contract-open-meta--short">
               <div><dt>{{ t('trade.openShortAvailable') }}</dt><dd class="numeric">{{ moneyText(contractQuantity) }} {{ baseAsset }}</dd></div>
-              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(quantity, 18, '0') }} {{ availableAsset }}</dd></div>
+              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ moneyText(quantity, 8, '0') }} {{ availableAsset }}</dd></div>
             </dl>
             <button
               class="contract-submit contract-submit--short"

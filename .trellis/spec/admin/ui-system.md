@@ -58,6 +58,27 @@ DetailDrawer
   uses the shared `-` empty-cell presentation; `symbol` is required and
   non-null. The page must not issue per-row user or market-directory requests.
 
+## Financial Display Precision
+
+- API Decimal fields, mutation payloads, comparisons, and CSV exports retain
+  their original decimal strings. Visible formatting is terminal and must
+  never overwrite the record or become a request value.
+- Generic Admin financial values render with two required fraction digits and
+  at most six. Stablecoins and common fiat-like assets render at most two;
+  other named assets render at most eight, tightened by a lower valid asset
+  precision when present. Market-price-specific widgets may use an explicit
+  price precision instead of the balance policy.
+- Rounding is decimal half-up and operates on the decimal coefficient, never
+  on a JavaScript `Number`. Rounded negative zero becomes zero. A non-zero
+  value below the smallest visible unit renders a threshold (`<0.01`,
+  `>-0.000001`) instead of a false zero.
+- Generic resource amount cells may infer an asset symbol from the same API
+  row only to choose the display cap. Inference must not add a duplicate asset
+  label, issue a secondary request, weaken strict row validation, or affect CSV
+  serialization. Rate, ratio, leverage, probability, and price columns stay on
+  their explicit/generic formatting policy rather than inheriting a wallet
+  asset cap accidentally.
+
 ## Semi Table Contract
 
 ### Column and Scroll Rules

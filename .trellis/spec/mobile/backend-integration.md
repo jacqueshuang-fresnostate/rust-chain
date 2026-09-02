@@ -1862,6 +1862,14 @@ createSecondsOrderReviewSnapshot(input: SecondsOrderReviewInput): SecondsOrderRe
   and mutation payload values remain canonical decimal text. A compatibility
   `number` passed to a display-only component is a terminal one-way conversion
   and must never feed validation, branching, review snapshots, or payloads.
+- Visible financial precision is a presentation boundary, not the storage or
+  mutation precision. `USDT`, `USDC`, common fiat-like amounts use at most two
+  fraction digits; other asset quantities use at most eight and may be
+  tightened by a lower authoritative asset precision. Formatting performs
+  deterministic decimal half-up rounding without `Number`. A non-zero value
+  below the smallest visible unit renders a threshold such as `<0.01` or
+  `>-0.00000001`, never a false zero. Rendered text must not flow back into a
+  request, review snapshot, comparison, ledger row, or calculation.
 - Order loaders capture request/session generations and commit only the latest
   authoritative response. Batch cancel uses the batch endpoint and preserves
   per-order failures instead of reporting false all-or-nothing success.
@@ -1955,7 +1963,7 @@ interface WalletLedgerEntry {
 
 createWalletLedgerPaginationController(input): WalletLedgerPaginationController
 createWalletLedgerAssetDirectoryRequestLifecycle(input): WalletLedgerAssetDirectoryRequestLifecycle
-formatWalletLedgerDecimal(value, locale, precisionScale): string
+formatWalletLedgerDecimal(value, locale, precisionScale, assetSymbol?): string
 ```
 
 - Transport names are `asset_symbol`, `direction`, `start_time`, `end_time`,
@@ -2024,8 +2032,11 @@ formatWalletLedgerDecimal(value, locale, precisionScale): string
 - Initial and append errors are separate. Append retry reuses the failed raw
   offset; next offset advances by response row count before deduplication.
   Identity is `accountType:id`, and an empty response exhausts pagination.
-- `precision_scale` is required and maps only from an integer in `0..18`.
-  Amounts remain `DecimalText`; no `Number`, `parseFloat`, or `toFixed` is
+- `precision_scale` is required and maps only from an integer in `0..18`. It
+  remains the authoritative storage/input limit but is not a command to expose
+  all 18 digits in the UI. Ledger rendering applies the shared asset display
+  cap after validation while preserving the exact `DecimalText` in the model
+  and exact-value title/ARIA fields. No `Number`, `parseFloat`, or `toFixed` is
   allowed in the financial path. Total retains the authoritative signed net
   account delta. The current API has no gross execution quantity, so the
   Pencil Quantity field and its title remain `--`; the absolute net delta must
@@ -2104,7 +2115,12 @@ walletAssetLogoUrls.value = staleDirectory.logoUrls
 #### Correct
 
 ```ts
-const amount = formatWalletLedgerDecimal(entry.amount, locale, entry.precisionScale)
+const amount = formatWalletLedgerDecimal(
+  entry.amount,
+  locale,
+  entry.precisionScale,
+  entry.symbol,
+)
 const quantity = '--' // net account delta is not a gross execution quantity
 const directory = await directoryLifecycle.load()
 if (directory.state === 'loaded') {

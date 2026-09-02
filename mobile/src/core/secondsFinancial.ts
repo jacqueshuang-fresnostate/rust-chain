@@ -10,6 +10,7 @@ import {
   type DecimalBoundary,
   type DecimalText,
 } from './decimal.ts'
+import { formatFinancialAmount } from './financialDisplay.ts'
 import { splitSymbol } from './format.ts'
 
 export interface SecondsStakeRange {
@@ -276,11 +277,9 @@ export function formatSecondsFinancial(
   maximumFractionDigits = 8,
   unavailable = '--',
 ): string {
-  const normalized = decimalTextFromBoundary(value)
-  if (!normalized) return unavailable
-  return formatDecimalText(normalized, locale, {
+  return formatFinancialAmount(value, locale, {
     maximumFractionDigits,
-    preserveNonZero: true,
+    unavailable,
   })
 }
 
@@ -303,7 +302,7 @@ export function formatSecondsPercent(
 export function createSecondsFinancialPresentation(options: SecondsFinancialPresentationOptions) {
   const formatValue = (
     value: DecimalBoundary,
-    maximumFractionDigits = 18,
+    maximumFractionDigits = 8,
     unavailable = '--',
   ) => formatSecondsFinancial(value, options.locale(), maximumFractionDigits, unavailable)
   const formatPayoutRate = (value: DecimalBoundary, fractionDigits: number): string => {

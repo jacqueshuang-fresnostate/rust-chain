@@ -151,6 +151,30 @@ describe('AdminResourcePage', () => {
     expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/accounts', 'items', {}, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
+  it('infers the asset only for display precision and keeps the adjacent asset column as the label', async () => {
+    listAdminResourceMock.mockResolvedValueOnce({
+      rows: [{
+        id: 2,
+        name: '稳定币账户',
+        enabled: true,
+        asset_symbol: 'USDT',
+        amount: '1134.331253942506787192',
+        created_at: 1_735_732_800_000
+      }],
+      raw: { items: [] }
+    });
+    const inferredColumns: Array<AdminResourceColumn<TestRecord>> = [
+      { key: 'asset_symbol', title: '资产' },
+      { key: 'amount', title: '可用', type: 'amount' }
+    ];
+
+    render(<AdminResourcePage<TestRecord> title="钱包账户" endpoint="/admin/wallet" responseKey="items" columns={inferredColumns} />);
+
+    expect(await screen.findByText('USDT')).toBeInTheDocument();
+    expect(screen.getByText('1,134.33')).toBeInTheDocument();
+    expect(screen.queryByText('1,134.33 USDT')).not.toBeInTheDocument();
+  });
+
   it('fixes the operation column on the right side', async () => {
     listAdminResourceMock.mockResolvedValueOnce({
       rows: [

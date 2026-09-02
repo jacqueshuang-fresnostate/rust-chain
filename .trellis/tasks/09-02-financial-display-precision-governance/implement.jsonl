@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile quality gate and shared UI contracts"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Exact Decimal DTO and presentation boundaries"}
+{"file": ".trellis/spec/admin/index.md", "reason": "Admin quality gate and package conventions"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "Admin API-backed decimal display contracts"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Storage and business precision must remain exact"}
+{"file": ".trellis/tasks/09-02-financial-display-precision-governance/research/display-precision-audit.md", "reason": "Audited leak paths and recommended display policy"}

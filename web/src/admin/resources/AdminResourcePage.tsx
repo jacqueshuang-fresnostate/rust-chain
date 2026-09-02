@@ -92,7 +92,52 @@ function mergeFilterOptionRows<T extends ApiRecord>(current: T[], next: T[]): T[
   return merged.slice(-FILTER_OPTION_ROW_LIMIT);
 }
 
-function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: T[Extract<keyof T, string>]) {
+const nonAssetAmountKeyParts = ['price', 'rate', 'ratio', 'leverage', 'probability'];
+
+function textField(record: ApiRecord, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value.trim().toUpperCase() : undefined;
+}
+
+function inferAmountAsset(columnKey: string, record: ApiRecord): string | undefined {
+  const key = columnKey.toLowerCase();
+  if (nonAssetAmountKeyParts.some((part) => key.includes(part))) return undefined;
+
+  const directionalCandidates = key.startsWith('to_') || key.startsWith('target_')
+    ? ['to_asset_symbol']
+    : key.startsWith('from_') || key.startsWith('fee_')
+      ? ['from_asset_symbol']
+      : key.startsWith('collateral_')
+        ? ['collateral_asset_symbol']
+        : [];
+  const candidates = [
+    ...directionalCandidates,
+    'asset_symbol',
+    'margin_asset_symbol',
+    'stake_asset_symbol',
+    'quote_asset_symbol',
+    'quote_asset',
+    'token',
+    'currency'
+  ];
+  for (const candidate of candidates) {
+    const asset = textField(record, candidate);
+    if (asset) return asset;
+  }
+
+  const symbol = textField(record, 'symbol');
+  const isAssetSymbol = symbol
+    && !symbol.includes('/')
+    && !symbol.includes('_')
+    && !symbol.includes('-');
+  return isAssetSymbol ? symbol : undefined;
+}
+
+function renderCell<T extends ApiRecord>(
+  column: AdminResourceColumn<T>,
+  value: T[Extract<keyof T, string>],
+  record: T
+) {
   const mappedValue = value === null || value === undefined ? undefined : column.valueMap?.[String(value)];
   if (mappedValue) {
     return <span>{mappedValue}</span>;
@@ -110,7 +155,8 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
   }
 
   if (column.type === 'amount') {
-    return <AmountText asset={column.asset} precision={column.precision} value={typeof value === 'string' ? value : value === null || value === undefined ? null : String(value)} />;
+    const asset = column.asset ?? inferAmountAsset(column.key, record);
+    return <AmountText appendAsset={Boolean(column.asset)} asset={asset} precision={column.precision} value={typeof value === 'string' ? value : value === null || value === undefined ? null : String(value)} />;
   }
 
   if (column.type === 'status') {
@@ -374,7 +420,7 @@ export function AdminResourcePage<T extends ApiRecord>({
     const resourceColumns = columns.map<ColumnProps<T>>((column) => ({
       dataIndex: column.key,
       key: `${column.key}-${column.title}`,
-      render: (value: T[Extract<keyof T, string>], record: T) => (column.render ? column.render(record) : renderCell(column, value)),
+      render: (value: T[Extract<keyof T, string>], record: T) => (column.render ? column.render(record) : renderCell(column, value, record)),
       title: column.title
     }));
 

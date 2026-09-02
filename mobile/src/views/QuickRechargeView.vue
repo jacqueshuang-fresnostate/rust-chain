@@ -10,12 +10,12 @@ import { formatDateTime } from '@/core/format'
 import {
   decimalCompare,
   decimalMultiply,
-  formatDecimalText,
   normalizeDecimalText,
   positiveDecimalInput,
   decimalWithinRange,
   type DecimalText,
 } from '@/core/decimal'
+import { formatFinancialAmount } from '@/core/financialDisplay'
 import { quickRechargeStatusPresentation } from '@/core/financialEnumPresentation'
 import { detectClientPlatform } from '@/core/platform'
 import { useSessionStore } from '@/stores/session'
@@ -70,10 +70,8 @@ function setAmount(value: DecimalText): void {
   amount.value = value
 }
 
-function formatMoney(value: DecimalText): string {
-  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', {
-    maximumFractionDigits: 18,
-  })
+function formatMoney(value: DecimalText, assetSymbol?: string): string {
+  return formatFinancialAmount(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { assetSymbol })
 }
 
 async function submit(): Promise<void> {
@@ -172,19 +170,19 @@ onMounted(() => { void load() })
                   :class="{ 'is-active': amountText && decimalCompare(amountText, value) === 0 }"
                   @click="setAmount(value)"
                 >
-                  {{ formatMoney(value) }} {{ config.currency }}
+                  {{ formatMoney(value, config.currency) }} {{ config.currency }}
                 </button>
               </div>
               <dl>
                 <div><dt>{{ t('quickRecharge.receivedAsset') }}</dt><dd>{{ config.token }}</dd></div>
                 <div><dt>{{ t('quickRecharge.network') }}</dt><dd>{{ config.network || t('quickRecharge.providerNetwork') }}</dd></div>
-                <div><dt>{{ t('quickRecharge.amountRange') }}</dt><dd class="numeric">{{ formatMoney(config.minAmountText) }}<span v-if="config.maxAmountText"> - {{ formatMoney(config.maxAmountText) }}</span> {{ config.currency }}</dd></div>
+                <div><dt>{{ t('quickRecharge.amountRange') }}</dt><dd class="numeric">{{ formatMoney(config.minAmountText, config.currency) }}<span v-if="config.maxAmountText"> - {{ formatMoney(config.maxAmountText, config.currency) }}</span> {{ config.currency }}</dd></div>
               </dl>
               <button class="button button--primary button--full recharge-submit" type="submit" :disabled="submitting">{{ submitting ? t('quickRecharge.creating') : t('quickRecharge.buy', { token: config.token }) }}</button>
             </form>
             <section v-if="submittedOrder" class="order-result" aria-live="polite">
               <div><ReceiptText :size="20" aria-hidden="true" /><span>{{ t('quickRecharge.order', { id: submittedOrder.orderId }) }}</span></div>
-              <strong class="numeric">{{ formatMoney(submittedOrder.actualAmountText || submittedOrder.fiatAmountText) }} {{ submittedOrder.actualAmountText ? submittedOrder.token : submittedOrder.currency }}</strong>
+              <strong class="numeric">{{ formatMoney(submittedOrder.actualAmountText || submittedOrder.fiatAmountText, submittedOrder.actualAmountText ? submittedOrder.token : submittedOrder.currency) }} {{ submittedOrder.actualAmountText ? submittedOrder.token : submittedOrder.currency }}</strong>
               <button v-if="submittedOrder.paymentUrl" class="button button--secondary button--full" type="button" @click="continuePayment">
                 {{ t('quickRecharge.continuePayment') }}
                 <ExternalLink :size="16" aria-hidden="true" />
@@ -205,7 +203,7 @@ onMounted(() => { void load() })
                   <small>{{ formatDateTime(order.createdAt) }}</small>
                 </div>
                 <span>
-                  <b class="numeric">{{ formatMoney(order.fiatAmountText) }} {{ order.currency }}</b>
+                  <b class="numeric">{{ formatMoney(order.fiatAmountText, order.currency) }} {{ order.currency }}</b>
                   <small>{{ order.network || t('quickRecharge.quickPayment') }}</small>
                 </span>
               </article>

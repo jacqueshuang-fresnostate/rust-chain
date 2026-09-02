@@ -41,7 +41,8 @@ import {
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { buildHomeMarketBrief } from '@/core/homeMarketBrief'
 import { buildReturnHistoryGeometry } from '@/core/returnHistoryGeometry'
-import { formatDecimalText, decimalSign, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { decimalSign, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { formatFinancialAmount } from '@/core/financialDisplay'
 import { resolveTodayReturnPresentation } from '@/core/todayReturnPresentation'
 import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
@@ -193,11 +194,10 @@ const accessibleReturnHistoryPoints = computed(() => {
 
 function formatSignedReturnAmount(value: DecimalText | null | undefined): string {
   const decimal = value ?? normalizeDecimalText('0')
-  return `${decimalSign(decimal) > 0 ? '+' : ''}${formatDecimalText(
-    decimal,
-    locale.value === 'en' ? 'en-US' : 'zh-CN',
-    { maximumFractionDigits: 18 },
-  )}`
+  const formatted = formatFinancialAmount(decimal, locale.value === 'en' ? 'en-US' : 'zh-CN', {
+    assetSymbol: 'USDT',
+  })
+  return `${decimalSign(decimal) > 0 && !formatted.startsWith('<') ? '+' : ''}${formatted}`
 }
 
 function formatReturnHistoryDay(dayStartAt: number): string {

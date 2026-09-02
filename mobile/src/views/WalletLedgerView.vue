@@ -274,13 +274,14 @@ function entryTime(entry: WalletLedgerEntry): string {
   return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-function ledgerDecimal(value: DecimalText, precisionScale: number): string {
+function ledgerDecimal(value: DecimalText, precisionScale: number, assetSymbol: string): string {
   void locale.value
-  return formatWalletLedgerDecimal(value, currentIntlLocale(), precisionScale)
+  return formatWalletLedgerDecimal(value, currentIntlLocale(), precisionScale, assetSymbol)
 }
 
 function signedAmount(entry: WalletLedgerEntry): string {
-  return `${walletLedgerAmountSign(entry.amount)}${ledgerDecimal(entry.amount, entry.precisionScale)}`
+  const amount = ledgerDecimal(entry.amount, entry.precisionScale, entry.symbol)
+  return `${amount.startsWith('<') ? '' : walletLedgerAmountSign(entry.amount)}${amount}`
 }
 
 function quantity(entry: WalletLedgerEntry): string {
@@ -302,7 +303,7 @@ function directionTone(entry: WalletLedgerEntry): 'is-buy' | 'is-sell' | 'is-ink
 
 function feeAmount(entry: WalletLedgerEntry): string {
   return feeIsKnown(entry)
-    ? ledgerDecimal(walletLedgerFeeDebitAmount(entry.fee), entry.precisionScale)
+    ? ledgerDecimal(walletLedgerFeeDebitAmount(entry.fee), entry.precisionScale, entry.symbol)
     : '--'
 }
 
@@ -480,7 +481,7 @@ onBeforeUnmount(() => {
               <div class="ledger-row__balance">
                 <span>{{ t('ledger.accountBalance') }}</span>
                 <strong class="numeric" :title="`${entry.balanceAfter} ${entry.symbol}`">
-                  {{ ledgerDecimal(entry.balanceAfter, entry.precisionScale) }}
+                  {{ ledgerDecimal(entry.balanceAfter, entry.precisionScale, entry.symbol) }}
                 </strong>
               </div>
             </footer>

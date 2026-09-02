@@ -257,7 +257,8 @@ test('extracted Trade and Seconds presentation adapters preserve exact execution
   assert.equal(tradePresentation.formatMarginRange({
     minMarginText: '0.000000000000000001',
     maxMarginText: '9007199254740993.000000000000000001',
-  }, 'USDT'), 'trade.marginRangeWithMaximum|0.000000000000000001|9,007,199,254,740,993|USDT')
+  }, 'USDT'), 'trade.marginRangeWithMaximum|<0.00000001|9,007,199,254,740,993|USDT')
+  assert.equal(tradePresentation.formatValue('1134.331253942506787192'), '1,134.33125394')
 
   const liveTickers = new Map<string, {
     lastPrice?: number
@@ -280,6 +281,7 @@ test('extracted Trade and Seconds presentation adapters preserve exact execution
   })
   assert.equal(secondsPresentation.exactPriceForSymbol('BTC/USDT'), '9007199254740993.000000000000000001')
   assert.equal(secondsPresentation.priceFor('BTC/USDT'), '9007199254740993.000000000000000001')
+  assert.equal(secondsPresentation.formatValue('1134.331253942506787192'), '1,134.33125394')
   assert.equal(secondsPresentation.exactCyclePayoutRate({
     minStake: 1,
     payoutRate: 0.875,

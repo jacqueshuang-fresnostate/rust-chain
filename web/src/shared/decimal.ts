@@ -1,10 +1,14 @@
 export type DecimalFormatOptions = {
   /**
-   * 资产小数精度。显示时补足到该精度，但不会静默截断服务端返回的更高精度。
+   * 资产或业务允许的小数精度。它只会收紧显示上限，不会改写原始值。
    */
   precision?: number;
   /** 未提供资产精度时的最少小数位。 */
   minimumFractionDigits?: number;
+  /** 最多显示的小数位；省略时通用后台字段最多显示 6 位。 */
+  maximumFractionDigits?: number;
+  /** 极小非零值是否显示为阈值，而不是显示成 0。 */
+  preserveNonZero?: boolean;
 };
 
 type ParsedDecimal = {
@@ -18,6 +22,7 @@ const DECIMAL_PATTERN = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))
 const MAX_EXPONENT = 10_000;
 const MAX_FORMAT_DIGITS = 20_000;
 const MAX_ASSET_PRECISION = 18;
+const DEFAULT_MAXIMUM_FRACTION_DIGITS = 6;
 
 function parseBoundedExponent(value: string | undefined): number | null {
   if (!value) return 0;
@@ -168,19 +173,55 @@ function validPrecision(value: number | undefined): number | null {
   return Number.isInteger(value) && value >= 0 && value <= MAX_ASSET_PRECISION ? value : null;
 }
 
+/** 仅在最终展示边界进行十进制四舍五入，不经过 JavaScript Number。 */
+function roundParsedDecimal(parsed: ParsedDecimal, scale: number): ParsedDecimal {
+  if (parsed.fraction.length <= scale) return parsed;
+  const source = toCoefficient(parsed.canonical);
+  if (!source) return parsed;
+
+  const divisor = 10n ** BigInt(source.scale - scale);
+  const negative = source.coefficient < 0n;
+  const absolute = negative ? -source.coefficient : source.coefficient;
+  let rounded = absolute / divisor;
+  if ((absolute % divisor) * 2n >= divisor) rounded += 1n;
+  const canonical = fromCoefficient(negative ? -rounded : rounded, scale);
+  return canonical ? parseDecimal(canonical) ?? parsed : parsed;
+}
+
+function smallestVisibleUnit(scale: number): ParsedDecimal {
+  const source = scale === 0 ? '1' : `0.${'0'.repeat(scale - 1)}1`;
+  return parseDecimal(source) as ParsedDecimal;
+}
+
+function renderParsedDecimal(parsed: ParsedDecimal, minimumFractionDigits: number): string {
+  const fraction = parsed.fraction.padEnd(minimumFractionDigits, '0');
+  const groupedInteger = parsed.integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const sign = parsed.negative ? '-' : '';
+  return fraction ? `${sign}${groupedInteger}.${fraction}` : `${sign}${groupedInteger}`;
+}
+
 export function formatDecimalText(value: string | number, options: DecimalFormatOptions = {}): string | null {
   const parsed = parseDecimal(value);
   if (!parsed) return null;
 
   const precision = validPrecision(options.precision);
   if (options.precision !== undefined && precision === null) return null;
+  const requestedMaximum = validPrecision(options.maximumFractionDigits);
+  if (options.maximumFractionDigits !== undefined && requestedMaximum === null) return null;
   const requestedMinimum = validPrecision(options.minimumFractionDigits);
   if (options.minimumFractionDigits !== undefined && requestedMinimum === null) return null;
-  const minimumFractionDigits = precision ?? requestedMinimum ?? 2;
-  // 若后端返回超出已知精度的数值，保留原值以便暴露合约问题，不在展示层截断或舍入。
-  const fractionLength = Math.max(parsed.fraction.length, minimumFractionDigits);
-  const fraction = parsed.fraction.padEnd(fractionLength, '0');
-  const groupedInteger = parsed.integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const sign = parsed.negative ? '-' : '';
-  return fraction ? `${sign}${groupedInteger}.${fraction}` : `${sign}${groupedInteger}`;
+  const configuredMaximum = requestedMaximum ?? DEFAULT_MAXIMUM_FRACTION_DIGITS;
+  const maximumFractionDigits = Math.min(configuredMaximum, precision ?? configuredMaximum);
+  const minimumFractionDigits = requestedMinimum ?? Math.min(2, maximumFractionDigits);
+  if (minimumFractionDigits > maximumFractionDigits) return null;
+
+  const rounded = roundParsedDecimal(parsed, maximumFractionDigits);
+  if (options.preserveNonZero !== false && parsed.canonical !== '0' && rounded.canonical === '0') {
+    const threshold = renderParsedDecimal(
+      smallestVisibleUnit(maximumFractionDigits),
+      maximumFractionDigits,
+    );
+    return parsed.negative ? `>-${threshold}` : `<${threshold}`;
+  }
+  return renderParsedDecimal(rounded, minimumFractionDigits);
 }

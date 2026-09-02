@@ -267,6 +267,26 @@ export function decimalTruncate(value: DecimalText, scale: number): DecimalText 
   })
 }
 
+/** Rounds a DecimalText half away from zero without converting through IEEE-754. */
+export function decimalRoundHalfUp(value: DecimalText, scale: number): DecimalText {
+  if (!Number.isSafeInteger(scale) || scale < 0 || scale > 100) {
+    throw new RangeError('invalid decimal scale')
+  }
+  const parsed = parseDecimal(value)
+  if (parsed.scale <= scale) return value
+
+  const divisor = powerOfTen(parsed.scale - scale)
+  const negative = parsed.coefficient < 0n
+  const absolute = negative ? -parsed.coefficient : parsed.coefficient
+  let rounded = absolute / divisor
+  if ((absolute % divisor) * 2n >= divisor) rounded += 1n
+
+  return renderDecimal({
+    coefficient: negative ? -rounded : rounded,
+    scale,
+  })
+}
+
 export function decimalFractionDigits(value: string): number {
   if (typeof value !== 'string') throw new TypeError('decimal value must be text')
   const match = DECIMAL_PATTERN.exec(value.trim())

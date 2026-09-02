@@ -196,6 +196,15 @@ test('资产页展示模型执行 complete/partial/error、隐私与正负零语
     detail: '0%',
     tone: '',
   })
+  assert.deepEqual(present('complete', {
+    ...todayReturn(0),
+    amount: normalizeDecimalText('1134.331253942506787192'),
+    rate: normalizeDecimalText('0.123456789012345678'),
+  }), {
+    amount: '+1,134.33 USDT',
+    detail: '12.35%',
+    tone: 'positive',
+  })
 
   const partial = { ...todayReturn(99), status: 'partial' as const, missingPriceAssets: ['BTC'] }
   assert.deepEqual(present('partial', partial), { amount: '--', detail: 'PARTIAL:BTC', tone: '' })

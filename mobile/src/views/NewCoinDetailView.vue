@@ -29,10 +29,10 @@ import {
   decimalMultiply,
   decimalPortion,
   decimalTextFromBoundary,
-  formatDecimalText,
   positiveDecimalInput,
   type DecimalText,
 } from '@/core/decimal'
+import { formatFinancialAmount } from '@/core/financialDisplay'
 import { useModalDialog } from '@/core/modalDialog'
 import type { MarketTicker, WalletAccount } from '@/core/types'
 import { useSessionStore } from '@/stores/session'
@@ -87,9 +87,9 @@ const canSubmit = computed(() => {
   return canPurchase.value && Boolean(executionPriceText.value)
 })
 
-function formatMoney(value: DecimalText | null): string {
+function formatMoney(value: DecimalText | null, assetSymbol?: string): string {
   return value
-    ? formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+    ? formatFinancialAmount(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { assetSymbol })
     : '--'
 }
 
@@ -303,7 +303,7 @@ onMounted(() => { void load() })
             </span>
           </div>
           <dl id="new-coin-entry-summary" class="sr-only">
-            <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric">{{ formatMoney(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</dd></div>
+            <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric">{{ formatMoney(canSubscribe ? estimatedQuantity : paymentAmount, canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol) }} {{ canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</dd></div>
             <div v-if="selectedAccount"><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="pencil-numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
           </dl>
         </section>
@@ -345,8 +345,8 @@ onMounted(() => { void load() })
         </header>
         <dl class="entry-review__summary">
           <div><dt>{{ t('newCoin.paymentAsset') }}</dt><dd>{{ selectedAccount.symbol }}</dd></div>
-          <div><dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt><dd class="pencil-numeric">{{ formatMoney(amountText) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd></div>
-          <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric up">{{ formatMoney(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd></div>
+          <div><dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt><dd class="pencil-numeric">{{ formatMoney(amountText, canSubscribe ? selectedAccount.symbol : project.symbol) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd></div>
+          <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric up">{{ formatMoney(canSubscribe ? estimatedQuantity : paymentAmount, canSubscribe ? project.symbol : selectedAccount.symbol) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd></div>
           <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="pencil-numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
         </dl>
         <p v-if="error" class="entry-review__error" role="alert">{{ error }}</p>

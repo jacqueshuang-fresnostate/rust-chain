@@ -50,7 +50,7 @@ test('financial input range and percentage shortcuts remain exact beyond IEEE-75
   assert.equal(decimalMinimum('9007199254740993', '9007199254740992.999999999999999999'), '9007199254740992.999999999999999999')
 })
 
-test('wallet ledger keeps source decimals and requires explicit authoritative asset precision', () => {
+test('wallet ledger keeps source decimals while applying a separate asset display policy', () => {
   const result = mapWalletLedgerResponse({
     entries: [{
       id: 1,
@@ -68,8 +68,9 @@ test('wallet ledger keeps source decimals and requires explicit authoritative as
   })
   const entry = result.entries[0]
   assert.equal(entry.amount, '0.000000000000000001')
-  assert.equal(formatWalletLedgerDecimal(entry.amount, 'en-US', entry.precisionScale), '0.000000000000000001')
-  assert.equal(formatWalletLedgerDecimal(entry.balanceAfter, 'en-US', entry.precisionScale), '9,007,199,254,740,993.000000000000000001')
+  assert.equal(formatWalletLedgerDecimal(entry.amount, 'en-US', entry.precisionScale, entry.symbol), '<0.01')
+  assert.equal(formatWalletLedgerDecimal(entry.balanceAfter, 'en-US', entry.precisionScale, entry.symbol), '9,007,199,254,740,993')
+  assert.equal(entry.balanceAfter, '9007199254740993.000000000000000001')
 
   assert.throws(() => mapWalletLedgerResponse({
     entries: [{

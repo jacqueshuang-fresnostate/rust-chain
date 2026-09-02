@@ -24,11 +24,11 @@ import {
   decimalTextFromBoundary,
   decimalTextFromFiniteNumber,
   decimalWithinRange,
-  formatDecimalText,
   normalizeDecimalText,
   positiveDecimalInput,
   type DecimalText,
 } from '@/core/decimal'
+import { formatFinancialAmount } from '@/core/financialDisplay'
 import {
   earnCategoryPresentation,
   earnStatusPresentation,
@@ -89,16 +89,16 @@ const availabilityLabel = computed(() => {
   const values = {
     available: availableLabel.value,
     asset: product.assetSymbol,
-    minimum: formatMoney(product.minSubscribeText || decimalTextFromFiniteNumber(product.minSubscribe)),
+    minimum: formatMoney(product.minSubscribeText || decimalTextFromFiniteNumber(product.minSubscribe), product.assetSymbol),
     maximum: product.maxSubscribeText === undefined && product.maxSubscribe === undefined
       ? '--'
-      : formatMoney(product.maxSubscribeText || decimalTextFromFiniteNumber(product.maxSubscribe || 0)),
+      : formatMoney(product.maxSubscribeText || decimalTextFromFiniteNumber(product.maxSubscribe || 0), product.assetSymbol),
   }
   return t(product.maxSubscribe === undefined ? 'earn.availability' : 'earn.availabilityWithMaximum', values)
 })
 
-function formatMoney(value: DecimalText): string {
-  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { maximumFractionDigits: 18 })
+function formatMoney(value: DecimalText, assetSymbol?: string): string {
+  return formatFinancialAmount(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { assetSymbol })
 }
 const selectedRedemptionRule = computed(() => {
   const product = selected.value
@@ -374,7 +374,7 @@ onMounted(() => { void load() })
         <dl class="earn-dialog-summary">
           <div>
             <dt>{{ t('earn.estimatedDailyYield') }}</dt>
-            <dd>{{ estimatedDailyYield === null ? '--' : `${formatMoney(estimatedDailyYield)} ${selected.assetSymbol}` }}</dd>
+            <dd>{{ estimatedDailyYield === null ? '--' : `${formatMoney(estimatedDailyYield, selected.assetSymbol)} ${selected.assetSymbol}` }}</dd>
           </div>
           <div><dt>{{ t('earn.interestStartRule') }}</dt><dd>{{ t('earn.ruleUnavailable') }}</dd></div>
           <div><dt>{{ t('earn.redemptionRule') }}</dt><dd>{{ selectedRedemptionRule }}</dd></div>
