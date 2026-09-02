@@ -8187,3 +8187,31 @@
 - 修改文件：`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`src/modules/wallet/infrastructure/accounts_ledger.rs`、钱包后端测试；`mobile/src/{api/wallet,core/walletLedger}.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/styles/pencil-selected-pages.css`、中英文资源及账单测试；`.trellis/spec/{backend/wallet-amount-precision,mobile/backend-integration}.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo fmt --all -- --check`、`cargo check`、`cargo clippy --all-targets -- -D warnings` 与账本后端聚焦测试通过；最终 `npm --prefix mobile run release:gate` 通过，Mobile 615/615、PWA/Tauri 双构建、制品、bundle/source-size/test-quality 门禁全部绿色；`git diff --check` 通过。Ego Browser 在 320/390/448px 明暗主题复核无横向溢出，Header/胶囊/行高与 Pencil 一致，并验证真实资产选择、Escape 关闭、焦点恢复和滚动锁。MySQL 路由数据分支因本机未配置 `DATABASE_URL` 按测试合同跳过。
 - 后续事项：部署前在 MySQL 8.x 环境执行 `cargo test wallet_ledger --tests`，补证真实联合账本的组合筛选与分页 SQL；本轮未提交或推送。
+
+## 2026-09-02 02:42 - 按用户更正重做手机端交易记录页面
+
+- 完成内容：以用户补充的 Pencil `kcP5D/A85if` 为新视觉真值，将 `/assets/ledger` 与全部可见入口更名为“交易记录”/“Transaction Records”；页面改为 58px 专用 Header（26px Lucide chevron-left、44px 点击目标且继续调用 `goBackOr`）、52px 四栏真实路由导航、58px 双下拉加筛选图标，以及固定 166px 四层连续流水行。接入既有资产元数据 logo，缺失交易对显示 `--`，保留真实分页、三筛选 Sheet、鉴权、DecimalText、加载/空态/错误和 session/filter generation 隔离；未修改 `OrdersView`、Admin、PC 或后端。
+- 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{wallet-ledger-classification,pencil-wallet-flow-parity,pencil-selected-page-parity-20260807}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦测试 5 文件 42/42 通过；`npm --prefix mobile run type-check` 通过。源码合同已覆盖 `kcP5D/A85if` 几何、明暗色值、四栏有效路由、26px 返回图标、44px 点击目标、资产 logo 与 DecimalText。
+- 后续事项：更新当前 Trellis 任务 PRD/research 并执行测试类型检查、diff 校验；最终浏览器视觉复核与完整 release gate 由主会话完成。
+
+## 2026-09-02 02:46 - 修正交易记录事项、收支方向与手续费语义
+
+- 完成内容：按 390px 真实 DTO Mock 复核反馈，将第二行左侧从永久 `--` 改为现有本地化真实交易事项；第三行改为按 amount 符号展示“收入/支出”，零值才显示 `--`，不再重复现货成交/结算；将后端非负 fee 以扣除语义呈现，非零值保持 DecimalText 并显示负号、零保持 `0`。新增可单测的金额方向与手续费扣除 helpers，并清理专用返回按钮的 background 声明。
+- 修改文件：`mobile/src/core/walletLedger.ts`、`mobile/src/api/wallet.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/wallet-ledger-classification.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦 5 文件 43/43 通过；`npm --prefix mobile run type-check` 与 `npm --prefix mobile run type-check:tests` 均通过。行为测试覆盖正/负/零 amount 与非零/零 fee，源码合同锁定事项名称、方向文案和 signed fee 映射。
+- 后续事项：同步当前 Trellis PRD/research 的最新业务映射，再执行 source-size、diff 和范围校验；最终浏览器视觉复核与完整 release gate 由主会话完成。
+
+## 2026-09-02 02:50 - 收口交易记录任务文档与聚焦质量门禁
+
+- 完成内容：重写当前任务 PRD/research，明确 `y6Y7TW/m25xr0` 旧视觉验收已被用户更正并废止，以 `kcP5D/A85if`、交易记录文案和最新事项/收支/手续费映射为唯一合同；将精确页面主题变量放回页面作用域，避免增加共享 CSS 预算，并用编译测试锁定暗色全局选择器。
+- 修改文件：`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/{prd.md,research/pencil-ledger-and-precision.md,implement.jsonl}`、`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/{pencil-wallet-flow-parity,wallet-ledger-classification,wallet-secondary-views}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 5 文件 43/43、应用与测试类型检查、source-size、test-quality、`git diff --check` 全部通过；共享 `pencil-selected-pages.css` 回到预算基线且最终无差异，改动范围仅当前任务 Mobile/文档文件。
+- 后续事项：主会话按计划完成最终 320/390/448px 明暗主题视觉复核与完整 release gate；本轮未提交或推送。
+
+## 2026-09-02 03:27 - 完成手机端交易记录 Pencil 1:1 复刻最终验收
+
+- 完成内容：将“资金账单”完整更名为“交易记录”/`Transaction Records`，以 Pencil `kcP5D/A85if` 为唯一视觉真值完成专用 Header、四栏导航、筛选条和 166px 连续记录行；修复默认日期可访问文案“日期：日期”、支出数量精确提示仍带负号的问题，并将后台资产 Logo 目录纳入可行为测试的最新请求、token 与 session generation 隔离，避免乱序响应覆盖当前 Logo。
+- 修改文件：`mobile/src/{api/wallet,core/walletLedger}.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{wallet-ledger-classification,pencil-wallet-flow-parity,pencil-selected-page-parity-20260807,wallet-secondary-views,ui-prototype-alignment-secondary}.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 5 文件 44/44、应用与测试类型检查、source-size、test-quality、`git diff --check` 全部通过；完整 `npm --prefix mobile run release:gate` 通过，Mobile 617/617、PWA/Tauri 双构建、制品检查与 bundle/source-size/test-quality 预算全部绿色。Ego Browser 已复核 320/390/448px 明暗主题无横向溢出；最终 390px 实测 Header/Tabs/Filter/Row 为 58/52/58/166px，日期 ARIA 为“日期：全部日期”，Sheet 锁定滚动、Escape 关闭并恢复焦点。
+- 后续事项：无；本轮未提交或推送。

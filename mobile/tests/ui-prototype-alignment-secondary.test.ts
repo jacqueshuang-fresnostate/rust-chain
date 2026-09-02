@@ -73,6 +73,13 @@ test('二级页面使用场景 Header 或完整认证身份区', () => {
       assert.doesNotMatch(source, /<PageHeader/)
       continue
     }
+    if (name === 'WalletLedgerView') {
+      assert.match(source, /<header class="ledger-header">/)
+      assert.match(source, /class="ledger-header__back"[\s\S]*?@click="backToAssets"/)
+      assert.match(source, /goBackOr\(router, route\.meta\.backFallback \|\| \{ name: 'assets' \}\)/)
+      assert.doesNotMatch(source, /<PageHeader/)
+      continue
+    }
     assert.match(source, /<PageHeader[\s\S]*?:back="true"/, `${name} missing explicit secondary back action`)
     if (source.includes(':pencil="true"')) {
       assert.match(source, /<PageHeader[\s\S]*?:pencil="true"/, `${name} missing Pencil header mode`)

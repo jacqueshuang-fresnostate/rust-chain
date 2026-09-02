@@ -4,4 +4,4 @@
 {"file": ".trellis/spec/backend/index.md", "reason": "Backend pre-development and feature-contract routing"}
 {"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Asset precision-scale source-of-truth and wallet ledger snapshot contracts"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Route, architecture, documentation, and validation requirements"}
-{"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-ledger-and-precision.md", "reason": "Exact Pencil y6Y7TW geometry and diagnosed precision root cause"}
+{"file": ".trellis/tasks/09-01-mobile-wallet-ledger-pencil-parity-decimal-precision/research/pencil-ledger-and-precision.md", "reason": "Corrected Pencil kcP5D/A85if transaction-record geometry, real DTO mapping, and retained precision contract"}

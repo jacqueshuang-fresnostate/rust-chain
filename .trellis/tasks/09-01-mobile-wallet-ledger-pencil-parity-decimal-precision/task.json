@@ -1,7 +1,7 @@
 {
   "id": "mobile-wallet-ledger-pencil-parity-decimal-precision",
   "name": "mobile-wallet-ledger-pencil-parity-decimal-precision",
-  "title": "手机资金账单 Pencil 复刻与金额精度治理",
+  "title": "手机交易记录 Pencil 复刻与金额精度治理",
   "description": "",
   "status": "in_progress",
   "dev_type": null,

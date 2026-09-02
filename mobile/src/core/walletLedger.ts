@@ -4,7 +4,9 @@ import {
   requiredRealizedReturnDecimal,
 } from './realizedReturn.ts'
 import {
+  decimalAbsolute,
   decimalCompare,
+  decimalNegate,
   decimalSign,
   formatDecimalText,
   normalizeDecimalText,
@@ -190,6 +192,28 @@ export type WalletLedgerRequestResult =
 
 export interface WalletLedgerRequestLifecycle {
   load: (offset: number, limit: number) => Promise<WalletLedgerRequestResult>
+  invalidate: () => void
+  stop: () => void
+}
+
+export interface WalletLedgerAssetMetadata {
+  symbol: string
+  logoUrl?: string
+}
+
+export interface WalletLedgerAssetDirectory {
+  symbols: string[]
+  logoUrls: Record<string, string>
+}
+
+export type WalletLedgerAssetDirectoryRequestResult =
+  | { state: 'guest' }
+  | { state: 'loaded'; value: WalletLedgerAssetDirectory }
+  | { state: 'error'; error: unknown }
+  | { state: 'stale' }
+
+export interface WalletLedgerAssetDirectoryRequestLifecycle {
+  load: () => Promise<WalletLedgerAssetDirectoryRequestResult>
   invalidate: () => void
   stop: () => void
 }
@@ -425,6 +449,18 @@ export function walletLedgerAmountSign(amount: DecimalText): '+' | '' {
   return decimalSign(amount) > 0 ? '+' : ''
 }
 
+export function walletLedgerDirectionForAmount(
+  amount: DecimalText,
+): 'credit' | 'debit' | null {
+  const sign = decimalSign(amount)
+  return sign > 0 ? 'credit' : sign < 0 ? 'debit' : null
+}
+
+export function walletLedgerFeeDebitAmount(fee: DecimalText): DecimalText {
+  const absoluteFee = decimalAbsolute(fee)
+  return decimalSign(absoluteFee) === 0 ? absoluteFee : decimalNegate(absoluteFee)
+}
+
 export function isWalletLedgerContractError(error: unknown): error is WalletLedgerContractError {
   return error instanceof WalletLedgerContractError
 }
@@ -632,6 +668,67 @@ export function createWalletLedgerRequestLifecycle(input: {
           return { state: 'stale' }
         }
         return { state: 'error', assetSymbol, direction, datePreset, error }
+      }
+    },
+    invalidate(): void {
+      requestVersion += 1
+    },
+    stop(): void {
+      active = false
+      requestVersion += 1
+    },
+  }
+}
+
+/**
+ * Load the authenticated wallet asset directory without allowing an older
+ * token, generation, or overlapping request to replace the current logo map.
+ */
+export function createWalletLedgerAssetDirectoryRequestLifecycle(input: {
+  sessionKey: () => string
+  sessionGeneration: () => number
+  fetchDirectory: () => Promise<readonly WalletLedgerAssetMetadata[]>
+}): WalletLedgerAssetDirectoryRequestLifecycle {
+  let requestVersion = 0
+  let active = true
+
+  const isStale = (version: number, sessionKey: string, sessionGeneration: number): boolean => (
+    !active
+    || version !== requestVersion
+    || input.sessionKey() !== sessionKey
+    || input.sessionGeneration() !== sessionGeneration
+  )
+
+  return {
+    async load(): Promise<WalletLedgerAssetDirectoryRequestResult> {
+      const version = ++requestVersion
+      if (!active) return { state: 'stale' }
+      const sessionKey = input.sessionKey()
+      if (!sessionKey) return { state: 'guest' }
+      const sessionGeneration = input.sessionGeneration()
+
+      try {
+        const accounts = await input.fetchDirectory()
+        if (isStale(version, sessionKey, sessionGeneration)) return { state: 'stale' }
+
+        const symbols = new Set<string>()
+        const logoUrls: Record<string, string> = {}
+        for (const account of accounts) {
+          const symbol = normalizeWalletLedgerAssetSymbol(account.symbol)
+          symbols.add(symbol)
+          const logoUrl = account.logoUrl?.trim()
+          if (logoUrl && !logoUrls[symbol]) logoUrls[symbol] = logoUrl
+        }
+        return {
+          state: 'loaded',
+          value: {
+            symbols: [...symbols].sort(),
+            logoUrls,
+          },
+        }
+      } catch (error) {
+        if (isStale(version, sessionKey, sessionGeneration)) return { state: 'stale' }
+        return { state: 'error', error }
       }
     },
     invalidate(): void {

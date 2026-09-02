@@ -28,7 +28,7 @@ test('all eight saved light and dark Pencil pairs are declared by production roo
     [sources.assets, 'v6phV TuWXq'],
     [sources.help, 'UouET FM5tp'],
     [sources.orders, 'e5Qs1 hxe8l'],
-    [sources.ledger, 'y6Y7TW m25xr0'],
+    [sources.ledger, 'kcP5D A85if'],
     [sources.messages, 't7j6n eSMHf'],
     [sources.prediction, 'CzpTv ZvGMv'],
     [sources.earn, 'nqP6W aXxul'],

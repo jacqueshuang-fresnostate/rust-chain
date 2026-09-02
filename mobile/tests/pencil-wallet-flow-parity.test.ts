@@ -27,7 +27,7 @@ test('钱包流程声明当前选中浅色与深色 Pencil 画板', () => {
     depositDetail: 'w5htG TCN5A',
     withdrawAsset: 'NGBmq h0WWYC',
     withdraw: 'Qa9dW o8Wsh',
-    ledger: 'y6Y7TW m25xr0',
+    ledger: 'kcP5D A85if',
     withdrawalRecords: 'DxqMB G3HecO',
     quickRecharge: 'CyRqi cM0eg',
   }
@@ -36,6 +36,13 @@ test('钱包流程声明当前选中浅色与深色 Pencil 画板', () => {
     const source = sources[name]
     assert.match(source, new RegExp(`data-pencil-source="${pencilIds}"`))
     assert.match(source, /class="page page--plain pencil-page wallet-pencil-page/)
+    if (name === 'ledger') {
+      assert.match(source, /class="ledger-header"/)
+      assert.match(source, /<ChevronLeft :size="26"/)
+      assert.match(source, /goBackOr\(router, route\.meta\.backFallback \|\| \{ name: 'assets' \}\)/)
+      assert.doesNotMatch(source, /<PageHeader/)
+      continue
+    }
     assert.match(source, /<PageHeader[\s\S]*?:back="true"[\s\S]*?:pencil="true"/)
     assert.match(source, /padding: 6px 20px calc\(20px \+ env\(safe-area-inset-bottom\)\)/)
     assert.doesNotMatch(source, /page--prototype-grid/)
@@ -49,6 +56,8 @@ test('钱包白色与纯黑画布规则位于全局构建入口且 scoped 编译
   assert.match(selectedPageCss, /\.wallet-pencil-page\s*\{[\s\S]*?--page: #ffffff;[\s\S]*?background: var\(--page\);/)
   assert.match(selectedPageCss, /\.wallet-pencil-page\s*\{[\s\S]*?--muted: #7a8b80;[\s\S]*?--page: #ffffff;[\s\S]*?background: var\(--page\);/)
   assert.match(selectedPageCss, /html\[data-theme='dark'\] \.wallet-pencil-page\s*\{[\s\S]*?--page: #000000;[\s\S]*?--muted: #7a8b80;[\s\S]*?background: var\(--page\);/)
+  assert.match(sources.ledger, /\.wallet-ledger-pencil\s*\{[\s\S]*?--wallet-record-buy: #0dbe7b;[\s\S]*?--wallet-record-ink: #111714;[\s\S]*?--wallet-record-page: #ffffff;[\s\S]*?--wallet-record-row-line: #edf1ef;[\s\S]*?--wallet-record-row-muted: #8a948f;[\s\S]*?--wallet-record-sell: #ff5878;[\s\S]*?--wallet-record-tab-line: #eef1ef;[\s\S]*?--wallet-record-tab-muted: #7b8680;/)
+  assert.match(sources.ledger, /:global\(html\[data-theme='dark'\] \.wallet-ledger-pencil\)\s*\{[\s\S]*?--wallet-record-buy: #45efae;[\s\S]*?--wallet-record-ink: #f3f7f5;[\s\S]*?--wallet-record-page: #000000;[\s\S]*?--wallet-record-row-line: #17221c;[\s\S]*?--wallet-record-row-muted: #8f9b94;[\s\S]*?--wallet-record-tab-line: #18231d;[\s\S]*?--wallet-record-tab-muted: #8f9b94;/)
   assert.match(selectedPageCss, /html\[data-theme='dark'\] \.wallet-pencil-page \.deposit-detail__qr\s*\{[\s\S]*?filter: invert\(1\);/)
 
   const globalBuildCss = compileStyle({
@@ -62,7 +71,8 @@ test('钱包白色与纯黑画布规则位于全局构建入口且 scoped 编译
   assert.match(globalBuildCss.code, /html\[data-theme='dark'\] \.wallet-pencil-page \.deposit-detail__qr/)
 
   for (const [name, source] of Object.entries(sources)) {
-    assert.doesNotMatch(source, /--wallet-canvas|:global\(html\[data-theme='dark'\]\)/, name)
+    if (name === 'ledger') assert.doesNotMatch(source, /--wallet-canvas/, name)
+    else assert.doesNotMatch(source, /--wallet-canvas|:global\(html\[data-theme='dark'\]\)/, name)
     const scopedSource = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] || ''
     const compiled = compileStyle({
       source: scopedSource,
@@ -71,13 +81,18 @@ test('钱包白色与纯黑画布规则位于全局构建入口且 scoped 编译
       scoped: true,
     })
     assert.deepEqual(compiled.errors, [], name)
-    assert.match(compiled.code, /\.wallet-pencil-page\[data-v-wallet-/)
+    if (name === 'ledger') {
+      assert.match(compiled.code, /\.wallet-ledger-pencil\[data-v-wallet-/)
+      assert.match(compiled.code, /html\[data-theme='dark'\] \.wallet-ledger-pencil\s*\{/)
+    }
+    else assert.match(compiled.code, /\.wallet-pencil-page\[data-v-wallet-/)
   }
 })
 
 test('钱包未登录态保留 Header 与 Body，并使用 fullPath 登录重定向的紧凑提示', () => {
-  for (const source of Object.values(sources)) {
-    assert.match(source, /<div class="page-content [^"]+">[\s\S]*?<LoginRequiredState/)
+  for (const [name, source] of Object.entries(sources)) {
+    if (name === 'ledger') assert.match(source, /<div class="ledger-content">[\s\S]*?<LoginRequiredState/)
+    else assert.match(source, /<div class="page-content [^"]+">[\s\S]*?<LoginRequiredState/)
     assert.match(source, /class="wallet-login-prompt"/)
     assert.match(source, /\.wallet-login-prompt \{[\s\S]*?background-image: none;[\s\S]*?min-height: 72px/)
     assert.match(source, /\.wallet-login-prompt :deep\(\.button\)[\s\S]*?min-height: 44px/)
@@ -134,19 +149,23 @@ test('提币表单保留真实网络、余额、完整字段焦点、验证和�
   assert.match(source, /useModalDialog\(reviewOpen, reviewDialog, '\[data-dialog-cancel\]'\)/)
 })
 
-test('账单、提币记录和快捷充值按连续列表映射且只消费真实返回数据', () => {
-  assert.match(sources.ledger, /\.ledger-filter-bar \{[\s\S]*?gap: 8px/)
-  assert.match(sources.ledger, /\.ledger-filter-trigger \{[\s\S]*?height: 28px/)
-  assert.match(sources.ledger, /\.ledger-filter-trigger \{[\s\S]*?min-height: 28px/)
-  assert.match(sources.ledger, /\.ledger-filter-trigger::before \{[\s\S]*?inset: -8px 0/)
-  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?height: 56px/)
-  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?min-height: 56px/)
-  assert.match(sources.ledger, /\.ledger-row__copy,[\s\S]*?gap: 3px/)
+test('交易记录、提币记录和快捷充值按连续列表映射且只消费真实返回数据', () => {
+  assert.match(sources.ledger, /\.ledger-header \{[\s\S]*?grid-template-columns: 26px minmax\(0, 1fr\) 26px;[\s\S]*?height: 58px;[\s\S]*?padding: 0 16px;/)
+  assert.match(sources.ledger, /\.ledger-header h1 \{[\s\S]*?font-size: 22px;[\s\S]*?font-weight: 700;/)
+  assert.match(sources.ledger, /\.ledger-record-tabs \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*?height: 52px;/)
+  assert.match(sources.ledger, /\.ledger-record-tab\.is-active i \{[\s\S]*?var\(--wallet-record-active\)/)
+  assert.match(sources.ledger, /\.ledger-filter-bar \{[\s\S]*?gap: 24px;[\s\S]*?height: 58px;[\s\S]*?padding: 0 16px;/)
+  assert.match(sources.ledger, /<ListFilter :size="24"/)
+  assert.match(sources.ledger, /\.ledger-filter-trigger,[\s\S]*?\.ledger-filter-more \{[\s\S]*?min-height: 44px;/)
+  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?grid-template-rows: 30px 22px 22px 19px;[\s\S]*?height: 166px;[\s\S]*?min-height: 166px;[\s\S]*?padding: 12px 18px;/)
+  assert.match(sources.ledger, /border-bottom: 1px solid var\(--wallet-record-row-line\)/)
   assert.match(sources.ledger, /\.ledger-list \{[\s\S]*?gap: 0/)
   assert.match(sources.ledger, /createWalletLedgerPaginationController\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
-  assert.match(sources.ledger, /walletAssetSymbols\.value = \[\.\.\.new Set\(accounts\.map/)
+  assert.match(sources.ledger, /walletAssetSymbols\.value = result\.value\.symbols/)
+  assert.match(sources.ledger, /walletAssetLogoUrls\.value = result\.value\.logoUrls/)
+  assert.match(sources.ledger, /<AssetMark :symbol="entry\.symbol" :src="entryLogoUrl\(entry\)" :size="30"/)
   assert.match(sources.ledger, /v-for="entry in entries"/)
-  assert.match(sources.ledger, /useModalDialog\(filterSheetOpen, filterDialog/)
+  assert.match(sources.ledger, /useModalDialog\(\s*filterSheetOpen,\s*filterDialog/)
   assert.doesNotMatch(sources.ledger, /ledger-account-filter|ledger-group__header|groupWalletLedgerEntries/)
   assert.doesNotMatch(sources.ledger, /<span class="sr-only">\{\{ entryAccessibleDetails\(entry\) \}\}<\/span>/)
   assert.doesNotMatch(sources.ledger, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
@@ -173,7 +192,8 @@ test('钱包返回合同使用业务父级，动态充币详情回到当前资�
   assert.match(sources.depositDetail, /:fallback="\{ name: 'deposit-network', params: \{ asset \} \}"/)
   assert.match(sources.withdrawAsset, /:fallback="\{ name: 'assets' \}"/)
   assert.match(sources.withdraw, /:fallback="\{ name: 'withdraw-asset' \}"/)
-  for (const source of [sources.ledger, sources.withdrawalRecords, sources.quickRecharge]) {
+  assert.match(sources.ledger, /goBackOr\(router, route\.meta\.backFallback \|\| \{ name: 'assets' \}\)/)
+  for (const source of [sources.withdrawalRecords, sources.quickRecharge]) {
     assert.match(source, /:fallback="\{ name: 'assets' \}"/)
   }
 })

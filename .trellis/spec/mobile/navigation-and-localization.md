@@ -254,14 +254,17 @@ lastTradePath: ComputedRef<string>
   symmetric `ledger.*` keys in `zh-CN` and `en`. An unknown `change_type`
   renders localized `ledger.typeOther` as its primary label and keeps the raw
   enum visible as secondary technical information.
-- Wallet ledger account-source controls and row badges use symmetric keys for
-  All, Spot, and Margin. Account source is separate from business category;
-  the category key for `margin` renders 杠杆 / Margin rather than 合约 /
-  Futures. Unknown account-source values are contract errors and are never
-  guessed from the change type.
-- Wallet ledger dates group by the runtime's local calendar day. Group headings
-  use localized Today/Yesterday labels or `Intl.DateTimeFormat`, and record
-  counts use vue-i18n pluralization rather than assembled fixed copy.
+- The `/assets/ledger` route and all of its entry points use the symmetric title
+  `交易记录` / `Transaction Records`. Its four tabs use symmetric labels for
+  Position history, Transaction ledger, Current strategy, and Strategy history.
+- Wallet ledger account type is shown inline as Spot or Margin; it is not a
+  visible filter or badge in the `kcP5D/A85if` design. Account source remains
+  separate from business category, and unknown account values are contract
+  errors rather than values inferred from `change_type`.
+- Wallet records render as continuous rows without date grouping. Each row uses
+  the runtime-local full timestamp, localized change type, localized Income /
+  Expense derived from the authoritative amount sign, and symmetric filter
+  sheet copy. The default date selection is All dates / 全部日期.
 
 ## 4. Validation & Error Matrix
 

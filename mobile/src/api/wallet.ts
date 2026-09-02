@@ -84,6 +84,7 @@ export type {
 } from '@/core/returnHistory'
 export {
   advanceWalletLedgerPagination,
+  createWalletLedgerAssetDirectoryRequestLifecycle,
   createWalletLedgerPaginationController,
   createWalletLedgerPaginationState,
   createWalletLedgerRequestLifecycle,
@@ -114,14 +115,20 @@ export {
   walletLedgerCategoryTranslationKey,
   walletLedgerDatePresetTranslationKey,
   walletLedgerDateRange,
+  walletLedgerDirectionForAmount,
   walletLedgerDirectionTranslationKey,
   walletLedgerEntryIdentity,
+  walletLedgerFeeDebitAmount,
   walletLedgerTypePresentation,
   WalletLedgerContractError,
 } from '@/core/walletLedger'
 export type {
   WalletLedgerAccountFilter,
   WalletLedgerAccountType,
+  WalletLedgerAssetDirectory,
+  WalletLedgerAssetDirectoryRequestLifecycle,
+  WalletLedgerAssetDirectoryRequestResult,
+  WalletLedgerAssetMetadata,
   WalletLedgerCategory,
   WalletLedgerDateGroup,
   WalletLedgerDatePreset,

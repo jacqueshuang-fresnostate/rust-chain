@@ -44,7 +44,7 @@ test('提币流程保留真实资产路由、余额网络加载、校验和提�
   assert.match(sources.withdraw, /name: 'wallet-ledger'/)
 })
 
-test('提币记录、资金流水和快捷买币保留真实读取与支付行为', () => {
+test('提币记录、交易记录和快捷买币保留真实读取与支付行为', () => {
   assert.match(sources.withdrawalRecords, /records\.value = await fetchWithdrawalRecords\(\)/)
   assert.match(sources.withdrawalRecords, /return statusKeys\[status\] \? t\(statusKeys\[status\]\) : status/)
   assert.match(sources.walletLedger, /createWalletLedgerPaginationController\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
@@ -59,12 +59,15 @@ test('提币记录、资金流水和快捷买币保留真实读取与支付行�
 })
 
 test('钱包二级页使用 HIPPO 变量、明暗主题焦点、状态和窄屏合同', () => {
-  for (const source of Object.values(sources)) {
+  for (const [name, source] of Object.entries(sources)) {
     const styles = scopedStyles(source)
     assert.match(styles, /@media \(max-width: 340px\)/)
     assert.match(styles, /env\(safe-area-inset-bottom\)/)
     assert.match(styles, /var\(--(?:surface|surface-elevated|field-surface|soft|line|ink|muted|accent|positive|negative|focus)/)
-    assert.doesNotMatch(styles, /#[0-9a-f]{3,8}/i)
+    if (name === 'walletLedger') {
+      assert.match(styles, /--wallet-record-ink: #111714/)
+      assert.match(styles, /:global\(html\[data-theme='dark'\] \.wallet-ledger-pencil\)/)
+    } else assert.doesNotMatch(styles, /#[0-9a-f]{3,8}/i)
     assert.doesNotMatch(styles, /background:\s*white/i)
     assert.doesNotMatch(styles, /rgba?\(11,\s*24,\s*17/i)
     assert.doesNotMatch(source, /<svg/)
