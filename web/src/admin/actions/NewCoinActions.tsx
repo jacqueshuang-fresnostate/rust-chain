@@ -6,6 +6,7 @@ import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminCheckbox, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
+import { optionalNewCoinLocalDateTimeMillis } from '../newCoinDateTime';
 import {
   AdminReferenceSelect,
   type AdminReferenceOption,
@@ -69,17 +70,6 @@ function optionalPositiveInteger(value: string): number | undefined {
     return undefined;
   }
   return requiredPositiveInteger(value, '可选ID');
-}
-
-function optionalTimestamp(value: string): number | undefined {
-  if (!value.trim()) {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error('时间必须为 Unix 毫秒时间戳');
-  }
-  return parsed;
 }
 
 function errorMessage(error: unknown) {
@@ -150,7 +140,7 @@ export function NewCoinActions() {
                 error={projectReferences.error}
                 label="新币项目"
                 loading={projectReferences.loading}
-                onChange={(projectId) => setLifecycle({ ...lifecycle, projectId })}
+                onChange={(projectId) => setLifecycle((current) => ({ ...current, projectId }))}
                 options={projectReferences.options}
                 placeholder="搜索项目符号或 ID"
                 value={lifecycle.projectId}
@@ -159,7 +149,7 @@ export function NewCoinActions() {
                 目标阶段
                 <AdminSelect
                   ariaLabel="目标阶段"
-                  onChange={(lifecycleStatus) => setLifecycle({ ...lifecycle, lifecycleStatus })}
+                  onChange={(lifecycleStatus) => setLifecycle((current) => ({ ...current, lifecycleStatus }))}
                   optionList={[
                     { value: 'preheat', label: '预热' },
                     { value: 'subscription', label: '申购中' },
@@ -169,7 +159,7 @@ export function NewCoinActions() {
                   value={lifecycle.lifecycleStatus}
                 />
               </label>
-              <label>上市时间戳<AdminTextInput ariaLabel="上市时间戳" placeholder="listed 可选，Unix ms" value={lifecycle.listedAt} onChange={(listedAt) => setLifecycle({ ...lifecycle, listedAt })} /></label>
+              <label>上市时间<AdminTextInput ariaLabel="上市时间" placeholder="可选" type="datetime-local" value={lifecycle.listedAt} onChange={(listedAt) => setLifecycle((current) => ({ ...current, listedAt }))} /></label>
             </div>
             <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${lifecycle.projectId}/lifecycle`} method="PATCH">
               <ConfirmAction
@@ -180,7 +170,7 @@ export function NewCoinActions() {
                 submitAction('更新生命周期', () =>
                   apiRequest(`/admin/api/v1/new-coins/${requiredPositiveInteger(lifecycle.projectId, '项目ID')}/lifecycle`, {
                     method: 'PATCH',
-                    body: JSON.stringify({ lifecycle_status: lifecycle.lifecycleStatus, listed_at: optionalTimestamp(lifecycle.listedAt), reason })
+                    body: JSON.stringify({ lifecycle_status: lifecycle.lifecycleStatus, listed_at: optionalNewCoinLocalDateTimeMillis(lifecycle.listedAt, '上市时间'), reason })
                   })
                 )
               }
@@ -250,7 +240,7 @@ export function NewCoinActions() {
                 error={projectReferences.error}
                 label="新币项目"
                 loading={projectReferences.loading}
-                onChange={(projectId) => setUnlockRule({ ...unlockRule, projectId })}
+                onChange={(projectId) => setUnlockRule((current) => ({ ...current, projectId }))}
                 options={projectReferences.options}
                 placeholder="搜索项目符号或 ID"
                 value={unlockRule.projectId}
@@ -259,7 +249,7 @@ export function NewCoinActions() {
                 解禁类型
                 <AdminSelect
                   ariaLabel="解禁类型"
-                  onChange={(unlockType) => setUnlockRule({ ...unlockRule, unlockType })}
+                  onChange={(unlockType) => setUnlockRule((current) => ({ ...current, unlockType }))}
                   optionList={[
                     { value: 'immediate_on_listing', label: '上市即解禁' },
                     { value: 'fixed_time', label: '固定时间解禁' },
@@ -268,9 +258,9 @@ export function NewCoinActions() {
                   value={unlockRule.unlockType}
                 />
               </label>
-              <label>上市时间戳<AdminTextInput ariaLabel="上市时间戳" value={unlockRule.listedAt} onChange={(listedAt) => setUnlockRule({ ...unlockRule, listedAt })} /></label>
-              <label>固定解禁时间戳<AdminTextInput ariaLabel="固定解禁时间戳" value={unlockRule.fixedUnlockAt} onChange={(fixedUnlockAt) => setUnlockRule({ ...unlockRule, fixedUnlockAt })} /></label>
-              <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={unlockRule.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setUnlockRule({ ...unlockRule, relativeUnlockSeconds })} /></label>
+              <label>上市时间<AdminTextInput ariaLabel="上市时间" type="datetime-local" value={unlockRule.listedAt} onChange={(listedAt) => setUnlockRule((current) => ({ ...current, listedAt }))} /></label>
+              <label>固定解禁时间<AdminTextInput ariaLabel="固定解禁时间" type="datetime-local" value={unlockRule.fixedUnlockAt} onChange={(fixedUnlockAt) => setUnlockRule((current) => ({ ...current, fixedUnlockAt }))} /></label>
+              <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={unlockRule.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setUnlockRule((current) => ({ ...current, relativeUnlockSeconds }))} /></label>
             </div>
             <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${unlockRule.projectId}/unlock-rule`} method="PATCH">
               <ConfirmAction
@@ -283,8 +273,8 @@ export function NewCoinActions() {
                     method: 'PATCH',
                     body: JSON.stringify({
                       unlock_type: unlockRule.unlockType,
-                      listed_at: optionalTimestamp(unlockRule.listedAt),
-                      fixed_unlock_at: optionalTimestamp(unlockRule.fixedUnlockAt),
+                      listed_at: optionalNewCoinLocalDateTimeMillis(unlockRule.listedAt, '上市时间'),
+                      fixed_unlock_at: optionalNewCoinLocalDateTimeMillis(unlockRule.fixedUnlockAt, '固定解禁时间'),
                       relative_unlock_seconds: optionalPositiveInteger(unlockRule.relativeUnlockSeconds),
                       reason
                     })

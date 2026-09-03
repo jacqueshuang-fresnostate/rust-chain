@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { computed, ref } from 'vue'
+import { normalizeDecimalText } from '../src/core/decimal.ts'
 import {
   estimateIsolatedLiquidationPrice,
   mapMarginCrossAccountRisk,
   parseMarginRiskNumber,
   resolveMaintenanceMarginRate,
+  resolveMarginPositionLiveProjection,
   resolveMarginPositionRiskMetrics,
 } from '../src/core/marginRiskMetrics.ts'
 import en from '../src/i18n/messages/en.ts'
@@ -45,6 +48,160 @@ const backendCrossAccountRisk = {
   marks_observed_at_min: 1_787_200_000_000,
   marks_observed_at_max: 1_787_200_001_000,
 }
+
+test('当前仓位以同一精确 ticker 对做多与做空重建 18 位盈亏和收益率', () => {
+  const position = {
+    direction: 'long' as const,
+    marginAmountText: normalizeDecimalText('2'),
+    notionalAmountText: normalizeDecimalText('9.000000000000000009'),
+    entryPriceText: normalizeDecimalText('3'),
+  }
+  const serverRisk = {
+    markPriceText: normalizeDecimalText('3'),
+    unrealizedPnlText: normalizeDecimalText('0'),
+    returnRateText: normalizeDecimalText('0'),
+    observedAt: 1_787_200_000_000,
+  }
+  const ticker = {
+    lastPriceText: normalizeDecimalText('4'),
+    observedAt: 1_787_200_000_000,
+  }
+
+  assert.deepEqual(resolveMarginPositionLiveProjection(position, ticker, serverRisk), {
+    markPriceText: '4',
+    unrealizedPnlText: '3.000000000000000003',
+    returnRateText: '1.500000000000000001',
+  })
+  assert.deepEqual(resolveMarginPositionLiveProjection(
+    { ...position, direction: 'short' },
+    ticker,
+    serverRisk,
+  ), {
+    markPriceText: '4',
+    unrealizedPnlText: '-3.000000000000000003',
+    returnRateText: '-1.500000000000000001',
+  })
+})
+
+test('当前仓位对旧 ticker、缺失精确价格、非正价格和无入场价保留服务端快照', () => {
+  const position = {
+    direction: 'long' as const,
+    marginAmountText: normalizeDecimalText('20'),
+    notionalAmountText: normalizeDecimalText('100'),
+    entryPriceText: normalizeDecimalText('100'),
+  }
+  const serverRisk = {
+    markPriceText: normalizeDecimalText('84'),
+    unrealizedPnlText: normalizeDecimalText('-16'),
+    returnRateText: normalizeDecimalText('-0.8'),
+    observedAt: 1_787_200_001_000,
+  }
+  const fallback = {
+    markPriceText: serverRisk.markPriceText,
+    unrealizedPnlText: serverRisk.unrealizedPnlText,
+    returnRateText: serverRisk.returnRateText,
+  }
+  const cases: Array<{
+    name: string
+    position: Parameters<typeof resolveMarginPositionLiveProjection>[0]
+    ticker: Parameters<typeof resolveMarginPositionLiveProjection>[1]
+    risk: Parameters<typeof resolveMarginPositionLiveProjection>[2]
+  }> = [
+    { name: 'missing ticker', position, ticker: undefined, risk: serverRisk },
+    {
+      name: 'missing exact ticker price',
+      position,
+      ticker: { observedAt: serverRisk.observedAt },
+      risk: serverRisk,
+    },
+    {
+      name: 'stale ticker',
+      position,
+      ticker: { lastPriceText: normalizeDecimalText('90'), observedAt: serverRisk.observedAt - 1 },
+      risk: serverRisk,
+    },
+    {
+      name: 'zero ticker price',
+      position,
+      ticker: { lastPriceText: '0' as never, observedAt: serverRisk.observedAt },
+      risk: serverRisk,
+    },
+    {
+      name: 'negative ticker price',
+      position,
+      ticker: { lastPriceText: '-1' as never, observedAt: serverRisk.observedAt },
+      risk: serverRisk,
+    },
+    {
+      name: 'invalid exact ticker price',
+      position,
+      ticker: { lastPriceText: '1e2' as never, observedAt: serverRisk.observedAt },
+      risk: serverRisk,
+    },
+    {
+      name: 'missing entry price',
+      position: { ...position, entryPriceText: null },
+      ticker: { lastPriceText: normalizeDecimalText('90'), observedAt: serverRisk.observedAt },
+      risk: serverRisk,
+    },
+    {
+      name: 'missing risk timestamp',
+      position,
+      ticker: { lastPriceText: normalizeDecimalText('90'), observedAt: serverRisk.observedAt },
+      risk: { ...serverRisk, observedAt: undefined },
+    },
+  ]
+
+  for (const entry of cases) {
+    assert.deepEqual(
+      resolveMarginPositionLiveProjection(entry.position, entry.ticker, entry.risk),
+      fallback,
+      entry.name,
+    )
+  }
+  assert.deepEqual(resolveMarginPositionLiveProjection(
+    position,
+    { lastPriceText: normalizeDecimalText('90'), observedAt: serverRisk.observedAt },
+    undefined,
+  ), {
+    markPriceText: null,
+    unrealizedPnlText: null,
+    returnRateText: null,
+  })
+})
+
+test('响应式 ticker 更新会原子刷新仓位标记价、盈亏和收益率三元组', () => {
+  const ticker = ref({
+    lastPriceText: normalizeDecimalText('4'),
+    observedAt: 1_787_200_001_000,
+  })
+  const projection = computed(() => resolveMarginPositionLiveProjection({
+    direction: 'long',
+    marginAmountText: normalizeDecimalText('2'),
+    notionalAmountText: normalizeDecimalText('9.000000000000000009'),
+    entryPriceText: normalizeDecimalText('3'),
+  }, ticker.value, {
+    markPriceText: normalizeDecimalText('3'),
+    unrealizedPnlText: normalizeDecimalText('0'),
+    returnRateText: normalizeDecimalText('0'),
+    observedAt: 1_787_200_000_000,
+  }))
+
+  assert.deepEqual(projection.value, {
+    markPriceText: '4',
+    unrealizedPnlText: '3.000000000000000003',
+    returnRateText: '1.500000000000000001',
+  })
+  ticker.value = {
+    lastPriceText: normalizeDecimalText('2'),
+    observedAt: 1_787_200_002_000,
+  }
+  assert.deepEqual(projection.value, {
+    markPriceText: '2',
+    unrealizedPnlText: '-3.000000000000000003',
+    returnRateText: '-1.500000000000000001',
+  })
+})
 
 test('风险 DTO 数值解析限定在有限 JSON 数字与十进制字符串', () => {
   assert.equal(parseMarginRiskNumber(0.05), 0.05)

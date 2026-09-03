@@ -2,7 +2,20 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { CircleAlert, CloudCheck, Download, RefreshCw, WifiOff, X } from 'lucide-vue-next'
+import {
+  BellRing,
+  CircleAlert,
+  CloudCheck,
+  Download,
+  Info,
+  Maximize,
+  RefreshCw,
+  WifiOff,
+  X,
+  Zap,
+} from 'lucide-vue-next'
+import brandLogo from '@/assets/brand/hippo-logo-landscape.png'
+import { useModalDialog } from '@/core/modalDialog'
 import {
   applyPwaUpdate,
   dismissOfflineReady,
@@ -20,6 +33,8 @@ const { t } = useI18n()
 const route = useRoute()
 const installing = ref(false)
 const retrying = ref(false)
+const installDialog = ref<HTMLElement | null>(null)
+const installHint = ref<HTMLElement | null>(null)
 
 const SAFE_PROMPT_ROUTES = new Set([
   'home',
@@ -33,17 +48,38 @@ const SAFE_PROMPT_ROUTES = new Set([
   'language',
 ])
 const promptSafeRoute = computed(() => SAFE_PROMPT_ROUTES.has(String(route.name || '')))
-const showInstall = computed(() => promptSafeRoute.value && (pwaState.installAvailable || pwaState.iosInstallAvailable))
+const showInstall = computed(() => (
+  promptSafeRoute.value
+  && !pwaState.installError
+  && (pwaState.installAvailable || pwaState.iosInstallAvailable)
+))
 const showUpdate = computed(() => promptSafeRoute.value && pwaState.needRefresh && !pwaState.updateDismissed)
 const showOfflineReady = computed(() => promptSafeRoute.value && pwaState.offlineReady)
 const showPwaError = computed(() => promptSafeRoute.value && (pwaState.registrationError || pwaState.installError))
-const visible = computed(() => pwaState.enabled && (
-  !pwaState.isOnline
-  || showInstall.value
-  || showUpdate.value
-  || showOfflineReady.value
-  || showPwaError.value
+const primaryState = computed<'update' | 'install' | 'ready' | 'error' | null>(() => {
+  if (showUpdate.value) return 'update'
+  if (showPwaError.value && pwaState.installError) return 'error'
+  if (showInstall.value) return 'install'
+  if (showOfflineReady.value) return 'ready'
+  if (showPwaError.value) return 'error'
+  return null
+})
+const showInstallDialog = computed(() => (
+  pwaState.enabled
+  && pwaState.isOnline
+  && primaryState.value === 'install'
 ))
+const showStatusIsland = computed(() => pwaState.enabled && (
+  !pwaState.isOnline
+  || primaryState.value === 'update'
+  || primaryState.value === 'ready'
+  || primaryState.value === 'error'
+))
+const { trapFocus: trapInstallFocus } = useModalDialog(
+  showInstallDialog,
+  installDialog,
+  '[data-pwa-install-close]',
+)
 
 watch(() => route.fullPath, (currentPath, previousPath) => {
   if ((previousPath === undefined || currentPath !== previousPath) && isPwaInstallValueRoute(route.name)) {
@@ -51,11 +87,27 @@ watch(() => route.fullPath, (currentPath, previousPath) => {
   }
 }, { immediate: true })
 
-watch(showInstall, (shown) => {
+watch(showInstallDialog, (shown) => {
   if (shown) markPwaInstallOfferShown()
 }, { immediate: true })
 
+function closeInstallDialog(): void {
+  if (installing.value) return
+  dismissPwaInstall()
+}
+
+function handleInstallDialogKeydown(event: KeyboardEvent): void {
+  trapInstallFocus(event, closeInstallDialog)
+}
+
 async function install(): Promise<void> {
+  if (installing.value) return
+  if (pwaState.iosInstallAvailable && !pwaState.installAvailable) {
+    installHint.value?.focus()
+    return
+  }
+  if (!pwaState.installAvailable) return
+
   installing.value = true
   try {
     await promptPwaInstall()
@@ -80,7 +132,7 @@ async function retry(): Promise<void> {
 
 <template>
   <Transition name="pwa-status-reveal">
-    <aside v-if="visible" class="pwa-status" aria-live="polite" aria-atomic="false">
+    <aside v-if="showStatusIsland" class="pwa-status" aria-live="polite" aria-atomic="false">
       <span class="pwa-status__ambient" aria-hidden="true" />
 
       <section
@@ -102,7 +154,7 @@ async function retry(): Promise<void> {
       </section>
 
       <section
-        v-if="showUpdate"
+        v-if="primaryState === 'update'"
         class="pwa-status__card pwa-status__card--update"
         data-tone="accent"
         :role="pwaState.updateError ? 'alert' : 'status'"
@@ -132,42 +184,7 @@ async function retry(): Promise<void> {
       </section>
 
       <section
-        v-else-if="showInstall"
-        class="pwa-status__card pwa-status__card--install"
-        data-tone="accent"
-        role="status"
-        :aria-busy="installing"
-      >
-        <div class="pwa-status__panel">
-          <span class="pwa-status__icon" aria-hidden="true">
-            <Download :size="22" :stroke-width="1.7" />
-          </span>
-          <div class="pwa-status__body">
-            <span class="pwa-status__kicker"><i aria-hidden="true" />{{ t('pwa.statusLabel') }}</span>
-            <strong>{{ t(pwaState.iosInstallAvailable ? 'pwa.iosInstallTitle' : 'pwa.installTitle') }}</strong>
-            <p>{{ t(pwaState.iosInstallAvailable ? 'pwa.iosInstallDescription' : 'pwa.installDescription') }}</p>
-            <div v-if="pwaState.installAvailable" class="pwa-status__actions">
-              <button
-                class="pwa-status__button pwa-status__button--primary"
-                type="button"
-                :disabled="installing"
-                @click="install"
-              >
-                <span>{{ installing ? t('pwa.installing') : t('pwa.installAction') }}</span>
-                <span class="pwa-status__button-icon" aria-hidden="true">
-                  <Download :size="15" :stroke-width="1.8" />
-                </span>
-              </button>
-            </div>
-          </div>
-          <button class="pwa-status__dismiss" type="button" :aria-label="t('pwa.dismiss')" :title="t('pwa.dismiss')" @click="dismissPwaInstall">
-            <X :size="18" :stroke-width="1.8" aria-hidden="true" />
-          </button>
-        </div>
-      </section>
-
-      <section
-        v-else-if="showOfflineReady"
+        v-else-if="primaryState === 'ready'"
         class="pwa-status__card pwa-status__card--ready"
         data-tone="positive"
         role="status"
@@ -188,7 +205,7 @@ async function retry(): Promise<void> {
       </section>
 
       <section
-        v-else-if="showPwaError"
+        v-else-if="primaryState === 'error'"
         class="pwa-status__card pwa-status__card--error"
         data-tone="negative"
         role="alert"
@@ -220,6 +237,119 @@ async function retry(): Promise<void> {
       </section>
     </aside>
   </Transition>
+
+  <Teleport to="body">
+    <Transition name="pwa-install-modal">
+      <div
+        v-if="showInstallDialog"
+        class="pwa-install"
+        data-pencil-source="NROQD FwXCx Tcgl6 V04kP"
+        @click.self="closeInstallDialog"
+      >
+        <section
+          id="pwa-install-dialog"
+          ref="installDialog"
+          class="pwa-install__sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pwa-install-title"
+          aria-describedby="pwa-install-description pwa-install-hint"
+          :aria-busy="installing"
+          tabindex="-1"
+          @keydown="handleInstallDialogKeydown"
+        >
+          <span class="pwa-install__grabber" aria-hidden="true" />
+
+          <header class="pwa-install__header">
+            <span class="pwa-install__app-icon" aria-hidden="true">
+              <img :src="brandLogo" alt="" />
+            </span>
+            <div class="pwa-install__heading">
+              <h2 id="pwa-install-title">{{ t('pwa.installTitle') }}</h2>
+              <span>{{ t('pwa.installSubtitle') }}</span>
+            </div>
+            <button
+              class="pwa-install__close"
+              type="button"
+              data-pwa-install-close
+              :disabled="installing"
+              :aria-label="t('pwa.installClose')"
+              :title="t('pwa.installClose')"
+              @click="closeInstallDialog"
+            >
+              <span class="pwa-install__close-face">
+                <X :size="19" :stroke-width="1.8" aria-hidden="true" />
+              </span>
+            </button>
+          </header>
+
+          <p id="pwa-install-description" class="pwa-install__description">
+            {{ t('pwa.installDescription') }}
+          </p>
+
+          <ul class="pwa-install__benefits" :aria-label="t('pwa.installBenefitsLabel')">
+            <li class="pwa-install__benefit">
+              <span class="pwa-install__benefit-icon" aria-hidden="true">
+                <Zap :size="16" :stroke-width="1.8" />
+              </span>
+              <span class="pwa-install__benefit-copy">
+                <strong>{{ t('pwa.installFastTitle') }}</strong>
+                <span>{{ t('pwa.installFastDescription') }}</span>
+              </span>
+            </li>
+            <li class="pwa-install__benefit">
+              <span class="pwa-install__benefit-icon" aria-hidden="true">
+                <Maximize :size="16" :stroke-width="1.8" />
+              </span>
+              <span class="pwa-install__benefit-copy">
+                <strong>{{ t('pwa.installImmersiveTitle') }}</strong>
+                <span>{{ t('pwa.installImmersiveDescription') }}</span>
+              </span>
+            </li>
+            <li class="pwa-install__benefit">
+              <span class="pwa-install__benefit-icon" aria-hidden="true">
+                <BellRing :size="16" :stroke-width="1.8" />
+              </span>
+              <span class="pwa-install__benefit-copy">
+                <strong>{{ t('pwa.installNotifyTitle') }}</strong>
+                <span>{{ t('pwa.installNotifyDescription') }}</span>
+              </span>
+            </li>
+          </ul>
+
+          <p
+            id="pwa-install-hint"
+            ref="installHint"
+            class="pwa-install__hint"
+            role="note"
+            tabindex="-1"
+          >
+            <Info :size="16" :stroke-width="1.8" aria-hidden="true" />
+            <span>{{ t('pwa.iosInstallDescription') }}</span>
+          </p>
+
+          <button
+            class="pwa-install__primary"
+            type="button"
+            :disabled="installing"
+            @click="install"
+          >
+            <Download :size="19" :stroke-width="2" aria-hidden="true" />
+            <span>{{ installing ? t('pwa.installing') : t('pwa.installAction') }}</span>
+          </button>
+
+          <button
+            class="pwa-install__later"
+            type="button"
+            :disabled="installing"
+            @click="closeInstallDialog"
+          >
+            {{ t('pwa.installLater') }}
+          </button>
+        </section>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -308,7 +438,6 @@ async function retry(): Promise<void> {
   --pwa-tone-soft: var(--positive-soft);
 }
 
-.pwa-status__card--install,
 .pwa-status__card--update {
   --pwa-tone: var(--accent);
   --pwa-tone-soft: var(--accent-soft);
@@ -620,6 +749,404 @@ async function retry(): Promise<void> {
   .pwa-status-reveal-leave-to {
     opacity: 0;
     transform: translateX(-50%);
+  }
+}
+
+.pwa-install {
+  --pwa-install-overlay: #07110c80;
+  --pwa-install-sheet: #ffffff;
+  --pwa-install-grabber: #cdd7d1;
+  --pwa-install-app-icon: #e3faef;
+  --pwa-install-app-icon-line: #bcebd6;
+  --pwa-install-title: #102018;
+  --pwa-install-muted: #64736b;
+  --pwa-install-accent: #18d38d;
+  --pwa-install-close: #eff8f3;
+  --pwa-install-benefits: #eff8f3;
+  --pwa-install-benefit-icon: #d8f7e9;
+  --pwa-install-hint: #f7faf8;
+  --pwa-install-hint-line: #dce9e2;
+  --pwa-install-primary-text: #082a1d;
+
+  align-items: flex-end;
+  background: var(--pwa-install-overlay);
+  box-sizing: border-box;
+  display: flex;
+  height: 100dvh;
+  inset-block: 0;
+  left: 50%;
+  max-width: var(--app-max-width, 448px);
+  overflow: hidden;
+  position: fixed;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: calc(var(--layer-overlay, 80) + 2);
+}
+
+.pwa-install *,
+.pwa-install *::before,
+.pwa-install *::after {
+  box-sizing: border-box;
+}
+
+.pwa-install__sheet {
+  -webkit-overflow-scrolling: touch;
+  background: var(--pwa-install-sheet);
+  border-radius: 26px 26px 0 0;
+  box-shadow: 0 -8px 28px #00000024;
+  color: var(--pwa-install-title);
+  display: grid;
+  flex: 0 0 auto;
+  font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  gap: 14px;
+  grid-template-rows: 82px 44px 146px 42px 54px 38px;
+  height: min(540px, 100dvh);
+  max-height: 100dvh;
+  outline: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 20px max(22px, env(safe-area-inset-bottom, 0px));
+  position: relative;
+  scrollbar-width: none;
+  width: 100%;
+}
+
+.pwa-install__sheet::-webkit-scrollbar {
+  display: none;
+}
+
+.pwa-install__grabber {
+  background: var(--pwa-install-grabber);
+  border-radius: 2px;
+  height: 4px;
+  left: 50%;
+  position: absolute;
+  top: 6px;
+  transform: translateX(-50%);
+  width: 42px;
+}
+
+.pwa-install__header {
+  height: 82px;
+  min-width: 0;
+  position: relative;
+}
+
+.pwa-install__app-icon {
+  align-items: center;
+  background: var(--pwa-install-app-icon);
+  border: 1px solid var(--pwa-install-app-icon-line);
+  border-radius: 18px;
+  display: flex;
+  height: 64px;
+  justify-content: center;
+  left: 0;
+  overflow: hidden;
+  position: absolute;
+  top: 14px;
+  width: 64px;
+}
+
+.pwa-install__app-icon img {
+  display: block;
+  height: 32px;
+  object-fit: contain;
+  width: 50px;
+}
+
+.pwa-install__heading {
+  display: grid;
+  gap: 4px;
+  grid-template-rows: 32px 19px;
+  height: 55px;
+  left: 78px;
+  min-width: 0;
+  position: absolute;
+  right: 50px;
+  top: 18.5px;
+}
+
+.pwa-install__heading h2 {
+  color: var(--pwa-install-title);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 32px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pwa-install__heading > span {
+  color: var(--pwa-install-accent);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 19px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pwa-install__close {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--pwa-install-muted);
+  cursor: pointer;
+  display: flex;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: -4px;
+  top: 24px;
+  width: 44px;
+}
+
+.pwa-install__close-face {
+  align-items: center;
+  background: var(--pwa-install-close);
+  border-radius: 18px;
+  display: flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+
+.pwa-install__description {
+  color: var(--pwa-install-muted);
+  font-size: 14px;
+  font-weight: 500;
+  height: 44px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.pwa-install__benefits {
+  background: var(--pwa-install-benefits);
+  border-radius: 16px;
+  display: grid;
+  grid-template-rows: repeat(3, 43px);
+  height: 146px;
+  list-style: none;
+  margin: 0;
+  padding: 8px 14px;
+}
+
+.pwa-install__benefit {
+  height: 43px;
+  min-width: 0;
+  position: relative;
+}
+
+.pwa-install__benefit-icon {
+  align-items: center;
+  background: var(--pwa-install-benefit-icon);
+  border-radius: 9px;
+  color: var(--pwa-install-accent);
+  display: flex;
+  height: 30px;
+  justify-content: center;
+  left: 0;
+  position: absolute;
+  top: 6.5px;
+  width: 30px;
+}
+
+.pwa-install__benefit-copy {
+  display: grid;
+  gap: 1px;
+  grid-template-rows: 20px 17px;
+  height: 38px;
+  left: 42px;
+  min-width: 0;
+  position: absolute;
+  right: 0;
+  top: 2.5px;
+}
+
+.pwa-install__benefit-copy strong {
+  color: var(--pwa-install-title);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pwa-install__benefit-copy > span {
+  color: var(--pwa-install-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pwa-install__hint {
+  align-items: center;
+  background: var(--pwa-install-hint);
+  border: 1px solid var(--pwa-install-hint-line);
+  border-radius: 12px;
+  color: var(--pwa-install-muted);
+  display: flex;
+  font-size: 12px;
+  font-weight: 500;
+  gap: 8px;
+  height: 42px;
+  line-height: 18px;
+  margin: 0;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.pwa-install__hint > svg {
+  flex: 0 0 auto;
+}
+
+.pwa-install__hint > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pwa-install__primary,
+.pwa-install__later {
+  -webkit-tap-highlight-color: transparent;
+  align-items: center;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  justify-content: center;
+  padding: 0;
+}
+
+.pwa-install__primary {
+  background: var(--pwa-install-accent);
+  border-radius: 16px;
+  box-shadow: 0 6px 16px #18d38d2e;
+  color: var(--pwa-install-primary-text);
+  font-size: 16px;
+  font-weight: 700;
+  gap: 8px;
+  height: 54px;
+  line-height: 22px;
+  width: 100%;
+}
+
+.pwa-install__later {
+  background: transparent;
+  color: var(--pwa-install-muted);
+  font-size: 14px;
+  font-weight: 600;
+  height: 38px;
+  line-height: 20px;
+  min-height: 38px;
+  position: relative;
+  width: 100%;
+}
+
+.pwa-install__later::before {
+  content: '';
+  inset: -3px 0;
+  position: absolute;
+}
+
+.pwa-install__close:focus-visible,
+.pwa-install__primary:focus-visible,
+.pwa-install__later:focus-visible,
+.pwa-install__hint:focus {
+  outline: 2px solid var(--pwa-install-accent);
+  outline-offset: 2px;
+}
+
+.pwa-install__close:not(:disabled):active,
+.pwa-install__primary:not(:disabled):active,
+.pwa-install__later:not(:disabled):active {
+  transform: scale(.985);
+}
+
+.pwa-install__close:disabled,
+.pwa-install__primary:disabled,
+.pwa-install__later:disabled {
+  cursor: wait;
+  opacity: .58;
+}
+
+:global(html[data-theme='dark'] .pwa-install) {
+  --pwa-install-overlay: #000000b8;
+  --pwa-install-sheet: #101a15;
+  --pwa-install-grabber: #526159;
+  --pwa-install-app-icon: #183d2f;
+  --pwa-install-app-icon-line: #2e7057;
+  --pwa-install-title: #f4faf7;
+  --pwa-install-muted: #9ba8a1;
+  --pwa-install-close: #18261f;
+  --pwa-install-benefits: #18261f;
+  --pwa-install-benefit-icon: #214235;
+  --pwa-install-hint: #151f1a;
+  --pwa-install-hint-line: #293b32;
+}
+
+.pwa-install-modal-enter-active,
+.pwa-install-modal-leave-active {
+  transition: opacity 240ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.pwa-install-modal-enter-active .pwa-install__sheet,
+.pwa-install-modal-leave-active .pwa-install__sheet {
+  transition: transform 320ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.pwa-install-modal-enter-from,
+.pwa-install-modal-leave-to {
+  opacity: 0;
+}
+
+.pwa-install-modal-enter-from .pwa-install__sheet,
+.pwa-install-modal-leave-to .pwa-install__sheet {
+  transform: translateY(100%);
+}
+
+@media (max-width: 340px) {
+  .pwa-install__sheet {
+    padding-inline: 16px;
+  }
+
+  .pwa-install__heading h2 {
+    font-size: 20px;
+  }
+
+  .pwa-install__close {
+    right: 0;
+  }
+
+  .pwa-install__description {
+    font-size: 13px;
+  }
+
+  .pwa-install__benefits {
+    padding-inline: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pwa-install-modal-enter-active,
+  .pwa-install-modal-leave-active,
+  .pwa-install-modal-enter-active .pwa-install__sheet,
+  .pwa-install-modal-leave-active .pwa-install__sheet {
+    transition: none;
+  }
+
+  .pwa-install-modal-enter-from .pwa-install__sheet,
+  .pwa-install-modal-leave-to .pwa-install__sheet {
+    transform: none;
   }
 }
 </style>

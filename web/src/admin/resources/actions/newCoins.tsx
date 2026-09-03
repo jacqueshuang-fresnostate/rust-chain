@@ -5,6 +5,7 @@ import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
+import { isValidNewCoinLocalDateTime, requiredNewCoinLocalDateTimeMillis } from '../../newCoinDateTime';
 import {
   type AssetOption,
   AssetSelect,
@@ -42,6 +43,7 @@ export function NewCoinProjectRowActions({ record }: { record: ApiRecord }) {
 
 type NewCoinProjectValues = {
   assetId: string;
+  quoteAssetId: string;
   symbol: string;
   lifecycleStatus: string;
   totalSupply: string;
@@ -58,6 +60,7 @@ type NewCoinProjectValues = {
 
 const initialNewCoinProject: NewCoinProjectValues = {
   assetId: '',
+  quoteAssetId: '',
   symbol: '',
   lifecycleStatus: 'preheat',
   totalSupply: '',
@@ -90,8 +93,40 @@ const newCoinUnlockFeeBasisOptions: SemiSelectOption[] = [
   { value: 'profit', label: '按解禁收益计费' }
 ];
 
-function isNewCoinProjectCreatable(values: NewCoinProjectValues): boolean {
-  return Boolean(values.assetId.trim() && values.symbol.trim() && values.lifecycleStatus.trim() && values.totalSupply.trim() && values.issuePrice.trim() && values.unlockType.trim());
+function isPositiveIntegerInput(value: string): boolean {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
+}
+
+function hasValidNewCoinUnlockSchedule(values: NewCoinProjectValues): boolean {
+  if (values.unlockType === 'immediate_on_listing') {
+    return isValidNewCoinLocalDateTime(values.listedAt);
+  }
+  if (values.unlockType === 'fixed_time') {
+    return isValidNewCoinLocalDateTime(values.fixedUnlockAt);
+  }
+  if (values.unlockType === 'relative_period') {
+    return isPositiveIntegerInput(values.relativeUnlockSeconds);
+  }
+  return false;
+}
+
+export function isNewCoinProjectCreatable(values: NewCoinProjectValues): boolean {
+  const assetId = Number(values.assetId);
+  const quoteAssetId = Number(values.quoteAssetId);
+  return Boolean(
+    Number.isInteger(assetId) &&
+    assetId > 0 &&
+    Number.isInteger(quoteAssetId) &&
+    quoteAssetId > 0 &&
+    assetId !== quoteAssetId &&
+    values.symbol.trim() &&
+    values.lifecycleStatus.trim() &&
+    values.totalSupply.trim() &&
+    values.issuePrice.trim() &&
+    values.unlockType.trim() &&
+    hasValidNewCoinUnlockSchedule(values)
+  );
 }
 
 function AssetSymbolSelect({
@@ -138,12 +173,26 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
   const unlockFeeEnabled = booleanFromSelect(project.unlockFeeEnabled);
   const selectProjectAsset = (assetId: string) => {
     const selectedAsset = assetOptions.find((asset) => asset.id === assetId);
-    setProject({ ...project, assetId, symbol: selectedAsset?.symbol || project.symbol });
+    setProject((current) => ({
+      ...current,
+      assetId,
+      quoteAssetId: current.quoteAssetId === assetId ? '' : current.quoteAssetId,
+      symbol: selectedAsset?.symbol || current.symbol
+    }));
   };
   const selectProjectSymbol = (symbol: string) => {
     const selectedAsset = assetOptions.find((asset) => asset.symbol === symbol);
-    setProject({ ...project, assetId: selectedAsset?.id || project.assetId, symbol });
+    setProject((current) => {
+      const assetId = selectedAsset?.id || current.assetId;
+      return {
+        ...current,
+        assetId,
+        quoteAssetId: current.quoteAssetId === assetId ? '' : current.quoteAssetId,
+        symbol
+      };
+    });
   };
+  const quoteAssetOptions = assetOptions.filter((asset) => asset.id !== project.assetId);
 
   return (
     <FormModal actionText="添加新币项目" size="extra-wide" title="添加新币项目">
@@ -152,44 +201,54 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
           <div className="admin-action-form">
             <AssetSelect label="项目资产" loading={assetLoading} options={assetOptions} value={project.assetId} onChange={selectProjectAsset} />
+            <AssetSelect
+              label="计价资产"
+              loading={assetLoading}
+              options={quoteAssetOptions}
+              value={project.quoteAssetId}
+              onChange={(quoteAssetId) => setProject((current) => ({
+                ...current,
+                quoteAssetId: current.assetId === quoteAssetId ? '' : quoteAssetId
+              }))}
+            />
             <AssetSymbolSelect label="项目符号" loading={assetLoading} options={assetOptions} value={project.symbol} onChange={selectProjectSymbol} />
             <label>
               生命周期
               <AdminSelect
                 ariaLabel="生命周期"
-                onChange={(lifecycleStatus) => setProject({ ...project, lifecycleStatus })}
+                onChange={(lifecycleStatus) => setProject((current) => ({ ...current, lifecycleStatus }))}
                 optionList={newCoinLifecycleOptions}
                 value={project.lifecycleStatus}
               />
             </label>
-            <label>发行总量<AdminTextInput ariaLabel="发行总量" value={project.totalSupply} onChange={(totalSupply) => setProject({ ...project, totalSupply })} /></label>
-            <label>发行价<AdminTextInput ariaLabel="发行价" value={project.issuePrice} onChange={(issuePrice) => setProject({ ...project, issuePrice })} /></label>
+            <label>发行总量<AdminTextInput ariaLabel="发行总量" value={project.totalSupply} onChange={(totalSupply) => setProject((current) => ({ ...current, totalSupply }))} /></label>
+            <label>发行价<AdminTextInput ariaLabel="发行价" value={project.issuePrice} onChange={(issuePrice) => setProject((current) => ({ ...current, issuePrice }))} /></label>
             <label>
               解禁类型
               <AdminSelect
                 ariaLabel="解禁类型"
-                onChange={(unlockType) => setProject({ ...project, unlockType })}
+                onChange={(unlockType) => setProject((current) => ({ ...current, unlockType }))}
                 optionList={newCoinUnlockTypeOptions}
                 value={project.unlockType}
               />
             </label>
-            {project.unlockType === 'immediate_on_listing' ? <label>上市时间<AdminTextInput ariaLabel="上市时间" value={project.listedAt} onChange={(listedAt) => setProject({ ...project, listedAt })} /></label> : null}
-            {project.unlockType === 'fixed_time' ? <label>固定解禁时间<AdminTextInput ariaLabel="固定解禁时间" value={project.fixedUnlockAt} onChange={(fixedUnlockAt) => setProject({ ...project, fixedUnlockAt })} /></label> : null}
-            {project.unlockType === 'relative_period' ? <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={project.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setProject({ ...project, relativeUnlockSeconds })} /></label> : null}
-            <label>启用解禁矿工费<BooleanSelect label="启用解禁矿工费" value={project.unlockFeeEnabled} onChange={(unlockFeeEnabledValue) => setProject({ ...project, unlockFeeEnabled: unlockFeeEnabledValue })} /></label>
+            {project.unlockType === 'immediate_on_listing' ? <label>上市时间<AdminTextInput ariaLabel="上市时间" type="datetime-local" value={project.listedAt} onChange={(listedAt) => setProject((current) => ({ ...current, listedAt }))} /></label> : null}
+            {project.unlockType === 'fixed_time' ? <label>固定解禁时间<AdminTextInput ariaLabel="固定解禁时间" type="datetime-local" value={project.fixedUnlockAt} onChange={(fixedUnlockAt) => setProject((current) => ({ ...current, fixedUnlockAt }))} /></label> : null}
+            {project.unlockType === 'relative_period' ? <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={project.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setProject((current) => ({ ...current, relativeUnlockSeconds }))} /></label> : null}
+            <label>启用解禁矿工费<BooleanSelect label="启用解禁矿工费" value={project.unlockFeeEnabled} onChange={(unlockFeeEnabledValue) => setProject((current) => ({ ...current, unlockFeeEnabled: unlockFeeEnabledValue }))} /></label>
             {unlockFeeEnabled ? (
               <>
-                <label>解禁费率<AdminTextInput ariaLabel="解禁费率" value={project.unlockFeeRate} onChange={(unlockFeeRate) => setProject({ ...project, unlockFeeRate })} /></label>
+                <label>解禁费率<AdminTextInput ariaLabel="解禁费率" value={project.unlockFeeRate} onChange={(unlockFeeRate) => setProject((current) => ({ ...current, unlockFeeRate }))} /></label>
                 <label>
                   解禁费计费基准
                   <AdminSelect
                     ariaLabel="解禁费计费基准"
-                    onChange={(unlockFeeBasis) => setProject({ ...project, unlockFeeBasis })}
+                    onChange={(unlockFeeBasis) => setProject((current) => ({ ...current, unlockFeeBasis }))}
                     optionList={newCoinUnlockFeeBasisOptions}
                     value={project.unlockFeeBasis}
                   />
                 </label>
-                <AssetSelect label="解禁费资产" loading={assetLoading} options={assetOptions} value={project.unlockFeeAsset} onChange={(unlockFeeAsset) => setProject({ ...project, unlockFeeAsset })} />
+                <AssetSelect label="解禁费资产" loading={assetLoading} options={assetOptions} value={project.unlockFeeAsset} onChange={(unlockFeeAsset) => setProject((current) => ({ ...current, unlockFeeAsset }))} />
               </>
             ) : null}
           </div>
@@ -200,6 +259,7 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
             onConfirm={async (reason) => {
               const body: Record<string, unknown> = {
                 asset_id: requiredPositiveInteger(project.assetId, '项目资产'),
+                quote_asset_id: requiredPositiveInteger(project.quoteAssetId, '计价资产'),
                 symbol: requiredString(project.symbol, '项目符号'),
                 lifecycle_status: requiredString(project.lifecycleStatus, '生命周期'),
                 total_supply: requiredString(project.totalSupply, '发行总量'),
@@ -209,10 +269,10 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
                 reason
               };
               if (project.unlockType === 'immediate_on_listing') {
-                body.listed_at = requiredPositiveInteger(project.listedAt, '上市时间');
+                body.listed_at = requiredNewCoinLocalDateTimeMillis(project.listedAt, '上市时间');
               }
               if (project.unlockType === 'fixed_time') {
-                body.fixed_unlock_at = requiredPositiveInteger(project.fixedUnlockAt, '固定解禁时间');
+                body.fixed_unlock_at = requiredNewCoinLocalDateTimeMillis(project.fixedUnlockAt, '固定解禁时间');
               }
               if (project.unlockType === 'relative_period') {
                 body.relative_unlock_seconds = requiredPositiveInteger(project.relativeUnlockSeconds, '相对解禁秒数');

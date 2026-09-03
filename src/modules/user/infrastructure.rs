@@ -306,6 +306,87 @@ pub(crate) async fn load_user_invite_code(
     .map_err(AppError::from)
 }
 
+/// 在调用方事务中锁定当前用户关联的启用代理节点，返回服务端权威代理 ID。
+/// `agents.user_id` 是唯一关联来源，不接受请求中的代理标识；自身或任一祖先停用时按未命中处理。
+/// `FOR UPDATE` 与代理门户创建邀请码共用同一节点锁，使并发首次读取在检查和补建之间串行化。
+/// 本函数只取锁不创建邀请码，也不提交或回滚事务；未关联代理时返回 `None`。
+pub(crate) async fn lock_active_linked_agent_id_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+) -> AppResult<Option<u64>> {
+    sqlx::query_scalar(
+        r#"SELECT agents.id
+           FROM agents
+           INNER JOIN users ON users.id = agents.user_id
+           WHERE agents.user_id = ?
+             AND users.status = 'active'
+             AND agents.status = 'active'
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM agents ancestors
+                 WHERE (ancestors.path = agents.path
+                    OR agents.path LIKE CONCAT(ancestors.path, '/%'))
+                   AND ancestors.status <> 'active'
+             )
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+/// 在已锁定代理节点的事务中，读取该代理最新的 active 邀请码。
+/// 排序以创建时间倒序并用主键破同时刻平局，因此代理门户新建的码会立即成为手机端展示值。
+/// 响应的 `root_agent_id` 保持历史直属归属语义，即等于邀请码 `owner_id`；旧长码不做格式迁移。
+/// 查询不改状态和使用次数，未有 active 码时返回 `None`交由应用层补建。
+pub(crate) async fn load_latest_active_agent_invite_code_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_id: u64,
+) -> AppResult<Option<ReferralCodeResponse>> {
+    sqlx::query_as::<_, ReferralCodeResponse>(
+        r#"SELECT codes.id, codes.owner_type, codes.owner_id, codes.code,
+                  codes.usage_limit, codes.used_count, codes.status,
+                  codes.owner_id AS root_agent_id, codes.created_at
+           FROM invite_codes codes
+           WHERE codes.owner_type = 'agent'
+             AND codes.owner_id = ?
+             AND codes.status = 'active'
+           ORDER BY codes.created_at DESC, codes.id DESC
+           LIMIT 1"#,
+    )
+    .bind(agent_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+/// 在已锁定所属代理的事务中插入一枚 active 代理邀请码。
+/// 码文由上层的共享安全随机生成器产生，本层仅对 MySQL 1062 全局唯一键冲突返回 `false`，
+/// 让调用方在有界次数内换码重试；其他数据库错误立即上抛。
+/// 不设使用上限，不停用历史码，也不增加使用次数；事务的提交仍由应用层负责。
+pub(crate) async fn insert_active_agent_invite_code_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_id: u64,
+    code: &str,
+) -> AppResult<bool> {
+    let result = sqlx::query(
+        r#"INSERT INTO invite_codes (owner_type, owner_id, code, status)
+           VALUES ('agent', ?, ?, 'active')"#,
+    )
+    .bind(agent_id)
+    .bind(code)
+    .execute(&mut **tx)
+    .await;
+
+    match result {
+        Ok(_) => Ok(true),
+        Err(error) if is_duplicate_key(&error) => Ok(false),
+        Err(error) => Err(AppError::from(error)),
+    }
+}
+
 /// 写入一枚用户邀请码，按 `existing_code_id` 是否给出在改写与新建两条分支间切换。
 /// 改写分支的 WHERE 同时限定主键、`owner_type = 'user'` 与 `owner_id`，
 /// 三者必须同时匹配才会生效，避免传错主键时改掉他人或代理的邀请码。

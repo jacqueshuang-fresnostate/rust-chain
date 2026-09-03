@@ -1,0 +1,5 @@
+{"file":".trellis/spec/admin/ui-system.md","reason":"Review form controls, validation, accessibility, Chinese labels, and required Admin verification."}
+{"file":".trellis/spec/admin/resource-response-contract.md","reason":"Ensure the fix does not weaken strict resource contracts or alter unrelated response handling."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review focused backend coverage and preserve route/application/infrastructure boundaries."}
+{"file":".trellis/spec/backend/new-coin-mobile-contract.md","reason":"Check quote asset and unlock time behavior remains compatible with existing user-side contracts."}
+{"file":".trellis/tasks/09-03-admin-new-coin-asset-time-fix/research/repo-findings.md","reason":"Verify every reported root cause and acceptance criterion against code and tests."}

@@ -206,6 +206,26 @@ test('320px 三列仓位与资产标签在本地单元内省略并保留完整 t
   }
 })
 
+test('当前仓位三枚芯片使用 Pencil 内容宽度、双轴居中与精确字重', () => {
+  const chipRule = positionRecord.match(/\.margin-position-record__chip \{([^}]*)\}/)?.[1]
+  assert.ok(chipRule)
+  assert.match(positionRecord, /class="margin-position-record__chip"/)
+  assert.match(positionRecord, /\.margin-position-record__chips \{[^}]*align-items: flex-start;[^}]*flex-wrap: wrap;[^}]*gap: 7px;[^}]*max-width: 100%;[^}]*min-width: 0;/)
+  assert.match(chipRule, /align-items: center;/)
+  assert.match(chipRule, /border-radius: 6px;/)
+  assert.match(chipRule, /display: inline-flex;/)
+  assert.match(chipRule, /flex: 0 1 auto;/)
+  assert.match(chipRule, /font-family: "Noto Sans SC"/)
+  assert.match(chipRule, /font-size: 13px;/)
+  assert.match(chipRule, /font-weight: 650;/)
+  assert.match(chipRule, /justify-content: center;/)
+  assert.match(chipRule, /max-width: 100%;/)
+  assert.match(chipRule, /padding: 4px 7px;/)
+  assert.match(chipRule, /white-space: nowrap;/)
+  assert.match(chipRule, /width: fit-content;/)
+  assert.doesNotMatch(positionRecord, /\.margin-position-record__chips span/)
+})
+
 test('委托类型栏、等待点、标签顺序和操作按钮与 390px Pencil 一致', () => {
   assert.match(orders, /\.orders-type-tabs \{[\s\S]*?gap: 18px;[\s\S]*?height: 44px;[\s\S]*?padding: 4px 16px;/)
   assert.match(orders, /\.orders-type-tabs button \{[\s\S]*?border-radius: 18px;[\s\S]*?font-size: 14px;[\s\S]*?padding: 7px 11px;/)
@@ -308,6 +328,18 @@ test('DecimalText 精确重建杠杆数量、历史收益率与终态边界', ()
   assert.match(transactionCore, /decimalDivide\(dividend, divisor, RECORD_DIVISION_SCALE\)/)
 })
 
+test('当前仓位从既有共享 ticker 响应式投影同一时点的价格、盈亏和收益率', () => {
+  assert.match(orders, /import \{ resolveMarginPositionLiveProjection \} from '@\/core\/marginRiskMetrics'/)
+  assert.match(orders, /const live = resolveMarginPositionLiveProjection\(position, market\.tickerFor\(symbol\), risk\)/)
+  assert.match(orders, /pnl: signed\(live\.unrealizedPnlText\)/)
+  assert.match(orders, /returnRate: percent\(live\.returnRateText\)/)
+  assert.match(orders, /pnlTone: pnlTone\(live\.unrealizedPnlText\)/)
+  assert.match(orders, /orders\.markPrice'\), value: decimal\(live\.markPriceText\)/)
+  assert.equal(orders.match(/market\.startLiveUpdates\('transaction-records-assets'\)/g)?.length, 1)
+  assert.equal(orders.match(/market\.stopLiveUpdates\('transaction-records-assets'\)/g)?.length, 1)
+  assert.doesNotMatch(orders, /watch\([^)]*market\.tickers[\s\S]*?fetchMarginPositionRisk/)
+})
+
 test('现货与杠杆按真实时间稳定混排，合约标题标准化且关联页消费真实接口', () => {
   const rows = mergeTransactionOrders(
     [spotOrder('a', 2_000), spotOrder('b', 1_000)],
@@ -386,7 +418,7 @@ test('仓位保证金率、方向色、灰色三按钮与资产 3×2 字段使�
   assert.match(positionRecord, /\.margin-position-record__title \{[^}]*flex: 0 0 auto;[^}]*max-width: 70%;/)
   assert.match(positionRecord, /\.margin-position-record__pnl \{[^}]*flex: 1 1 0;/)
   assert.match(positionRecord, /margin-position-record__pnl[\s\S]*?<strong>[\s\S]*?<small v-if="!valuesHidden">\(\{\{ returnRate \}\}\)<\/small>/)
-  assert.match(positionRecord, /span\.is-negative \{[\s\S]*?var\(--records-chip-negative\)/)
+  assert.match(positionRecord, /\.margin-position-record__chip\.is-negative \{[\s\S]*?var\(--records-chip-negative\)/)
   assert.doesNotMatch(positionRecord, /is-primary/)
   assert.match(positionRecord, /__actions button \{[\s\S]*?background: var\(--records-button\);/)
   assert.match(assetRecord, /import \{ ChevronRight \}/)

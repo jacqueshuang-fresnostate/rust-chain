@@ -28,14 +28,14 @@ function openProductHelp(): void {
 
 <template>
   <main
-    class="page page--plain product-hub"
+    class="page page--plain pencil-page product-hub"
     data-pencil-source="Z0B0N6 zMsKE"
     data-product-workspace="live"
   >
-    <PageHeader :back="true" :pencil="true" :title="t('products.title')" :subtitle="t('products.introDescription')">
+    <PageHeader :back="true" :pencil="true" :title="t('products.title')">
       <template #actions>
-        <button class="icon-button" type="button" :aria-label="t('news.product')" @click="openProductHelp">
-          <Ellipsis :size="20" aria-hidden="true" />
+        <button class="icon-button" type="button" :aria-label="t('products.hubHelp')" @click="openProductHelp">
+          <Ellipsis :size="18" aria-hidden="true" />
         </button>
       </template>
     </PageHeader>
@@ -87,6 +87,7 @@ function openProductHelp(): void {
   background: var(--page);
   color: var(--text);
   display: block;
+  font-family: var(--font-geist-sans), "PingFang SC", "Microsoft YaHei", sans-serif;
   gap: 0;
   min-width: 0;
 }
@@ -94,6 +95,7 @@ function openProductHelp(): void {
 .product-hub__body {
   display: grid;
   gap: 18px;
+  grid-template-rows: 128px 48px;
   min-width: 0;
   padding: 8px 20px calc(20px + env(safe-area-inset-bottom));
 }
@@ -101,6 +103,8 @@ function openProductHelp(): void {
 .product-hub__list {
   display: grid;
   gap: 0;
+  grid-template-rows: repeat(2, 64px);
+  height: 128px;
   min-width: 0;
 }
 
@@ -108,8 +112,8 @@ function openProductHelp(): void {
   align-items: center;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
+  box-shadow: none;
   color: var(--text);
   display: flex;
   gap: 14px;
@@ -121,50 +125,49 @@ function openProductHelp(): void {
   width: 100%;
 }
 
-.product-card__icon {
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-  color: var(--positive);
-  display: flex;
+.product-hub__row .product-card__icon {
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: none;
+  color: var(--text);
+  display: grid;
   flex: 0 0 44px;
   height: 44px;
-  justify-content: center;
+  place-items: center;
   width: 44px;
-}
-
-.product-hub__row[data-product="news"] .product-card__icon {
-  color: var(--accent);
 }
 
 .product-hub__copy {
   display: grid;
   flex: 1 1 auto;
   gap: 3px;
+  height: 41px;
   min-width: 0;
 }
 
 .product-hub__copy strong {
-  font-size: 14px;
-  line-height: 20px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 22px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .product-hub__copy small {
-  color: var(--muted);
+  color: var(--product-hub-muted);
   font-size: 11px;
+  font-weight: 450;
   line-height: 16px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.product-hub__row > svg,
-.product-hub__help > svg:last-child {
-  color: var(--muted);
+.product-hub__row > svg {
+  color: var(--product-hub-muted);
   flex: 0 0 auto;
 }
 
@@ -172,14 +175,16 @@ function openProductHelp(): void {
   align-items: center;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
-  color: var(--muted);
+  box-shadow: none;
+  color: var(--text);
   display: flex;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 650;
   gap: 10px;
   height: 48px;
   justify-content: flex-start;
+  line-height: 19px;
   min-height: 48px;
   min-width: 0;
   padding: 0;
@@ -188,12 +193,18 @@ function openProductHelp(): void {
 }
 
 .product-hub__help > svg:first-child {
-  color: var(--positive);
+  color: var(--text);
   flex: 0 0 auto;
 }
 
+.product-hub__help > svg:last-child {
+  color: var(--product-hub-muted);
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 .product-hub__help span {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -204,12 +215,6 @@ function openProductHelp(): void {
 .product-hub__help:focus-visible {
   box-shadow: inset 0 0 0 2px var(--focus);
   outline: 0;
-}
-
-@media (max-width: 340px) {
-  .product-hub__body {
-    padding-inline: 16px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

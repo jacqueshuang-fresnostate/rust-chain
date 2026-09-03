@@ -51,6 +51,7 @@ defineEmits<{
       <span
         v-for="(chip, index) in chips"
         :key="`${chip.label}-${index}`"
+        class="margin-position-record__chip"
         :class="`is-${chip.tone || 'neutral'}`"
       >{{ chip.label }}</span>
     </div>
@@ -156,26 +157,42 @@ defineEmits<{
 .is-muted { color: var(--records-muted); }
 
 .margin-position-record__chips {
+  align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  max-width: 100%;
+  min-width: 0;
 }
 
-.margin-position-record__chips span {
+.margin-position-record__chip {
+  align-items: center;
   background: var(--records-chip);
   border-radius: 6px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 1 auto;
+  font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 13px;
-  font-weight: 400;
+  font-weight: 650;
+  justify-content: center;
   line-height: 18px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 4px 7px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: fit-content;
 }
 
-.margin-position-record__chips span.is-positive {
+.margin-position-record__chip.is-positive {
   background: var(--records-chip-positive);
   color: var(--records-positive);
 }
 
-.margin-position-record__chips span.is-negative {
+.margin-position-record__chip.is-negative {
   background: var(--records-chip-negative);
   color: var(--records-negative);
 }

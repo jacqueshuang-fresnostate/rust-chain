@@ -1,0 +1,30 @@
+{
+  "id": "mobile-product-hub-pencil-parity",
+  "name": "mobile-product-hub-pencil-parity",
+  "title": "手机端产品中心 Pencil 1:1 对齐",
+  "description": "Align the mobile Product Hub exactly with Pencil frames Z0B0N6 and zMsKE.",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "Product Hub view, product-only selected-page theme variables, and focused parity tests",
+  "package": "mobile",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-09-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/src/views/ProductHubView.vue",
+    "mobile/src/styles/pencil-selected-pages.css",
+    "mobile/tests/pencil-trading-product-selected-parity.test.ts"
+  ],
+  "notes": "Focused implementation, independent review, and 320/390/448 light/dark runtime verification completed.",
+  "meta": {}
+}

@@ -8,6 +8,7 @@ import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
 import { authStore } from '../../auth/authStore';
 import { batchStatusSummary } from './actions/agents';
+import { isNewCoinProjectCreatable } from './actions/newCoins';
 import { buildAdminResourceRowContract } from './AdminResourcePage';
 import { ResourcePage, resourceConfigs, type ResourceConfig } from './resourceConfigs';
 
@@ -166,6 +167,34 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, dialog
   });
 }
 
+async function selectSemiOptionForControl(
+  user: ReturnType<typeof userEvent.setup>,
+  dialog: HTMLElement,
+  label: string,
+  optionLabel: string,
+  index = 0
+) {
+  const control = semiSelectByLabel(dialog, label, index);
+  await user.click(control);
+  const optionListId = control.getAttribute('aria-controls');
+  expect(optionListId).toBeTruthy();
+  const option = await waitFor(() => {
+    const optionList = document.getElementById(String(optionListId));
+    expect(optionList).toBeInTheDocument();
+    const matched = [...(optionList?.querySelectorAll('.semi-select-option') ?? [])]
+      .find((item) => item.textContent === optionLabel) as HTMLElement | undefined;
+    expect(matched).toBeDefined();
+    return matched as HTMLElement;
+  });
+  fireEvent.mouseEnter(option);
+  fireEvent.mouseDown(option);
+  fireEvent.mouseUp(option);
+  fireEvent.click(option);
+  await waitFor(() => {
+    expect(semiSelectByLabel(dialog, label, index)).toHaveTextContent(optionLabel);
+  });
+}
+
 const assetRows = [
   { id: 11, symbol: 'BTC', name: 'Bitcoin', status: 'active' },
   { id: 12, symbol: 'USDT', name: 'Tether', status: 'active' },
@@ -260,6 +289,66 @@ function mockEmptyResource() {
 }
 
 describe('resourceConfigs create actions', () => {
+  it('仅在计价资产不同且当前解禁配置合法时允许创建新币项目', () => {
+    const validProject = {
+      assetId: '11',
+      quoteAssetId: '12',
+      symbol: 'BTC',
+      lifecycleStatus: 'preheat',
+      totalSupply: '1000000',
+      issuePrice: '1',
+      unlockType: 'fixed_time',
+      listedAt: '',
+      fixedUnlockAt: '2026-11-10T08:42',
+      relativeUnlockSeconds: '',
+      unlockFeeEnabled: 'false',
+      unlockFeeRate: '',
+      unlockFeeBasis: 'market_value',
+      unlockFeeAsset: ''
+    };
+
+    expect(isNewCoinProjectCreatable(validProject)).toBe(true);
+    expect(isNewCoinProjectCreatable({ ...validProject, quoteAssetId: '' })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, quoteAssetId: '0' })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, quoteAssetId: '-1' })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, quoteAssetId: '1.5' })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, quoteAssetId: validProject.assetId })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, fixedUnlockAt: '' })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, fixedUnlockAt: 'invalid' })).toBe(false);
+    expect(isNewCoinProjectCreatable({ ...validProject, unlockType: 'immediate_on_listing', fixedUnlockAt: '' })).toBe(false);
+    expect(isNewCoinProjectCreatable({
+      ...validProject,
+      unlockType: 'immediate_on_listing',
+      listedAt: 'invalid',
+      fixedUnlockAt: ''
+    })).toBe(false);
+    expect(isNewCoinProjectCreatable({
+      ...validProject,
+      unlockType: 'immediate_on_listing',
+      listedAt: '2026-11-10T09:15',
+      fixedUnlockAt: ''
+    })).toBe(true);
+    expect(isNewCoinProjectCreatable({ ...validProject, unlockType: 'relative_period', fixedUnlockAt: '' })).toBe(false);
+    expect(isNewCoinProjectCreatable({
+      ...validProject,
+      unlockType: 'relative_period',
+      fixedUnlockAt: '',
+      relativeUnlockSeconds: '0'
+    })).toBe(false);
+    expect(isNewCoinProjectCreatable({
+      ...validProject,
+      unlockType: 'relative_period',
+      fixedUnlockAt: '',
+      relativeUnlockSeconds: '1.5'
+    })).toBe(false);
+    expect(isNewCoinProjectCreatable({
+      ...validProject,
+      unlockType: 'relative_period',
+      fixedUnlockAt: '',
+      relativeUnlockSeconds: '86400'
+    })).toBe(true);
+  });
+
   it('adds an email filter beside every user ID filter', () => {
     const emailUnsupportedByBackend = new Set(['walletWithdrawals', 'walletDeposits']);
     const configsWithoutEmail = Object.entries(resourceConfigs)
@@ -1919,6 +2008,11 @@ describe('resourceConfigs create actions', () => {
 
   it('creates convert pairs, risk rules, new coin projects, and user row actions', async () => {
     const user = userEvent.setup();
+    const activeAssetsWithTransfersDisabled = assetRows.map((asset) =>
+      asset.id === 11 || asset.id === 12
+        ? { ...asset, deposit_enabled: false, withdraw_enabled: false }
+        : asset
+    );
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
       await user.type(reasonInputs.at(-1)!, reason);
@@ -1928,7 +2022,7 @@ describe('resourceConfigs create actions', () => {
 
     listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
       if (endpoint === '/admin/api/v1/assets') {
-        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+        return { rows: activeAssetsWithTransfersDisabled, raw: { [responseKey]: activeAssetsWithTransfersDisabled } };
       }
 
       if (endpoint === '/admin/api/v1/convert/pairs') {
@@ -2092,17 +2186,28 @@ describe('resourceConfigs create actions', () => {
     await user.click(await screen.findByRole('button', { name: '添加新币项目' }));
     dialog = await findActionSheet('添加新币项目');
     expectCreateModalSize(dialog, 'extra-wide');
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenCalledWith(
+        '/admin/api/v1/assets',
+        'assets',
+        { status: 'active', limit: 100 },
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+    });
     semiSelectByLabel(dialog, '项目资产');
+    semiSelectByLabel(dialog, '计价资产');
     semiSelectByLabel(dialog, '项目符号');
     expect(semiSelectByLabel(dialog, '生命周期')).toHaveTextContent('预热');
     semiInputByLabel(dialog, '发行总量');
     semiInputByLabel(dialog, '发行价');
     expect(semiSelectByLabel(dialog, '解禁类型')).toHaveTextContent('固定时间解禁');
+    expect(within(dialog).getByLabelText('固定解禁时间')).toHaveAttribute('type', 'datetime-local');
     semiSelectByLabel(dialog, '启用解禁矿工费');
     expect(within(dialog).queryByLabelText('解禁费计费基准')).not.toBeInTheDocument();
     await selectSemiOption(user, dialog, '生命周期', '申购中');
     await selectSemiOption(user, dialog, '生命周期', '预热');
     await selectSemiOption(user, dialog, '解禁类型', '上市即解禁');
+    expect(within(dialog).getByLabelText('上市时间')).toHaveAttribute('type', 'datetime-local');
     await selectSemiOption(user, dialog, '解禁类型', '固定时间解禁');
     await selectSemiOption(user, dialog, '项目资产', 'BTC - Bitcoin（ID: 11）');
     await selectSemiOption(user, dialog, '项目符号', 'BTC - Bitcoin（ID: 11）');
@@ -2112,8 +2217,40 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, dialog, '解禁费资产', 'USDT - Tether（ID: 12）');
     await user.type(within(dialog).getByLabelText('发行总量'), '1000000');
     await user.type(within(dialog).getByLabelText('发行价'), '1');
-    await user.type(within(dialog).getByLabelText('固定解禁时间'), '1794309753000');
     await user.type(within(dialog).getByLabelText('解禁费率'), '0.04');
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    await user.click(semiSelectByLabel(dialog, '计价资产'));
+    const quoteOptionList = [...document.querySelectorAll('.semi-select-option-list')].at(-1) as HTMLElement;
+    const quoteOptions = [...quoteOptionList.querySelectorAll('.semi-select-option')];
+    expect(quoteOptions.some((option) => option.textContent === 'BTC - Bitcoin（ID: 11）')).toBe(false);
+    const quoteOption = quoteOptions.find((option) => option.textContent === 'USDT - Tether（ID: 12）') as HTMLElement;
+    expect(quoteOption).toBeInTheDocument();
+    fireEvent.mouseDown(quoteOption);
+    fireEvent.mouseUp(quoteOption);
+    fireEvent.click(quoteOption);
+    await waitFor(() => expect(semiSelectByLabel(dialog, '计价资产')).toHaveTextContent('USDT - Tether（ID: 12）'));
+    await selectSemiOptionForControl(user, dialog, '项目资产', 'USDT - Tether（ID: 12）');
+    await waitFor(() => {
+      expect(semiSelectByLabel(dialog, '计价资产')).toHaveTextContent('请选择资产');
+      expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    });
+    await selectSemiOptionForControl(user, dialog, '项目资产', 'BTC - Bitcoin（ID: 11）');
+    await selectSemiOptionForControl(user, dialog, '计价资产', 'USDT - Tether（ID: 12）');
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    await selectSemiOption(user, dialog, '解禁类型', '上市即解禁');
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('上市时间'), { target: { value: '2026-11-10T09:15' } });
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeEnabled();
+    await selectSemiOption(user, dialog, '解禁类型', '相对周期解禁');
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('相对解禁秒数'), { target: { value: '0' } });
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('相对解禁秒数'), { target: { value: '86400' } });
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeEnabled();
+    await selectSemiOption(user, dialog, '解禁类型', '固定时间解禁');
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText('固定解禁时间'), { target: { value: '2026-11-10T08:42' } });
+    expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeEnabled();
     await user.click(within(dialog).getByRole('button', { name: '提交添加新币项目' }));
     await confirmWithReason('create new coin');
     await waitFor(() => {
@@ -2127,8 +2264,9 @@ describe('resourceConfigs create actions', () => {
       lifecycle_status: 'preheat',
       total_supply: '1000000',
       issue_price: '1',
+      quote_asset_id: 12,
       unlock_type: 'fixed_time',
-      fixed_unlock_at: 1794309753000,
+      fixed_unlock_at: new Date(2026, 10, 10, 8, 42).getTime(),
       unlock_fee_enabled: true,
       unlock_fee_rate: '0.04',
       unlock_fee_basis: 'profit',

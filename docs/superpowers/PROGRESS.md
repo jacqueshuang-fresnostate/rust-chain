@@ -8327,3 +8327,73 @@
 - 修改文件：`mobile/src/core/{decimal,financialDisplay,todayReturnPresentation,walletLedger,tradeFinancial,secondsFinancial}.ts`、`mobile/src/views/{Home,WalletLedger,Withdraw,Loan,Earn,NewCoinDetail,QuickRecharge,Trade,Seconds}View.vue`、`mobile/tests/{financial-display,today-return,finance-decimal-lifecycle,wallet-ledger-classification,trade-seconds-decimal-derivations}.test.ts`、`web/src/shared/{decimal,numberFormat}.ts`、`web/src/shared/AmountText.tsx`、`web/src/admin/resources/{AdminResourcePage,resourceConfigs}.tsx` 及测试、`.trellis/spec/{mobile/backend-integration,admin/ui-system}.md`、`.trellis/tasks/09-02-financial-display-precision-governance/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Mobile `npm --prefix mobile run release:gate` 全链路通过（全量测试、类型检查、PWA/Tauri 构建与产物、Bundle、源码尺寸和关键测试质量门禁）；Admin `typecheck`、`lint`、全量测试 61 文件/437 项、生产策略 15 项、覆盖率 23 项、生产构建和 Bundle 预算全部通过；`git diff --check` 与 Trellis implement/check 上下文校验通过。
 - 后续事项：无代码事项；本轮未提交或推送，等待用户明确指令。
+
+## 2026-09-03 03:47 - 修复杠杆仓位芯片与实时收益投影
+
+- 完成内容：为交易记录当前仓位的方向、保证金模式和倍数标签新增独立 `.margin-position-record__chip`，锁定 Pencil 的 `4px 7px` 内边距、6px 圆角、13px Noto Sans SC、650 字重、内容宽度、双轴居中、单行和窄屏收缩/换行边界。新增纯 `DecimalText` 实时展示投影：仅当共享 ticker 含合法正数精确价格且观测时间不早于风险快照时，按后端同源多空公式和 18 位除法同步重建标记价、未实现盈亏与收益率；旧/缺失/非法 ticker、无入场价或不可比较时间继续原样显示服务端风险三元组。`OrdersView` 复用既有共享 ticker 租约响应式消费该投影，不增加 REST 请求，不改变清算、平仓弹窗或后端计算。
+- 修改文件：`mobile/src/components/MarginPositionRecord.vue`、`mobile/src/core/marginRiskMetrics.ts`、`mobile/src/views/OrdersView.vue`、`mobile/tests/{margin-risk-metrics,transaction-records-pencil-parity}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 34/34、Mobile 全量测试 642/642 通过；`npm --prefix mobile run release:gate` 全链路通过（生产/测试类型检查、PWA/Tauri 构建与产物检查、Bundle、源码尺寸和关键测试质量门禁）；Trellis task context 7/7 条校验及 `git diff --check` 通过。
+- 后续事项：无；保留且未触碰无关的 `mobile/pencil/hippo-mobile-uiux.pen` 自动保存改动，本轮未提交或推送。
+
+## 2026-09-03 05:33 - 统一代理邀请码并补齐下级用户资产交易视图
+
+- 完成内容：统一普通用户与代理新建邀请码为六位大写字母数字安全随机规则和全局唯一冲突有界重试；代理关联用户的 `/referral/my-code` 在代理行锁事务内读取或补建最新 active 代理码，保留普通用户语义及历史长代理码；新增三组 token-derived 子树只读接口，分页返回团队用户现货/杠杆资产、杠杆仓位和含 `opened` 的全部秒合约订单，并在行集与 total SQL 内重复范围谓词；代理门户新增独立“资产与订单”详情页、三标签懒加载缓存、中文筛选/状态、服务端分页、Decimal 展示、同步提示及完整 OpenAPI/规范/测试。
+- 修改文件：`src/modules/{admin/infrastructure.rs,admin/infrastructure/users.rs,auth/infrastructure.rs,user/{application,infrastructure,service}.rs,agent/{application,infrastructure,presentation,routes,service}.rs}`、`src/openapi.rs`、`src/openapi/agent_portal.rs`、`tests/{agent_routes,openapi_routes}.rs`、`tests/unit_src/{src_modules_agent_routes_tests,src_modules_user_routes_tests}.rs`、`web/src/api/{agent.ts,agent.test.ts}`、`web/src/agent/{pages.tsx,pages.test.tsx,routes.tsx,routes.test.tsx,UserPortfolioPage.tsx,UserPortfolioPage.test.tsx}`、`web/src/layouts/{AgentLayout.tsx,AgentLayout.test.tsx}`、`web/src/shared/StatusTag.tsx`、`.trellis/spec/backend/agent-hierarchy.md`、`.trellis/tasks/09-03-agent-referral-user-portfolio-visibility/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：一次性 MySQL 9.3 空库完整应用 migrations 1–120 后，`cargo test --test agent_routes` 21/21、`cargo test --test user_routes user_referral` 4/4 通过，覆盖新六码门户创建与绑定、并发 my-code、最新 active 同步、旧长码绑定、父子树授权、opened/状态筛选/total 和只读快照；Rust `cargo fmt --all -- --check`、`cargo check`、`cargo clippy --all-targets --all-features -- -D warnings`、代理路由单元 3/3、邀请码生成单元 1/1、Agent OpenAPI 契约测试 1/1 通过。Admin Web `typecheck`、`lint`、全量测试 62 文件/444 项、生产策略 15 项、覆盖率 23 项、生产构建与 Bundle 预算通过；`git diff --check` 通过。
+- 后续事项：无；一次性 MySQL 已停止并清理，保留全部既有 Mobile、Pencil 和上一任务未提交改动，本轮未提交或推送。
+
+## 2026-09-03 06:12 - 独立复核代理邀请码与用户金融视图
+
+- 完成内容：独立复读任务、研究、实现/检查上下文及相关规范并审查完整功能差异；修复邀请码状态启停未与“我的邀请码”读取协调且同值更新误报不存在的问题，统一为 `invite code -> agent` 锁序的单事务并补齐最新 active 回退；将六位码生成改为无取模偏差的安全拒绝采样。金融视图新增资产精度后端 fail-closed、Web 严格行合同、OpenAPI required/nullable 与数值边界；资产表补显 Logo，秒合约 `opened` 改为业务准确的“进行中”。测试扩充三级子树、自身/父级/兄弟/其他根/未归属/不存在、伪造代理参数、双钱包只读、Decimal/毫秒、脏精度、服务端分页、状态幂等及 active 回退。
+- 修改文件：`src/modules/{user/service.rs,agent/{application,infrastructure}.rs}`、`src/openapi/agent_portal.rs`、`tests/{agent_routes,openapi_routes}.rs`、`web/src/{api/{agent.ts,agent.test.ts},agent/{UserPortfolioPage.tsx,UserPortfolioPage.test.tsx},shared/StatusTag.tsx}`、`.trellis/spec/backend/agent-hierarchy.md`、`.trellis/tasks/09-03-agent-referral-user-portfolio-visibility/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：本机 MySQL 9.3 唯一临时库完整应用 migrations 1–120，邀请码并发/最新码与金融子树两项集成测试 2/2 通过并清库；`cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、Clippy `-D warnings`、Rust 单元 329/329、架构 11/11、Agent OpenAPI 1/1 通过。Admin Web `typecheck`、`lint`、聚焦 9/9、全量 62 文件/446 项、生产策略 15/15、覆盖率 23/23、生产构建与 Bundle 预算通过；最终 `git diff --check` 与 Trellis 上下文校验通过。
+- 后续事项：无；未改动既有 Mobile/Pencil 与 `.trellis/tasks/09-03-margin-position-chips-live-pnl/` 内容，未提交或推送。
+
+## 2026-09-03 07:00 - 对齐手机端 PWA 安装弹窗 Pencil 选稿
+
+- 完成内容：将 PWA 安装态从状态浮岛独立为映射 `NROQD/FwXCx` 与 `Tcgl6/V04kP` 的底部模态层，锁定 390px 下 540px Sheet、关键子区尺寸和明暗色板；复用 `useModalDialog` 实现遮罩/Escape 关闭、Tab 捕获、背景滚动锁与焦点恢复，保留 Android/Chromium 原生安装，iOS CTA 聚焦可读手动安装提示。更新、离线、离线就绪和错误继续使用原双层玻璃状态浮岛及既有优先级。
+- 修改文件：`mobile/src/components/PwaStatus.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{pwa-status-immersive,pwa}.test.ts`、`.trellis/tasks/09-03-mobile-pwa-install-pencil-parity/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：限时聚焦 PWA/模态/基础回归 24/24 通过；`npm --prefix mobile run type-check` 与 `npm --prefix mobile run type-check:tests` 均通过。按用户最新指令未运行全量 release gate；本地预览进程已停止。
+- 后续事项：主会话继续完成真实安装资格下的 390px 明暗主题浏览器视觉核验；本轮未编辑 `.pen`，未提交或推送。
+
+## 2026-09-03 07:25 - 独立复核并修复 PWA 安装弹窗 Pencil 对齐
+
+- 完成内容：核对 PRD、Pencil 节点真值、Mobile 规范、无障碍、i18n 与原 PWA 状态路径；修复深色 `AgFcl` 遮罩、全局 44px 按钮 `min-height` 覆盖 38px “稍后提醒”可见面、标题负字距、Sheet/主按钮阴影、19px 图标及安装失败反馈优先级；新增基于真实全局样式级联的回归合同，同步任务研究与 Mobile PWA 规范。
+- 修改文件：`mobile/src/components/PwaStatus.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{pwa-status-immersive,pwa}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/09-03-mobile-pwa-install-pencil-parity/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦 PWA/模态/原型回归 43/43 通过；Mobile 生产与测试类型检查、源码/测试治理、PWA 生产构建、Trellis 上下文校验与 `git diff --check` 均通过；390×1144 运行时确认浅色遮罩 `rgba(7,17,12,.5)`、深色 `rgba(0,0,0,.72)`、Sheet 390×540（y=604）、稍后按钮 350×38 且水平零溢出。
+- 后续事项：无；保留全部无关脏改动，未编辑 `.pen`，未提交或推送。
+
+## 2026-09-03 07:37 - 完成 PWA 安装弹窗最终运行时验收
+
+- 完成内容：再次以 Pencil `NROQD`、`Tcgl6` 导出图逐屏核对 390×1144 浅色与深色安装弹窗；补充 390×480 短屏滚动和 iOS 安装引导交互验收，确认短屏仅 Sheet 内滚动、底部操作可完整触达，iOS 点击“立即安装”后焦点准确落到手动添加主屏幕说明且弹窗保持可读。
+- 修改文件：`docs/superpowers/PROGRESS.md`（本次仅补充最终验收记录；功能实现文件保持上一切片结果）。
+- 验证结果：PWA/共享模态/基础样式聚焦测试 33/33 通过，Mobile 生产与测试类型检查、源码/测试治理、PWA 生产构建、PWA 产物断言、Trellis 上下文校验和 `git diff --check` 通过；Ego 浏览器确认 390×480 下 Sheet `clientHeight=480`、`scrollHeight=510`、滚动 30px 后“稍后提醒”完整可见且横向溢出为 0，390×1144 下 Sheet 为 390×540（y=604），浅色遮罩/Sheet 为 `rgba(7,17,12,.5)`/`#FFF`，深色为 `rgba(0,0,0,.72)`/`#101A15`。
+- 后续事项：无；保留全部无关脏改动，未编辑 `.pen`，未提交或推送。
+
+## 2026-09-03 08:01 - 对齐手机端产品中心 Pencil 选稿
+
+- 完成内容：严格按 `Z0B0N6`/`zMsKE` 修正 `/products` 正常态：Ellipsis 调整为 18px，移除产品行与说明入口分割线，统一 44px 产品圆盘的明暗主题正文色/底色/边框，校正产品标题、说明和 Help 字体，并保留三条既有真实路由、焦点与触控合同；新增精确覆盖 390px 坐标、320/390/448px 宽度、字体、颜色、无装饰状态和 Header 中心的回归断言。
+- 修改文件：`mobile/src/views/ProductHubView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`.trellis/tasks/09-03-mobile-product-hub-pencil-parity/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Product Hub 及关联导航/壳层聚焦测试 36/36 通过；`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`、`npm --prefix mobile run check:source-size`、`npm --prefix mobile run check:test-quality` 通过；`git diff --check` 通过。
+- 后续事项：按用户限定未运行完整 `release:gate`，明暗主题运行时截图复核留给主会话；本轮未提交或推送，并保留全部无关脏改动。
+
+## 2026-09-03 08:25 - 独立复核并收口手机端产品中心
+
+- 完成内容：依据 `Z0B0N6`/`zMsKE` 与主会话 Ego 证据复核产品中心几何、字体、明暗色、无装饰状态、320/390/448px 溢出、键盘焦点与三条路由；将 Header Ellipsis 的无障碍名称从模糊的“产品”改为与动作一致的“查看产品说明”。恢复 `pencil-selected-pages.css` 首注释，让产品页复用 `.pencil-page` 的精确语义色，仅在必要作用域保留清晰的 `--product-hub-muted`，将共享 CSS 收回 889 行/21527 字节治理预算。移除自证式几何算术断言，改为真实约束源、级联、编译与响应式截断合同。
+- 修改文件：`mobile/src/views/ProductHubView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`（仅产品中心合同）、`.trellis/tasks/09-03-mobile-product-hub-pencil-parity/{prd.md,research/product-hub-pencil-truth.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：产品中心及关联导航/壳层聚焦测试 36/36 通过；`npm --prefix mobile run type-check`、`type-check:tests`、`check:governance` 全部通过，其中 `pencil-selected-pages.css` 为 889/889 行、21527/21540 字节；`git diff --check` 通过。Ego 证据确认 390×920 明暗坐标/色板/字体精确匹配，320/448px 零横向溢出。
+- 后续事项：无；按要求未运行整仓 `release:gate`，未提交或推送，并保留全部无关脏改动。
+
+## 2026-09-03 08:59 - 修复后台新币资产与时间配置
+
+- 完成内容：新币创建表单新增仅含 active 资产的“计价资产”下拉并发送必填 `quote_asset_id`；排除当前项目资产，切换项目资产产生冲突时清空计价资产，且将缺失/相同资产与三种解禁类型各自的空值/非法时间或秒数纳入创建按钮前置校验。创建页、生命周期流转与解禁规则的绝对时间统一改为 `datetime-local`，通过新币专用纯函数按浏览器本地时区严格校验并转换 Unix 毫秒，动作页空值继续省略。前后端回归锁定 active 且充值/提现开关均关闭的项目与计价资产仍可选、可创建。
+- 修改文件：`web/src/admin/resources/actions/newCoins.tsx`、`web/src/admin/actions/NewCoinActions.tsx`、`web/src/admin/newCoinDateTime.ts`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/admin/actions/NewCoinActions.test.tsx`、`tests/admin_routes.rs`、`.trellis/tasks/09-03-admin-new-coin-asset-time-fix/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Admin 新币创建聚焦测试 2/2、动作页聚焦测试 2/2、`npm --prefix web run typecheck`、`npm --prefix web run lint`、生产策略 15/15 与覆盖率门禁 23/23 通过；`cargo fmt --all -- --check` 通过；Rust 聚焦新币路由测试 1/1 编译并通过，但本机未配置 `DATABASE_URL`，MySQL 实库分支按既有合同跳过；`git diff --check` 通过。
+- 后续事项：有可用 MySQL 时可复跑聚焦 Rust 用例执行实库断言；本轮保留全部无关脏改动，未提交或推送。
+
+## 2026-09-03 09:24 - 独立复核并收口后台新币资产与时间配置
+
+- 完成内容：逐项复核新币创建、生命周期、解禁动作及后端 active 资产锁定路径；修复相关 React 对象展开更新可能使用旧 render 快照以及竞态计价资产冲突，改为函数式更新并按最新项目资产二次校验。将本地日期时间转换改为数字日历分量构造与逐项回读，拒绝日期滚动/DST 空洞；测试改用独立的本地时间期望。删除关闭充提 fixture 自断言，改为真实下拉选择、项目/计价冲突清空与精确请求验证；Rust 聚焦用例补充 disabled 计价资产拒绝。新增 Admin 七节可执行合同、PRD 终验说明及独立复核记录，未改生产后端逻辑。
+- 修改文件：`web/src/admin/resources/actions/newCoins.tsx`、`web/src/admin/actions/NewCoinActions.tsx`、`web/src/admin/newCoinDateTime.ts`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/admin/actions/NewCoinActions.test.tsx`、`tests/admin_routes.rs`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-03-admin-new-coin-asset-time-fix/{prd.md,review.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Web 聚焦 2 文件/70 项、全量 63 文件/449 项、生产策略 15/15、覆盖率门禁 23/23、`typecheck`、`lint`、生产 `build`（3772 modules）与 `budget` 均通过；`cargo fmt --all -- --check`、`cargo check --all-targets` 通过；Rust 聚焦命令结果 1 passed/0 failed/92 filtered，但本机 `DATABASE_URL` 缺失，输出明确跳过 MySQL 分支，active 关闭充提成功及 disabled 拒绝的实库断言未执行；Trellis 上下文校验与 `git diff --check` 通过。
+- 后续事项：有可用 MySQL 时复跑聚焦 Rust 用例以取得实库断言证据；本轮保留全部无关脏改动，未提交或推送。

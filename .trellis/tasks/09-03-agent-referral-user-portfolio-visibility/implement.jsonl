@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Preserve DDD responsibility boundaries and Chinese risk-sensitive contracts"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Follow route, test, architecture, and validation quality gates"}
+{"file": ".trellis/spec/backend/agent-hierarchy.md", "reason": "Use the existing token-derived subtree authorization contract"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Keep financial Decimal values exact across API boundaries"}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Preserve seconds order statuses, pagination, and read-only behavior"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Reuse the Admin/Agent table, filter, accessibility, and browser conventions"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "Keep frontend DTO validation and derived fields explicit"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify data flow and authorization at every backend/frontend boundary"}
+{"file": ".trellis/tasks/09-03-agent-referral-user-portfolio-visibility/research/current-agent-referral-and-team-data.md", "reason": "Use the audited dual-code root cause and recommended scoped data design"}

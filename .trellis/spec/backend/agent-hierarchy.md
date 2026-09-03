@@ -199,3 +199,86 @@ for allocation in allocations {
 ```
 
 The shared domain function converts cumulative rates into positive differences and preserves the quantized maximum payout.
+
+## Scenario: Agent-Linked Invite Code And Read-Only User Portfolio
+
+### 1. Scope / Trigger
+
+- Trigger: an agent creates an invite code, its linked user calls `GET /api/v1/referral/my-code`, or an authenticated agent opens a team user's financial detail.
+- Financial detail covers existing spot/margin wallet accounts, margin positions, and seconds-contract orders only.
+
+### 2. Signatures
+
+- Shared invite generator: `generate_invite_code()`, six characters from `A-Z0-9`, backed by the system secure random source and rejection sampling rather than biased byte modulo.
+- Linked identity: `agents.user_id`; clients never choose this association while reading their effective code.
+- Effective agent code: latest `invite_codes` row with `owner_type = 'agent'`, matching `owner_id`, and `status = 'active'`, ordered by `created_at DESC, id DESC`.
+- Read-only routes:
+  - `GET /agent/api/v1/users/{user_id}/assets`
+  - `GET /agent/api/v1/users/{user_id}/margin-positions`
+  - `GET /agent/api/v1/users/{user_id}/seconds-contract-orders`
+- Every list response carries a filter-consistent `total`; financial page defaults to 20, caps limit at 100, and caps offset at 100000.
+
+### 3. Contracts
+
+- Newly generated user-owned and agent-owned codes share the same format and the global unique index on `invite_codes.code`. MySQL duplicate-key collisions retry with a fresh code for a bounded number of attempts.
+- A regular user continues to receive its earliest valid user-owned code. A user referenced by an active `agents.user_id` instead receives that agent's latest active agent-owned code.
+- If an active linked agent has no active code, `/referral/my-code` locks the agent row, creates one, and returns it. Portal creation locks the same row, so concurrent first reads and portal writes use one lock order.
+- Portal status mutation locks the owned invite-code row before the agent coordination row, matching registration's `invite code -> agent` order. It then updates and rereads in one transaction; same-status requests are idempotent, and a completed disable cannot interleave inside an effective-code read.
+- Creating a newer active portal code changes only the linked user's displayed effective code. Existing codes, including historical long-format agent codes, remain valid for registration/binding until separately disabled or exhausted.
+- Agent financial authorization comes exclusively from the authenticated `AgentAccessScope.path`. No path, query, or request-body agent ID can enlarge it.
+- Parent agents may read users owned by descendant agents. Parent, sibling, unrelated-root, unassigned, and nonexistent users are indistinguishable as `NOT_FOUND` to an out-of-scope caller.
+- Membership pre-checks are not persistent authorization. Each wallet/position/order row query and its COUNT query must independently join `user_referrals -> agents` and repeat the materialized-path predicate.
+- Asset rows retain one account per source ledger and expose `account_type = spot | margin`; balances from the two ledgers are never silently merged. `logo_url` remains present even when null, and stored `precision_scale` outside `0..=18` fails closed instead of reaching amount formatting.
+- Missing seconds-contract status means no status predicate and therefore includes `opened`, `settled`, and `manual_review`. Margin and seconds status filters must also apply to COUNT.
+- In the seconds-contract portal table, the backend value `opened` is labelled `进行中`; the generic margin-position label `持仓中` must not be reused for that context.
+- Financial routes execute SELECT-only snapshots. They must not lazily create wallets, load market prices, accrue interest, settle contracts, close/liquidate positions, mutate balances, or write ledgers/events.
+- Every amount, price, rate, leverage, and PnL crosses JSON as Decimal text; timestamps use Unix milliseconds.
+
+### 4. Validation & Error Matrix
+
+- Invalid financial status -> `VALIDATION_ERROR` before opening a database pool/query path.
+- Missing/inactive authenticated agent chain -> `UNAUTHORIZED`.
+- Target outside the token-derived subtree or absent -> `NOT_FOUND` with the same response shape.
+- Invite-code random-source failure or bounded collision exhaustion -> internal error; no partial invite row is committed.
+- Unknown query parameters such as `agent_id` have no scope effect.
+
+### 5. Good/Base/Bad Cases
+
+- Good: level 1 reads a level-3 user's two wallet-account rows, open margin position, and all seconds orders including `opened`.
+- Good: two concurrent first `/referral/my-code` calls for an agent-linked user return the same newly created agent-owned code without duplicate-key leakage.
+- Base: a team user has no wallet or order rows; authorized routes return empty arrays and `total = 0` without creating data.
+- Bad: checking subtree membership once and then querying financial rows by only `user_id`; a concurrent reassignment can leak the old user's records.
+- Bad: defaulting seconds orders to `settled`; active exposure disappears from the agent view.
+- Bad: combining spot and margin balances for the same asset without an account-type discriminator.
+
+### 6. Tests Required
+
+- Invite integration: generated portal codes are six uppercase alphanumeric characters; concurrent linked-user first reads converge; a newer portal active code becomes effective immediately; disabling it falls back to the next latest active code; same-status mutation is idempotent; a historical long code still binds.
+- Scope integration: root reads direct/descendant users while child requests for parent, sibling, other root, unassigned, and nonexistent users all return not-found, including requests that append an `agent_id` query.
+- Financial integration: spot/margin accounts remain distinct, status-filtered totals match rows, default seconds results include `opened`, Decimal/timestamp fields retain their wire types, invalid stored precision fails closed, and before/after wallet and order snapshots are identical.
+- Route unit tests: all three endpoints require agent scope, validate statuses, and enforce pagination bounds.
+- OpenAPI and web tests: routes/schemas preserve Decimal strings and milliseconds; detail tabs lazy-load, cache successful query keys, isolate filter refreshes, and keep the team-users nav selected.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+SELECT * FROM seconds_contract_orders WHERE user_id = :user_id;
+```
+
+The preceding membership check can become stale, so this query leaks after a concurrent ownership move.
+
+#### Correct
+
+```sql
+SELECT orders.*
+FROM seconds_contract_orders orders
+JOIN user_referrals referrals ON referrals.user_id = orders.user_id
+JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id
+WHERE orders.user_id = :user_id
+  AND (owner_agents.path = :scope_path
+       OR owner_agents.path LIKE CONCAT(:scope_path, '/%'));
+```
+
+Rows and COUNT repeat the server-derived subtree predicate, and the surrounding use case remains strictly read-only.

@@ -1,0 +1,32 @@
+{
+  "id": "admin-new-coin-asset-time-fix",
+  "name": "admin-new-coin-asset-time-fix",
+  "title": "修复新币项目资产与时间配置",
+  "description": "Fix the Admin new-coin quote asset payload, preserve deposit/withdraw-independent asset eligibility, and replace raw timestamp fields with datetime pickers.",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "Admin new-coin create/action forms plus focused frontend/backend regression coverage",
+  "package": "web,backend",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-09-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "web/src/admin/resources/actions/newCoins.tsx",
+    "web/src/admin/actions/NewCoinActions.tsx",
+    "web/src/admin/resources/resourceConfigs.test.tsx",
+    "web/src/admin/actions/helperCopy.test.tsx",
+    "tests/admin_routes.rs"
+  ],
+  "notes": "Backend already ignores deposit/withdraw flags for active new-coin assets; lock that contract with regression coverage.",
+  "meta": {}
+}

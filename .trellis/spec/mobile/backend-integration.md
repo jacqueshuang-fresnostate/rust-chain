@@ -300,8 +300,11 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   millisecond integers and the minimum may not exceed the maximum. Backend DECIMAL read models may become finite
   JavaScript numbers only inside this display adapter and must never feed an
   order, transfer, or other mutation payload.
-  Mark price, PnL, return, margin ratio, and liquidation distance remain
-  snapshot-authoritative and unavailable (`--`) after a failed first read.
+  The server risk response remains the fallback authority for mark price, PnL,
+  and return, and the sole authority for margin ratio and liquidation distance.
+  Section 20 permits the transaction-record current-position card to project
+  only mark price, PnL, and return from one newer exact shared ticker; all five
+  fields remain unavailable (`--`) after a failed first risk read.
   Maintenance margin rate prefers a finite non-negative snapshot value and
   falls back only to the matching product rate. An isolated liquidation price
   prefers a finite positive snapshot value; when absent, display code may use
@@ -2000,6 +2003,30 @@ formatWalletLedgerDecimal(value, locale, precisionScale, assetSymbol?): string
   slices plus a real legacy terminal residual; if execution-history loading
   fails, execution-derived quantity, return, and average fields render `--`
   instead of treating the terminal residual row as the whole position.
+- Each current-position direction/mode/leverage chip owns the semantic
+  `.margin-position-record__chip` element. It is content-width `inline-flex`,
+  centered on both axes, single-line, and locally shrink-bounded; its exact
+  Pencil face is `4px 7px` padding, `6px` radius, `13px` Noto Sans SC text at
+  weight `650`. The wrapping 7px-gap row and per-chip `max-width: 100%` must
+  retain zero horizontal overflow from 320px through 448px without a broad
+  descendant `span` selector.
+- The current-position card may replace the server fallback tuple
+  `(mark_price, unrealized_pnl, return_rate)` only when the already-shared
+  matching ticker provides an exact positive `lastPriceText`, both observations
+  are positive safe millisecond timestamps, and the ticker observation is not
+  older than `risk.observed_at`. Calculate the three live fields as one coherent
+  projection with `DecimalText` only: `pnl = notional * directional(mark -
+  entry) / entry`, then `return = pnl / margin`, truncating each division to the
+  backend's 18-decimal scale. Long uses `mark - entry`; short uses `entry -
+  mark`. Missing risk, stale/missing ticker time, absent/invalid exact ticker
+  text, non-positive mark or entry, or an invalid/non-positive margin returns
+  the server tuple unchanged. Numeric ticker compatibility fields never enter
+  this calculation.
+- This live display projection reuses the route's existing shared market ticker
+  lease and Vue dependency tracking. A ticker frame issues no REST request and
+  does not project maintenance margin rate, margin ratio, liquidation price,
+  account equity, close-sheet settlement inputs, or any backend liquidation
+  decision.
 - Margin wallet buckets directly authorize Balance, Available, and Frozen.
   Cross-account `equity` authorizes Currency equity only when that object is
   present. Until the backend defines portfolio `occupied` and isolated equity,

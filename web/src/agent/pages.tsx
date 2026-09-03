@@ -1,6 +1,7 @@
 import { Banner, Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import {
   changeAgentPassword,
@@ -217,6 +218,7 @@ export function AgentSupportPage() {
 }
 
 export function AgentUsersPage() {
+  const navigate = useNavigate();
   const loadUsers = useCallback(async () => (await getAgentUsers()).users, []);
   const { data, error, loading } = useLoader<AgentTeamUser[]>(loadUsers);
   const columns = useMemo<Array<ColumnProps<AgentTeamUser>>>(
@@ -227,9 +229,25 @@ export function AgentUsersPage() {
       { dataIndex: 'status', key: 'status', render: (value) => <StatusTag value={typeof value === 'string' ? value : null} />, title: '状态' },
       { dataIndex: 'kyc_level', key: 'kyc_level', title: 'KYC等级' },
       { dataIndex: 'depth', key: 'depth', title: '层级深度' },
-      { dataIndex: 'referred_at', key: 'referred_at', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} />, title: '加入时间' }
+      { dataIndex: 'referred_at', key: 'referred_at', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} />, title: '加入时间' },
+      {
+        dataIndex: 'user_id',
+        fixed: 'right',
+        key: 'actions',
+        render: (_value, record) => (
+          <Button
+            onClick={() => navigate(`/agent/users/${record.user_id}/portfolio`, { state: { email: record.email ?? null } })}
+            size="small"
+            type="primary"
+          >
+            资产与订单
+          </Button>
+        ),
+        title: '操作',
+        width: 288
+      }
     ],
-    []
+    [navigate]
   );
 
   return (
@@ -312,10 +330,13 @@ export function AgentInviteCodesPage() {
         }
         title="邀请码"
       />
+      <Banner description="最新启用邀请码会与代理关联用户的手机端邀请页同步。" type="info" />
       <DataTable columns={columns} data={data ?? []} error={error} loading={loading} />
     </main>
   );
 }
+
+export { AgentUserPortfolioPage } from './UserPortfolioPage';
 
 export function AgentCommissionsPage() {
   const { data, error, loading } = useLoader<AgentCommissionsResponse>(getAgentCommissions);

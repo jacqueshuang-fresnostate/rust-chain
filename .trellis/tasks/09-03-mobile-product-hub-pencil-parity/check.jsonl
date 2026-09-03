@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify Mobile quality gates, icon-only control and no-regression requirements."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Review selected-page cascade, exact 390px Product Hub geometry and global theme ownership."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Confirm the three existing routes and back behavior remain unchanged."}
+{"file":".trellis/tasks/09-03-mobile-product-hub-pencil-parity/research/product-hub-pencil-truth.md","reason":"Compare implementation/tests/runtime against exact Pencil truth and recorded baseline deltas."}

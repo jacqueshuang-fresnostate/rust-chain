@@ -51,7 +51,7 @@ use crate::{
     modules::agent::domain::AgentHierarchyNode,
     modules::market::adapters::MarketFeedProvider,
     modules::security::{USER_SECURITY_POLICY_KEY, UserSecurityPolicy, UserTwoFactorSettings},
-    modules::user::service::generate_user_invite_code,
+    modules::user::service::{INVITE_CODE_CREATE_ATTEMPTS, generate_invite_code},
     modules::wallet::WithdrawFeeTier,
 };
 use bigdecimal::BigDecimal;

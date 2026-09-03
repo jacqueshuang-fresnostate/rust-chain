@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 import {
   createAgentInviteCode,
@@ -107,24 +108,25 @@ describe('Agent portal pages', () => {
       ]
     });
 
-    render(<AgentUsersPage />);
+    render(<MemoryRouter><AgentUsersPage /></MemoryRouter>);
 
     expect(await screen.findByText('team@example.test')).toBeInTheDocument();
     expect(screen.getByText('团队用户')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '资产与订单' })).toBeInTheDocument();
   });
 
   it('creates invite codes and updates invite code status', async () => {
     getAgentInviteCodesMock
       .mockResolvedValueOnce({
         invite_codes: [
-          { id: 7, owner_id: 3, code: 'AGT7', usage_limit: 10, used_count: 1, status: 'active', created_at: now }
+          { id: 7, owner_id: 3, code: 'A1B2C3', usage_limit: 10, used_count: 1, status: 'active', created_at: now }
         ]
       })
       .mockResolvedValue({ invite_codes: [] });
     createAgentInviteCodeMock.mockResolvedValueOnce({
       id: 8,
       owner_id: 3,
-      code: 'AGT8',
+      code: 'D4E5F6',
       usage_limit: 10,
       used_count: 0,
       status: 'active',
@@ -133,7 +135,7 @@ describe('Agent portal pages', () => {
     updateAgentInviteCodeStatusMock.mockResolvedValueOnce({
       id: 7,
       owner_id: 3,
-      code: 'AGT7',
+      code: 'A1B2C3',
       usage_limit: 10,
       used_count: 1,
       status: 'disabled',
@@ -142,7 +144,8 @@ describe('Agent portal pages', () => {
 
     render(<AgentInviteCodesPage />);
 
-    expect(await screen.findByText('AGT7')).toBeInTheDocument();
+    expect(await screen.findByText('A1B2C3')).toBeInTheDocument();
+    expect(screen.getByText('最新启用邀请码会与代理关联用户的手机端邀请页同步。')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox', { name: '使用上限' }), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: '创建邀请码' }));
     await waitFor(() => expect(createAgentInviteCodeMock).toHaveBeenCalledWith(10));

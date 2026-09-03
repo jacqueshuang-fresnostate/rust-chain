@@ -121,3 +121,109 @@ async fn agent_routes_require_agent_scope() {
         StatusCode::INTERNAL_SERVER_ERROR
     );
 }
+
+#[tokio::test]
+async fn agent_financial_routes_require_agent_scope_and_validate_status_before_mysql() {
+    let state = test_state();
+    let user_token = issue_token(
+        &state.settings,
+        "user:1",
+        TokenScope::User,
+        state.settings.jwt_access_ttl_seconds,
+    )
+    .unwrap();
+    let agent_token = issue_token(
+        &state.settings,
+        "agent:1",
+        TokenScope::Agent,
+        state.settings.jwt_access_ttl_seconds,
+    )
+    .unwrap();
+    let app = routes().with_state(state);
+
+    for path in [
+        "/users/9/assets",
+        "/users/9/margin-positions",
+        "/users/9/seconds-contract-orders",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(AUTHORIZATION, format!("Bearer {agent_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    for path in [
+        "/users/9/margin-positions?status=unknown",
+        "/users/9/seconds-contract-orders?status=closed",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(AUTHORIZATION, format!("Bearer {agent_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[test]
+fn agent_financial_filters_and_pagination_are_bounded() {
+    use crate::modules::agent::service::{
+        agent_financial_list_page, normalized_agent_margin_position_status,
+        normalized_agent_seconds_order_status,
+    };
+
+    let page = agent_financial_list_page(Some(1_000), Some(u32::MAX));
+    assert_eq!(page.limit, 100);
+    assert_eq!(page.offset, 100_000);
+    let default_page = agent_financial_list_page(None, None);
+    assert_eq!(default_page.limit, 20);
+    assert_eq!(default_page.offset, 0);
+
+    assert_eq!(
+        normalized_agent_margin_position_status(Some(" opened ".to_owned())).unwrap(),
+        Some("opened".to_owned())
+    );
+    assert!(normalized_agent_margin_position_status(Some("settled".to_owned())).is_err());
+    assert_eq!(
+        normalized_agent_seconds_order_status(Some("manual_review".to_owned())).unwrap(),
+        Some("manual_review".to_owned())
+    );
+    assert_eq!(
+        normalized_agent_seconds_order_status(Some("  ".to_owned())).unwrap(),
+        None
+    );
+}

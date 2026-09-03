@@ -13014,6 +13014,28 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let asset_id = create_asset(&pool, "ANP").await;
     let quote_asset_id = create_asset(&pool, "ANQ").await;
+    sqlx::query(
+        "UPDATE assets SET deposit_enabled = FALSE, withdraw_enabled = FALSE WHERE id IN (?, ?)",
+    )
+    .bind(asset_id)
+    .bind(quote_asset_id)
+    .execute(&pool)
+    .await?;
+    let asset_switches: Vec<(u64, String, bool, bool)> = sqlx::query_as(
+        "SELECT id, status, deposit_enabled, withdraw_enabled FROM assets WHERE id IN (?, ?) ORDER BY id",
+    )
+    .bind(asset_id)
+    .bind(quote_asset_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(asset_switches.len(), 2);
+    assert!(
+        asset_switches
+            .iter()
+            .all(|(_, status, deposit_enabled, withdraw_enabled)| {
+                status == "active" && !deposit_enabled && !withdraw_enabled
+            })
+    );
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -13023,6 +13045,55 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
     .unwrap();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
     let symbol = format!("ANP{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let create_payload = json!({
+        "asset_id": asset_id,
+        "symbol": symbol,
+        "lifecycle_status": "preheat",
+        "total_supply": "1000000.000000000000000000",
+        "issue_price": "1.000000000000000000",
+        "quote_asset_id": quote_asset_id,
+        "unlock_type": "fixed_time",
+        "fixed_unlock_at": 1794309753000_i64,
+        "unlock_fee_enabled": true,
+        "unlock_fee_rate": "0.04000000",
+        "unlock_fee_basis": "market_value",
+        "unlock_fee_asset": quote_asset_id,
+        "reason": "create new coin project"
+    })
+    .to_string();
+
+    sqlx::query("UPDATE assets SET status = 'disabled' WHERE id = ?")
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
+    let disabled_quote_asset = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/new-coins")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(create_payload.clone()))
+                .unwrap(),
+        )
+        .await?;
+    let disabled_status = disabled_quote_asset.status();
+    let disabled_payload = body_json(disabled_quote_asset).await?;
+    sqlx::query("UPDATE assets SET status = 'active' WHERE id = ?")
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        disabled_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {disabled_payload}"
+    );
+    assert_eq!(disabled_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        disabled_payload["message"],
+        "validation error: new coin asset must be active"
+    );
 
     let create = app
         .clone()
@@ -13032,24 +13103,7 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
                 .uri("/admin/api/v1/new-coins")
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "asset_id": asset_id,
-                        "symbol": symbol,
-                        "lifecycle_status": "preheat",
-                        "total_supply": "1000000.000000000000000000",
-                        "issue_price": "1.000000000000000000",
-                        "quote_asset_id": quote_asset_id,
-                        "unlock_type": "fixed_time",
-                        "fixed_unlock_at": 1794309753000_i64,
-                        "unlock_fee_enabled": true,
-                        "unlock_fee_rate": "0.04000000",
-                        "unlock_fee_basis": "market_value",
-                        "unlock_fee_asset": quote_asset_id,
-                        "reason": "create new coin project"
-                    })
-                    .to_string(),
-                ))
+                .body(Body::from(create_payload))
                 .unwrap(),
         )
         .await?;

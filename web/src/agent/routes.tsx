@@ -8,9 +8,10 @@ type AgentPageName =
   | 'AgentSupportPage'
   | 'AgentSubAgentsPage'
   | 'AgentTeamTreePage'
+  | 'AgentUserPortfolioPage'
   | 'AgentUsersPage';
 
-// 八个代理端页面同处一个模块，按需加载后它们合并为一个独立 chunk，
+// 九个代理端页面同处一个模块，按需加载后它们合并为一个独立 chunk，
 // 管理端与登录页不再为代理端代码付出首屏体积。handle.page 保留静态可读的路由绑定。
 function agentRoute(path: string, page: AgentPageName): RouteObject {
   return {
@@ -25,6 +26,7 @@ export const agentRoutes: RouteObject[] = [
   agentRoute('dashboard', 'AgentDashboardPage'),
   agentRoute('support', 'AgentSupportPage'),
   agentRoute('users', 'AgentUsersPage'),
+  agentRoute('users/:userId/portfolio', 'AgentUserPortfolioPage'),
   agentRoute('invite-codes', 'AgentInviteCodesPage'),
   agentRoute('commissions', 'AgentCommissionsPage'),
   agentRoute('convert-stats', 'AgentConvertStatsPage'),

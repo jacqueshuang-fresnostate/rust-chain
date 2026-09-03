@@ -21,9 +21,9 @@ pub(crate) const TWO_FACTOR_RESET_PURPOSE: &str = "two_factor_reset";
 pub(crate) const FUND_PASSWORD_RESET_PURPOSE: &str = "fund_password_reset";
 pub(crate) const EMAIL_VERIFICATION_CODE_TTL_MINUTES: u32 = 10;
 pub(crate) const EMAIL_VERIFICATION_CODE_COOLDOWN_SECONDS: i64 = 60;
-pub(crate) const USER_INVITE_CODE_LENGTH: usize = 6;
-pub(crate) const USER_INVITE_CODE_CREATE_ATTEMPTS: usize = 12;
-const USER_INVITE_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+pub(crate) const INVITE_CODE_LENGTH: usize = 6;
+pub(crate) const INVITE_CODE_CREATE_ATTEMPTS: usize = 12;
+const INVITE_CODE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /// 绑定邮箱前做轻量格式校验：去空白后要求恰好一个 `@`、本地部分与域名部分均非空、
 /// 整串不含任何空白字符，且字节长度不超过 255 以匹配数据库列宽。
@@ -156,34 +156,48 @@ pub(crate) fn normalize_third_party_display_name(
 }
 
 /// 使用系统安全随机源生成六位大写字母数字邀请码。
-/// 随机源失败时返回内部错误；唯一性冲突由应用层在限定次数内重新生成。
-pub(crate) fn generate_user_invite_code() -> AppResult<String> {
+/// 普通用户码与代理码必须共用本入口和 `invite_codes.code` 的全局唯一索引，
+/// 禁止按归属类型分配不同格式或可预测前缀。随机源失败返回内部错误；
+/// 唯一性冲突由各写入用例在 `INVITE_CODE_CREATE_ATTEMPTS` 次内换码重试。
+pub(crate) fn generate_invite_code() -> AppResult<String> {
     let rng = SystemRandom::new();
-    let mut bytes = [0_u8; USER_INVITE_CODE_LENGTH];
-    rng.fill(&mut bytes)
-        .map_err(|_| AppError::Internal("invite code generation failed".to_owned()))?;
+    let uniform_bound =
+        (usize::from(u8::MAX) + 1) / INVITE_CODE_ALPHABET.len() * INVITE_CODE_ALPHABET.len();
+    let mut code = String::with_capacity(INVITE_CODE_LENGTH);
 
-    Ok(bytes
-        .iter()
-        .map(|byte| {
-            USER_INVITE_CODE_ALPHABET[*byte as usize % USER_INVITE_CODE_ALPHABET.len()] as char
-        })
-        .collect())
+    // 256 不能被 36 整除；丢弃尾部四个取值后再取模，避免部分字符拥有更高概率。
+    while code.len() < INVITE_CODE_LENGTH {
+        let mut bytes = [0_u8; INVITE_CODE_LENGTH];
+        rng.fill(&mut bytes)
+            .map_err(|_| AppError::Internal("invite code generation failed".to_owned()))?;
+        for byte in bytes {
+            let byte = usize::from(byte);
+            if byte >= uniform_bound {
+                continue;
+            }
+            code.push(INVITE_CODE_ALPHABET[byte % INVITE_CODE_ALPHABET.len()] as char);
+            if code.len() == INVITE_CODE_LENGTH {
+                break;
+            }
+        }
+    }
+
+    Ok(code)
 }
 
-/// 判定一个字符串是否符合本平台自生成邀请码的形态：长度恰为 `USER_INVITE_CODE_LENGTH`，
-/// 且每个字符都落在大写字母或阿拉伯数字范围内，与 `generate_user_invite_code` 使用的字母表口径一致。
+/// 判定一个字符串是否符合本平台自生成邀请码的形态：长度恰为 `INVITE_CODE_LENGTH`，
+/// 且每个字符都落在大写字母或阿拉伯数字范围内，与 `generate_invite_code` 使用的字母表口径一致。
 /// 注意这里不排除易混淆字符，也不校验该邀请码是否真实存在或仍然可用，只做形态判定；
 /// 返回布尔值而非 `Result`，供调用方在「是否走邀请码分支」这类判断中直接使用。
-pub(crate) fn is_valid_user_invite_code(code: &str) -> bool {
-    code.len() == USER_INVITE_CODE_LENGTH
+pub(crate) fn is_valid_generated_invite_code(code: &str) -> bool {
+    code.len() == INVITE_CODE_LENGTH
         && code
             .chars()
             .all(|char| char.is_ascii_uppercase() || char.is_ascii_digit())
 }
 
 /// 规范化用户填写的邀请码：仅裁剪首尾空白并拒绝空串，刻意不做大小写转换或字符集过滤。
-/// 之所以比 `is_valid_user_invite_code` 宽松，是因为绑定入口同时接受平台自生成的邀请码
+/// 之所以比 `is_valid_generated_invite_code` 宽松，是因为绑定入口同时接受平台自生成的邀请码
 /// 与代理商推广链接携带的其他码型，收紧字符集会误伤后者。
 /// 因此这里只保证「有内容可查」，该码是否存在、是否属于有效代理、剩余可用次数是否耗尽，
 /// 全部由 infrastructure 层在事务内锁行校验；失败返回 `AppError::Validation` 且消息为 `code is required`。

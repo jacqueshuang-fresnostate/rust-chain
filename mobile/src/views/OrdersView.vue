@@ -31,6 +31,7 @@ import {
   type DecimalText,
 } from '@/core/decimal'
 import { orderStatusPresentation } from '@/core/financialEnumPresentation'
+import { resolveMarginPositionLiveProjection } from '@/core/marginRiskMetrics'
 import { useModalDialog } from '@/core/modalDialog'
 import {
   filterTransactionOrders,
@@ -301,13 +302,14 @@ function positionRecord(position: MarginPosition) {
   const symbol = symbolFor(position)
   const pair = splitPair(symbol)
   const marginAsset = productFor(position)?.marginAssetSymbol || pair.quote
+  const live = resolveMarginPositionLiveProjection(position, market.tickerFor(symbol), risk)
   return {
     id: position.id,
     contractTitle: formatMarginContractTitle(symbol, t('orders.perpetual')),
     pnlLabel: metricLabel(t('orders.pnlAmount'), marginAsset),
-    pnl: signed(risk?.unrealizedPnlText),
-    returnRate: percent(risk?.returnRateText),
-    pnlTone: pnlTone(risk?.unrealizedPnlText),
+    pnl: signed(live.unrealizedPnlText),
+    returnRate: percent(live.returnRateText),
+    pnlTone: pnlTone(live.unrealizedPnlText),
     chips: [
       { label: t(position.direction === 'long' ? 'orders.longShort' : 'orders.shortShort'), tone: position.direction === 'long' ? 'positive' as const : 'negative' as const },
       { label: t(position.marginMode === 'cross' ? 'orders.cross' : 'orders.isolated') },
@@ -318,7 +320,7 @@ function positionRecord(position: MarginPosition) {
       { label: metricLabel(t('orders.margin'), marginAsset), value: decimal(position.marginAmountText) },
       { label: t('orders.maintenanceMarginRate'), value: percent(risk?.maintenanceMarginRateText, false) },
       { label: t('orders.entryPrice'), value: decimal(position.entryPriceText) },
-      { label: t('orders.markPrice'), value: decimal(risk?.markPriceText) },
+      { label: t('orders.markPrice'), value: decimal(live.markPriceText) },
       { label: t('orders.liquidationPrice'), value: decimal(risk?.estimatedLiquidationPriceText) },
     ],
   }

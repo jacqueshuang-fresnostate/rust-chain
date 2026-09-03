@@ -1,0 +1,4 @@
+{"file":".trellis/spec/admin/ui-system.md","reason":"Follow Admin Semi form, SideSheet, accessibility, Chinese copy, and quality-gate contracts."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Preserve backend layering and add focused route coverage without weakening existing active-asset rules."}
+{"file":".trellis/spec/backend/new-coin-mobile-contract.md","reason":"Keep existing new-coin quote asset, lifecycle, and unlock semantics consistent across clients."}
+{"file":".trellis/tasks/09-03-admin-new-coin-asset-time-fix/research/repo-findings.md","reason":"Use the verified root cause, asset eligibility facts, affected files, and minimal implementation plan."}

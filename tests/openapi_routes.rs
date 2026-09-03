@@ -105,6 +105,27 @@ fn schema_is_unix_millis(value: &Value) -> bool {
         .is_some_and(|schemas| schemas.iter().any(schema_is_unix_millis))
 }
 
+fn schema_has_type(value: &Value, expected: &str) -> bool {
+    if value.get("type").is_some_and(|schema_type| {
+        schema_type == expected
+            || schema_type
+                .as_array()
+                .is_some_and(|types| types.iter().any(|value| value == expected))
+    }) {
+        return true;
+    }
+
+    value
+        .get("anyOf")
+        .or_else(|| value.get("oneOf"))
+        .and_then(Value::as_array)
+        .is_some_and(|schemas| {
+            schemas
+                .iter()
+                .any(|schema| schema_has_type(schema, expected))
+        })
+}
+
 #[tokio::test]
 async fn openapi_json_exposes_first_batch_contract() {
     let openapi = openapi_json().await;
@@ -501,6 +522,15 @@ async fn openapi_json_documents_agent_portal_contract() {
         ("/agent/api/v1/me", ["get"].as_slice()),
         ("/agent/api/v1/dashboard", ["get"].as_slice()),
         ("/agent/api/v1/users", ["get"].as_slice()),
+        ("/agent/api/v1/users/{user_id}/assets", ["get"].as_slice()),
+        (
+            "/agent/api/v1/users/{user_id}/margin-positions",
+            ["get"].as_slice(),
+        ),
+        (
+            "/agent/api/v1/users/{user_id}/seconds-contract-orders",
+            ["get"].as_slice(),
+        ),
         ("/agent/api/v1/invite-codes", ["get", "post"].as_slice()),
         (
             "/agent/api/v1/invite-codes/{id}/status",
@@ -528,6 +558,12 @@ async fn openapi_json_documents_agent_portal_contract() {
         "AgentDashboardResponse",
         "AgentTeamUserResponse",
         "AgentUsersResponse",
+        "AgentUserAssetResponse",
+        "AgentUserAssetsResponse",
+        "AgentUserMarginPositionResponse",
+        "AgentUserMarginPositionsResponse",
+        "AgentUserSecondsContractOrderResponse",
+        "AgentUserSecondsContractOrdersResponse",
         "CreateAgentInviteCodeRequest",
         "UpdateAgentInviteCodeStatusRequest",
         "AgentInviteCodeResponse",
@@ -615,6 +651,150 @@ async fn openapi_json_documents_agent_portal_contract() {
     let team_tree_properties =
         &openapi["components"]["schemas"]["AgentTeamTreeNodeResponse"]["properties"];
     assert!(schema_is_unix_millis(&team_tree_properties["referred_at"]));
+
+    let asset_properties =
+        &openapi["components"]["schemas"]["AgentUserAssetResponse"]["properties"];
+    for field in [
+        "account_type",
+        "asset_symbol",
+        "logo_url",
+        "precision_scale",
+        "available",
+        "frozen",
+        "locked",
+        "updated_at",
+    ] {
+        assert!(
+            asset_properties.get(field).is_some(),
+            "missing AgentUserAssetResponse.{field}"
+        );
+    }
+    assert_eq!(
+        asset_properties["account_type"]["pattern"].as_str(),
+        Some("^(spot|margin)$")
+    );
+    assert_eq!(asset_properties["precision_scale"]["minimum"], 0);
+    assert_eq!(asset_properties["precision_scale"]["maximum"], 18);
+    assert!(schema_is_unix_millis(&asset_properties["updated_at"]));
+    assert!(
+        openapi["components"]["schemas"]["AgentUserAssetsResponse"]["properties"]
+            .get("total")
+            .is_some()
+    );
+    assert_eq!(
+        openapi["components"]["schemas"]["AgentUserAssetsResponse"]["properties"]["total"]["minimum"],
+        0
+    );
+
+    let margin_properties =
+        &openapi["components"]["schemas"]["AgentUserMarginPositionResponse"]["properties"];
+    for decimal_field in [
+        "margin_amount",
+        "leverage",
+        "notional_amount",
+        "borrowed_amount",
+        "interest_amount",
+        "entry_price",
+        "limit_price",
+        "exit_price",
+        "realized_pnl",
+    ] {
+        assert!(
+            schema_has_type(&margin_properties[decimal_field], "string"),
+            "{decimal_field} must remain Decimal text"
+        );
+    }
+    assert_eq!(
+        margin_properties["status"]["pattern"].as_str(),
+        Some("^(opened|closed|canceled|liquidated)$")
+    );
+    for timestamp in ["opened_at", "created_at", "closed_at"] {
+        assert!(schema_is_unix_millis(&margin_properties[timestamp]));
+    }
+    assert!(
+        openapi["components"]["schemas"]["AgentUserMarginPositionsResponse"]["properties"]
+            .get("total")
+            .is_some()
+    );
+    assert_eq!(
+        openapi["components"]["schemas"]["AgentUserMarginPositionsResponse"]["properties"]["total"]
+            ["minimum"],
+        0
+    );
+
+    let seconds_properties =
+        &openapi["components"]["schemas"]["AgentUserSecondsContractOrderResponse"]["properties"];
+    for decimal_field in [
+        "stake_amount",
+        "payout_rate",
+        "entry_price",
+        "settlement_price",
+    ] {
+        assert!(
+            schema_has_type(&seconds_properties[decimal_field], "string"),
+            "{decimal_field} must remain Decimal text"
+        );
+    }
+    assert_eq!(
+        seconds_properties["status"]["pattern"].as_str(),
+        Some("^(opened|settled|manual_review)$")
+    );
+    assert_eq!(
+        seconds_properties["result"]["pattern"].as_str(),
+        Some("^(win|loss)$")
+    );
+    for timestamp in ["expires_at", "created_at", "settled_at"] {
+        assert!(schema_is_unix_millis(&seconds_properties[timestamp]));
+    }
+    assert!(
+        openapi["components"]["schemas"]["AgentUserSecondsContractOrdersResponse"]["properties"]
+            .get("total")
+            .is_some()
+    );
+    assert_eq!(
+        openapi["components"]["schemas"]["AgentUserSecondsContractOrdersResponse"]["properties"]["total"]
+            ["minimum"],
+        0
+    );
+
+    for (schema_name, required_fields) in [
+        ("AgentUserAssetResponse", ["logo_url"].as_slice()),
+        (
+            "AgentUserMarginPositionResponse",
+            [
+                "entry_price",
+                "limit_price",
+                "exit_price",
+                "realized_pnl",
+                "closed_at",
+            ]
+            .as_slice(),
+        ),
+        (
+            "AgentUserSecondsContractOrderResponse",
+            ["entry_price", "settlement_price", "result", "settled_at"].as_slice(),
+        ),
+    ] {
+        let required = openapi["components"]["schemas"][schema_name]["required"]
+            .as_array()
+            .unwrap();
+        for field in required_fields {
+            assert!(
+                required.iter().any(|value| value.as_str() == Some(*field)),
+                "{schema_name}.{field} must be required and nullable"
+            );
+        }
+    }
+
+    let agent_tag = openapi["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tag| tag["name"] == "agent-portal")
+        .unwrap();
+    let description = agent_tag["description"].as_str().unwrap();
+    assert!(description.contains("token-derived"));
+    assert!(description.contains("只读"));
 }
 
 #[tokio::test]

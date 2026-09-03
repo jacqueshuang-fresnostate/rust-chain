@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile quality gate, Lucide control, touch-target and production snapshot contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Selected-page global CSS boundary and existing Product Hub geometry/cascade rules."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Product Hub to Prediction/News navigation and PageHeader history contracts."}
+{"file":".trellis/tasks/09-03-mobile-product-hub-pencil-parity/research/product-hub-pencil-truth.md","reason":"Exact selected Pencil node geometry, colors, typography and measured runtime deltas."}

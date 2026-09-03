@@ -3,7 +3,7 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 //! 代理端全部只读用例都遵循同一条前置链路：先从令牌主体解析代理管理员，再由服务端查出物化路径 scope，
 //! 后续 SQL 一律以该路径为边界，客户端无法通过传参跨越到父级或兄弟代理团队。
-//! 除改密外本文件不开显式事务，多次查询之间不保证同一数据库快照。
+//! 只读用例不开显式事务，多次查询之间不保证同一数据库快照；改密和邀请码创建各自持有写事务。
 
 use crate::{
     error::{AppError, AppResult},
@@ -14,18 +14,22 @@ use crate::{
                 AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
                 AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
                 AgentPasswordChangeResponse, AgentSubAgentsResponse, AgentTeamTreeResponse,
-                AgentUsersResponse, ChangeAgentPasswordRequest, CreateInviteCodeRequest,
-                UpdateInviteCodeStatusRequest,
+                AgentUserAssetsResponse, AgentUserMarginPositionsQuery,
+                AgentUserMarginPositionsResponse, AgentUserSecondsContractOrdersQuery,
+                AgentUserSecondsContractOrdersResponse, AgentUsersResponse,
+                ChangeAgentPasswordRequest, CreateInviteCodeRequest, UpdateInviteCodeStatusRequest,
             },
             repository::{AgentAccessScope, AgentInviteCodeWrite},
             service::{
                 agent_admin_id_from_subject, agent_commissions_response,
-                agent_convert_stats_response, agent_dashboard_response, agent_list_page,
-                generated_agent_invite_code, validate_agent_invite_code_status,
+                agent_convert_stats_response, agent_dashboard_response, agent_financial_list_page,
+                agent_list_page, normalized_agent_margin_position_status,
+                normalized_agent_seconds_order_status, validate_agent_invite_code_status,
                 validate_agent_invite_code_usage_limit, validate_agent_password_change,
             },
         },
         auth::{ActorType, AuthActor, hash_password, revoke_actor_auth_sessions, verify_password},
+        user::service::{INVITE_CODE_CREATE_ATTEMPTS, generate_invite_code},
     },
     state::AppState,
 };
@@ -82,6 +86,72 @@ pub(crate) async fn list_agent_users(
     let page = agent_list_page(query.limit, query.offset, 100);
     let users = infrastructure::list_agent_team_users(&pool, &scope, page).await?;
     Ok(AgentUsersResponse { users })
+}
+
+/// 分页读取某个团队用户的现货与杠杆钱包快照，两类账户不做跨账本合并。
+/// 目标用户 ID 是资源标识，可见 scope 仅由令牌回查；不存在、无归属或子树外均映射为未找到。
+/// 成员检查后的账户行查询会再次重复同一物化路径谓词，并发改派不会泄漏原数据。
+/// 用例全程仅 SELECT，不补建钱包、不写流水也不触发任何结算。
+pub(crate) async fn list_agent_user_assets(
+    mysql: Option<Pool<MySql>>,
+    subject: &str,
+    user_id: u64,
+    query: AgentListQuery,
+) -> AppResult<AgentUserAssetsResponse> {
+    let (pool, scope) = agent_context(mysql, subject).await?;
+    ensure_agent_user_in_scope(&pool, &scope, user_id).await?;
+    let page = agent_financial_list_page(query.limit, query.offset);
+    let (assets, total) =
+        infrastructure::list_agent_user_assets(&pool, &scope, user_id, page).await?;
+    Ok(AgentUserAssetsResponse { assets, total })
+}
+
+/// 分页读取团队用户的持久化杠杆仓位快照，状态筛选与 COUNT 使用同一谓词。
+/// 状态在获取连接池前收敛，避免无效值引发不必要数据库访问；子树边界由 token-derived scope 决定。
+/// 只回显落库价格、金额和 PnL，不读行情、不重算风险、不平仓或强平。
+pub(crate) async fn list_agent_user_margin_positions(
+    mysql: Option<Pool<MySql>>,
+    subject: &str,
+    user_id: u64,
+    query: AgentUserMarginPositionsQuery,
+) -> AppResult<AgentUserMarginPositionsResponse> {
+    let status = normalized_agent_margin_position_status(query.status)?;
+    let page = agent_financial_list_page(query.limit, query.offset);
+    let (pool, scope) = agent_context(mysql, subject).await?;
+    ensure_agent_user_in_scope(&pool, &scope, user_id).await?;
+    let (positions, total) = infrastructure::list_agent_user_margin_positions(
+        &pool,
+        &scope,
+        user_id,
+        status.as_deref(),
+        page,
+    )
+    .await?;
+    Ok(AgentUserMarginPositionsResponse { positions, total })
+}
+
+/// 分页读取团队用户的全部秒合约订单；缺省不追加状态条件，因而明确包含 `opened`。
+/// 可选状态只接受 opened、settled 和 manual_review，行集与 total 共用该筛选并各自重复子树谓词。
+/// 仅读取已持久化订单快照，不扫描到期单、不回填行情、不结算也不改钱包。
+pub(crate) async fn list_agent_user_seconds_contract_orders(
+    mysql: Option<Pool<MySql>>,
+    subject: &str,
+    user_id: u64,
+    query: AgentUserSecondsContractOrdersQuery,
+) -> AppResult<AgentUserSecondsContractOrdersResponse> {
+    let status = normalized_agent_seconds_order_status(query.status)?;
+    let page = agent_financial_list_page(query.limit, query.offset);
+    let (pool, scope) = agent_context(mysql, subject).await?;
+    ensure_agent_user_in_scope(&pool, &scope, user_id).await?;
+    let (orders, total) = infrastructure::list_agent_user_seconds_contract_orders(
+        &pool,
+        &scope,
+        user_id,
+        status.as_deref(),
+        page,
+    )
+    .await?;
+    Ok(AgentUserSecondsContractOrdersResponse { orders, total })
 }
 
 /// 分页列出当前节点之下的下级代理，逐条附带直属用户数与整棵子树用户数两个口径的统计。
@@ -147,9 +217,9 @@ pub(crate) async fn list_agent_invite_codes(
     Ok(AgentInviteCodesResponse { invite_codes })
 }
 
-/// 校验使用上限后为当前代理生成新邀请码，插入成功后再按所有权回读完整快照。
-/// 冲突或数据库错误直接失败；本用例未开显式事务，回读缺失按未找到处理。
-/// 码文本由服务端按时间有序的 UUID 生成，请求体只能指定使用上限；没有幂等键，重复提交会各生成一枚新码。
+/// 校验使用上限后为当前代理生成六位大写字母/数字邀请码。
+/// 创建事务锁定代理节点，与关联用户的首次 my-code 共用锁顺序；全局码值冲突只在有界次数内换码重试。
+/// 请求体只能指定使用上限；没有幂等键，重复提交会各生成新码，旧长码保留 active 与原有关系。
 pub(crate) async fn create_agent_invite_code(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -158,21 +228,41 @@ pub(crate) async fn create_agent_invite_code(
     let (pool, scope) = agent_context(mysql, subject).await?;
     validate_agent_invite_code_usage_limit(request.usage_limit)?;
 
-    let write = AgentInviteCodeWrite {
-        agent_id: scope.agent_id,
-        code: generated_agent_invite_code(),
-        usage_limit: request.usage_limit,
-    };
-    let invite_code_id = infrastructure::insert_agent_invite_code(&pool, write).await?;
+    let mut tx = pool.begin().await?;
+    if !infrastructure::lock_active_agent_for_invite_code_in_tx(&mut tx, scope.agent_id).await? {
+        return Err(AppError::Unauthorized);
+    }
 
-    infrastructure::load_agent_invite_code_by_id(&pool, scope.agent_id, invite_code_id)
+    for _ in 0..INVITE_CODE_CREATE_ATTEMPTS {
+        let write = AgentInviteCodeWrite {
+            agent_id: scope.agent_id,
+            code: generate_invite_code()?,
+            usage_limit: request.usage_limit,
+        };
+        let Some(invite_code_id) =
+            infrastructure::insert_agent_invite_code_in_tx(&mut tx, &write).await?
+        else {
+            continue;
+        };
+        let response = infrastructure::load_agent_invite_code_by_id_in_tx(
+            &mut tx,
+            scope.agent_id,
+            invite_code_id,
+        )
         .await?
-        .ok_or(AppError::NotFound)
+        .ok_or_else(|| AppError::Internal("created agent invite code is missing".to_owned()))?;
+        tx.commit().await?;
+        return Ok(response);
+    }
+
+    Err(AppError::Internal(
+        "failed to create unique agent invite code".to_owned(),
+    ))
 }
 
 /// 仅允许邀请码所属代理在启用与停用之间切换，不匹配所有权时返回未找到。
-/// 单语句更新后另行回读权威快照；重复设置不改使用次数或邀请关系，但数据库若对同值更新
-/// 报告零受影响行，本用例会返回未找到，因此不承诺同值请求幂等成功。
+/// 事务按邀请码、代理的顺序加锁，与注册兑换保持相同锁序；同时与“我的邀请码”和门户创建
+/// 共用代理协调锁，避免状态写入在读取最新启用码期间穿插完成。重复设置同值按幂等成功处理。
 pub(crate) async fn update_agent_invite_code_status(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -181,21 +271,34 @@ pub(crate) async fn update_agent_invite_code_status(
 ) -> AppResult<AgentInviteCodeResponse> {
     let status = validate_agent_invite_code_status(&request.status)?;
     let (pool, scope) = agent_context(mysql, subject).await?;
-    let updated = infrastructure::update_agent_invite_code_status(
-        &pool,
+
+    let mut tx = pool.begin().await?;
+    if !infrastructure::lock_agent_invite_code_for_status_update_in_tx(
+        &mut tx,
+        scope.agent_id,
+        invite_code_id,
+    )
+    .await?
+    {
+        return Err(AppError::NotFound);
+    }
+    if !infrastructure::lock_active_agent_for_invite_code_in_tx(&mut tx, scope.agent_id).await? {
+        return Err(AppError::Unauthorized);
+    }
+    infrastructure::update_agent_invite_code_status(
+        &mut tx,
         scope.agent_id,
         invite_code_id,
         status,
     )
     .await?;
 
-    if !updated {
-        return Err(AppError::NotFound);
-    }
-
-    infrastructure::load_agent_invite_code_by_id(&pool, scope.agent_id, invite_code_id)
-        .await?
-        .ok_or(AppError::NotFound)
+    let response =
+        infrastructure::load_agent_invite_code_by_id_in_tx(&mut tx, scope.agent_id, invite_code_id)
+            .await?
+            .ok_or_else(|| AppError::Internal("updated agent invite code is missing".to_owned()))?;
+    tx.commit().await?;
+    Ok(response)
 }
 
 /// 校验新旧口令后锁定代理管理员凭证，同事务更新哈希并撤销 MySQL 刷新令牌。
@@ -256,6 +359,21 @@ async fn agent_context(
         .await?
         .ok_or(AppError::Unauthorized)?;
     Ok((pool, scope))
+}
+
+/// 将目标用户的存在性与子树授权收敛为同一个 `NotFound`。
+/// 这是防止代理通过响应差异枚举其他团队用户的第一道边界；
+/// 真正返回金融行的 SQL 仍必须各自重复 scope 谓词，不得把此预检当成持续授权。
+async fn ensure_agent_user_in_scope(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+    user_id: u64,
+) -> AppResult<()> {
+    if infrastructure::agent_scope_contains_user(pool, scope, user_id).await? {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
 }
 
 /// 为其他限界上下文解析当前代理令牌对应的精确 active 代理 ID。

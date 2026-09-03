@@ -4,8 +4,6 @@ const INTERNAL_USER_EMAIL_DOMAIN: &str = "@internal.local";
 
 const INTERNAL_USER_EMAIL_PATTERN: &str = "%@internal.local";
 
-const ADMIN_USER_INVITE_CODE_CREATE_ATTEMPTS: usize = 12;
-
 #[derive(Debug)]
 pub(crate) struct AdminUserListFilter {
     pub(crate) user_id: Option<u64>,
@@ -194,8 +192,8 @@ pub(crate) async fn create_user_invite_code_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
 ) -> AppResult<()> {
-    for _ in 0..ADMIN_USER_INVITE_CODE_CREATE_ATTEMPTS {
-        let code = generate_user_invite_code()?;
+    for _ in 0..INVITE_CODE_CREATE_ATTEMPTS {
+        let code = generate_invite_code()?;
         let result = sqlx::query(
             r#"INSERT INTO invite_codes (owner_type, owner_id, code, status)
                VALUES ('user', ?, ?, 'active')"#,

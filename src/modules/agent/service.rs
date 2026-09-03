@@ -19,7 +19,10 @@ use crate::{
     },
 };
 use bigdecimal::BigDecimal;
-use uuid::Uuid;
+
+pub(crate) const AGENT_FINANCIAL_DEFAULT_LIMIT: u32 = 20;
+pub(crate) const AGENT_FINANCIAL_MAX_LIMIT: u32 = 100;
+pub(crate) const AGENT_FINANCIAL_MAX_OFFSET: u32 = 100_000;
 
 // 以下五个常量是返佣规则表 product_type 列的全部合法取值，新增业务线必须同时扩充归一化函数。
 pub(crate) const AGENT_COMMISSION_PRODUCT_CONVERT: &str = "convert";
@@ -56,6 +59,18 @@ pub(crate) fn agent_list_page(
     AgentListPage {
         limit: limit.unwrap_or(default_limit).clamp(1, default_limit),
         offset: offset.unwrap_or(0),
+    }
+}
+
+/// 构造团队用户金融明细的统一分页边界：缺省二十条，页大小最大一百，偏移最大十万。
+/// 输入只影响当前用户的稳定顺序结果页，不携带代理 ID，也不参与子树范围决策。
+/// 本函数为纯归一化，不查询总数或访问数据库。
+pub(crate) fn agent_financial_list_page(limit: Option<u32>, offset: Option<u32>) -> AgentListPage {
+    AgentListPage {
+        limit: limit
+            .unwrap_or(AGENT_FINANCIAL_DEFAULT_LIMIT)
+            .clamp(1, AGENT_FINANCIAL_MAX_LIMIT),
+        offset: offset.unwrap_or(0).min(AGENT_FINANCIAL_MAX_OFFSET),
     }
 }
 
@@ -112,12 +127,49 @@ pub(crate) fn validate_agent_invite_code_status(status: &str) -> AppResult<&'sta
     }
 }
 
-/// 生成代理邀请码文本：AGT 前缀加 UUIDv7 的无分隔十六进制串，时间有序便于按生成顺序排查。
-/// 本函数只保证极低碰撞概率，不查库预检，真正的唯一性由邀请码表的唯一索引在插入时兜底。
-/// 冲突时不会在此重试，调用链会把数据库错误直接上抛，由运营重新发起创建。
-pub(crate) fn generated_agent_invite_code() -> String {
-    // 代理邀请码统一使用 AGT 前缀，便于和普通用户邀请码在运营侧快速区分。
-    format!("AGT{}", Uuid::now_v7().simple())
+/// 归一化代理端杠杆仓位状态筛选，空白按未筛选处理。
+/// 仅接受已实现的 `opened | closed | canceled | liquidated`，未知值在获取连接池前即返回校验错误。
+/// 返回的稳定小写串可直接参数化绑定，不会把请求原文拼入 SQL。
+pub(crate) fn normalized_agent_margin_position_status(
+    value: Option<String>,
+) -> AppResult<Option<String>> {
+    normalize_agent_financial_status(
+        value,
+        &["opened", "closed", "canceled", "liquidated"],
+        "margin position status must be opened, closed, canceled, or liquidated",
+    )
+}
+
+/// 归一化代理端秒合约状态筛选，缺省或空白表示全部状态并显式包含 `opened`。
+/// 仅允许 `opened | settled | manual_review`，因此进行中订单不会被默认终态筛选隐藏。
+/// 校验为纯函数，失败时无数据库、结算、钱包或行情副作用。
+pub(crate) fn normalized_agent_seconds_order_status(
+    value: Option<String>,
+) -> AppResult<Option<String>> {
+    normalize_agent_financial_status(
+        value,
+        &["opened", "settled", "manual_review"],
+        "seconds contract order status must be opened, settled, or manual_review",
+    )
+}
+
+fn normalize_agent_financial_status(
+    value: Option<String>,
+    allowed: &[&str],
+    error_message: &str,
+) -> AppResult<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if allowed.contains(&value) {
+        Ok(Some(value.to_owned()))
+    } else {
+        Err(AppError::Validation(error_message.to_owned()))
+    }
 }
 
 /// 将 SQL 聚合记录映射为代理兑换统计，计数字段无法转为整数时返回内部错误。

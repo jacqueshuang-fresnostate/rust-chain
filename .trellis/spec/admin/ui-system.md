@@ -234,6 +234,119 @@ const scroll = containedTableScrollForColumns(
   `/admin/prediction/settings?tab=assets` and must not appear as a second
   sidebar or generic read-only resource page.
 
+## Admin New-Coin Asset and Local-Time Workflow
+
+### 1. Scope / Trigger
+
+- Applies when changing the Admin new-coin create SideSheet, lifecycle action,
+  unlock-rule action, asset selectors, or their request serialization.
+- This is a cross-layer contract because Admin sends local wall-clock input and
+  asset identifiers to Rust DTOs that deserialize absolute times as Unix
+  milliseconds and enforce active-asset and unlock-rule invariants.
+
+### 2. Signatures
+
+```ts
+POST /admin/api/v1/new-coins
+PATCH /admin/api/v1/new-coins/:projectId/lifecycle
+PATCH /admin/api/v1/new-coins/:projectId/unlock-rule
+
+isNewCoinProjectCreatable(values: NewCoinProjectValues): boolean
+requiredNewCoinLocalDateTimeMillis(value: string, label: string): number
+optionalNewCoinLocalDateTimeMillis(value: string, label: string): number | undefined
+```
+
+The create request includes positive integer `asset_id` and `quote_asset_id`,
+positive Decimal-text `total_supply` and `issue_price`, one supported
+`unlock_type`, and exactly the schedule field required by that type.
+
+### 3. Contracts
+
+- Both create asset selectors consume the shared `useAssetOptions` source,
+  which requests `/admin/api/v1/assets` with `{ status: 'active', limit: 100 }`.
+  `deposit_enabled` and
+  `withdraw_enabled` do not affect eligibility; `status = disabled` remains
+  ineligible in both the option query and backend asset lock.
+- `quote_asset_id` is required, is serialized as a positive integer, and must
+  differ from `asset_id`. Quote options exclude the current project asset.
+  Selecting a project asset or symbol that conflicts with the selected quote
+  clears the quote immediately. Coupled state changes use functional React
+  updates so a queued change cannot restore a stale conflicting value.
+- `上市时间` and `固定解禁时间` use `datetime-local`. Parse their numeric local
+  calendar components, reject normalization such as February 30 or a DST gap,
+  then send the resulting Unix milliseconds. Never interpret the value as UTC
+  text or expose a raw timestamp input to an operator.
+- Create serializes only `listed_at` for `immediate_on_listing`, only
+  `fixed_unlock_at` for `fixed_time`, or only positive integer
+  `relative_unlock_seconds` for `relative_period`. The create button stays
+  disabled until the currently selected schedule is valid.
+- Lifecycle and unlock-rule optional blank times become `undefined`; JSON
+  serialization therefore omits those keys. A nonblank invalid value raises a
+  Chinese field-specific validation error before any request is sent.
+- Backend precision, active-status, mutually exclusive unlock fields, audit
+  transaction, and unlock-fee rules remain authoritative. In particular, an
+  enabled unlock-fee asset must equal the project's `quote_asset_id`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Quote asset is blank, zero, non-integer, or equals project asset | Keep create disabled and send no request |
+| Project asset changes to the selected quote | Clear quote immediately; filter that asset from quote options |
+| Active asset has both transfer switches off | Keep it selectable and allow backend creation |
+| Asset status is `disabled` | Exclude it from options; backend creation returns validation error |
+| Required schedule is blank, malformed, normalized, or non-positive relative seconds | Keep create disabled; boundary helper reports a Chinese field error |
+| Optional lifecycle/action time is blank | Return `undefined` and omit the JSON key |
+| Optional lifecycle/action time is nonblank but invalid | Report a Chinese field error and make no request |
+
+### 5. Good / Base / Bad Cases
+
+- Good: select active project asset 11 and active quote asset 12 even when both
+  have deposit and withdrawal disabled; a fixed local time submits
+  `quote_asset_id: 12` and the exact local-time Unix milliseconds.
+- Base: leave an optional lifecycle time blank; the PATCH body has no
+  `listed_at` key.
+- Bad: retain quote 12 after switching the project asset to 12, convert
+  `datetime-local` by appending `Z`, or keep all three schedule fields in the
+  create payload. Each violates a backend invariant or changes the operator's
+  intended instant.
+
+### 6. Tests Required
+
+- Create UI coverage must use active asset response rows whose deposit and
+  withdrawal flags are false, select those rows through the rendered controls,
+  switch the project asset into a quote conflict, assert the quote clears, and
+  inspect the exact POST body. Asserting only the fixture object is insufficient.
+- Button coverage exercises all three `unlock_type` values with missing,
+  invalid, zero/fractional, and valid current schedule inputs.
+- Lifecycle/unlock UI coverage asserts `datetime-local`, exact PATCH
+  milliseconds, invalid-date rejection, and omission of blank optional keys.
+- The focused Rust route test sets both transfer flags false and proves create
+  succeeds, while a disabled asset remains rejected. If `DATABASE_URL` is
+  absent and the test skips by contract, report that real-database assertions
+  did not execute.
+- Run the Admin quality gate plus `cargo fmt --all -- --check`,
+  `cargo check --all-targets`, the focused Rust route test, Trellis task
+  validation, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```tsx
+// Wrong: stale state can restore a conflicting quote and the local value is
+// incorrectly reinterpreted as UTC.
+setProject({ ...project, assetId });
+body.fixed_unlock_at = Date.parse(`${fixedUnlockAt}Z`);
+
+// Correct: coupled state derives from the latest snapshot and the helper reads
+// datetime-local as browser-local calendar components.
+setProject((current) => ({
+  ...current,
+  assetId,
+  quoteAssetId: current.quoteAssetId === assetId ? '' : current.quoteAssetId
+}));
+body.fixed_unlock_at = requiredNewCoinLocalDateTimeMillis(fixedUnlockAt, '固定解禁时间');
+```
+
 ## Margin Product Configuration Workflow
 
 ### 1. Scope / Trigger

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile package quality gate, icon and responsive interaction contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"PWA install lifecycle, safe-route, theme, shell and modal behavior contract."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Localized visible copy and dialog navigation/accessibility conventions."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing modal lifecycle and brand assets rather than duplicating behavior."}
+{"file":".trellis/tasks/09-03-mobile-pwa-install-pencil-parity/research/pencil-pwa-install-dialog.md","reason":"Exact Pencil node IDs, geometry, palette, copy and icon truth for the 1:1 implementation."}

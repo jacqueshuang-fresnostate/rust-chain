@@ -1,6 +1,19 @@
+import {
+  decimalDivide,
+  decimalMultiply,
+  decimalSubtract,
+  tryNormalizeDecimalText,
+  type DecimalText,
+} from './decimal.ts'
+
 export type MarginLiquidationRiskScope = 'position' | 'account'
 
 const MARGIN_RISK_DECIMAL_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/
+const MARGIN_LIVE_PROJECTION_SCALE = 18
+const MARGIN_LIVE_DECIMAL_CONSTRAINTS = {
+  maxIntegerDigits: 20,
+  maxScale: MARGIN_LIVE_PROJECTION_SCALE,
+} as const
 
 export type MarginCrossAccountPriceAssumption = 'reference_pair_only_other_marks_static'
 
@@ -55,6 +68,84 @@ export interface MarginPositionRiskMetrics {
   liquidationDistanceRate: number | null
   liquidationRiskScope: MarginLiquidationRiskScope
   crossAccountEstimateState: MarginCrossAccountEstimateState | null
+}
+
+export interface MarginPositionLiveSource {
+  direction: 'long' | 'short'
+  marginAmountText: DecimalText
+  notionalAmountText: DecimalText
+  entryPriceText: DecimalText | null
+}
+
+export interface MarginPositionTickerSource {
+  lastPriceText?: DecimalText
+  observedAt?: number
+}
+
+export interface MarginPositionServerRiskSource {
+  markPriceText: DecimalText
+  unrealizedPnlText: DecimalText
+  returnRateText: DecimalText | null
+  observedAt?: number
+}
+
+export interface MarginPositionLiveProjection {
+  markPriceText: DecimalText | null
+  unrealizedPnlText: DecimalText | null
+  returnRateText: DecimalText | null
+}
+
+/**
+ * Projects only the three same-ticker display fields that Mobile can reproduce exactly.
+ * Every invalid or incomparable live boundary returns the authoritative server tuple unchanged.
+ */
+export function resolveMarginPositionLiveProjection(
+  position: MarginPositionLiveSource,
+  ticker: MarginPositionTickerSource | null | undefined,
+  risk: MarginPositionServerRiskSource | null | undefined,
+): MarginPositionLiveProjection {
+  const serverProjection: MarginPositionLiveProjection = {
+    markPriceText: risk?.markPriceText ?? null,
+    unrealizedPnlText: risk?.unrealizedPnlText ?? null,
+    returnRateText: risk?.returnRateText ?? null,
+  }
+  if (!risk
+    || !isPositiveSafeTimestamp(risk.observedAt)
+    || !isPositiveSafeTimestamp(ticker?.observedAt)
+    || ticker.observedAt < risk.observedAt
+    || (position.direction !== 'long' && position.direction !== 'short')) {
+    return serverProjection
+  }
+
+  const markPriceText = exactMarginLiveDecimal(ticker.lastPriceText, false)
+  const entryPriceText = exactMarginLiveDecimal(position.entryPriceText, false)
+  const marginAmountText = exactMarginLiveDecimal(position.marginAmountText, false)
+  const notionalAmountText = exactMarginLiveDecimal(position.notionalAmountText, true)
+  if (!markPriceText || !entryPriceText || !marginAmountText || !notionalAmountText) {
+    return serverProjection
+  }
+
+  try {
+    const directionalDelta = position.direction === 'long'
+      ? decimalSubtract(markPriceText, entryPriceText)
+      : decimalSubtract(entryPriceText, markPriceText)
+    const unrealizedPnlText = decimalDivide(
+      decimalMultiply(notionalAmountText, directionalDelta),
+      entryPriceText,
+      MARGIN_LIVE_PROJECTION_SCALE,
+    )
+    return {
+      markPriceText,
+      unrealizedPnlText,
+      returnRateText: decimalDivide(
+        unrealizedPnlText,
+        marginAmountText,
+        MARGIN_LIVE_PROJECTION_SCALE,
+      ),
+    }
+  } catch {
+    return serverProjection
+  }
 }
 
 /** Parses only finite JSON numbers or backend DECIMAL strings used by risk display inputs. */
@@ -215,6 +306,20 @@ function finiteNonNegativeNumber(value: unknown): number | null {
 
 function finitePositiveNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function exactMarginLiveDecimal(value: unknown, allowZero: boolean): DecimalText | null {
+  return typeof value === 'string'
+    ? tryNormalizeDecimalText(value, {
+      ...MARGIN_LIVE_DECIMAL_CONSTRAINTS,
+      allowNegative: false,
+      allowZero,
+    })
+    : null
+}
+
+function isPositiveSafeTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 function strictMarginRiskNumber(value: unknown, field: string): number {

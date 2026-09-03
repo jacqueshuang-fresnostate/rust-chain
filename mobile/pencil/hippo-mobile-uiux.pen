@@ -60260,7 +60260,8 @@
                   "fill": "#8A948F",
                   "content": "2026/09/01 22:51:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -60521,7 +60522,8 @@
                   "fill": "#8A948F",
                   "content": "2026/09/01 22:51:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -60782,7 +60784,8 @@
                   "fill": "#8A948F",
                   "content": "2026/09/01 22:51:02",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -61043,7 +61046,8 @@
                   "fill": "#8A948F",
                   "content": "2026/09/01 22:51:02",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -61592,7 +61596,8 @@
                   "fill": "#8F9B94",
                   "content": "2026/09/01 22:51:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -61853,7 +61858,8 @@
                   "fill": "#8F9B94",
                   "content": "2026/09/01 22:51:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -62114,7 +62120,8 @@
                   "fill": "#8F9B94",
                   "content": "2026/09/01 22:51:02",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -62375,7 +62382,8 @@
                   "fill": "#8F9B94",
                   "content": "2026/09/01 22:51:02",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -112573,7 +112581,8 @@
                   "fill": "#8A948F",
                   "content": "09/01 22:51:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 14
+                  "fontSize": 14,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -112786,7 +112795,8 @@
                   "fill": "#8A948F",
                   "content": "09/01 22:51:02",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 14
+                  "fontSize": 14,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -113064,7 +113074,8 @@
                   "fill": "#8A948F",
                   "content": "08/31 00:18:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -113418,7 +113429,8 @@
                   "fill": "#8A948F",
                   "content": "08/19 16:20:57",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -113988,7 +114000,8 @@
                   "fill": "#8F9B94",
                   "content": "09/01 22:51:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 14
+                  "fontSize": 14,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -114201,7 +114214,8 @@
                   "fill": "#8F9B94",
                   "content": "09/01 22:51:02",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 14
+                  "fontSize": 14,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -114479,7 +114493,8 @@
                   "fill": "#8F9B94",
                   "content": "08/31 00:18:31",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -114833,7 +114848,8 @@
                   "fill": "#8F9B94",
                   "content": "08/19 16:20:57",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -115410,7 +115426,8 @@
                   "fill": "#8A948F",
                   "content": "09/01 22:56:18",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -115741,7 +115758,8 @@
                   "fill": "#8A948F",
                   "content": "09/01 22:55:42",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -115920,7 +115938,8 @@
               "fill": "#8A948F",
               "content": "市场波动时，限价委托可能无法立即成交",
               "fontFamily": "Noto Sans SC",
-              "fontSize": 13
+              "fontSize": 13,
+              "fontWeight": "normal"
             }
           ]
         }
@@ -116395,7 +116414,8 @@
                   "fill": "#8F9B94",
                   "content": "09/01 22:56:18",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -116726,7 +116746,8 @@
                   "fill": "#8F9B94",
                   "content": "09/01 22:55:42",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             },
@@ -116905,7 +116926,8 @@
               "fill": "#8F9B94",
               "content": "市场波动时，限价委托可能无法立即成交",
               "fontFamily": "Noto Sans SC",
-              "fontSize": 13
+              "fontSize": 13,
+              "fontWeight": "normal"
             }
           ]
         }
@@ -119478,6 +119500,5035 @@
                       "fontWeight": "600"
                     }
                   ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "NROQD",
+      "x": 1880,
+      "y": 2127,
+      "name": "01b / PWA 安装提示 · 浅色主题",
+      "theme": {
+        "mode": "light"
+      },
+      "clip": true,
+      "width": 390,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "EAWG3",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "SdAsj",
+              "name": "Time",
+              "fill": "$text",
+              "content": "09:41",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 11,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "bQo1a",
+              "name": "Status Signals",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "g6sCI",
+                  "name": "Network",
+                  "fill": "$muted",
+                  "content": "4G+",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "icon",
+                  "id": "VhiTC",
+                  "name": "Wifi",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "L37EmD",
+                  "name": "Battery",
+                  "fill": "$text",
+                  "content": "82%",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "mZfBM",
+          "name": "Root Header",
+          "width": "fill_container",
+          "height": 64,
+          "fill": "$canvas",
+          "stroke": "#00000000",
+          "strokeAlignment": "inner",
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "id": "claWy",
+              "name": "Brand Logo",
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "images/hippo-logo.png",
+                "mode": "fit"
+              },
+              "width": 136,
+              "height": 34
+            },
+            {
+              "type": "frame",
+              "id": "EEAAG",
+              "name": "Header Actions",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "e8C3YA",
+                  "name": "Theme",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "#00000000",
+                  "cornerRadius": 22,
+                  "stroke": "#00000000",
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "rjoyc",
+                      "name": "Theme Icon",
+                      "width": 19,
+                      "height": 19,
+                      "icon": "moon",
+                      "library": "lucide",
+                      "fill": "$text"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "AtG1L",
+                  "name": "Messages",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "#00000000",
+                  "cornerRadius": 22,
+                  "stroke": "#00000000",
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "MseId",
+                      "name": "Messages Icon",
+                      "width": 19,
+                      "height": 19,
+                      "icon": "bell",
+                      "library": "lucide",
+                      "fill": "$text"
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "eBF2M",
+                      "layoutPosition": "absolute",
+                      "x": 31,
+                      "y": 2,
+                      "name": "Unread Dot",
+                      "fill": "$coral",
+                      "width": 8,
+                      "height": 8
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "JDxKL",
+          "name": "Home Utility Row",
+          "width": "fill_container",
+          "height": 56,
+          "gap": 8,
+          "padding": [
+            6,
+            16
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "D56Ti",
+              "name": "Home Search",
+              "width": "fill_container",
+              "height": 44,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "CMuNA",
+                  "name": "Home Search Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "search",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "e2mMw",
+                  "name": "Home Search Placeholder",
+                  "fill": "$muted",
+                  "content": "搜索币种、产品或功能",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 13,
+                  "fontWeight": "450"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "y6r3Z",
+              "name": "Scan",
+              "width": 44,
+              "height": 44,
+              "fill": "$surface",
+              "cornerRadius": 22,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "DDk35",
+                  "name": "Scan Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "scan-line",
+                  "library": "lucide",
+                  "fill": "$text"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "z6amgk",
+          "name": "Portfolio Guest Overview",
+          "width": "fill_container",
+          "fill": "$surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 8,
+          "padding": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "yN1SM",
+              "name": "Guest Hero",
+              "clip": true,
+              "width": "fill_container",
+              "height": 270,
+              "cornerRadius": "$radius-l",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 24,
+              "padding": [
+                18,
+                20,
+                16,
+                20
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "QK2iw",
+                  "layoutPosition": "absolute",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Card BG Image",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "images/generated-1785687557714.png",
+                    "mode": "fill"
+                  },
+                  "width": 358,
+                  "height": 270
+                },
+                {
+                  "type": "rectangle",
+                  "id": "ngCxS",
+                  "layoutPosition": "absolute",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Card BG Overlay",
+                  "fill": "#FFFFFF00",
+                  "width": 358,
+                  "height": 270
+                },
+                {
+                  "type": "ellipse",
+                  "id": "X74koz",
+                  "layoutPosition": "absolute",
+                  "x": -70,
+                  "y": 150,
+                  "name": "Bloom",
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "radial",
+                    "enabled": true,
+                    "rotation": 0,
+                    "size": {
+                      "width": 1,
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#43EFA92E",
+                        "position": 0
+                      },
+                      {
+                        "color": "#43EFA900",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "width": 200,
+                  "height": 200
+                },
+                {
+                  "type": "frame",
+                  "id": "M39UMU",
+                  "name": "Guest Mid",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "F09P7",
+                      "name": "Guest Headline",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xNkHY",
+                          "name": "Headline Line 1",
+                          "fill": "$text",
+                          "content": "全球市场",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 44,
+                          "fontWeight": "750"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "yDjEx",
+                          "name": "Headline Line 2 Offset",
+                          "width": "fill_container",
+                          "justifyContent": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Ktm5G",
+                              "name": "Headline Line 2",
+                              "fill": "$mint-strong",
+                              "content": "一手掌握",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 44,
+                              "fontWeight": "750"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "gkPNm",
+                      "name": "Guest Sub",
+                      "fill": "$muted",
+                      "content": "登录后同步资产估值、收益走势与持仓",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JehLa",
+                  "name": "Guest Bottom",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ZzfjD",
+                      "name": "Guest Login CTA",
+                      "width": "fill_container",
+                      "height": 48,
+                      "fill": "$mint",
+                      "cornerRadius": 4,
+                      "gap": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "vtB7D",
+                          "name": "CTA Label",
+                          "fill": "#07110D",
+                          "content": "去登录",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "t4byV",
+                          "name": "CTA Arrow",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#07110D"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "x5eOf",
+          "name": "Funding Actions",
+          "width": "fill_container",
+          "height": 64,
+          "gap": 8,
+          "padding": [
+            12,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "PAxwW",
+              "name": "Buy Crypto",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "$mint",
+              "cornerRadius": 4,
+              "stroke": "$mint",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "ua2A4",
+                  "name": "Buy Crypto Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "credit-card",
+                  "library": "lucide",
+                  "fill": "#07110D"
+                },
+                {
+                  "type": "text",
+                  "id": "obF8x",
+                  "name": "Buy Crypto Label",
+                  "fill": "#07110D",
+                  "content": "买币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 14,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gNPyq",
+              "name": "Deposit",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "$text",
+              "cornerRadius": 4,
+              "stroke": "$text",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "UHU1a",
+                  "name": "Deposit Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "arrow-down-left",
+                  "library": "lucide",
+                  "fill": "$canvas"
+                },
+                {
+                  "type": "text",
+                  "id": "e6c3z6",
+                  "name": "Deposit Label",
+                  "fill": "$canvas",
+                  "content": "充币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 14,
+                  "fontWeight": "650"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "LSw75",
+          "name": "Shortcut Grid",
+          "width": "fill_container",
+          "height": 176,
+          "gap": 8,
+          "padding": [
+            8,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "D7ldLV",
+              "name": "Shortcut Column 0",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "iW3wl",
+                  "name": "Shortcut 闪兑",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "kKwAV",
+                      "name": "闪兑 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "IIDoa",
+                          "name": "闪兑 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "repeat",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "d47reR",
+                      "name": "闪兑 Label",
+                      "fill": "$text",
+                      "content": "闪兑",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JW0RT",
+                  "name": "Shortcut 借贷",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "N3jdNY",
+                      "name": "借贷 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "p3TGd",
+                          "name": "借贷 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "landmark",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "c0IvR",
+                      "name": "借贷 Label",
+                      "fill": "$text",
+                      "content": "借贷",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "lYUS2",
+              "name": "Shortcut Column 1",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "f9E7OQ",
+                  "name": "Shortcut 现货",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "bOkAh",
+                      "name": "现货 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "jc21X",
+                          "name": "现货 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "chart-line",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "L3HVuh",
+                      "name": "现货 Label",
+                      "fill": "$text",
+                      "content": "现货",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "j1Yck",
+                  "name": "Shortcut 新币",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "WsaR5",
+                      "name": "新币 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "i8DamS",
+                          "name": "新币 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "sparkles",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "RhyYB",
+                      "name": "新币 Label",
+                      "fill": "$text",
+                      "content": "新币",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "x4knM",
+              "name": "Shortcut Column 2",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "R3RAFN",
+                  "name": "Shortcut 合约",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "whiI5",
+                      "name": "合约 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "mzRMV",
+                          "name": "合约 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "layers",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "v16yWF",
+                      "name": "合约 Label",
+                      "fill": "$text",
+                      "content": "合约",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "H8q3tg",
+                  "name": "Shortcut 秒合约",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "x5dPKX",
+                      "name": "秒合约 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "PKOhc",
+                          "name": "预测 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "zap",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "HT2J1",
+                      "name": "预测 Label",
+                      "fill": "$text",
+                      "content": "秒合约",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "j5uwOU",
+              "name": "Shortcut Column 3",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "dTCdl",
+                  "name": "Shortcut 理财",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "O0DxsK",
+                      "name": "理财 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "j9HC8",
+                          "name": "理财 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "piggy-bank",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "dhGgL",
+                      "name": "理财 Label",
+                      "fill": "$text",
+                      "content": "理财",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "iH1BR",
+                  "name": "Shortcut 更多",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "IWspU",
+                      "name": "更多 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "soB0r",
+                          "name": "更多 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "ellipsis",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "qrHM7",
+                      "name": "更多 Label",
+                      "fill": "$text",
+                      "content": "更多",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "acNQ5",
+          "name": "Market Brief",
+          "width": "fill_container",
+          "height": 80,
+          "fill": "#00000000",
+          "stroke": "#00000000",
+          "strokeAlignment": "inner",
+          "gap": 12,
+          "padding": [
+            8,
+            16
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fuX42",
+              "name": "Brief Card",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "#07110D",
+              "cornerRadius": 12,
+              "stroke": "#00000000",
+              "gap": 12,
+              "padding": [
+                12,
+                14
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ZeiZt",
+                  "name": "Brief Icon Plate",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$mint-soft",
+                  "cornerRadius": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "IYMa7",
+                      "name": "Brief Icon",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "newspaper",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "MV0bA",
+                  "name": "Brief Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "i4bjtZ",
+                      "name": "Brief Eyebrow",
+                      "fill": "$mint",
+                      "content": "AI 行情日报",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pM7KL",
+                      "name": "Brief Title",
+                      "fill": "#FFFFFF",
+                      "content": "三分钟读懂今日市场",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 14,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "T9lNYd",
+                      "name": "Brief Detail",
+                      "fill": "#9BA8A1",
+                      "content": "暂无平台公告",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "icon",
+                  "id": "mhzmi",
+                  "name": "Brief Arrow",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Qov5m",
+          "name": "Home Markets",
+          "width": "fill_container",
+          "height": 290,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            14,
+            16,
+            4,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "JBMOX",
+              "name": "Market Header",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "AqOOL",
+                  "name": "Market Title",
+                  "fill": "$text",
+                  "content": "行情",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 22,
+                  "fontWeight": "750"
+                },
+                {
+                  "type": "text",
+                  "id": "GVrzI",
+                  "name": "Market More",
+                  "fill": "$muted",
+                  "content": "更多  ›",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ao5uM",
+              "name": "Market Tabs",
+              "width": "fill_container",
+              "gap": 20,
+              "padding": [
+                4,
+                0,
+                2,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "WuHEz",
+                  "name": "Tab 自选",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "MWXNG",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "自选",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "t2h2R3",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B7peP",
+                  "name": "Tab 主流",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "m3aV6",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "主流",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "t1VjH",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "e7BYWa",
+                  "name": "Tab 热门",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Wy3eX",
+                      "name": "Tab Label",
+                      "fill": "$text",
+                      "content": "热门",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "IlG0v",
+                      "name": "Tab Bar",
+                      "fill": "$text",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Q5T0Ml",
+                  "name": "Tab 涨幅",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "apSgp",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "涨幅",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "uvWke",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "O7kyps",
+                  "name": "Tab 新币",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "DdKZu",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "新币",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "rE5ZQ",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "HqNG7",
+              "name": "Market Col Header",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                4,
+                0,
+                2,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "rSLh9",
+                  "name": "Col Pair",
+                  "width": "fill_container",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "N5Pab",
+                      "name": "Col Label",
+                      "fill": "$muted",
+                      "content": "交易对",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Lt13t",
+                  "name": "Col Price",
+                  "width": 104,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "m829k",
+                      "name": "Col Label",
+                      "fill": "$muted",
+                      "content": "最新价",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "l7HWNt",
+                  "name": "Col Change",
+                  "width": 88,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "K9TBpX",
+                      "name": "Col Label",
+                      "fill": "$muted",
+                      "content": "24h涨跌",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "nVymm",
+              "name": "Market Row BTC",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                7,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "CS318",
+                  "name": "Pair Cell",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "q1up5",
+                      "name": "Coin BTC",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#00000000",
+                      "stroke": "#00000000",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "epGMM",
+                          "name": "Coin Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "bitcoin",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "YDCgQ",
+                      "name": "Pair Name",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "GxB1M",
+                          "name": "Pair Base",
+                          "fill": "$text",
+                          "content": "BTC",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "KhwnX",
+                          "name": "Pair Quote",
+                          "fill": "$muted",
+                          "content": "/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gH1Mq",
+                  "name": "Price Cell",
+                  "width": 104,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "UtBv2",
+                      "name": "Price",
+                      "fill": "$text",
+                      "content": "63,085.00",
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "NlQMV",
+                      "name": "Price Unit",
+                      "fill": "$muted",
+                      "content": "USDT",
+                      "fontFamily": "$font-data",
+                      "fontSize": 9,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tulyN",
+                  "name": "Change Chip",
+                  "width": 88,
+                  "height": 30,
+                  "fill": "$mint",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "zQg3n",
+                      "name": "Change",
+                      "fill": "#07110D",
+                      "content": "+0.58%",
+                      "fontFamily": "$font-data",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "l5b8hh",
+              "name": "Market Row ETH",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                7,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "FxSkH",
+                  "name": "Pair Cell",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "PNxFN",
+                      "name": "Coin ETH",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#00000000",
+                      "stroke": "#00000000",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "WcHiR",
+                          "name": "Coin Letter",
+                          "fill": "#FFFFFF",
+                          "content": "Ξ",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "jUKOB",
+                      "name": "Pair Name",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "GAVqw",
+                          "name": "Pair Base",
+                          "fill": "$text",
+                          "content": "ETH",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "a2Fpvq",
+                          "name": "Pair Quote",
+                          "fill": "$muted",
+                          "content": "/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "H1Z7mO",
+                  "name": "Price Cell",
+                  "width": 104,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "go1E6",
+                      "name": "Price",
+                      "fill": "$text",
+                      "content": "3,412.88",
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "dLkq9",
+                      "name": "Price Unit",
+                      "fill": "$muted",
+                      "content": "USDT",
+                      "fontFamily": "$font-data",
+                      "fontSize": 9,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "NHoov",
+                  "name": "Change Chip",
+                  "width": 88,
+                  "height": 30,
+                  "fill": "$coral",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "rWsx1",
+                      "name": "Change",
+                      "fill": "#FFFFFF",
+                      "content": "-1.22%",
+                      "fontFamily": "$font-data",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sfnPB",
+              "name": "Market Row HIPPO",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                7,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "RyyK0",
+                  "name": "Pair Cell",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Fxivi",
+                      "name": "Coin HIPPO",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#00000000",
+                      "stroke": "#00000000",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sxq31",
+                          "name": "Coin Letter",
+                          "fill": "#07110D",
+                          "content": "H",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "750"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "L33GGB",
+                      "name": "Pair Name",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Isfr1",
+                          "name": "Pair Base",
+                          "fill": "$text",
+                          "content": "HIPPO",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "tRISw",
+                          "name": "Pair Quote",
+                          "fill": "$muted",
+                          "content": "/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "yuVN3",
+                  "name": "Price Cell",
+                  "width": 104,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "EMpwZ",
+                      "name": "Price",
+                      "fill": "$text",
+                      "content": "0.0824",
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "c9yTnM",
+                      "name": "Price Unit",
+                      "fill": "$muted",
+                      "content": "USDT",
+                      "fontFamily": "$font-data",
+                      "fontSize": 9,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z0gUF",
+                  "name": "Change Chip",
+                  "width": 88,
+                  "height": 30,
+                  "fill": "$mint",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "vYGMN",
+                      "name": "Change",
+                      "fill": "#07110D",
+                      "content": "+4.96%",
+                      "fontFamily": "$font-data",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "zk0c7",
+          "name": "Bottom Navigation",
+          "width": "fill_container",
+          "height": 84,
+          "fill": "#00000000",
+          "stroke": "#00000000",
+          "strokeAlignment": "inner",
+          "padding": [
+            6,
+            16,
+            10,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "AIMwM",
+              "name": "Nav Dock",
+              "width": "fill_container",
+              "height": 68,
+              "fill": "$surface",
+              "cornerRadius": 24,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#07110D14",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 24
+              },
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "vh37U",
+                  "name": "Nav 首页",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "K5mWp",
+                      "name": "首页 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "house",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    },
+                    {
+                      "type": "text",
+                      "id": "JJcwF",
+                      "name": "首页 Label",
+                      "fill": "$text",
+                      "content": "首页",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "650"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QSICF",
+                  "name": "Nav 行情",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mORvJ",
+                      "name": "行情 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "chart-line",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "uJDtV",
+                      "name": "行情 Label",
+                      "fill": "$muted",
+                      "content": "行情",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XnJMq",
+                  "name": "FAB Space",
+                  "width": 56,
+                  "height": 56,
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "i0tV6o",
+                      "name": "FAB Label",
+                      "fill": "$muted",
+                      "content": "交易",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rmJXu",
+                  "name": "Nav 资产",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "RB5DS",
+                      "name": "资产 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "wallet-cards",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ba0o4",
+                      "name": "资产 Label",
+                      "fill": "$muted",
+                      "content": "资产",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "J9GgE",
+                  "name": "Nav 我的",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "f2Zjbo",
+                      "name": "我的 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "user-round",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "jin9g",
+                      "name": "我的 Label",
+                      "fill": "$muted",
+                      "content": "我的",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B7D5r",
+                  "layoutPosition": "absolute",
+                  "x": 151,
+                  "y": -12,
+                  "name": "Nav FAB",
+                  "width": 56,
+                  "height": 56,
+                  "fill": "$mint",
+                  "cornerRadius": 28,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#43EFA966",
+                    "offset": {
+                      "x": 0,
+                      "y": 6
+                    },
+                    "blur": 16
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "yLxcz",
+                      "name": "FAB Icon",
+                      "width": 24,
+                      "height": 24,
+                      "icon": "arrow-left-right",
+                      "library": "lucide",
+                      "fill": "#07110D"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "R1dlXl",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "PWA 安装遮罩",
+          "fill": "#07110C80",
+          "width": 390,
+          "height": 1144
+        },
+        {
+          "type": "frame",
+          "id": "FwXCx",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 604,
+          "name": "PWA 安装弹窗",
+          "width": 390,
+          "height": 540,
+          "fill": "#FFFFFF",
+          "cornerRadius": [
+            26,
+            26,
+            0,
+            0
+          ],
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000024",
+            "offset": {
+              "x": 0,
+              "y": -8
+            },
+            "blur": 28
+          },
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            22,
+            20
+          ],
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 2,
+              "id": "KqMFG",
+              "layoutPosition": "absolute",
+              "x": 174,
+              "y": 6,
+              "name": "弹窗拖拽条",
+              "fill": "#CDD7D1",
+              "width": 42,
+              "height": 4
+            },
+            {
+              "type": "frame",
+              "id": "u2UWQb",
+              "name": "安装弹窗标题区",
+              "width": "fill_container",
+              "height": 82,
+              "gap": 14,
+              "padding": [
+                10,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "f9Q7AJ",
+                  "name": "PWA 应用图标",
+                  "width": 64,
+                  "height": 64,
+                  "fill": "#E3FAEF",
+                  "cornerRadius": 18,
+                  "stroke": "#BCEBD6",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "JBKu9",
+                      "name": "Hippo 应用 Logo",
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "images/hippo-logo.png",
+                        "mode": "fit"
+                      },
+                      "width": 50,
+                      "height": 32
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "F8lQjt",
+                  "name": "安装标题文字区",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "GGedA",
+                      "name": "安装弹窗标题",
+                      "fill": "#102018",
+                      "content": "安装 Hippo App",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 22,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "VtSuN",
+                      "name": "安装弹窗副标题",
+                      "fill": "#18D38D",
+                      "content": "添加到主屏幕",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "iit6t",
+                  "name": "关闭安装弹窗",
+                  "context": "关闭弹窗，本次会话不再提示",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "#EFF8F3",
+                  "cornerRadius": 18,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "q0ZINE",
+                      "name": "关闭图标",
+                      "width": 19,
+                      "height": 19,
+                      "icon": "x",
+                      "library": "lucide",
+                      "fill": "#64736B"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "GV6yc",
+              "name": "安装说明",
+              "fill": "#64736B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "无需应用商店，获得更快的启动速度、全屏体验和及时通知。",
+              "lineHeight": 1.55,
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 14,
+              "fontWeight": "500"
+            },
+            {
+              "type": "frame",
+              "id": "VUn72",
+              "name": "PWA 安装优势",
+              "width": "fill_container",
+              "height": 146,
+              "fill": "#EFF8F3",
+              "cornerRadius": 16,
+              "layout": "vertical",
+              "padding": [
+                8,
+                14
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pCCAW",
+                  "name": "快速启动",
+                  "width": "fill_container",
+                  "height": 43,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "W32FVS",
+                      "name": "快速启动图标底座",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#D8F7E9",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "tfbOd",
+                          "name": "快速启动图标",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "zap",
+                          "library": "lucide",
+                          "fill": "#18D38D"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "opfCg",
+                      "name": "快速启动文字",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "e3s77",
+                          "name": "快速启动标题",
+                          "fill": "#102018",
+                          "content": "快速启动",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "khhDW",
+                          "name": "快速启动说明",
+                          "fill": "#64736B",
+                          "content": "从主屏幕一键进入",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "w4uIWh",
+                  "name": "沉浸体验",
+                  "width": "fill_container",
+                  "height": 43,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "XSXPk",
+                      "name": "沉浸体验图标底座",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#D8F7E9",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "UvQ2P",
+                          "name": "沉浸体验图标",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "maximize",
+                          "library": "lucide",
+                          "fill": "#18D38D"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "g4Ofu5",
+                      "name": "沉浸体验文字",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Gz5DT",
+                          "name": "沉浸体验标题",
+                          "fill": "#102018",
+                          "content": "沉浸体验",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "z6jSl",
+                          "name": "沉浸体验说明",
+                          "fill": "#64736B",
+                          "content": "全屏浏览，操作更专注",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "VeIbv",
+                  "name": "及时通知",
+                  "width": "fill_container",
+                  "height": 43,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "i2oTJF",
+                      "name": "及时通知图标底座",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#D8F7E9",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "FtTds",
+                          "name": "及时通知图标",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "bell-ring",
+                          "library": "lucide",
+                          "fill": "#18D38D"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Q1yYs",
+                      "name": "及时通知文字",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "JLVD1",
+                          "name": "及时通知标题",
+                          "fill": "#102018",
+                          "content": "及时通知",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "l2bto",
+                          "name": "及时通知说明",
+                          "fill": "#64736B",
+                          "content": "重要行情与订单状态不错过",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NSQjK",
+              "name": "安装提示",
+              "width": "fill_container",
+              "height": 42,
+              "fill": "#F7FAF8",
+              "cornerRadius": 12,
+              "stroke": "#DCE9E2",
+              "strokeWidth": 1,
+              "gap": 8,
+              "padding": [
+                0,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "rsa3a",
+                  "name": "安装提示图标",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "info",
+                  "library": "lucide",
+                  "fill": "#64736B"
+                },
+                {
+                  "type": "text",
+                  "id": "zICX8",
+                  "name": "安装提示文字",
+                  "fill": "#64736B",
+                  "content": "iPhone 用户可通过分享菜单添加到主屏幕",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "xcKPL",
+              "name": "立即安装按钮",
+              "context": "触发保存的 beforeinstallprompt.prompt()，成功后关闭弹窗",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#18D38D",
+              "cornerRadius": 16,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#18D38D2E",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 16
+              },
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "bdarg",
+                  "name": "安装按钮图标",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "download",
+                  "library": "lucide",
+                  "fill": "#082A1D"
+                },
+                {
+                  "type": "text",
+                  "id": "o8gGbv",
+                  "name": "立即安装文字",
+                  "fill": "#082A1D",
+                  "content": "立即安装",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 16,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Cii48",
+              "name": "稍后提醒按钮",
+              "width": "fill_container",
+              "height": 38,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "uU5pe",
+                  "name": "稍后提醒文字",
+                  "fill": "#64736B",
+                  "content": "稍后提醒",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "Tcgl6",
+      "x": 2350,
+      "y": 2127,
+      "name": "01b / PWA 安装提示 · 深色主题",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 390,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "C9U6eN",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "Wa9iL",
+              "name": "Time",
+              "fill": "$text",
+              "content": "09:41",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 11,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "g65EH",
+              "name": "Status Signals",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ivygM",
+                  "name": "Network",
+                  "fill": "$muted",
+                  "content": "4G+",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "icon",
+                  "id": "nVgvK",
+                  "name": "Wifi",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "srWFT",
+                  "name": "Battery",
+                  "fill": "$text",
+                  "content": "82%",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "TY1Oi",
+          "name": "Root Header",
+          "width": "fill_container",
+          "height": 64,
+          "fill": "$canvas",
+          "stroke": "#00000000",
+          "strokeAlignment": "inner",
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "id": "RoL7B",
+              "name": "Brand Logo",
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "images/hippo-logo.png",
+                "mode": "fit"
+              },
+              "width": 136,
+              "height": 34
+            },
+            {
+              "type": "frame",
+              "id": "UJ62n",
+              "name": "Header Actions",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tFFEb",
+                  "name": "Theme",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "#00000000",
+                  "cornerRadius": 22,
+                  "stroke": "#00000000",
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Y7Y0vy",
+                      "name": "Theme Icon",
+                      "width": 19,
+                      "height": 19,
+                      "icon": "sun",
+                      "library": "lucide",
+                      "fill": "$text"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZhliY",
+                  "name": "Messages",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "#00000000",
+                  "cornerRadius": 22,
+                  "stroke": "#00000000",
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "mvdxR",
+                      "name": "Messages Icon",
+                      "width": 19,
+                      "height": 19,
+                      "icon": "bell",
+                      "library": "lucide",
+                      "fill": "$text"
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "UgrqI",
+                      "layoutPosition": "absolute",
+                      "x": 31,
+                      "y": 2,
+                      "name": "Unread Dot",
+                      "fill": "$coral",
+                      "width": 8,
+                      "height": 8
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "H0309d",
+          "name": "Home Utility Row",
+          "width": "fill_container",
+          "height": 56,
+          "gap": 8,
+          "padding": [
+            6,
+            16
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ctqA9",
+              "name": "Home Search",
+              "width": "fill_container",
+              "height": 44,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "X6PNE",
+                  "name": "Home Search Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "search",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "F3pfdN",
+                  "name": "Home Search Placeholder",
+                  "fill": "$muted",
+                  "content": "搜索币种、产品或功能",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 13,
+                  "fontWeight": "450"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "elm28",
+              "name": "Scan",
+              "width": 44,
+              "height": 44,
+              "fill": "$surface",
+              "cornerRadius": 22,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "TDJVx",
+                  "name": "Scan Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "scan-line",
+                  "library": "lucide",
+                  "fill": "$text"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "cThfM",
+          "name": "Portfolio Guest Overview",
+          "width": "fill_container",
+          "fill": "$surface-2",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 8,
+          "padding": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "pRlBK",
+              "name": "Guest Hero",
+              "clip": true,
+              "width": "fill_container",
+              "height": 270,
+              "cornerRadius": "$radius-l",
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 24,
+              "padding": [
+                18,
+                20,
+                16,
+                20
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "ZEK4I",
+                  "layoutPosition": "absolute",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Card BG Image",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "images/generated-1785686288395.png",
+                    "mode": "fill"
+                  },
+                  "width": 358,
+                  "height": 270
+                },
+                {
+                  "type": "rectangle",
+                  "id": "dtALa",
+                  "layoutPosition": "absolute",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Card BG Overlay",
+                  "fill": "#0A100DC0",
+                  "width": 358,
+                  "height": 270
+                },
+                {
+                  "type": "ellipse",
+                  "id": "Ud3z7",
+                  "layoutPosition": "absolute",
+                  "x": -70,
+                  "y": 150,
+                  "name": "Bloom",
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "radial",
+                    "enabled": true,
+                    "rotation": 0,
+                    "size": {
+                      "width": 1,
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#43EFA92E",
+                        "position": 0
+                      },
+                      {
+                        "color": "#43EFA900",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "width": 200,
+                  "height": 200
+                },
+                {
+                  "type": "frame",
+                  "id": "L7Yun4",
+                  "name": "Guest Mid",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hft3u",
+                      "name": "Guest Headline",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "D6ig9y",
+                          "name": "Headline Line 1",
+                          "fill": "$text",
+                          "content": "全球市场",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 44,
+                          "fontWeight": "750"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "etQC1",
+                          "name": "Headline Line 2 Offset",
+                          "width": "fill_container",
+                          "justifyContent": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "GY0CD",
+                              "name": "Headline Line 2",
+                              "fill": "$mint-strong",
+                              "content": "一手掌握",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 44,
+                              "fontWeight": "750"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "RunHH",
+                      "name": "Guest Sub",
+                      "fill": "$muted",
+                      "content": "登录后同步资产估值、收益走势与持仓",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "E6nbv",
+                  "name": "Guest Bottom",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "E9N6EN",
+                      "name": "Guest Login CTA",
+                      "width": "fill_container",
+                      "height": 48,
+                      "fill": "$mint",
+                      "cornerRadius": 4,
+                      "gap": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Z6PQU",
+                          "name": "CTA Label",
+                          "fill": "#07110D",
+                          "content": "去登录",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 13,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "v2CnEg",
+                          "name": "CTA Arrow",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#07110D"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "qNFuW",
+          "name": "Funding Actions",
+          "width": "fill_container",
+          "height": 64,
+          "gap": 8,
+          "padding": [
+            12,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "u38EWO",
+              "name": "Buy Crypto",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "$mint",
+              "cornerRadius": 4,
+              "stroke": "$mint",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "Rtece",
+                  "name": "Buy Crypto Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "credit-card",
+                  "library": "lucide",
+                  "fill": "#07110D"
+                },
+                {
+                  "type": "text",
+                  "id": "pcBbW",
+                  "name": "Buy Crypto Label",
+                  "fill": "#07110D",
+                  "content": "买币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 14,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "p9UGX",
+              "name": "Deposit",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                14
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "I5Prr",
+                  "name": "Deposit Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "arrow-down-left",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "xzreQ",
+                  "name": "Deposit Label",
+                  "fill": "$text",
+                  "content": "充币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 14,
+                  "fontWeight": "650"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Icf5Y",
+          "name": "Shortcut Grid",
+          "width": "fill_container",
+          "height": 176,
+          "gap": 8,
+          "padding": [
+            8,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "kqsCs",
+              "name": "Shortcut Column 0",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "q2U7hG",
+                  "name": "Shortcut 闪兑",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "nFuNS",
+                      "name": "闪兑 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "FhIT8",
+                          "name": "闪兑 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "repeat",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "unVmk",
+                      "name": "闪兑 Label",
+                      "fill": "$text",
+                      "content": "闪兑",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n0D0Vc",
+                  "name": "Shortcut 借贷",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "A97KW",
+                      "name": "借贷 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "S57ND",
+                          "name": "借贷 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "landmark",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "asFi0",
+                      "name": "借贷 Label",
+                      "fill": "$text",
+                      "content": "借贷",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "KAAkP",
+              "name": "Shortcut Column 1",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "r97mRC",
+                  "name": "Shortcut 现货",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ZqSD4",
+                      "name": "现货 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "nnyuq",
+                          "name": "现货 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "chart-line",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "uOGeZ",
+                      "name": "现货 Label",
+                      "fill": "$text",
+                      "content": "现货",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "t76yj",
+                  "name": "Shortcut 新币",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "z9ETsD",
+                      "name": "新币 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "uAKIe",
+                          "name": "新币 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "sparkles",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "ngi8n",
+                      "name": "新币 Label",
+                      "fill": "$text",
+                      "content": "新币",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "OClyK",
+              "name": "Shortcut Column 2",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "k8MLhf",
+                  "name": "Shortcut 合约",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hESXk",
+                      "name": "合约 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Kjrh3",
+                          "name": "合约 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "layers",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "r5v9I",
+                      "name": "合约 Label",
+                      "fill": "$text",
+                      "content": "合约",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "AtGGg",
+                  "name": "Shortcut 秒合约",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "BxV2d",
+                      "name": "秒合约 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Zv6eb",
+                          "name": "预测 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "zap",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "b8c5p",
+                      "name": "预测 Label",
+                      "fill": "$text",
+                      "content": "秒合约",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "aF9aI",
+              "name": "Shortcut Column 3",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "eKsye",
+                  "name": "Shortcut 理财",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "KAaRH",
+                      "name": "理财 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "nCQes",
+                          "name": "理财 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "piggy-bank",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "AcWzt",
+                      "name": "理财 Label",
+                      "fill": "$text",
+                      "content": "理财",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "PYEv2",
+                  "name": "Shortcut 更多",
+                  "width": "fill_container",
+                  "height": 72,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "UtO2s",
+                      "name": "更多 Plate",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$surface",
+                      "cornerRadius": "$radius-m",
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "TBePp",
+                          "name": "更多 Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "ellipsis",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "fMlpC",
+                      "name": "更多 Label",
+                      "fill": "$text",
+                      "content": "更多",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "nz7Im",
+          "name": "Market Brief",
+          "width": "fill_container",
+          "height": 80,
+          "fill": "#00000000",
+          "stroke": "#00000000",
+          "strokeAlignment": "inner",
+          "gap": 12,
+          "padding": [
+            8,
+            16
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "e7hxl4",
+              "name": "Brief Card",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "#121714",
+              "cornerRadius": 12,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "gap": 12,
+              "padding": [
+                12,
+                14
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "eJKHq",
+                  "name": "Brief Icon Plate",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$mint-soft",
+                  "cornerRadius": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "e3wBw",
+                      "name": "Brief Icon",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "newspaper",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "eOaxv",
+                  "name": "Brief Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "NkpCQ",
+                      "name": "Brief Eyebrow",
+                      "fill": "$mint",
+                      "content": "AI 行情日报",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ml4n8",
+                      "name": "Brief Title",
+                      "fill": "#FFFFFF",
+                      "content": "三分钟读懂今日市场",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 14,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "J6tbQC",
+                      "name": "Brief Detail",
+                      "fill": "#9BA8A1",
+                      "content": "暂无平台公告",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "icon",
+                  "id": "lLlvr",
+                  "name": "Brief Arrow",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "TkQJt",
+          "name": "Home Markets",
+          "width": "fill_container",
+          "height": 290,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            14,
+            16,
+            4,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "DgdJI",
+              "name": "Market Header",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "xJAat",
+                  "name": "Market Title",
+                  "fill": "$text",
+                  "content": "行情",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 22,
+                  "fontWeight": "750"
+                },
+                {
+                  "type": "text",
+                  "id": "Kc2F3",
+                  "name": "Market More",
+                  "fill": "$muted",
+                  "content": "更多  ›",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "VwUo5",
+              "name": "Market Tabs",
+              "width": "fill_container",
+              "gap": 20,
+              "padding": [
+                4,
+                0,
+                2,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "p9q7J",
+                  "name": "Tab 自选",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "U6cvL",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "自选",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "EOg1Z",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "GfylG",
+                  "name": "Tab 主流",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "j21Nu",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "主流",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "B9cGL",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "O36tE",
+                  "name": "Tab 热门",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "C7etOp",
+                      "name": "Tab Label",
+                      "fill": "$text",
+                      "content": "热门",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "yOSiS",
+                      "name": "Tab Bar",
+                      "fill": "$text",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "y4FQqI",
+                  "name": "Tab 涨幅",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Z96KV",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "涨幅",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "UItSG",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rT6Rq",
+                  "name": "Tab 新币",
+                  "layout": "vertical",
+                  "gap": 5,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "njZ2n",
+                      "name": "Tab Label",
+                      "fill": "$muted",
+                      "content": "新币",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "yhQpw",
+                      "name": "Tab Bar",
+                      "fill": "#00000000",
+                      "width": 18,
+                      "height": 2
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "vemy4",
+              "name": "Market Col Header",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                4,
+                0,
+                2,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "fn6Zl",
+                  "name": "Col Pair",
+                  "width": "fill_container",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "WQtOo",
+                      "name": "Col Label",
+                      "fill": "$muted",
+                      "content": "交易对",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "mdCVS",
+                  "name": "Col Price",
+                  "width": 104,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "t6guE",
+                      "name": "Col Label",
+                      "fill": "$muted",
+                      "content": "最新价",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "n9XXW",
+                  "name": "Col Change",
+                  "width": 88,
+                  "justifyContent": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "OSrS9",
+                      "name": "Col Label",
+                      "fill": "$muted",
+                      "content": "24h涨跌",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "IZGj4",
+              "name": "Market Row BTC",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                7,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cFbqB",
+                  "name": "Pair Cell",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "maIbs",
+                      "name": "Coin BTC",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#00000000",
+                      "stroke": "#00000000",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "v2ivt",
+                          "name": "Coin Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "bitcoin",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fwCXj",
+                      "name": "Pair Name",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "lqunB",
+                          "name": "Pair Base",
+                          "fill": "$text",
+                          "content": "BTC",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "T1vPy",
+                          "name": "Pair Quote",
+                          "fill": "$muted",
+                          "content": "/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "y30qd",
+                  "name": "Price Cell",
+                  "width": 104,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "UxyQP",
+                      "name": "Price",
+                      "fill": "$text",
+                      "content": "63,085.00",
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "YFvvO",
+                      "name": "Price Unit",
+                      "fill": "$muted",
+                      "content": "USDT",
+                      "fontFamily": "$font-data",
+                      "fontSize": 9,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tlR0t",
+                  "name": "Change Chip",
+                  "width": 88,
+                  "height": 30,
+                  "fill": "$mint",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "x1RCuv",
+                      "name": "Change",
+                      "fill": "#07110D",
+                      "content": "+0.58%",
+                      "fontFamily": "$font-data",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "iHP3i",
+              "name": "Market Row ETH",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                7,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "e5IvB",
+                  "name": "Pair Cell",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "cSmd4",
+                      "name": "Coin ETH",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#00000000",
+                      "stroke": "#00000000",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "dTvzx",
+                          "name": "Coin Letter",
+                          "fill": "#FFFFFF",
+                          "content": "Ξ",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rfybZ",
+                      "name": "Pair Name",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "a036P",
+                          "name": "Pair Base",
+                          "fill": "$text",
+                          "content": "ETH",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "U5fj0",
+                          "name": "Pair Quote",
+                          "fill": "$muted",
+                          "content": "/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "D025em",
+                  "name": "Price Cell",
+                  "width": 104,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mCct1",
+                      "name": "Price",
+                      "fill": "$text",
+                      "content": "3,412.88",
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "aTlwf",
+                      "name": "Price Unit",
+                      "fill": "$muted",
+                      "content": "USDT",
+                      "fontFamily": "$font-data",
+                      "fontSize": 9,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HemqH",
+                  "name": "Change Chip",
+                  "width": 88,
+                  "height": 30,
+                  "fill": "$coral",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "BaCe7",
+                      "name": "Change",
+                      "fill": "#FFFFFF",
+                      "content": "-1.22%",
+                      "fontFamily": "$font-data",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sENjd",
+              "name": "Market Row HIPPO",
+              "width": "fill_container",
+              "gap": 10,
+              "padding": [
+                7,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "YIb0Y",
+                  "name": "Pair Cell",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "MgY1Q",
+                      "name": "Coin HIPPO",
+                      "width": 22,
+                      "height": 22,
+                      "fill": "#00000000",
+                      "stroke": "#00000000",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zXYDe",
+                          "name": "Coin Letter",
+                          "fill": "#07110D",
+                          "content": "H",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "750"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IzrO4",
+                      "name": "Pair Name",
+                      "gap": 1,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ePLkC",
+                          "name": "Pair Base",
+                          "fill": "$text",
+                          "content": "HIPPO",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "QP8le",
+                          "name": "Pair Quote",
+                          "fill": "$muted",
+                          "content": "/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "y4z8Gn",
+                  "name": "Price Cell",
+                  "width": 104,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "IaCku",
+                      "name": "Price",
+                      "fill": "$text",
+                      "content": "0.0824",
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "IMwhl",
+                      "name": "Price Unit",
+                      "fill": "$muted",
+                      "content": "USDT",
+                      "fontFamily": "$font-data",
+                      "fontSize": 9,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "jlfRz",
+                  "name": "Change Chip",
+                  "width": 88,
+                  "height": 30,
+                  "fill": "$mint",
+                  "cornerRadius": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "N6mRzh",
+                      "name": "Change",
+                      "fill": "#07110D",
+                      "content": "+4.96%",
+                      "fontFamily": "$font-data",
+                      "fontSize": 12,
+                      "fontWeight": "650"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "e3P6O",
+          "name": "Bottom Navigation",
+          "width": "fill_container",
+          "height": 84,
+          "fill": "#00000000",
+          "stroke": "#00000000",
+          "strokeAlignment": "inner",
+          "padding": [
+            6,
+            16,
+            10,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "aE1tp",
+              "name": "Nav Dock",
+              "width": "fill_container",
+              "height": 68,
+              "fill": "$surface",
+              "cornerRadius": 24,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#00000080",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 24
+              },
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "y9pkS",
+                  "name": "Nav 首页",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "wsGdM",
+                      "name": "首页 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "house",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    },
+                    {
+                      "type": "text",
+                      "id": "f0HcTo",
+                      "name": "首页 Label",
+                      "fill": "$text",
+                      "content": "首页",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "650"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "y9Y2At",
+                  "name": "Nav 行情",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "NzEJ8",
+                      "name": "行情 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "chart-line",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "bSThK",
+                      "name": "行情 Label",
+                      "fill": "$muted",
+                      "content": "行情",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B5TOUv",
+                  "name": "FAB Space",
+                  "width": 56,
+                  "height": 56,
+                  "layout": "vertical",
+                  "justifyContent": "end",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "VwFpg",
+                      "name": "FAB Label",
+                      "fill": "$muted",
+                      "content": "交易",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "KymMe",
+                  "name": "Nav 资产",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "NTC3x",
+                      "name": "资产 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "wallet-cards",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "KIcfe",
+                      "name": "资产 Label",
+                      "fill": "$muted",
+                      "content": "资产",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JA4r3",
+                  "name": "Nav 我的",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "LbuSp",
+                      "name": "我的 Icon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "user-round",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "y1Wu8E",
+                      "name": "我的 Label",
+                      "fill": "$muted",
+                      "content": "我的",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xpcyp",
+                  "layoutPosition": "absolute",
+                  "x": 151,
+                  "y": -12,
+                  "name": "Nav FAB",
+                  "width": 56,
+                  "height": 56,
+                  "fill": "$mint",
+                  "cornerRadius": 28,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#43EFA966",
+                    "offset": {
+                      "x": 0,
+                      "y": 6
+                    },
+                    "blur": 16
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "qJkkb",
+                      "name": "FAB Icon",
+                      "width": 24,
+                      "height": 24,
+                      "icon": "arrow-left-right",
+                      "library": "lucide",
+                      "fill": "#07110D"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "AgFcl",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "PWA 安装遮罩",
+          "fill": "#000000B8",
+          "width": 390,
+          "height": 1144
+        },
+        {
+          "type": "frame",
+          "id": "V04kP",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 604,
+          "name": "PWA 安装弹窗",
+          "width": 390,
+          "height": 540,
+          "fill": "#101A15",
+          "cornerRadius": [
+            26,
+            26,
+            0,
+            0
+          ],
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000024",
+            "offset": {
+              "x": 0,
+              "y": -8
+            },
+            "blur": 28
+          },
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            22,
+            20
+          ],
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 2,
+              "id": "B5NJ0",
+              "layoutPosition": "absolute",
+              "x": 174,
+              "y": 6,
+              "name": "弹窗拖拽条",
+              "fill": "#526159",
+              "width": 42,
+              "height": 4
+            },
+            {
+              "type": "frame",
+              "id": "QbV04",
+              "name": "安装弹窗标题区",
+              "width": "fill_container",
+              "height": 82,
+              "gap": 14,
+              "padding": [
+                10,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "gK7ji",
+                  "name": "PWA 应用图标",
+                  "width": 64,
+                  "height": 64,
+                  "fill": "#183D2F",
+                  "cornerRadius": 18,
+                  "stroke": "#2E7057",
+                  "strokeWidth": 1,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Z9Ub0f",
+                      "name": "Hippo 应用 Logo",
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "images/hippo-logo.png",
+                        "mode": "fit"
+                      },
+                      "width": 50,
+                      "height": 32
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "AxLCs",
+                  "name": "安装标题文字区",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "h2Tu8",
+                      "name": "安装弹窗标题",
+                      "fill": "#F4FAF7",
+                      "content": "安装 Hippo App",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 22,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "l8Yu8",
+                      "name": "安装弹窗副标题",
+                      "fill": "#18D38D",
+                      "content": "添加到主屏幕",
+                      "fontFamily": "Noto Sans SC",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "TZehL",
+                  "name": "关闭安装弹窗",
+                  "context": "关闭弹窗，本次会话不再提示",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "#18261F",
+                  "cornerRadius": 18,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "e2Va7",
+                      "name": "关闭图标",
+                      "width": 19,
+                      "height": 19,
+                      "icon": "x",
+                      "library": "lucide",
+                      "fill": "#9BA8A1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "C8O1Z8",
+              "name": "安装说明",
+              "fill": "#9BA8A1",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "无需应用商店，获得更快的启动速度、全屏体验和及时通知。",
+              "lineHeight": 1.55,
+              "fontFamily": "Noto Sans SC",
+              "fontSize": 14,
+              "fontWeight": "500"
+            },
+            {
+              "type": "frame",
+              "id": "H7yCSG",
+              "name": "PWA 安装优势",
+              "width": "fill_container",
+              "height": 146,
+              "fill": "#18261F",
+              "cornerRadius": 16,
+              "layout": "vertical",
+              "padding": [
+                8,
+                14
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "D9dVKE",
+                  "name": "快速启动",
+                  "width": "fill_container",
+                  "height": 43,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "TMDZp",
+                      "name": "快速启动图标底座",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#214235",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ohoH3",
+                          "name": "快速启动图标",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "zap",
+                          "library": "lucide",
+                          "fill": "#18D38D"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Z1inh3",
+                      "name": "快速启动文字",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "QbdD3",
+                          "name": "快速启动标题",
+                          "fill": "#F4FAF7",
+                          "content": "快速启动",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "YmNC5",
+                          "name": "快速启动说明",
+                          "fill": "#9BA8A1",
+                          "content": "从主屏幕一键进入",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "U9BbjP",
+                  "name": "沉浸体验",
+                  "width": "fill_container",
+                  "height": 43,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "GBlQE",
+                      "name": "沉浸体验图标底座",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#214235",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "pDHXS",
+                          "name": "沉浸体验图标",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "maximize",
+                          "library": "lucide",
+                          "fill": "#18D38D"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lBsN6",
+                      "name": "沉浸体验文字",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "MMQ6J",
+                          "name": "沉浸体验标题",
+                          "fill": "#F4FAF7",
+                          "content": "沉浸体验",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "n1cou",
+                          "name": "沉浸体验说明",
+                          "fill": "#9BA8A1",
+                          "content": "全屏浏览，操作更专注",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XdpKO",
+                  "name": "及时通知",
+                  "width": "fill_container",
+                  "height": 43,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "kJnRD",
+                      "name": "及时通知图标底座",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#214235",
+                      "cornerRadius": 9,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "HSc8C",
+                          "name": "及时通知图标",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "bell-ring",
+                          "library": "lucide",
+                          "fill": "#18D38D"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "lXaMt",
+                      "name": "及时通知文字",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "l89Ej",
+                          "name": "及时通知标题",
+                          "fill": "#F4FAF7",
+                          "content": "及时通知",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 14,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "r4MPi",
+                          "name": "及时通知说明",
+                          "fill": "#9BA8A1",
+                          "content": "重要行情与订单状态不错过",
+                          "fontFamily": "Noto Sans SC",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "uPlvi",
+              "name": "安装提示",
+              "width": "fill_container",
+              "height": 42,
+              "fill": "#151F1A",
+              "cornerRadius": 12,
+              "stroke": "#293B32",
+              "strokeWidth": 1,
+              "gap": 8,
+              "padding": [
+                0,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "JEAQW",
+                  "name": "安装提示图标",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "info",
+                  "library": "lucide",
+                  "fill": "#9BA8A1"
+                },
+                {
+                  "type": "text",
+                  "id": "Qg6Us",
+                  "name": "安装提示文字",
+                  "fill": "#9BA8A1",
+                  "content": "iPhone 用户可通过分享菜单添加到主屏幕",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "HPagm",
+              "name": "立即安装按钮",
+              "context": "触发保存的 beforeinstallprompt.prompt()，成功后关闭弹窗",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#18D38D",
+              "cornerRadius": 16,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#18D38D2E",
+                "offset": {
+                  "x": 0,
+                  "y": 6
+                },
+                "blur": 16
+              },
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "aqTg7",
+                  "name": "安装按钮图标",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "download",
+                  "library": "lucide",
+                  "fill": "#082A1D"
+                },
+                {
+                  "type": "text",
+                  "id": "xMv84",
+                  "name": "立即安装文字",
+                  "fill": "#082A1D",
+                  "content": "立即安装",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 16,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ZUc9H",
+              "name": "稍后提醒按钮",
+              "width": "fill_container",
+              "height": 38,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "O7DlU6",
+                  "name": "稍后提醒文字",
+                  "fill": "#9BA8A1",
+                  "content": "稍后提醒",
+                  "fontFamily": "Noto Sans SC",
+                  "fontSize": 14,
+                  "fontWeight": "600"
                 }
               ]
             }

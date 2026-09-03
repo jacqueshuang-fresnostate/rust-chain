@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Defines exact DecimalText, market ticker freshness, margin risk authority, and private/account reconciliation boundaries."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Defines selected Pencil mobile geometry, responsive behavior, and truthful live-data presentation requirements."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires searching for existing decimal and market lifecycle helpers before adding a reusable display projection."}
+{"file":".trellis/tasks/09-03-margin-position-chips-live-pnl/research/current-position-live-pnl-audit.md","reason":"Records the Pencil chip geometry, frozen-risk root cause, backend formula, and selected no-extra-request implementation."}

@@ -102,7 +102,7 @@ html[data-theme='dark'] .wallet-pencil-page .deposit-detail__qr {
   filter: invert(1);
 }
 
-/* Selected trading/product frames use a flat white/black root canvas. */
+.app-stage .mobile-canvas .product-hub{--product-hub-muted:#7a8b80;}
 .app-stage .mobile-canvas .contract-trade,
 .app-stage .mobile-canvas .seconds-page,
 .app-stage .mobile-canvas .product-hub,

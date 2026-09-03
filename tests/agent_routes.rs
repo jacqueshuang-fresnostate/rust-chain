@@ -286,6 +286,24 @@ async fn response_json(response: axum::response::Response) -> Result<Value, Box<
     Ok(serde_json::from_slice(&body)?)
 }
 
+async fn agent_get_json(
+    app: axum::Router,
+    token: &str,
+    uri: impl AsRef<str>,
+) -> Result<(StatusCode, Value), Box<dyn Error>> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(uri.as_ref())
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let payload = response_json(response).await?;
+    Ok((status, payload))
+}
+
 async fn cleanup_agent_admin_username(pool: &MySqlPool, username: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM agent_admin_users WHERE username = ?")
         .bind(username)
@@ -989,6 +1007,9 @@ async fn agent_users_route_rejects_non_agent_scopes() -> Result<(), Box<dyn Erro
     for path in [
         "/agent/api/v1/dashboard",
         "/agent/api/v1/users",
+        "/agent/api/v1/users/1/assets",
+        "/agent/api/v1/users/1/margin-positions",
+        "/agent/api/v1/users/1/seconds-contract-orders",
         "/agent/api/v1/invite-codes",
         "/agent/api/v1/team-tree",
         "/agent/api/v1/commissions",
@@ -1503,6 +1524,13 @@ async fn agent_invite_codes_are_scoped_to_authenticated_agent() -> Result<(), Bo
     assert_eq!(created["owner_id"], agent_a.agent_id);
     assert_eq!(created["usage_limit"], 25);
     assert_eq!(created["status"], "active");
+    let created_code = created["code"].as_str().unwrap();
+    assert_eq!(created_code.len(), 6);
+    assert!(
+        created_code
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
+    );
     let created_code_id = created["id"].as_u64().unwrap();
 
     let list_response = app
@@ -1524,6 +1552,11 @@ async fn agent_invite_codes_are_scoped_to_authenticated_agent() -> Result<(), Bo
         String::from_utf8_lossy(&list_body)
     );
     let invite_codes: Value = serde_json::from_slice(&list_body)?;
+    assert_eq!(
+        invite_codes["invite_codes"][0]["id"].as_u64(),
+        Some(created_code_id),
+        "newest active invite code must be listed first"
+    );
     let listed_ids = invite_codes["invite_codes"]
         .as_array()
         .unwrap()
@@ -2159,7 +2192,7 @@ async fn agent_lists_support_newest_first_commission_pagination() -> Result<(), 
         .iter()
         .map(|code| code["id"].as_u64().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(invite_page_ids, vec![invite_code_b]);
+    assert_eq!(invite_page_ids, vec![invite_code_a]);
 
     let users_page = get_json("/agent/api/v1/users?limit=1".to_owned()).await?;
     assert_eq!(users_page["users"].as_array().unwrap().len(), 1);
@@ -2284,5 +2317,664 @@ async fn agent_password_change_requires_current_password_and_rotates_login()
         .execute(&pool)
         .await?;
     cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn linked_agent_user_my_code_is_concurrent_safe_and_tracks_latest_portal_code()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent = create_agent(&pool, "linked-code").await;
+    let portal_invitee = create_user(&pool, "linked-code-portal-invitee").await;
+    let legacy_invitee = create_user(&pool, "linked-code-legacy-invitee").await;
+    let user_token = issue_token(
+        &settings,
+        format!("user:{}", agent.agent_user_id),
+        TokenScope::User,
+        900,
+    )?;
+    let invitee_token = issue_token(
+        &settings,
+        format!("user:{legacy_invitee}"),
+        TokenScope::User,
+        900,
+    )?;
+    let portal_invitee_token = issue_token(
+        &settings,
+        format!("user:{portal_invitee}"),
+        TokenScope::User,
+        900,
+    )?;
+    let agent_token = issue_token(
+        &settings,
+        format!("agent:{}", agent.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let first = agent_get_json(app.clone(), &user_token, "/api/v1/referral/my-code");
+    let second = agent_get_json(app.clone(), &user_token, "/api/v1/referral/my-code");
+    let (first, second) = tokio::join!(first, second);
+    let (first_status, first_payload) = first?;
+    let (second_status, second_payload) = second?;
+    assert_eq!(first_status, StatusCode::OK, "payload: {first_payload}");
+    assert_eq!(second_status, StatusCode::OK, "payload: {second_payload}");
+    assert_eq!(first_payload["owner_type"], "agent");
+    assert_eq!(first_payload["owner_id"], agent.agent_id);
+    assert_eq!(first_payload["code"], second_payload["code"]);
+    let generated = first_payload["code"].as_str().unwrap();
+    assert_eq!(generated.len(), 6);
+    assert!(
+        generated
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
+    );
+    let initial_active_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM invite_codes WHERE owner_type = 'agent' AND owner_id = ? AND status = 'active'",
+    )
+    .bind(agent.agent_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(initial_active_count, 1);
+
+    let legacy_code = format!("legacy-agent-code-{}", Uuid::now_v7().simple());
+    sqlx::query(
+        "INSERT INTO invite_codes (owner_type, owner_id, code, status) VALUES ('agent', ?, ?, 'active')",
+    )
+    .bind(agent.agent_id)
+    .bind(&legacy_code)
+    .execute(&pool)
+    .await?;
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/invite-codes")
+                .header("authorization", format!("Bearer {agent_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"usage_limit":12}"#))?,
+        )
+        .await?;
+    let create_status = create_response.status();
+    let portal_code = response_json(create_response).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {portal_code}");
+    let portal_code_text = portal_code["code"].as_str().unwrap();
+    assert_eq!(portal_code_text.len(), 6);
+    assert!(
+        portal_code_text
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character.is_ascii_digit())
+    );
+
+    let (latest_status, latest) =
+        agent_get_json(app.clone(), &user_token, "/api/v1/referral/my-code").await?;
+    assert_eq!(latest_status, StatusCode::OK, "payload: {latest}");
+    assert_eq!(latest["code"], portal_code["code"]);
+    assert_eq!(latest["owner_type"], "agent");
+
+    // 状态切换与关联用户读取共用代理协调锁；停用最新码后必须立即回退到仍启用的历史码。
+    // 重复停用是幂等成功，而不是依赖 MySQL changed rows 把既有记录误报为不存在。
+    for _ in 0..2 {
+        let disabled_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!(
+                        "/agent/api/v1/invite-codes/{}/status",
+                        portal_code["id"].as_u64().unwrap()
+                    ))
+                    .header("authorization", format!("Bearer {agent_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"status":"disabled"}"#))?,
+            )
+            .await?;
+        let disabled_status = disabled_response.status();
+        let disabled = response_json(disabled_response).await?;
+        assert_eq!(disabled_status, StatusCode::OK, "payload: {disabled}");
+        assert_eq!(disabled["status"], "disabled");
+    }
+    let (fallback_status, fallback) =
+        agent_get_json(app.clone(), &user_token, "/api/v1/referral/my-code").await?;
+    assert_eq!(fallback_status, StatusCode::OK, "payload: {fallback}");
+    assert_eq!(fallback["code"], legacy_code);
+
+    let reenabled_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/agent/api/v1/invite-codes/{}/status",
+                    portal_code["id"].as_u64().unwrap()
+                ))
+                .header("authorization", format!("Bearer {agent_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"status":"active"}"#))?,
+        )
+        .await?;
+    let reenabled_status = reenabled_response.status();
+    let reenabled = response_json(reenabled_response).await?;
+    assert_eq!(reenabled_status, StatusCode::OK, "payload: {reenabled}");
+    assert_eq!(reenabled["status"], "active");
+    let (_, latest_again) =
+        agent_get_json(app.clone(), &user_token, "/api/v1/referral/my-code").await?;
+    assert_eq!(latest_again["code"], portal_code["code"]);
+
+    let portal_bind = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/referral/bind")
+                .header("authorization", format!("Bearer {portal_invitee_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "code": portal_code_text }).to_string()))?,
+        )
+        .await?;
+    let portal_bind_status = portal_bind.status();
+    let portal_bind_payload = response_json(portal_bind).await?;
+    assert_eq!(
+        portal_bind_status,
+        StatusCode::OK,
+        "payload: {portal_bind_payload}"
+    );
+    assert_eq!(portal_bind_payload["root_agent_id"], agent.agent_id);
+
+    let legacy_bind = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/referral/bind")
+                .header("authorization", format!("Bearer {invitee_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "code": legacy_code }).to_string()))?,
+        )
+        .await?;
+    let legacy_bind_status = legacy_bind.status();
+    let legacy_bind_payload = response_json(legacy_bind).await?;
+    assert_eq!(
+        legacy_bind_status,
+        StatusCode::OK,
+        "payload: {legacy_bind_payload}"
+    );
+    assert_eq!(legacy_bind_payload["root_agent_id"], agent.agent_id);
+
+    cleanup_agent_fixture(&pool, &[agent], &[portal_invitee, legacy_invitee]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only_snapshots()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let root = create_agent(&pool, "pf-root").await;
+    let child = create_child_agent(&pool, root, "pf-child").await;
+    let grandchild = create_child_agent(&pool, child, "pf-grandchild").await;
+    let sibling = create_child_agent(&pool, root, "pf-sibling").await;
+    let other_root = create_agent(&pool, "pf-other-root").await;
+    let root_user = create_user(&pool, "portfolio-root-user").await;
+    let child_user = create_user(&pool, "portfolio-child-user").await;
+    let sibling_user = create_user(&pool, "portfolio-sibling-user").await;
+    let other_user = create_user(&pool, "portfolio-other-user").await;
+    let unassigned_user = create_user(&pool, "portfolio-unassigned-user").await;
+    refer_user_to_agent(&pool, root_user, root.agent_id, 1).await;
+    refer_user_to_agent(&pool, child_user, grandchild.agent_id, 1).await;
+    refer_user_to_agent(&pool, sibling_user, sibling.agent_id, 1).await;
+    refer_user_to_agent(&pool, other_user, other_root.agent_id, 1).await;
+    create_unassigned_referral(&pool, unassigned_user).await;
+
+    let base_asset = create_asset(&pool, "pfbase").await;
+    let quote_asset = create_asset(&pool, "pfquote").await;
+    let (base_symbol, quote_symbol): (String, String) = sqlx::query_as(
+        "SELECT (SELECT symbol FROM assets WHERE id = ?), (SELECT symbol FROM assets WHERE id = ?)",
+    )
+    .bind(base_asset)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    let pair_symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, 18, 18, 1, 'active', 'external')"#,
+    )
+    .bind(base_asset)
+    .bind(quote_asset)
+    .bind(&pair_symbol)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let margin_product_id = sqlx::query(
+        r#"INSERT INTO margin_products
+           (pair_id, margin_asset, margin_mode, margin_modes, leverage_levels,
+            max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, 'isolated', JSON_ARRAY('isolated'), JSON_ARRAY('2'),
+                   5, 1, 1000, 0.05, 'active')"#,
+    )
+    .bind(pair_id)
+    .bind(quote_asset)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let seconds_product_id = sqlx::query(
+        r#"INSERT INTO seconds_contract_products
+           (pair_id, stake_asset, duration_seconds, payout_rate, min_stake, max_stake, status)
+           VALUES (?, ?, 60, 0.8, 1, 1000, 'active')"#,
+    )
+    .bind(pair_id)
+    .bind(quote_asset)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+
+    sqlx::query(
+        r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, 123.456789012345678901, 2, 3), (?, ?, 999, 0, 0)"#,
+    )
+    .bind(child_user)
+    .bind(quote_asset)
+    .bind(other_user)
+    .bind(quote_asset)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO margin_wallet_accounts (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, 45.5, 4, 5), (?, ?, 888, 0, 0)"#,
+    )
+    .bind(child_user)
+    .bind(quote_asset)
+    .bind(other_user)
+    .bind(quote_asset)
+    .execute(&pool)
+    .await?;
+
+    let insert_margin = |user_id: u64, status: &'static str, suffix: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                r#"INSERT INTO margin_positions
+                   (user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode,
+                    direction, order_type, margin_amount, leverage, notional_amount,
+                    borrowed_amount, interest_amount, entry_price, exit_price, realized_pnl,
+                    status, idempotency_key, closed_at)
+                   VALUES (?, ?, ?, ?, 'spot', 'isolated', 'long', 'market', 10, 2, 20,
+                           10, 0.5, 100, IF(? = 'closed', 110, NULL),
+                           IF(? = 'closed', 5, NULL), ?, ?,
+                           IF(? = 'closed', CURRENT_TIMESTAMP(6), NULL))"#,
+            )
+            .bind(user_id)
+            .bind(margin_product_id)
+            .bind(pair_id)
+            .bind(quote_asset)
+            .bind(status)
+            .bind(status)
+            .bind(status)
+            .bind(format!(
+                "agent-portfolio-margin-{suffix}-{}",
+                Uuid::now_v7().simple()
+            ))
+            .bind(status)
+            .execute(&pool)
+            .await
+            .map(|result| result.last_insert_id())
+        }
+    };
+    let opened_margin = insert_margin(child_user, "opened", "opened").await?;
+    let closed_margin = insert_margin(child_user, "closed", "closed").await?;
+    let other_margin = insert_margin(other_user, "opened", "other").await?;
+
+    let insert_seconds = |user_id: u64, status: &'static str, suffix: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                r#"INSERT INTO seconds_contract_orders
+                   (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+                    duration_seconds, payout_rate, entry_price, settlement_price, status,
+                    result, idempotency_key, expires_at, settled_at,
+                    settlement_failure_code, settlement_failed_at,
+                    settlement_window_start, settlement_window_end)
+                   VALUES (?, ?, ?, ?, 'up', 7.25, 60, 0.8, 100,
+                           IF(? = 'settled', 110, NULL), ?,
+                           IF(? = 'settled', 'win', NULL), ?,
+                           DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND),
+                           IF(? = 'settled', CURRENT_TIMESTAMP(6), NULL),
+                           IF(? = 'manual_review', 'test_price_unavailable', NULL),
+                           IF(? = 'manual_review', CURRENT_TIMESTAMP(6), NULL),
+                           IF(? = 'manual_review', DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 1 SECOND), NULL),
+                           IF(? = 'manual_review', CURRENT_TIMESTAMP(6), NULL))"#,
+            )
+            .bind(user_id)
+            .bind(seconds_product_id)
+            .bind(pair_id)
+            .bind(quote_asset)
+            .bind(status)
+            .bind(status)
+            .bind(status)
+            .bind(format!(
+                "agent-portfolio-seconds-{suffix}-{}",
+                Uuid::now_v7().simple()
+            ))
+            .bind(status)
+            .bind(status)
+            .bind(status)
+            .bind(status)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .map(|result| result.last_insert_id())
+        }
+    };
+    let opened_seconds = insert_seconds(child_user, "opened", "opened").await?;
+    let settled_seconds = insert_seconds(child_user, "settled", "settled").await?;
+    let review_seconds = insert_seconds(child_user, "manual_review", "review").await?;
+    let other_seconds = insert_seconds(other_user, "opened", "other").await?;
+
+    let wallet_before: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(child_user)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    let margin_wallet_before: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen, locked FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(child_user)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    let margin_statuses_before: Vec<(u64, String)> =
+        sqlx::query_as("SELECT id, status FROM margin_positions WHERE user_id = ? ORDER BY id")
+            .bind(child_user)
+            .fetch_all(&pool)
+            .await?;
+    let seconds_statuses_before: Vec<(u64, String)> = sqlx::query_as(
+        "SELECT id, status FROM seconds_contract_orders WHERE user_id = ? ORDER BY id",
+    )
+    .bind(child_user)
+    .fetch_all(&pool)
+    .await?;
+
+    let root_token = issue_token(
+        &settings,
+        format!("agent:{}", root.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let child_token = issue_token(
+        &settings,
+        format!("agent:{}", child.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let grandchild_token = issue_token(
+        &settings,
+        format!("agent:{}", grandchild.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let (status, assets) = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!("/agent/api/v1/users/{child_user}/assets?limit=1"),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "payload: {assets}");
+    assert_eq!(assets["total"], 2);
+    assert_eq!(assets["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(assets["assets"][0]["account_type"], "spot");
+    assert!(assets["assets"][0]["available"].is_string());
+    assert!(
+        assets["assets"][0]
+            .as_object()
+            .unwrap()
+            .contains_key("logo_url")
+    );
+    assert_eq!(assets["assets"][0]["precision_scale"], 18);
+    assert!(assets["assets"][0]["updated_at"].is_number());
+
+    let (status, positions) = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!("/agent/api/v1/users/{child_user}/margin-positions"),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "payload: {positions}");
+    assert_eq!(positions["total"], 2);
+    let returned_margin_ids = positions["positions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert!(returned_margin_ids.contains(&opened_margin));
+    assert!(returned_margin_ids.contains(&closed_margin));
+    assert!(!returned_margin_ids.contains(&other_margin));
+    for position in positions["positions"].as_array().unwrap() {
+        for field in [
+            "margin_amount",
+            "leverage",
+            "notional_amount",
+            "borrowed_amount",
+            "interest_amount",
+        ] {
+            assert!(position[field].is_string(), "{field} must be Decimal text");
+        }
+        assert!(position["opened_at"].is_number());
+        assert!(position["created_at"].is_number());
+        assert!(position["closed_at"].is_null() || position["closed_at"].is_number());
+    }
+
+    let (status, opened_positions) = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!("/agent/api/v1/users/{child_user}/margin-positions?status=opened&limit=1"),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "payload: {opened_positions}");
+    assert_eq!(opened_positions["total"], 1);
+    assert_eq!(opened_positions["positions"][0]["id"], opened_margin);
+
+    let (status, orders) = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!("/agent/api/v1/users/{child_user}/seconds-contract-orders?limit=2"),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "payload: {orders}");
+    assert_eq!(orders["total"], 3);
+    assert_eq!(orders["orders"].as_array().unwrap().len(), 2);
+    for order in orders["orders"].as_array().unwrap() {
+        assert!(order["stake_amount"].is_string());
+        assert!(order["payout_rate"].is_string());
+        assert!(order["entry_price"].is_null() || order["entry_price"].is_string());
+        assert!(order["settlement_price"].is_null() || order["settlement_price"].is_string());
+        assert!(order["expires_at"].is_number());
+        assert!(order["created_at"].is_number());
+        assert!(order["settled_at"].is_null() || order["settled_at"].is_number());
+    }
+    let all_statuses = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!("/agent/api/v1/users/{child_user}/seconds-contract-orders?limit=100"),
+    )
+    .await?
+    .1["orders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["status"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(all_statuses.contains(&"opened".to_owned()));
+    assert!(all_statuses.contains(&"settled".to_owned()));
+    assert!(all_statuses.contains(&"manual_review".to_owned()));
+
+    let (status, review_orders) = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!(
+            "/agent/api/v1/users/{child_user}/seconds-contract-orders?status=manual_review&limit=1"
+        ),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "payload: {review_orders}");
+    assert_eq!(review_orders["total"], 1);
+    assert_eq!(review_orders["orders"][0]["id"], review_seconds);
+
+    let (child_own_status, _) = agent_get_json(
+        app.clone(),
+        &child_token,
+        format!("/agent/api/v1/users/{child_user}/assets"),
+    )
+    .await?;
+    assert_eq!(child_own_status, StatusCode::OK);
+    let (grandchild_own_status, _) = agent_get_json(
+        app.clone(),
+        &grandchild_token,
+        format!("/agent/api/v1/users/{child_user}/assets"),
+    )
+    .await?;
+    assert_eq!(grandchild_own_status, StatusCode::OK);
+    for target_user in [
+        root_user,
+        sibling_user,
+        other_user,
+        unassigned_user,
+        u64::MAX,
+    ] {
+        for suffix in ["assets", "margin-positions", "seconds-contract-orders"] {
+            let (denied, denied_payload) = agent_get_json(
+                app.clone(),
+                &child_token,
+                format!(
+                    "/agent/api/v1/users/{target_user}/{suffix}?agent_id={}",
+                    root.agent_id
+                ),
+            )
+            .await?;
+            assert_eq!(denied, StatusCode::NOT_FOUND, "payload: {denied_payload}");
+        }
+    }
+
+    let wallet_after: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(child_user)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    let margin_wallet_after: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen, locked FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(child_user)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    let margin_statuses_after: Vec<(u64, String)> =
+        sqlx::query_as("SELECT id, status FROM margin_positions WHERE user_id = ? ORDER BY id")
+            .bind(child_user)
+            .fetch_all(&pool)
+            .await?;
+    let seconds_statuses_after: Vec<(u64, String)> = sqlx::query_as(
+        "SELECT id, status FROM seconds_contract_orders WHERE user_id = ? ORDER BY id",
+    )
+    .bind(child_user)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(wallet_after, wallet_before);
+    assert_eq!(margin_wallet_after, margin_wallet_before);
+    assert_eq!(margin_statuses_after, margin_statuses_before);
+    assert_eq!(seconds_statuses_after, seconds_statuses_before);
+
+    // 资产精度来自可变的数据库配置，接口必须拒绝超出 Decimal(38,18) 边界的脏值。
+    sqlx::query("UPDATE assets SET precision_scale = 19 WHERE id = ?")
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    let invalid_precision = agent_get_json(
+        app.clone(),
+        &root_token,
+        format!("/agent/api/v1/users/{child_user}/assets"),
+    )
+    .await?;
+    sqlx::query("UPDATE assets SET precision_scale = 18 WHERE id = ?")
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    assert_eq!(invalid_precision.0, StatusCode::INTERNAL_SERVER_ERROR);
+
+    for order_id in [
+        opened_seconds,
+        settled_seconds,
+        review_seconds,
+        other_seconds,
+    ] {
+        sqlx::query("DELETE FROM seconds_contract_orders WHERE id = ?")
+            .bind(order_id)
+            .execute(&pool)
+            .await?;
+    }
+    for position_id in [opened_margin, closed_margin, other_margin] {
+        sqlx::query("DELETE FROM margin_positions WHERE id = ?")
+            .bind(position_id)
+            .execute(&pool)
+            .await?;
+    }
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?)")
+        .bind(child_user)
+        .bind(other_user)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_wallet_accounts WHERE user_id IN (?, ?)")
+        .bind(child_user)
+        .bind(other_user)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM seconds_contract_product_cycles WHERE product_id = ?")
+        .bind(seconds_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM seconds_contract_products WHERE id = ?")
+        .bind(seconds_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_products WHERE id = ?")
+        .bind(margin_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    for asset_id in [base_asset, quote_asset] {
+        sqlx::query("DELETE FROM assets WHERE id = ?")
+            .bind(asset_id)
+            .execute(&pool)
+            .await?;
+    }
+    cleanup_agent_fixture(
+        &pool,
+        &[grandchild, child, sibling, root, other_root],
+        &[
+            root_user,
+            child_user,
+            sibling_user,
+            other_user,
+            unassigned_user,
+        ],
+    )
+    .await?;
     Ok(())
 }

@@ -7,22 +7,26 @@
 
 use crate::{
     error::{AppError, AppResult},
-    modules::agent::{
-        domain::{AgentCommissionRateTier, allocate_differential_agent_commissions},
-        presentation::{
-            AgentCommissionResponse, AgentDashboardAssetSummaryResponse, AgentInviteCodeResponse,
-            AgentMeResponse, AgentSubAgentResponse, AgentTeamTreeNodeResponse,
-            AgentTeamUserResponse,
+    modules::{
+        agent::{
+            domain::{AgentCommissionRateTier, allocate_differential_agent_commissions},
+            presentation::{
+                AgentCommissionResponse, AgentDashboardAssetSummaryResponse,
+                AgentInviteCodeResponse, AgentMeResponse, AgentSubAgentResponse,
+                AgentTeamTreeNodeResponse, AgentTeamUserResponse, AgentUserAssetResponse,
+                AgentUserMarginPositionResponse, AgentUserSecondsContractOrderResponse,
+            },
+            repository::{
+                AgentAccessScope, AgentAdminCredentialRecord, AgentBusinessCommissionWrite,
+                AgentCommissionRuleRecord, AgentConvertStatsRecord, AgentDashboardCountsRecord,
+                AgentInviteCodeWrite, AgentListPage,
+            },
         },
-        repository::{
-            AgentAccessScope, AgentAdminCredentialRecord, AgentBusinessCommissionWrite,
-            AgentCommissionRuleRecord, AgentConvertStatsRecord, AgentDashboardCountsRecord,
-            AgentInviteCodeWrite, AgentListPage,
-        },
+        wallet::MAX_ASSET_PRECISION_SCALE,
     },
 };
 use bigdecimal::BigDecimal;
-use sqlx::{MySql, Pool, Transaction};
+use sqlx::{MySql, Pool, QueryBuilder, Transaction};
 
 /// 在业务结算事务中，按用户所属代理链生成各层级的差额返佣待结算记录。
 /// 调用方须传入正数业务基数、权威来源标识和发放资产；零或负数基数直接忽略。
@@ -360,6 +364,230 @@ pub(crate) async fn list_agent_team_users(
     Ok(users)
 }
 
+/// 核对目标用户是否归属于当前登录代理的服务端物化路径子树。
+/// 用户标识来自资源路径，代理范围只来自 `AgentAccessScope`；无归属、父级、兄弟或其他根树均返回 `false`。
+/// 该检查只是为了给无权与不存在目标统一映射为未找到，不可代替后续金融行查询自身的重复子树谓词。
+/// 查询无锁、无事务与写副作用；并发改派会由后续查询再次收紧。
+pub(crate) async fn agent_scope_contains_user(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+    user_id: u64,
+) -> AppResult<bool> {
+    let matched = sqlx::query_scalar::<_, u64>(
+        r#"SELECT users.id
+           FROM users
+           INNER JOIN user_referrals referrals ON referrals.user_id = users.id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id
+           WHERE users.id = ?
+             AND (owner_agents.path = ?
+               OR owner_agents.path LIKE CONCAT(?, '/%'))
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .bind(&scope.path)
+    .bind(&scope.path)
+    .fetch_optional(pool)
+    .await?;
+    Ok(matched.is_some())
+}
+
+/// 分页读取团队用户已建立的现货与杠杆钱包账户，返回与页前筛选完全一致的总数。
+/// 两张账户表先以 `UNION ALL` 保留来源，再用 `account_type` 标明 spot 或 margin，不对同资产合并金额。
+/// 行查询与 COUNT 均绑定目标用户并重复当前 scope 路径谓词，即使成员检查后用户被改派，也不会读出原账户。
+/// 全过程只执行 SELECT，不惰性建账、不变更余额、不追加流水。
+pub(crate) async fn list_agent_user_assets(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+    user_id: u64,
+    page: AgentListPage,
+) -> AppResult<(Vec<AgentUserAssetResponse>, i64)> {
+    let mut rows = agent_user_assets_base_query(user_id, false);
+    let mut total = agent_user_assets_base_query(user_id, true);
+    for builder in [&mut rows, &mut total] {
+        push_scoped_financial_user_predicate(builder, "accounts.user_id", scope, user_id);
+    }
+    rows.push(
+        " ORDER BY CASE accounts.account_type WHEN 'spot' THEN 0 ELSE 1 END, \
+         accounts.asset_id ASC, accounts.account_id ASC LIMIT ",
+    );
+    rows.push_bind(page.limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(page.offset as i64);
+
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+    let assets = rows
+        .build_query_as::<AgentUserAssetResponse>()
+        .fetch_all(pool)
+        .await?;
+    if assets
+        .iter()
+        .any(|asset| !(0..=MAX_ASSET_PRECISION_SCALE).contains(&asset.precision_scale))
+    {
+        return Err(AppError::Internal(
+            "asset precision_scale is outside the supported range".to_string(),
+        ));
+    }
+    Ok((assets, total))
+}
+
+/// 分页读取团队用户杠杆仓位的持久化快照，可选状态同时作用于行查询与 COUNT。
+/// 每条 SQL 均通过用户归属代理的 `agents.path` 重复限定当前子树，目标 ID 本身不能绕过该谓词。
+/// 查询只返回落库金额、价格、PnL 与时间，不读取行情、不重算风险、不触发计息、平仓或强平。
+/// 排序为创建时间和主键双倒序，相同时刻也能稳定翻页。
+pub(crate) async fn list_agent_user_margin_positions(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+    user_id: u64,
+    status: Option<&str>,
+    page: AgentListPage,
+) -> AppResult<(Vec<AgentUserMarginPositionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
+        r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
+                  pairs.symbol, positions.margin_asset,
+                  margin_assets.symbol AS margin_asset_symbol, positions.wallet_scope,
+                  positions.margin_mode, positions.direction, positions.order_type,
+                  positions.margin_amount, positions.leverage, positions.notional_amount,
+                  positions.borrowed_amount, positions.interest_amount, positions.entry_price,
+                  positions.limit_price, positions.exit_price, positions.realized_pnl,
+                  positions.opened_at, positions.created_at, positions.closed_at, positions.status
+           FROM margin_positions positions
+           INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
+           INNER JOIN assets margin_assets ON margin_assets.id = positions.margin_asset
+           INNER JOIN user_referrals referrals ON referrals.user_id = positions.user_id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id"#,
+    );
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM margin_positions positions
+           INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
+           INNER JOIN assets margin_assets ON margin_assets.id = positions.margin_asset
+           INNER JOIN user_referrals referrals ON referrals.user_id = positions.user_id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        push_scoped_financial_user_predicate(builder, "positions.user_id", scope, user_id);
+        if let Some(status) = status {
+            builder.push(" AND positions.status = ");
+            builder.push_bind(status.to_owned());
+        }
+    }
+    rows.push(" ORDER BY positions.created_at DESC, positions.id DESC LIMIT ");
+    rows.push_bind(page.limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(page.offset as i64);
+
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+    let positions = rows
+        .build_query_as::<AgentUserMarginPositionResponse>()
+        .fetch_all(pool)
+        .await?;
+    Ok((positions, total))
+}
+
+/// 分页读取团队用户秒合约订单，未筛选时保留 opened、settled 和 manual_review 全部状态。
+/// 行查询与 COUNT 共用目标用户、状态和物化路径谓词，且两条 SQL 各自联接服务端归属，不依赖之前的成员检查结果。
+/// 返回值只是已持久化的本金、周期、赔率、开结算价、输赢与时间；不扫描到期单、不查行情历史、不结算或写钱包。
+/// 结果按创建时间和主键双倒序，使翻页与移动端历史订单口径一致。
+pub(crate) async fn list_agent_user_seconds_contract_orders(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+    user_id: u64,
+    status: Option<&str>,
+    page: AgentListPage,
+) -> AppResult<(Vec<AgentUserSecondsContractOrderResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
+        r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
+                  pairs.symbol, orders.stake_asset,
+                  stake_assets.symbol AS stake_asset_symbol, orders.direction,
+                  orders.stake_amount, orders.duration_seconds, orders.payout_rate,
+                  orders.entry_price, orders.settlement_price, orders.status, orders.result,
+                  orders.expires_at, orders.created_at, orders.settled_at
+           FROM seconds_contract_orders orders
+           INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
+           INNER JOIN assets stake_assets ON stake_assets.id = orders.stake_asset
+           INNER JOIN user_referrals referrals ON referrals.user_id = orders.user_id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id"#,
+    );
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM seconds_contract_orders orders
+           INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
+           INNER JOIN assets stake_assets ON stake_assets.id = orders.stake_asset
+           INNER JOIN user_referrals referrals ON referrals.user_id = orders.user_id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        push_scoped_financial_user_predicate(builder, "orders.user_id", scope, user_id);
+        if let Some(status) = status {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status.to_owned());
+        }
+    }
+    rows.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
+    rows.push_bind(page.limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(page.offset as i64);
+
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+    let orders = rows
+        .build_query_as::<AgentUserSecondsContractOrderResponse>()
+        .fetch_all(pool)
+        .await?;
+    Ok((orders, total))
+}
+
+fn agent_user_assets_base_query(user_id: u64, count_only: bool) -> QueryBuilder<'static, MySql> {
+    let mut builder = QueryBuilder::<MySql>::new(if count_only {
+        "SELECT COUNT(*)"
+    } else {
+        r#"SELECT accounts.account_id, accounts.account_type, accounts.asset_id,
+                  assets.symbol AS asset_symbol, assets.logo_url, assets.precision_scale,
+                  accounts.available, accounts.frozen, accounts.locked, accounts.updated_at"#
+    });
+    builder.push(
+        r#" FROM (
+               SELECT wallets.id AS account_id, 'spot' AS account_type, wallets.user_id,
+                      wallets.asset_id, wallets.available, wallets.frozen, wallets.locked,
+                      wallets.updated_at
+               FROM wallet_accounts wallets
+               WHERE wallets.user_id = "#,
+    );
+    builder.push_bind(user_id);
+    builder.push(
+        r#" UNION ALL
+               SELECT wallets.id AS account_id, 'margin' AS account_type, wallets.user_id,
+                      wallets.asset_id, wallets.available, wallets.frozen, wallets.locked,
+                      wallets.updated_at
+               FROM margin_wallet_accounts wallets
+               WHERE wallets.user_id = "#,
+    );
+    builder.push_bind(user_id);
+    builder.push(
+        r#") accounts
+           INNER JOIN assets ON assets.id = accounts.asset_id
+           INNER JOIN user_referrals referrals ON referrals.user_id = accounts.user_id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id"#,
+    );
+    builder
+}
+
+fn push_scoped_financial_user_predicate(
+    builder: &mut QueryBuilder<'_, MySql>,
+    user_column: &str,
+    scope: &AgentAccessScope,
+    user_id: u64,
+) {
+    builder.push(" WHERE ");
+    builder.push(user_column);
+    builder.push(" = ");
+    builder.push_bind(user_id);
+    builder.push(" AND (owner_agents.path = ");
+    builder.push_bind(scope.path.clone());
+    builder.push(" OR owner_agents.path LIKE CONCAT(");
+    builder.push_bind(scope.path.clone());
+    builder.push(", '/%'))");
+}
+
 /// 按子树路径与邀请深度读取团队树用户节点，保留直属邀请人和公司归属。
 /// 分页结果只读且无事务副作用，排序稳定为代理层级、邀请深度和用户 ID。
 /// 与团队用户查询相比额外返回邀请关系的物化路径，客户端据此还原多级邀请链而无需再次请求。
@@ -478,7 +706,7 @@ pub(crate) async fn list_agent_commissions(
 }
 
 /// 按所有者类型和代理 ID 分页读取自有邀请码，不混入用户或子代理记录。
-/// 结果按主键稳定升序，查询不锁行、不修改邀请码状态或已用次数。
+/// active 码优先且按创建时间、主键双倒序，门户最新创建值因而与手机端主码顺序一致。
 /// 返回使用上限、已用次数与启用状态三项运营关注的字段，下级代理自建的邀请码不会混入本结果。
 pub(crate) async fn list_agent_invite_codes(
     pool: &Pool<MySql>,
@@ -489,7 +717,8 @@ pub(crate) async fn list_agent_invite_codes(
         r#"SELECT id, owner_id, code, usage_limit, used_count, status, created_at
            FROM invite_codes
            WHERE owner_type = 'agent' AND owner_id = ?
-           ORDER BY id ASC
+           ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+                    created_at DESC, id DESC
            LIMIT ? OFFSET ?"#,
     )
     .bind(agent_id)
@@ -501,36 +730,78 @@ pub(crate) async fn list_agent_invite_codes(
     Ok(invite_codes)
 }
 
-/// 为指定代理插入新邀请码和可选使用上限，返回数据库生成主键。
-/// 唯一键或其他 SQL 失败直接上抛；本操作使用连接池单语句提交，不重试生成码。
-/// 使用上限为空即写入不限次数，状态与已用次数交由数据库默认值填充，因此需另行回读才能拿到完整快照。
-pub(crate) async fn insert_agent_invite_code(
-    pool: &Pool<MySql>,
-    write: AgentInviteCodeWrite,
-) -> AppResult<u64> {
-    let insert = sqlx::query(
+/// 在门户创建邀请码的事务中锁定当前 active 代理节点。
+/// 该行与关联用户 `/referral/my-code` 的缺码补建共用同一把锁，
+/// 使两个入口的“检查后插入”串行化，避免并发初次读取误报或跨代理回读。
+/// 返回 `false` 表示 scope 读取后节点已被停用；不创建记录也不自行提交。
+pub(crate) async fn lock_active_agent_for_invite_code_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_id: u64,
+) -> AppResult<bool> {
+    let matched = sqlx::query_scalar::<_, u64>(
+        r#"SELECT agents.id
+           FROM agents
+           WHERE agents.id = ?
+             AND agents.status = 'active'
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM agents ancestors
+                 WHERE (ancestors.path = agents.path
+                    OR agents.path LIKE CONCAT(ancestors.path, '/%'))
+                   AND ancestors.status <> 'active'
+             )
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(agent_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(matched.is_some())
+}
+
+/// 在已锁定代理节点的事务中尝试插入新邀请码和可选使用上限。
+/// 成功返回数据库主键；全局 `invite_codes.code` 唯一键的 MySQL 1062 冲突返回 `None`，
+/// 由应用层重新生成六位安全随机码；其他 SQL 错误保持上抛并使事务回滚。
+/// 状态与已用次数使用数据库默认值，既有长码不被停用或改写。
+pub(crate) async fn insert_agent_invite_code_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    write: &AgentInviteCodeWrite,
+) -> AppResult<Option<u64>> {
+    let result = sqlx::query(
         r#"INSERT INTO invite_codes (owner_type, owner_id, code, usage_limit)
            VALUES ('agent', ?, ?, ?)"#,
     )
     .bind(write.agent_id)
     .bind(&write.code)
     .bind(write.usage_limit)
-    .execute(pool)
-    .await?;
+    .execute(&mut **tx)
+    .await;
 
-    Ok(insert.last_insert_id())
+    match result {
+        Ok(insert) => Ok(Some(insert.last_insert_id())),
+        Err(error) if is_duplicate_key_error(&error) => Ok(None),
+        Err(error) => Err(AppError::from(error)),
+    }
 }
 
-/// 按主键、代理所有者和固定 owner 类型更新邀请码状态，防止跨代理修改。
-/// 返回值来自 MySQL 受影响行数；同值更新可能返回 `false`，不能区分记录缺失与数据库视为未变更。
-/// 本语句不修改使用次数或既有邀请关系，状态取值已由服务层收敛为启用或停用两种。
+fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
+    let Some(database_error) = error.as_database_error() else {
+        return false;
+    };
+    matches!(database_error.code().as_deref(), Some("1062"))
+        || database_error.message().contains("Duplicate entry")
+}
+
+/// 在事务内按主键、代理所有者和固定 owner 类型更新邀请码状态，防止跨代理修改。
+/// 调用方必须先锁定目标邀请码，再按绑定流程一致的顺序锁定所属代理，以免与邀请码兑换形成反向锁序。
+/// 本语句不修改使用次数或既有邀请关系；记录已由前置锁定确认存在，因此同值更新也视为成功。
 pub(crate) async fn update_agent_invite_code_status(
-    pool: &Pool<MySql>,
+    tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
     invite_code_id: u64,
     status: &str,
-) -> AppResult<bool> {
-    let result = sqlx::query(
+) -> AppResult<()> {
+    sqlx::query(
         r#"UPDATE invite_codes
            SET status = ?
            WHERE id = ? AND owner_type = 'agent' AND owner_id = ?"#,
@@ -538,21 +809,44 @@ pub(crate) async fn update_agent_invite_code_status(
     .bind(status)
     .bind(invite_code_id)
     .bind(agent_id)
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
 
-    Ok(result.rows_affected() > 0)
+    Ok(())
 }
 
-/// 按主键与代理所有权回读邀请码，不属于当前代理的记录按未命中处理。
-/// 查询只读且无行锁，用于写入后返回权威快照，SQL 错误直接上抛。
-/// 所有权条件与主键同时参与匹配，因此跨代理读取会被当成记录不存在，而不是暴露出存在但无权访问。
-pub(crate) async fn load_agent_invite_code_by_id(
-    pool: &Pool<MySql>,
+/// 在状态变更事务内锁定当前代理拥有的邀请码。
+/// 邀请码行必须先于代理行加锁，与注册兑换的 `invite_code -> agent` 锁序保持一致；
+/// 不属于当前代理的主键按未命中处理，避免泄露跨代理记录是否存在。
+pub(crate) async fn lock_agent_invite_code_for_status_update_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_id: u64,
+    invite_code_id: u64,
+) -> AppResult<bool> {
+    let invite_code_id = sqlx::query_scalar::<_, u64>(
+        r#"SELECT id
+           FROM invite_codes
+           WHERE id = ? AND owner_type = 'agent' AND owner_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(invite_code_id)
+    .bind(agent_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    Ok(invite_code_id.is_some())
+}
+
+/// 在门户创建事务内按代理所有权回读新邀请码快照。
+/// 主键、owner_type 和 owner_id 三重条件防止全局主键被误用为跨代理查询；
+/// 本查询不改状态、使用次数或邀请关系，事务提交由应用层负责。
+pub(crate) async fn load_agent_invite_code_by_id_in_tx(
+    tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
     invite_code_id: u64,
 ) -> AppResult<Option<AgentInviteCodeResponse>> {
-    let invite_code = sqlx::query_as::<_, AgentInviteCodeResponse>(
+    sqlx::query_as::<_, AgentInviteCodeResponse>(
         r#"SELECT id, owner_id, code, usage_limit, used_count, status, created_at
            FROM invite_codes
            WHERE id = ? AND owner_type = 'agent' AND owner_id = ?
@@ -560,8 +854,7 @@ pub(crate) async fn load_agent_invite_code_by_id(
     )
     .bind(invite_code_id)
     .bind(agent_id)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(invite_code)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
 }

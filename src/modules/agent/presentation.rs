@@ -50,8 +50,117 @@ pub(crate) struct AgentTeamUserResponse {
     pub(crate) referred_at: DateTime<Utc>,
 }
 
+/// 代理端团队用户资产分页响应，现货与杠杆账户通过 `account_type` 显式区分。
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentUserAssetsResponse {
+    pub(crate) assets: Vec<AgentUserAssetResponse>,
+    pub(crate) total: i64,
+}
+
+/// 代理端可见的单条钱包账户快照，金额保持数据库 Decimal 文本精度。
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct AgentUserAssetResponse {
+    pub(crate) account_id: u64,
+    pub(crate) account_type: String,
+    pub(crate) asset_id: u64,
+    pub(crate) asset_symbol: String,
+    pub(crate) logo_url: Option<String>,
+    pub(crate) precision_scale: i32,
+    pub(crate) available: BigDecimal,
+    pub(crate) frozen: BigDecimal,
+    pub(crate) locked: BigDecimal,
+    #[serde(with = "unix_millis")]
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+/// 团队用户杠杆仓位分页响应，`total` 与当前状态筛选使用同一谓词。
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentUserMarginPositionsResponse {
+    pub(crate) positions: Vec<AgentUserMarginPositionResponse>,
+    pub(crate) total: i64,
+}
+
+/// 代理端只读杠杆仓位快照，不包含任何需要行情回填才能计算的派生值。
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct AgentUserMarginPositionResponse {
+    pub(crate) id: u64,
+    pub(crate) user_id: u64,
+    pub(crate) product_id: u64,
+    pub(crate) pair_id: u64,
+    pub(crate) symbol: String,
+    pub(crate) margin_asset: u64,
+    pub(crate) margin_asset_symbol: String,
+    pub(crate) wallet_scope: String,
+    pub(crate) margin_mode: String,
+    pub(crate) direction: String,
+    pub(crate) order_type: String,
+    pub(crate) margin_amount: BigDecimal,
+    pub(crate) leverage: BigDecimal,
+    pub(crate) notional_amount: BigDecimal,
+    pub(crate) borrowed_amount: BigDecimal,
+    pub(crate) interest_amount: BigDecimal,
+    pub(crate) entry_price: Option<BigDecimal>,
+    pub(crate) limit_price: Option<BigDecimal>,
+    pub(crate) exit_price: Option<BigDecimal>,
+    pub(crate) realized_pnl: Option<BigDecimal>,
+    #[serde(with = "unix_millis")]
+    pub(crate) opened_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) closed_at: Option<DateTime<Utc>>,
+    pub(crate) status: String,
+}
+
+/// 团队用户秒合约订单分页响应，缺省查询同时包含进行中与全部终态。
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentUserSecondsContractOrdersResponse {
+    pub(crate) orders: Vec<AgentUserSecondsContractOrderResponse>,
+    pub(crate) total: i64,
+}
+
+/// 代理端只读秒合约订单快照，本金、赔率和价格均以 Decimal 文本跨越 JSON 边界。
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct AgentUserSecondsContractOrderResponse {
+    pub(crate) id: u64,
+    pub(crate) user_id: u64,
+    pub(crate) product_id: u64,
+    pub(crate) pair_id: u64,
+    pub(crate) symbol: String,
+    pub(crate) stake_asset: u64,
+    pub(crate) stake_asset_symbol: String,
+    pub(crate) direction: String,
+    pub(crate) stake_amount: BigDecimal,
+    pub(crate) duration_seconds: u32,
+    pub(crate) payout_rate: BigDecimal,
+    pub(crate) entry_price: Option<BigDecimal>,
+    pub(crate) settlement_price: Option<BigDecimal>,
+    pub(crate) status: String,
+    pub(crate) result: Option<String>,
+    #[serde(with = "unix_millis")]
+    pub(crate) expires_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) settled_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentListQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AgentUserMarginPositionsQuery {
+    pub(crate) status: Option<String>,
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AgentUserSecondsContractOrdersQuery {
+    pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,
 }

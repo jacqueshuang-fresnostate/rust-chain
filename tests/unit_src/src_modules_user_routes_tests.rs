@@ -3,9 +3,7 @@ use crate::{
     config::Settings,
     modules::{
         auth::TokenScope,
-        user::service::{
-            USER_INVITE_CODE_LENGTH, generate_user_invite_code, is_valid_user_invite_code,
-        },
+        user::service::{INVITE_CODE_LENGTH, generate_invite_code, is_valid_generated_invite_code},
     },
 };
 use axum::{
@@ -20,15 +18,15 @@ use tower::ServiceExt;
 #[test]
 fn user_invite_code_is_six_uppercase_alphanumeric_chars() {
     for _ in 0..32 {
-        let code = generate_user_invite_code().unwrap();
-        assert_eq!(code.len(), USER_INVITE_CODE_LENGTH);
-        assert!(is_valid_user_invite_code(&code));
+        let code = generate_invite_code().unwrap();
+        assert_eq!(code.len(), INVITE_CODE_LENGTH);
+        assert!(is_valid_generated_invite_code(&code));
     }
-    assert!(is_valid_user_invite_code("A1B2C3"));
-    assert!(!is_valid_user_invite_code("A1B2C"));
-    assert!(!is_valid_user_invite_code("A1B2C3D"));
-    assert!(!is_valid_user_invite_code("ABC-12"));
-    assert!(!is_valid_user_invite_code("abc123"));
+    assert!(is_valid_generated_invite_code("A1B2C3"));
+    assert!(!is_valid_generated_invite_code("A1B2C"));
+    assert!(!is_valid_generated_invite_code("A1B2C3D"));
+    assert!(!is_valid_generated_invite_code("ABC-12"));
+    assert!(!is_valid_generated_invite_code("abc123"));
 }
 
 fn test_state() -> AppState {

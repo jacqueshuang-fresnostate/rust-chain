@@ -1,6 +1,7 @@
 //! 代理门户的 OpenAPI 契约：面向代理本人，提供身份、团队、邀请码、佣金与业务统计的自助查询。
 //! 所有端点的数据范围都由令牌对应的代理确定，不接受代理标识参数，因此不存在跨代理越权查询。
 //! 代理或其链路上任一上级被停用时访问即被拒绝，避免停用分支继续获取团队数据。
+//! 团队用户的钱包、杠杆仓位和秒合约订单仅限子树内分页只读，不触发结算或账务写入。
 //! 门户只提供邀请码的创建与启停两个写操作，佣金状态与用户归属的变更必须由后台完成。
 
 use super::*;
@@ -66,6 +67,116 @@ pub(super) struct AgentUsersResponse {
 }
 
 #[derive(ToSchema)]
+pub(super) struct AgentUserAssetResponse {
+    account_id: u64,
+    #[schema(pattern = "^(spot|margin)$")]
+    account_type: String,
+    asset_id: u64,
+    asset_symbol: String,
+    #[schema(required = true)]
+    logo_url: Option<String>,
+    #[schema(minimum = 0, maximum = 18)]
+    precision_scale: i32,
+    available: String,
+    frozen: String,
+    locked: String,
+    #[schema(format = Int64)]
+    updated_at: i64,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserAssetsResponse {
+    assets: Vec<AgentUserAssetResponse>,
+    #[schema(minimum = 0)]
+    total: i64,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserMarginPositionResponse {
+    id: u64,
+    user_id: u64,
+    product_id: u64,
+    pair_id: u64,
+    symbol: String,
+    margin_asset: u64,
+    margin_asset_symbol: String,
+    #[schema(pattern = "^(spot|margin)$")]
+    wallet_scope: String,
+    #[schema(pattern = "^(isolated|cross)$")]
+    margin_mode: String,
+    #[schema(pattern = "^(long|short)$")]
+    direction: String,
+    #[schema(pattern = "^(market|limit)$")]
+    order_type: String,
+    margin_amount: String,
+    leverage: String,
+    notional_amount: String,
+    borrowed_amount: String,
+    interest_amount: String,
+    #[schema(required = true)]
+    entry_price: Option<String>,
+    #[schema(required = true)]
+    limit_price: Option<String>,
+    #[schema(required = true)]
+    exit_price: Option<String>,
+    #[schema(required = true)]
+    realized_pnl: Option<String>,
+    #[schema(format = Int64)]
+    opened_at: i64,
+    #[schema(format = Int64)]
+    created_at: i64,
+    #[schema(format = Int64, required = true)]
+    closed_at: Option<i64>,
+    #[schema(pattern = "^(opened|closed|canceled|liquidated)$")]
+    status: String,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserMarginPositionsResponse {
+    positions: Vec<AgentUserMarginPositionResponse>,
+    #[schema(minimum = 0)]
+    total: i64,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserSecondsContractOrderResponse {
+    id: u64,
+    user_id: u64,
+    product_id: u64,
+    pair_id: u64,
+    symbol: String,
+    stake_asset: u64,
+    stake_asset_symbol: String,
+    #[schema(pattern = "^(up|down)$")]
+    direction: String,
+    stake_amount: String,
+    #[schema(minimum = 1)]
+    duration_seconds: u32,
+    payout_rate: String,
+    #[schema(required = true)]
+    entry_price: Option<String>,
+    #[schema(required = true)]
+    settlement_price: Option<String>,
+    #[schema(pattern = "^(opened|settled|manual_review)$")]
+    status: String,
+    #[schema(pattern = "^(win|loss)$", required = true)]
+    result: Option<String>,
+    #[schema(format = Int64)]
+    expires_at: i64,
+    #[schema(format = Int64)]
+    created_at: i64,
+    #[schema(format = Int64, required = true)]
+    settled_at: Option<i64>,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserSecondsContractOrdersResponse {
+    orders: Vec<AgentUserSecondsContractOrderResponse>,
+    #[schema(minimum = 0)]
+    total: i64,
+}
+
+#[derive(ToSchema)]
 pub(super) struct CreateAgentInviteCodeRequest {
     usage_limit: Option<i32>,
 }
@@ -80,6 +191,7 @@ pub(super) struct UpdateAgentInviteCodeStatusRequest {
 pub(super) struct AgentInviteCodeResponse {
     id: u64,
     owner_id: u64,
+    #[schema(example = "A1B2C3")]
     code: String,
     usage_limit: Option<i32>,
     used_count: i32,
@@ -230,6 +342,82 @@ fn get_agent_dashboard() {}
     )
 )]
 fn list_agent_users() {}
+
+/// 分页查询团队用户已建立的现货与杠杆钱包，每行通过 account_type 区分账本。
+/// 目标用户必须在当前代理的令牌派生子树内；不存在和不可见都返回 404。
+/// 接口仅做持久化快照读取，不惰性建账、不改钱包与流水。
+#[utoipa::path(
+    get,
+    path = "/agent/api/v1/users/{user_id}/assets",
+    tag = "agent-portal",
+    summary = "查询团队用户资产账户",
+    params(
+        ("user_id" = u64, Path, description = "团队用户 ID"),
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 20，最大 100"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0，最大 100000")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = AgentUserAssetsResponse),
+        (status = 401, description = "未登录或代理已停用", body = ErrorResponse),
+        (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),
+        (status = 404, description = "用户不存在或不在可见子树", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn list_agent_user_assets() {}
+
+/// 分页查询团队用户的杠杆仓位持久化快照，可按四种仓位状态筛选。
+/// 行集与 total 共用筛选和子树谓词；路径不包含 agent ID，越权与不存在均返回 404。
+/// 接口不读行情、不计息、不平仓或强平，也不写账务流水。
+#[utoipa::path(
+    get,
+    path = "/agent/api/v1/users/{user_id}/margin-positions",
+    tag = "agent-portal",
+    summary = "查询团队用户杠杆仓位",
+    params(
+        ("user_id" = u64, Path, description = "团队用户 ID"),
+        ("status" = Option<String>, Query, description = "状态：opened | closed | canceled | liquidated"),
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 20，最大 100"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0，最大 100000")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = AgentUserMarginPositionsResponse),
+        (status = 400, description = "状态或分页参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录或代理已停用", body = ErrorResponse),
+        (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),
+        (status = 404, description = "用户不存在或不在可见子树", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn list_agent_user_margin_positions() {}
+
+/// 分页查询团队用户的秒合约订单，缺省不限状态，因而直接包含进行中 opened 订单。
+/// opened、settled 或 manual_review 筛选同时作用于行集与 total，范围只来自令牌对应子树。
+/// 该端点只读已落库订单，不扫描到期单、不结算、不读行情也不改钱包。
+#[utoipa::path(
+    get,
+    path = "/agent/api/v1/users/{user_id}/seconds-contract-orders",
+    tag = "agent-portal",
+    summary = "查询团队用户秒合约订单",
+    params(
+        ("user_id" = u64, Path, description = "团队用户 ID"),
+        ("status" = Option<String>, Query, description = "状态：opened | settled | manual_review；缺省为全部"),
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 20，最大 100"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0，最大 100000")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = AgentUserSecondsContractOrdersResponse),
+        (status = 400, description = "状态或分页参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录或代理已停用", body = ErrorResponse),
+        (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),
+        (status = 404, description = "用户不存在或不在可见子树", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn list_agent_user_seconds_contract_orders() {}
 
 /// 分页查询当前代理名下的邀请码及其状态，单页最多返回一百条。
 /// 邀请码是新用户注册时归属到该代理的凭据，列表主要用于确认哪些码仍然可用。

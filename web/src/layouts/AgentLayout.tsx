@@ -70,7 +70,9 @@ const semiNavItems: NavItems = navItems.map((item) => ({
 }));
 
 function normalizePath(pathname: string): string {
-  return pathname === '/agent' ? '/agent/dashboard' : pathname;
+  if (pathname === '/agent') return '/agent/dashboard';
+  if (pathname.startsWith('/agent/users/')) return '/agent/users';
+  return pathname;
 }
 
 export function AgentLayout() {

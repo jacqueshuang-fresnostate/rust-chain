@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify Mobile quality gates, touch targets, Lucide usage and narrow-screen behavior."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Check the install modal without regressing PWA build/runtime and non-install statuses."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Check accessible dialog semantics, focus behavior and locale completeness."}
+{"file":".trellis/tasks/09-03-mobile-pwa-install-pencil-parity/research/pencil-pwa-install-dialog.md","reason":"Audit exact light/dark Pencil geometry, palette, copy and icon mapping."}

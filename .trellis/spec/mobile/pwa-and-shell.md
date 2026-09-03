@@ -158,12 +158,29 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - `PwaStatus` is mounted exactly once in `App.vue`. Install and update prompts
   appear only on explicitly allowed safe routes; offline and registration
   errors may remain global.
-- `PwaStatus` is a non-modal system island, not a viewport backdrop or bottom
-  sheet. Its fixed root starts below the 64px application Header plus the top
+- Only the eligible install branch of `PwaStatus` is the body-Teleported Pencil
+  modal `NROQD/FwXCx` and `Tcgl6/V04kP`. Update, offline, offline-ready, and
+  registration/install-error feedback remain the existing non-modal system
+  island. That island starts below the 64px application Header plus the top
   safe area, stays within the 448px application canvas, leaves detached side
-  margins, and keeps `pointer-events: none`. Only each visible status card and
-  its controls restore pointer events; the component must not lock body scroll
-  or prevent the page outside a card from receiving pointer input.
+  margins, and keeps `pointer-events: none`; only each visible status card and
+  its controls restore pointer events.
+- The install modal covers the application canvas, anchors a full-width bottom
+  sheet, and reuses `useModalDialog` for initial Close focus, Tab containment,
+  Escape/backdrop/Close/later dismissal, body scroll lock, and focus return.
+  At 390px the sheet is exactly 540px high with 26px top corners, `12px 20px
+  22px` padding, 14px row gaps, and `82/44/146/42/54/38px` child tracks. The
+  final 38px later-button face explicitly overrides the global 44px button
+  `min-height`; its `::before` expands the pointer target to 44px without
+  changing painted geometry. At shorter heights the sheet itself scrolls, and
+  320–448px layouts never widen the document.
+- The install modal maps the exact Pencil palette in-place on theme changes:
+  light overlay/sheet are `#07110C80/#FFFFFF`; dark node `AgFcl` and sheet are
+  `#000000B8/#101A15`. Both sheets use `0 -8px 28px #00000024`; the primary
+  action uses `0 6px 16px #18D38D2E`. Modal copy is Noto Sans SC with zero
+  letter spacing, and the local HIPPO landscape mark plus Lucide icons are the
+  only visual assets. Chromium invokes the retained native install prompt;
+  the iOS action focuses the always-visible manual Add to Home Screen note.
 - The Seconds settlement result is a body-Teleported modal dialog matching the
   selected Pencil frames `tFcTH` and `FBdqS`. Its fixed root covers the viewport,
   owns the light/dark backdrop, locks body scrolling through `useModalDialog`,
@@ -182,22 +199,26 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   `data-pencil-source="tFcTH FBdqS"` boundary. Theme changes update those CSS
   variables in place without remounting or replaying a queued result. Reduced
   motion removes the reveal transition while preserving final geometry.
-- Each PWA state uses the same double-bezel structure: an outer
+- Each non-install PWA state uses the same double-bezel structure: an outer
   `.pwa-status__card` supplies semantic ambient light and an inner
   `.pwa-status__panel` supplies the translucent, blurred surface and inset
   highlight. Use existing theme tokens with `color-mix`, Lucide icons, and the
-  state mapping accent=install/update, positive=offline-ready, and
+  state mapping accent=update, positive=offline-ready, and
   negative=offline/error. Do not reintroduce the retired `#0b1811` family,
   remote art, emoji, or a second icon library.
-- The live region remains polite and non-atomic. Offline may render together
-  with exactly one primary card; the primary priority remains update, install,
-  offline-ready, then error. Busy update/install/retry states expose
-  `aria-busy`, disable duplicate actions, and every button/dismiss target is at
-  least 44x44px with a visible focus ring.
-- `pwa-status-reveal` may animate only opacity, transform, and presentation
-  blur through the project motion curve. At 320px its actions may wrap but the
-  document must not overflow horizontally. Under `prefers-reduced-motion`, all
-  entry, spinner, and decorative breathing motion is disabled.
+- The island live region remains polite and non-atomic. Offline may render
+  together with exactly one non-install primary card. Update stays highest;
+  an install failure then outranks the stale install offer and offline-ready so
+  its existing error feedback is observable; otherwise install eligibility,
+  offline-ready, and registration error retain their established order. The
+  install offer itself never opens while offline. Busy update/install/retry
+  states expose `aria-busy`, disable duplicate actions, and every control has a
+  visible focus ring and at least a 44x44px hit target.
+- `pwa-status-reveal` and `pwa-install-modal` may animate only opacity and
+  transform through the project motion curve. At 320px island actions may wrap
+  and the install sheet may contract, but the document must not overflow
+  horizontally. Under `prefers-reduced-motion`, entry and decorative breathing
+  motion are disabled; functional busy feedback remains truthful.
 - Updates stay user-controlled: a waiting worker receives `SKIP_WAITING`, then
   the page reloads on `controllerchange`.
 - The root theme is `data-theme="light|dark"` on `<html>`, persists through
@@ -498,6 +519,31 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   min-height distribute free space and stretch the two rows away from the
   selected geometry. At a 390px viewport, the final rendered body starts at
   `y=60` and its 8px top padding places the first product row at `y=68`.
+- Product Hub maps only `Z0B0N6/zMsKE`: one 60px `PageHeader`, Prediction and
+  News rows, and one Product guide row. The design-canvas label `d2FQe`, extra
+  products, cards, dividers, shadows, gradients, and route-local animation are
+  not production content. Prediction pushes `prediction`; News pushes `news`;
+  both the guide row and Header Ellipsis push `news?category=product`.
+- At 390px the Product Hub body is `y=60, h=222`; the two rows are
+  `x=20, y=68/132, w=350, h=64`, and the guide is
+  `x=20, y=214, w=350, h=48`. Rows use a 14px gap, 44px circular plates,
+  19px Lucide product icons, and 18px chevrons. The guide uses a 16px
+  `BookOpen` and Chevron. Fluid 20px side insets, `min-width: 0`, and single-line
+  ellipsis keep 320px, 390px, and 448px free of horizontal overflow.
+- Product Hub typography is Geist `15/700/22` for row titles, `11/450/16` for
+  subtitles, and `13/650/19` for the guide. Subtitles and chevrons remain
+  `#7a8b80`. Light page/text/plate/border are
+  `#ffffff/#111714/#ffffff/#ccd5d0`; dark values are
+  `#000000/#f2f7f4/#0c100e/#29342e`. Keep these cross-theme values in clearly
+  scoped semantic Pencil variables. The root reuses `.pencil-page` text,
+  elevated-surface, and line roles; only the theme-invariant muted value uses
+  the clearly named `--product-hub-muted` variable scoped to
+  `.app-stage .mobile-canvas .product-hub`. Do not add abbreviated global
+  variables or duplicate light/dark declarations that already resolve exactly.
+- Product Hub keeps the shared 44px Header and row hit targets, visible keyboard
+  focus, localized visible copy and accessible names, typed route pushes, and
+  `PageHeader` history fallback. The Back icon is 22px; the Ellipsis is 18px;
+  their centers remain `(40,30)` and `(350,30)` at 390px.
 - Route-local visual controls must be checked against earlier global
   `prototype-parity.css` selectors before relying on source order. If a scoped
   base selector is strengthened to preserve material styles, every modifier
@@ -627,14 +673,17 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Vite mode is not `pwa` | PWA plugin disabled and no registration |
 | Runtime exposes `__TAURI_INTERNALS__` | Return before service-worker registration |
 | Service-worker registration fails | Set a localized retryable error; keep app usable |
-| Browser has no install prompt | Hide Chromium action; show iOS instructions only on iOS browser |
+| Browser has no install prompt | Hide the offer except on iOS; the iOS CTA focuses the visible manual-install note instead of silently doing nothing |
 | Install prompt was dismissed | Suppress it for seven days |
+| Native install prompt rejects | Close the install modal and prioritize the existing install-error island below any waiting update |
 | Worker update is waiting | Offer update on a safe route; reload only after user accepts |
 | Browser is offline | Render cached shell and truthful unavailable/error states |
-| Offline and one primary PWA state are both active | Stack the offline island with update > install > offline-ready > error; do not collapse or reorder the truth states |
-| Pointer is outside a visible PWA card | Let the underlying application receive the pointer; do not add a backdrop, body scroll lock, or full-root hit target |
+| Offline and one primary PWA state are both active | Keep install modal suppressed; stack the offline island only with update, offline-ready, or error according to established priority |
+| Pointer is outside a visible non-install PWA card | Let the underlying application receive the pointer; the island adds no backdrop, body scroll lock, or full-root hit target |
+| Eligible install offer opens | Render the Teleported Pencil backdrop/sheet, lock body scroll, focus Close, contain Tab, and restore prior focus after dismissal |
 | PWA action is running | Set `aria-busy`, disable its action, and preserve a 44px target without layout shift |
-| Viewport is 320px or reduced motion is requested | Wrap actions without horizontal overflow; remove entry, spinner, and decorative breathing animations |
+| Install modal renders in dark theme | Resolve `AgFcl` to `rgba(0, 0, 0, .72)` / `#000000B8`, not the light `#07110C80` overlay |
+| Viewport is 320px or reduced motion is requested | Keep zero horizontal overflow and scroll short install sheets; remove reveal and decorative breathing animations |
 | Stored theme is invalid or inaccessible | Use system preference, then light |
 | Announcement API fails | Show retry and empty/error state; do not synthesize messages |
 | Message Center opens from Home | Hide Root Header and Dock; Back returns through history to Home |
@@ -705,15 +754,16 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Good: `build:pwa` produces manifest, service worker, brand icons, and an
   offline-reloadable shell while cache inspection contains no API or WebSocket
   endpoint.
-- Good: an install prompt appears as a detached double-bezel glass island below
-  the Header; the user can still scroll and operate the visible page outside
-  the island, while the install and dismiss controls remain 44px targets.
+- Good: an eligible install offer appears as the selected Pencil bottom modal;
+  its 38px later-button face remains exact while a pseudo-element supplies the
+  44px hit target, and dismissal unlocks the page and restores focus.
 - Base: the browser is offline while an update is waiting, so the negative
   offline island and accent update island stack in that order without hiding
   either truthful state or overflowing a 320px viewport.
-- Bad: `PwaStatus` becomes a modal backdrop, intercepts the full viewport,
-  locks body scrolling, renders a flat full-width band, or animates after the
-  user requests reduced motion.
+- Bad: update, offline, offline-ready, or error feedback is moved into the
+  install backdrop, or the install branch retains the island and fails to trap
+  focus/lock scrolling. It is also wrong for the dark install overlay to reuse
+  the translucent green light value or to animate after reduced motion.
 - Good: selecting Contract opens the persisted pair with
   `?mode=contract`; selecting Seconds opens `/seconds`.
 - Good: direct-open Spot renders the `yzOPc`/`bo8k5` split default with live
@@ -780,15 +830,23 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Unit/source contract: build modes, Tauri double guard, manifest fields,
   `runtimeCaching: []`, denied fallback routes, single `PwaStatus`, safe prompt
   routes, theme normalization, and complete `zh-CN`/English keys.
-- PWA status island contract: assert the existing route allowlist and state
-  priority, the five double-bezel panels, semantic tone/role/`aria-busy`
-  mapping, pointer-transparent root and pointer-active cards, 44px controls,
-  focus ring, no retired colors/emoji/remote assets, narrow-screen wrapping,
-  custom reveal transition, and complete reduced-motion overrides.
-- PWA status browser pass: force install, offline, and stacked states at
-  320x720, 390x844, and 448x900 in both themes; assert document width equals
-  viewport width, card edges stay detached, actions are fully visible, and
-  `elementFromPoint` outside the card reaches the underlying page.
+- PWA status contract: assert the existing route allowlist and non-install
+  priority, four unchanged double-bezel island panels, semantic
+  tone/role/`aria-busy` mapping, pointer-transparent island root, and
+  pointer-active cards. Separately assert the install-only Teleport, exact
+  `NROQD/FwXCx/Tcgl6/V04kP` tracks, palette, shadows, zero title tracking,
+  19px Close/Download icons, modal semantics, focus lifecycle, and iOS note
+  feedback. The geometry regression must account for the global `button {
+  min-height: 44px }` cascade and prove the local later face computes to 38px
+  while its pseudo-element expands the hit area to 44px.
+- PWA browser pass: force install, offline, and stacked states at 320x720,
+  390x920, and 448x900 in both themes. Assert document width equals viewport
+  width; non-install card edges remain detached and pass through outside
+  pointers. For install, assert exact 390px child rectangles, 540px sheet,
+  computed shadows/typography, light/dark computed overlays, short-screen
+  internal scrolling, initial Close focus, Tab wrap, Escape/backdrop/later
+  close, body unlock, focus restoration, native failure priority, and iOS CTA
+  focus feedback.
 - Build: `npm run build:pwa` and inspect generated manifest/service worker;
   `npm run build:tauri` and assert no PWA artifacts remain.
 - Browser: theme switch survives reload; all five dock entries and the
@@ -918,8 +976,10 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Product Hub parity: load the complete stylesheet order including the legacy
   prototype rule, then assert computed `display === 'block'` and `gap === '0px'`.
   In a 390px browser viewport, assert body `getBoundingClientRect().y === 60`
-  and first row `y === 68`; a source-only check for both declarations is not
-  sufficient.
+  and first row `y === 68`; also cover the second row/help geometry, exact
+  light/dark colors and typography, the three typed destinations, meaningful
+  localized names, keyboard focus, and zero overflow at 320/390/448px. A
+  source-only check for runtime geometry and overflow is not sufficient.
 - Spot interaction: expanding the chart mounts exactly one local renderer and
   exposes real order-book/latest-trade tabs without iframe or remote chart
   script. The only chart-owned external link is the official Lightweight Charts
@@ -993,30 +1053,39 @@ if (__PWA_ENABLED__ && !isTauriRuntime()) void initializePwa()
 messages.value = await fetchNews(40)
 ```
 
-For the non-modal PWA status island:
+For non-install PWA status islands and the install-only modal:
 
 ```vue
-<!-- Wrong: a full-screen modal blocks the application for an auxiliary state. -->
+<!-- Wrong: an update/offline/error auxiliary state blocks the application. -->
 <aside class="pwa-status" style="inset: 0; pointer-events: auto">
   <div class="backdrop" />
-  <StatusCard />
+  <UpdateOrOfflineCard />
 </aside>
 
-<!-- Correct: the root is transparent to input and only the island is active. -->
+<!-- Correct: non-install status stays non-modal; install alone owns a dialog. -->
 <Transition name="pwa-status-reveal">
   <aside class="pwa-status" aria-live="polite" aria-atomic="false">
     <section class="pwa-status__card" role="status">
-      <div class="pwa-status__panel"><StatusContent /></div>
+      <div class="pwa-status__panel"><UpdateOrOfflineContent /></div>
     </section>
   </aside>
 </Transition>
+<Teleport to="body">
+  <div class="pwa-install">
+    <section role="dialog" aria-modal="true"><InstallContent /></section>
+  </div>
+</Teleport>
 ```
 
 ```css
 .pwa-status { pointer-events: none; }
 .pwa-status__card { pointer-events: auto; }
+.pwa-install__later { height: 38px; min-height: 38px; }
+.pwa-install__later::before { content: ''; position: absolute; inset: -3px 0; }
+html[data-theme='dark'] .pwa-install { --pwa-install-overlay: #000000b8; }
 @media (prefers-reduced-motion: reduce) {
-  .pwa-status *, .pwa-status-reveal-enter-active { animation: none; transition: none; }
+  .pwa-status *, .pwa-status-reveal-enter-active,
+  .pwa-install-modal-enter-active { animation: none; transition: none; }
 }
 ```
 

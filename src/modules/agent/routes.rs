@@ -8,13 +8,16 @@ use super::{
     application::{
         change_agent_password, create_agent_invite_code, get_agent_convert_stats,
         get_agent_dashboard, get_agent_me, list_agent_commissions, list_agent_invite_codes,
-        list_agent_sub_agents, list_agent_team_tree, list_agent_users,
-        update_agent_invite_code_status,
+        list_agent_sub_agents, list_agent_team_tree, list_agent_user_assets,
+        list_agent_user_margin_positions, list_agent_user_seconds_contract_orders,
+        list_agent_users, update_agent_invite_code_status,
     },
     presentation::{
         AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
         AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
         AgentPasswordChangeResponse, AgentSubAgentsResponse, AgentTeamTreeResponse,
+        AgentUserAssetsResponse, AgentUserMarginPositionsQuery, AgentUserMarginPositionsResponse,
+        AgentUserSecondsContractOrdersQuery, AgentUserSecondsContractOrdersResponse,
         AgentUsersResponse, ChangeAgentPasswordRequest, CreateInviteCodeRequest,
         UpdateInviteCodeStatusRequest,
     },
@@ -34,6 +37,15 @@ pub fn routes() -> Router<AppState> {
         .route("/me", get(me))
         .route("/dashboard", get(dashboard))
         .route("/users", get(list_users))
+        .route("/users/:user_id/assets", get(list_user_assets))
+        .route(
+            "/users/:user_id/margin-positions",
+            get(list_user_margin_positions),
+        )
+        .route(
+            "/users/:user_id/seconds-contract-orders",
+            get(list_user_seconds_contract_orders),
+        )
         .route(
             "/invite-codes",
             get(list_invite_codes).post(create_invite_code),
@@ -101,6 +113,49 @@ async fn list_users(
     ))
 }
 
+/// 返回当前代理子树内某用户的现货与杠杆钱包账户快照。
+/// 路径仅含目标用户 ID，代理 scope 始终从 `AgentAuth` 令牌主体回查；查询串只接受分页参数。
+/// 处理器只调用只读应用用例，不补建账户或改变任何钱包框。
+async fn list_user_assets(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Query(query): Query<AgentListQuery>,
+) -> AppResult<Json<AgentUserAssetsResponse>> {
+    Ok(Json(
+        list_agent_user_assets(state.mysql.clone(), &claims.sub, user_id, query).await?,
+    ))
+}
+
+/// 返回当前代理子树内某用户的杠杆仓位快照，可选状态筛选与分页 total 严格同口径。
+/// 无权与目标不存在由应用层统一映射为未找到，路由不接受任何 agent ID 参数。
+/// 查询不触发行情计算、平仓、强平、计息或账务写入。
+async fn list_user_margin_positions(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Query(query): Query<AgentUserMarginPositionsQuery>,
+) -> AppResult<Json<AgentUserMarginPositionsResponse>> {
+    Ok(Json(
+        list_agent_user_margin_positions(state.mysql.clone(), &claims.sub, user_id, query).await?,
+    ))
+}
+
+/// 返回当前代理子树内某用户的秒合约订单，缺省状态为全部并包含进行中 `opened`。
+/// 筛选只接受 opened、settled 和 manual_review，代理边界由令牌派生路径而非客户端参数决定。
+/// 处理器绝不调用结算入口，也不会回填行情或更改订单和钱包。
+async fn list_user_seconds_contract_orders(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Query(query): Query<AgentUserSecondsContractOrdersQuery>,
+) -> AppResult<Json<AgentUserSecondsContractOrdersResponse>> {
+    Ok(Json(
+        list_agent_user_seconds_contract_orders(state.mysql.clone(), &claims.sub, user_id, query)
+            .await?,
+    ))
+}
+
 /// 返回团队关系树的两个分支数据：下级代理列表与带邀请深度的用户节点列表，并附服务端认定的根代理 ID。
 /// 同一分页参数同时作用于两个列表，页大小上限五百；根 ID 来自令牌解析出的 scope，不接受客户端指定。
 async fn team_tree(
@@ -150,7 +205,7 @@ async fn list_invite_codes(
 }
 
 /// 为当前代理创建一枚新邀请码，请求体只允许指定可选使用上限，码文本由服务端生成不接受自定义。
-/// 上限必须为正数或缺省；插入成功后回读完整记录返回，回读落空按未找到处理。该接口无幂等键，重复提交会生成多枚码。
+/// 上限必须为正数或缺省；服务端在代理行锁保护的事务内生成六位码并对唯一键冲突做有界重试。该接口无幂等键，重复提交会生成多枚码。
 async fn create_invite_code(
     AgentAuth(claims): AgentAuth,
     State(state): State<AppState>,

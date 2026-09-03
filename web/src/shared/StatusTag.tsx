@@ -4,6 +4,7 @@ import type { ComponentProps } from 'react';
 type TagColor = NonNullable<ComponentProps<typeof Tag>['color']>;
 
 type StatusTagProps = {
+  label?: string;
   value?: boolean | number | string | null;
 };
 
@@ -18,6 +19,8 @@ const STATUS_MAP: Record<string, StatusMeta> = {
   approved: { label: '已通过', color: 'green' },
   archived: { label: '已归档', color: 'grey' },
   cancelled: { label: '已取消', color: 'grey' },
+  canceled: { label: '已取消', color: 'grey' },
+  closed: { label: '已平仓', color: 'green' },
   completed: { label: '已完成', color: 'green' },
   deny: { label: '拒绝', color: 'red' },
   disabled: { label: '禁用', color: 'grey' },
@@ -32,6 +35,7 @@ const STATUS_MAP: Record<string, StatusMeta> = {
   locked: { label: '锁定', color: 'orange' },
   long: { label: '做多', color: 'green' },
   loss: { label: '亏损', color: 'red' },
+  manual_review: { label: '人工复核', color: 'orange' },
   not_required: { label: '无需支付', color: 'grey' },
   opened: { label: '持仓中', color: 'light-blue' },
   paid: { label: '已支付', color: 'green' },
@@ -69,7 +73,7 @@ function normalizeStatus(value: StatusTagProps['value']) {
   return String(value).trim().toLowerCase();
 }
 
-export function StatusTag({ value }: StatusTagProps) {
+export function StatusTag({ label, value }: StatusTagProps) {
   const normalized = normalizeStatus(value);
 
   if (!normalized) {
@@ -78,5 +82,5 @@ export function StatusTag({ value }: StatusTagProps) {
 
   const meta = STATUS_MAP[normalized] ?? { label: String(value), color: 'light-blue' as TagColor };
 
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  return <Tag color={meta.color}>{label?.trim() || meta.label}</Tag>;
 }
