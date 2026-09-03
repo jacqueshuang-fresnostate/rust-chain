@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Follow the authoritative transaction-record ledger direction, DecimalText, theme-token, and release-gate contracts."}
+{"file":".trellis/spec/mobile/index.md","reason":"Follow Mobile quality-gate and semantic visual conventions."}
+{"file":".trellis/tasks/09-04-mobile-wallet-ledger-income-expense-tone/research/repo-findings.md","reason":"Use the verified existing direction helper and semantic token path for the minimal implementation."}

@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
                 <AssetMark :symbol="entry.symbol" :src="entryLogoUrl(entry)" :size="30" />
                 <strong>{{ entry.symbol }}</strong>
               </div>
-              <strong class="ledger-row__total numeric" :title="exactAmountTitle(entry)">
+              <strong class="ledger-row__total numeric" :class="directionTone(entry)" :title="exactAmountTitle(entry)">
                 {{ signedAmount(entry) }}
               </strong>
             </header>

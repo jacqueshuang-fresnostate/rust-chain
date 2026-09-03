@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import ts from 'typescript'
 import { createI18n } from 'vue-i18n'
+import { compileStyle, parse as parseSfc } from 'vue/compiler-sfc'
 import {
   advanceWalletLedgerPagination,
   createWalletLedgerAssetDirectoryRequestLifecycle,
@@ -50,6 +52,89 @@ const walletCoreSource = readFileSync(new URL('../src/core/walletLedger.ts', imp
 const viewSource = readFileSync(new URL('../src/views/WalletLedgerView.vue', import.meta.url), 'utf8')
 const transactionRecordsLayoutSource = readFileSync(new URL('../src/components/TransactionRecordsLayout.vue', import.meta.url), 'utf8')
 const transactionRecordEmptySource = readFileSync(new URL('../src/components/TransactionRecordEmptyState.vue', import.meta.url), 'utf8')
+const parsedView = parseSfc(viewSource, { filename: 'WalletLedgerView.vue' })
+const viewTemplateSource = parsedView.descriptor.template?.content ?? ''
+const viewScriptSource = parsedView.descriptor.scriptSetup?.content ?? ''
+const viewStyleSource = parsedView.descriptor.styles.find((style) => style.scoped)?.content ?? ''
+
+type CssRule = {
+  body: string
+  start: number
+}
+
+type DirectionTone = (entry: WalletLedgerEntry) => 'is-buy' | 'is-sell' | 'is-ink'
+
+function cssRule(css: string, selector: string): CssRule {
+  const marker = `${selector} {`
+  const start = css.indexOf(marker)
+  assert.notEqual(start, -1, `missing CSS rule ${selector}`)
+  const openingBrace = start + marker.length - 1
+  let depth = 1
+  for (let index = openingBrace + 1; index < css.length; index += 1) {
+    if (css[index] === '{') depth += 1
+    if (css[index] !== '}') continue
+    depth -= 1
+    if (depth === 0) {
+      return { body: css.slice(openingBrace + 1, index), start }
+    }
+  }
+  assert.fail(`unterminated CSS rule ${selector}`)
+}
+
+function cssDeclaration(body: string, property: string): string {
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`(?:^|\\n)\\s*${escapedProperty}:\\s*([^;]+);`).exec(body)
+  assert.ok(match, `missing CSS declaration ${property}`)
+  return match[1].trim()
+}
+
+function cssCustomProperties(body: string): Record<string, string> {
+  return Object.fromEntries(
+    [...body.matchAll(/(?:^|\n)\s*(--[\w-]+):\s*([^;]+);/g)]
+      .map((match) => [match[1], match[2].trim()]),
+  )
+}
+
+function openingTagWithClass(template: string, classValue: string): string {
+  const classMarker = `class="${classValue}"`
+  const classIndex = template.indexOf(classMarker)
+  assert.notEqual(classIndex, -1, `missing template class ${classValue}`)
+  const start = template.lastIndexOf('<', classIndex)
+  const end = template.indexOf('>', classIndex)
+  assert.ok(start >= 0 && end > classIndex, `invalid opening tag for ${classValue}`)
+  return template.slice(start, end + 1)
+}
+
+function loadDirectionToneFromView(): { call: DirectionTone, source: string } {
+  const sourceFile = ts.createSourceFile(
+    'WalletLedgerView.script.ts',
+    viewScriptSource,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  )
+  const declaration = sourceFile.statements.find((statement) => (
+    ts.isFunctionDeclaration(statement) && statement.name?.text === 'directionTone'
+  ))
+  assert.ok(declaration && ts.isFunctionDeclaration(declaration), 'missing directionTone implementation')
+  const source = declaration.getText(sourceFile)
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+    reportDiagnostics: true,
+  })
+  assert.equal(transpiled.diagnostics?.length ?? 0, 0)
+  const createDirectionTone = new Function(
+    'walletLedgerDirectionForAmount',
+    `${transpiled.outputText}\nreturn directionTone;`,
+  ) as (classify: typeof walletLedgerDirectionForAmount) => DirectionTone
+  return {
+    call: createDirectionTone(walletLedgerDirectionForAmount),
+    source,
+  }
+}
 
 test('账单适配器严格消费权威账户、分类、分页、金额、手续费和时间', () => {
   const mapped = mapWalletLedgerResponse({
@@ -408,6 +493,65 @@ test('交易方向来自真实金额符号且非零手续费以 DecimalText 扣�
   assert.equal(walletLedgerFeeDebitAmount(normalizeDecimalText('0.25')), '-0.25')
   assert.equal(walletLedgerFeeDebitAmount(normalizeDecimalText('0')), '0')
   assert.equal(walletLedgerFeeDebitAmount(normalizeDecimalText('-0')), '0')
+})
+
+test('账单总额真实绑定权威金额的三态方向类', () => {
+  assert.deepEqual(parsedView.errors, [])
+  const totalTag = openingTagWithClass(viewTemplateSource, 'ledger-row__total numeric')
+  assert.ok(totalTag.startsWith('<strong '))
+  assert.ok(totalTag.includes(':class="directionTone(entry)"'))
+  assert.ok(totalTag.includes(':title="exactAmountTitle(entry)"'))
+
+  const directionTone = loadDirectionToneFromView()
+  assert.ok(directionTone.source.includes('walletLedgerDirectionForAmount(entry.amount)'))
+  assert.equal(directionTone.source.includes('changeType'), false)
+  const timestamp = Date.parse('2026-09-04T00:00:00Z')
+  const entries = [
+    { ...ledgerEntry(1, timestamp), changeType: 'withdrawal_confirm', amount: normalizeDecimalText('8') },
+    { ...ledgerEntry(2, timestamp), changeType: 'deposit_confirm', amount: normalizeDecimalText('-8') },
+    { ...ledgerEntry(3, timestamp), changeType: 'withdrawal_confirm', amount: normalizeDecimalText('0') },
+  ]
+  assert.deepEqual(entries.map(directionTone.call), ['is-buy', 'is-sell', 'is-ink'])
+})
+
+test('账单总额的动态语义色覆盖默认 ink，且明暗主题 token 完整', () => {
+  const compiled = compileStyle({
+    source: viewStyleSource,
+    filename: 'WalletLedgerView.vue',
+    id: 'data-v-wallet-ledger',
+    scoped: true,
+  })
+  assert.deepEqual(compiled.errors, [])
+
+  const totalRule = cssRule(compiled.code, '.ledger-row__total[data-v-wallet-ledger]')
+  assert.equal(cssDeclaration(totalRule.body, 'color'), 'var(--wallet-record-ink)')
+  assert.equal(totalRule.body.includes('!important'), false)
+  for (const [selector, token] of [
+    ['.is-buy[data-v-wallet-ledger]', '--wallet-record-buy'],
+    ['.is-sell[data-v-wallet-ledger]', '--wallet-record-sell'],
+    ['.is-ink[data-v-wallet-ledger]', '--wallet-record-ink'],
+  ] as const) {
+    const semanticRule = cssRule(compiled.code, selector)
+    assert.ok(semanticRule.start > totalRule.start, `${selector} must follow the equal-specificity total rule`)
+    assert.equal(cssDeclaration(semanticRule.body, 'color'), `var(${token})`)
+  }
+
+  const lightRule = cssRule(compiled.code, '.wallet-ledger-pencil[data-v-wallet-ledger]')
+  const darkRule = cssRule(compiled.code, "html[data-theme='dark'] .wallet-ledger-pencil")
+  assert.ok(darkRule.start > lightRule.start)
+  const light = cssCustomProperties(lightRule.body)
+  const dark = { ...light, ...cssCustomProperties(darkRule.body) }
+  assert.deepEqual(
+    [light, dark].map((theme) => ({
+      buy: theme['--wallet-record-buy'],
+      sell: theme['--wallet-record-sell'],
+      ink: theme['--wallet-record-ink'],
+    })),
+    [
+      { buy: '#0dbe7b', sell: '#ff5878', ink: '#111714' },
+      { buy: '#45efae', sell: '#ff5878', ink: '#f3f7f5' },
+    ],
+  )
 })
 
 test('账单保留权威资产精度，但可见文本使用独立精度并进行十进制舍入', () => {

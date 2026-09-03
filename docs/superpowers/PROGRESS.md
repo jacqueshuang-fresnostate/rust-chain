@@ -8397,3 +8397,17 @@
 - 修改文件：`web/src/admin/resources/actions/newCoins.tsx`、`web/src/admin/actions/NewCoinActions.tsx`、`web/src/admin/newCoinDateTime.ts`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/admin/actions/NewCoinActions.test.tsx`、`tests/admin_routes.rs`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-03-admin-new-coin-asset-time-fix/{prd.md,review.md}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Web 聚焦 2 文件/70 项、全量 63 文件/449 项、生产策略 15/15、覆盖率门禁 23/23、`typecheck`、`lint`、生产 `build`（3772 modules）与 `budget` 均通过；`cargo fmt --all -- --check`、`cargo check --all-targets` 通过；Rust 聚焦命令结果 1 passed/0 failed/92 filtered，但本机 `DATABASE_URL` 缺失，输出明确跳过 MySQL 分支，active 关闭充提成功及 disabled 拒绝的实库断言未执行；Trellis 上下文校验与 `git diff --check` 通过。
 - 后续事项：有可用 MySQL 时复跑聚焦 Rust 用例以取得实库断言证据；本轮保留全部无关脏改动，未提交或推送。
+
+## 2026-09-04 01:21 - 修复手机资金账单总额收支方向色
+
+- 完成内容：在账单总额数字上复用现有 `directionTone(entry)`，以权威 `entry.amount` 符号将收入、支出、零值分别映射到 `is-buy` / `is-sell` / `is-ink`；未改动金额文本、精度、title/ARIA、请求、筛选、分页或布局。新增聚焦回归锁定总额类绑定、符号方向来源及三种语义类的现有明暗主题变量。
+- 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/wallet-ledger-classification.test.ts`、`.trellis/tasks/09-04-mobile-wallet-ledger-income-expense-tone/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`node --test --experimental-strip-types tests/wallet-ledger-classification.test.ts` 16/16 通过；`npm --prefix mobile run type-check`、`npm --prefix mobile run type-check:tests`、`npm --prefix mobile run check:governance` 通过，其中源码尺寸与关键测试质量门禁均通过；`git diff --check` 通过。
+- 后续事项：无；按要求未运行耗时完整 `release:gate`，未提交或推送，并保留全部无关脏改动。
+
+## 2026-09-04 01:36 - 独立复核并收口手机资金账单收支方向色
+
+- 完成内容：逐项复核总额模板绑定、`entry.amount` 权威方向、明暗主题变量和 scoped CSS 级联；确认生产仅增加一行动态 class，金额格式、符号、精度、title/ARIA、接口、筛选、分页、布局和其他数字颜色未变。修复回归只依赖跨段大正则、未执行页面映射且未完整覆盖级联/深色 sell 继承的问题，改为结构定位、生产函数提取执行和真实 scoped CSS 编译断言；同步 Mobile Transaction Records 可执行合同、PRD 终验与独立复核记录。
+- 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/wallet-ledger-classification.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/09-04-mobile-wallet-ledger-income-expense-tone/{prd.md,review.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 17/17 通过；`npm --prefix mobile run type-check`、`type-check:tests`、`check:governance` 通过；完整 `npm --prefix mobile run release:gate` 通过，其中 Mobile 全量测试 652/652、PWA/Tauri 各编译 2136 modules、PWA 预缓存 152 项，两类产物、Bundle、源码尺寸和测试质量门禁均通过；Trellis context 3 条 implement/4 条 check 全部校验通过；`git diff --check` 通过。
+- 后续事项：无；未 commit/push，且未编辑或覆盖 `mobile/pencil` 中的既有脏改动。

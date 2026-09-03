@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify signed total semantics, no numeric coercion, light/dark token use, regression coverage, and required Mobile gate."}
+{"file":".trellis/spec/mobile/index.md","reason":"Verify Mobile project quality and visual semantic conventions."}
+{"file":".trellis/tasks/09-04-mobile-wallet-ledger-income-expense-tone/prd.md","reason":"Check the exact income-green, expense-red, zero-neutral scope and exclusions."}
+{"file":".trellis/tasks/09-04-mobile-wallet-ledger-income-expense-tone/research/repo-findings.md","reason":"Confirm the implementation reuses the existing direction and tone path instead of duplicating logic."}

@@ -2050,6 +2050,15 @@ formatWalletLedgerDecimal(value, locale, precisionScale, assetSymbol?): string
   `#8F9B94`. Active is `#18D38D`; negative is `#FF5878`; positive is
   `#0DBE7B` light and `#45EFAE` dark. Do not restore the retired `#0b1811` /
   `rgba(11, 24, 17, ...)` family.
+- The signed `.ledger-row__total.numeric` reuses `directionTone(entry)` from
+  authoritative `entry.amount`: positive/credit maps to `is-buy`,
+  negative/debit maps to `is-sell`, and zero maps to `is-ink`. Those classes
+  resolve through `--wallet-record-buy`, `--wallet-record-sell`, and
+  `--wallet-record-ink`; the default total ink rule must not outrank the
+  dynamic class. Effective light values are `#0DBE7B` / `#FF5878` / `#111714`,
+  and dark values are `#45EFAE` / `#FF5878` / `#F3F7F5`. `change_type` never
+  determines this tone, and styling does not alter signed text, precision,
+  title, or row ARIA.
 - Asset options and row logos come only from the authenticated wallet directory.
   Directory requests are latest-wins and must match both exact session token and
   session generation before symbols or logo URLs enter view state.
@@ -2120,10 +2129,12 @@ formatWalletLedgerDecimal(value, locale, precisionScale, assetSymbol?): string
 - View/source tests assert `kcP5D/A85if`, unchanged Header/tab/filter geometry,
   dynamic safe-area chrome, the exact converted outer row advances, full-width
   divider rows, two-column detail/footer grids, the <=340px two-row footer,
-  light/dark row tokens, valid routes, localized title/default filter copy,
-  exact titles, 44px modal interaction, real logo use, explicit reset of the
-  legacy `.ledger-list article` declarations, and no forbidden number
-  conversion or backdrop filter (including prefixed forms).
+  the signed-total binding and executable positive/negative/zero tone mapping,
+  compiled cascade order, effective light/dark row tokens, valid routes,
+  localized title/default filter copy, exact titles, 44px modal interaction,
+  real logo use, explicit reset of the legacy `.ledger-list article`
+  declarations, and no forbidden number conversion or backdrop filter
+  (including prefixed forms).
 - Browser verification covers 320px, 390px, and 448px in light/dark themes,
   exact row advances, stable footer alignment, modal focus/scroll behavior,
   title centering, and zero horizontal overflow.
