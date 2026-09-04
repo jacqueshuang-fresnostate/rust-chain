@@ -251,10 +251,12 @@ test('new selected-page copy is symmetric and Vue templates contain no fixed CJK
   for (const source of vueSources) {
     for (const match of source.matchAll(/\bt\('([^']+)'/g)) keys.add(match[1])
     const template = source.match(/<template>([\s\S]*?)<\/template>/)?.[1] || ''
-    const visibleText = template
+    // 注释属于开发说明而非页面文案：中文文案检查先剔除 HTML 注释，避免误伤代码注释
+    const templateCopy = template.replace(/<!--[\s\S]*?-->/g, '')
+    const visibleText = templateCopy
       .replace(/\{\{[\s\S]*?\}\}/g, '')
       .replace(/<[^>]+>/g, '')
-    assert.doesNotMatch(template, /[\u3400-\u9fff]/)
+    assert.doesNotMatch(templateCopy, /[\u3400-\u9fff]/)
     assert.doesNotMatch(visibleText, /[A-Za-z]/)
     assert.doesNotMatch(template, /<svg/)
     assert.doesNotMatch(template, /\p{Extended_Pictographic}/u)

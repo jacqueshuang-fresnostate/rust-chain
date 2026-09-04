@@ -8411,3 +8411,10 @@
 - 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/wallet-ledger-classification.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/09-04-mobile-wallet-ledger-income-expense-tone/{prd.md,review.md}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：聚焦测试 17/17 通过；`npm --prefix mobile run type-check`、`type-check:tests`、`check:governance` 通过；完整 `npm --prefix mobile run release:gate` 通过，其中 Mobile 全量测试 652/652、PWA/Tauri 各编译 2136 modules、PWA 预缓存 152 项，两类产物、Bundle、源码尺寸和测试质量门禁均通过；Trellis context 3 条 implement/4 条 check 全部校验通过；`git diff --check` 通过。
 - 后续事项：无；未 commit/push，且未编辑或覆盖 `mobile/pencil` 中的既有脏改动。
+
+## 2026-09-04 14:19 - 为资金账单页面与核心测试补充中文注释
+
+- 完成内容：为 `WalletLedgerView.vue`（脚本/模板/样式全段）与 `wallet-ledger-classification.test.ts`（用例/夹具/合同）添加逐处中文功能注释，不改动任何生产与测试逻辑；期间发现移动端"源码禁止硬编码中文"的三条测试合同会误伤代码注释，经用户确认后把三条 CJK 检查统一改为先剔除 HTML/块/整行注释再匹配（保留防硬编码文案的合同本意）。`quantity()` 内两行英文注释同步译为中文。
+- 修改文件：`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/wallet-ledger-classification.test.ts`、`mobile/tests/pencil-selected-page-parity-20260807.test.ts`、`mobile/tests/pencil-wallet-flow-parity.test.ts`、`mobile/tests/wallet-secondary-views.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：自校验脚本确认两份注释差异行 100% 为注释/空行（页面 +244/-2、测试 +253/-0）；`npm test` 全量 652/652 通过（含 6 个相关合同测试文件 64/64）；`npm --prefix mobile run type-check`、`type-check:tests`、`check:governance` 通过；`git diff --check` 通过。
+- 后续事项：无；本轮未提交或推送。

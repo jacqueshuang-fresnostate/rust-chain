@@ -213,6 +213,11 @@ test('生产钱包页面没有复制 Pencil 演示资产、金额、网络或支
   for (const source of Object.values(sources)) {
     assert.doesNotMatch(source, /09:41|100\.00|TRC20|ERC20|BEP20|CARD|FAST PAY|MANUAL/)
     assert.doesNotMatch(source, /<svg|\p{Extended_Pictographic}/u)
-    assert.doesNotMatch(source, /[\u3400-\u9fff]/)
+    // 注释属于开发说明而非页面文案：中文检查先剔除 HTML/块/整行注释，避免误伤代码注释
+    const copySource = source
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/[^\n]*/gm, '')
+    assert.doesNotMatch(copySource, /[\u3400-\u9fff]/)
   }
 })

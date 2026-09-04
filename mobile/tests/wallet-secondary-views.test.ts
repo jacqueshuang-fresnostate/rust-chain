@@ -72,7 +72,12 @@ test('钱包二级页使用 HIPPO 变量、明暗主题焦点、状态和窄屏�
     assert.doesNotMatch(styles, /rgba?\(11,\s*24,\s*17/i)
     assert.doesNotMatch(source, /<svg/)
     assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
-    assert.doesNotMatch(source, /[\u3400-\u9fff]/)
+    // 注释属于开发说明而非页面文案：中文检查先剔除 HTML/块/整行注释，避免误伤代码注释
+    const copySource = source
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/[^\n]*/gm, '')
+    assert.doesNotMatch(copySource, /[\u3400-\u9fff]/)
   }
 
   for (const source of [sources.depositAsset, sources.withdrawAsset, sources.withdraw, sources.quickRecharge]) {
