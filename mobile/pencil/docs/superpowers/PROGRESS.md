@@ -516,3 +516,17 @@
 - 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
 - 验证结果：通过 Pencil execute 检查 oOJ0q、ZTtvY，未发现裁切、重叠、溢出或 placeholder 残留；完成双主题打新内容区截图检查。
 - 后续事项：无
+
+## 2026-09-04 14:19 - 打新数据主视觉改为机会中心
+
+- 完成内容：重构 ebjOB、ihoYv 双主题主视觉，将原总空投与平均涨跌数据展示改为“今日打新机会”中心；突出 CP 正在申购、空投与 APR 摘要、进入申购快捷操作，并增加预热、申购、待上市、已上市四类项目数量概览及发行日历入口。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成两个主视觉及双主题整页截图检查；oOJ0q、ZTtvY 布局问题计数均为 0，无裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 15:23 - 打新主视觉替换为主题图片
+
+- 完成内容：将 ebjOB、ihoYv 原打新机会信息主视觉替换为同一张全宽主题横幅图片；图片采用深色 Web3 空间、青绿色发光币种与轨道元素，不含文字和品牌标识，并保留 390×148px 区域尺寸以维持页面结构。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成双主题横幅及整页截图检查；oOJ0q、ZTtvY 布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
