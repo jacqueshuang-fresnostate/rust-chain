@@ -428,7 +428,6 @@ onMounted(() => { void load() })
   display: grid;
   gap: 14px;
   margin: 0 auto;
-  max-width: 358px;
 }
 
 .new-coin-record-feedback {

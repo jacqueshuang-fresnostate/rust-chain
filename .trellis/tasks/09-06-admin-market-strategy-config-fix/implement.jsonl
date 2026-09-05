@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Shared form and action contracts"}
+{"file": ".trellis/spec/backend/synthetic-market-kline.md", "reason": "Authoritative strategy invariants"}
+{"file": ".trellis/tasks/09-06-admin-market-strategy-config-fix/research/config-flow.md", "reason": "Confirmed frontend gaps"}

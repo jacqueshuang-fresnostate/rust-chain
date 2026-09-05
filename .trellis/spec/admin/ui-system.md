@@ -555,6 +555,27 @@ const body = {
 
 ## Market Strategy Settings, Versions, Nodes, and Recovery
 
+- The strategy row is a scoped exception to the generic single-line action group:
+  constrain `.admin-market-strategy-row-actions` to the existing 288px action
+  cell and wrap whole buttons. Do not widen all resources or allow its edit,
+  pause and status controls to be clipped outside the fixed column. Verify
+  bounding boxes and actual hit targets at 1728px and 1280px.
+- One Chinese validation result owns preview/save gating and payload validation.
+  Check strict local calendar dates and UTC-minute alignment without silently
+  rounding hydrated seconds, ordered interior node times, target/mode enums,
+  absolute targets greater than zero, percentage targets strictly greater than
+  -100, paired volume bounds and generator ranges. Compare decimal text exactly;
+  negative percentages above -100 remain valid. Show the first actionable error
+  inline rather than an unexplained disabled button.
+- An active detail response disables configuration submission even if the list
+  was stale. Opening the editor never changes status. Provide an explicit
+  reason-confirmed `paused` status command in active rows, keep disable available,
+  and reload the list after status changes. Explain that saving a new version
+  does not automatically enable a paused/disabled strategy. Backend transaction
+  guards remain authoritative for concurrent status changes.
+- Preset application is all-or-nothing. If minute rounding collides or reverses
+  nodes, reject the application with a message to expand the range and preserve
+  the draft. Never silently drop or reorder a relative-to-previous target.
 - Create and edit reuse one market-strategy form and one ordered node editor.
   Each node exposes Chinese labels for target time/type/value, execution mode,
   tolerance, local volatility, and optional paired volume bounds. Use

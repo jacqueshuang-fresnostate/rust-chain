@@ -11,6 +11,7 @@ import {
   applyPreset,
   eligibleMarketStrategyPairs,
   isMarketStrategySubmittable,
+  marketStrategyValidationError,
   scenarioOptions,
   seedModeOptions,
   strategyTypeOptionsWithCurrent,
@@ -39,6 +40,7 @@ export function MarketStrategyForm({
   const { pairLoading, pairOptions } = useMarketPairOptions(active && includePairId);
   const selectedPreset = presets.presets.find((preset) => preset.code === values.scenario);
   const canPreview = isMarketStrategySubmittable(values, true);
+  const validationError = marketStrategyValidationError(values, true);
   const selectablePairs = eligibleMarketStrategyPairs(pairOptions);
   const selectableStrategyTypes = strategyTypeOptionsWithCurrent(values.strategyType);
 
@@ -120,7 +122,7 @@ export function MarketStrategyForm({
               if (!selectedPreset) return;
               const next = applyPreset(values, selectedPreset);
               if (!next) {
-                Toast.warning('请先填写有效的起始价、开始时间与结束时间，再应用场景预设');
+                Toast.warning('请填写有效起始价和整分钟起止时间，并扩大时间范围以容纳全部预设节点；当前配置未更改');
                 return;
               }
               onChange(next);
@@ -176,6 +178,7 @@ export function MarketStrategyForm({
       </section>
 
       <MarketStrategyNodeEditor value={values.nodes} onChange={(nodes) => onChange({ ...values, nodes })} />
+      {validationError ? <div aria-live="polite" className="admin-inline-error" role="alert">{validationError}</div> : null}
     </div>
   );
 }

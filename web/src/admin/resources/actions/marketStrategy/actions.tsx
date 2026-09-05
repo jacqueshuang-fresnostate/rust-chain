@@ -39,7 +39,7 @@ export function MarketStrategyRowActions({
   const editor = useMarketStrategyEditor(record, strategyId);
 
   return (
-    <>
+    <div className="admin-market-strategy-row-actions">
       <Button
         disabled={!strategyId}
         onClick={() => openRecordDetail('/admin/api/v1/market-strategies', strategyId, helpers)}
@@ -61,14 +61,23 @@ export function MarketStrategyRowActions({
           修改
         </Button>
         <SideSheet
-          onCancel={() => editor.setVisible(false)}
+          onCancel={() => {
+            editor.setVisible(false);
+            if (editor.config.status !== recordString(record, 'status')) helpers.reload();
+          }}
           title="修改行情策略"
           visible={editor.visible}
           {...createModalProps('wide')}
         >
           <Card bordered={false}>
             <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+              {editor.config.status === 'active' ? (
+                <div key="active-notice" role="alert">策略启用中，请先关闭此窗口，在列表暂停或禁用策略后再修改配置。预览不会改变正在运行的策略。</div>
+              ) : (
+                <div key="inactive-notice">修改会生成新配置版本，不会自动启用策略；保存后请回到列表按需启用。</div>
+              )}
               <MarketStrategyForm
+                key="configuration"
                 active={editor.visible}
                 includePairId={false}
                 isEditing
@@ -77,10 +86,12 @@ export function MarketStrategyRowActions({
                 onChange={editor.setConfig}
               />
               <ConfirmAction
+                key="save"
                 actionText="提交修改"
-                disabled={!isMarketStrategySubmittable(editor.config, false)}
+                disabled={editor.config.status === 'active' || !isMarketStrategySubmittable(editor.config, false)}
                 title="确认修改行情策略"
                 onConfirm={async (reason) => {
+                  if (editor.config.status === 'active') throw new Error('请先暂停或禁用策略后再修改配置');
                   await submitAction('修改行情策略', () =>
                     apiRequest(`/admin/api/v1/market-strategies/${strategyId}`, {
                       method: 'PATCH',
@@ -94,7 +105,24 @@ export function MarketStrategyRowActions({
             </Space>
           </Card>
         </SideSheet>
+        {recordString(record, 'status') === 'active' ? (
+          <ConfirmAction
+            key="pause"
+            actionText="暂停"
+            disabled={!strategyId}
+            title="暂停行情策略（停止实时生成后可修改配置）"
+            onConfirm={async (reason) => {
+              await submitAction('暂停行情策略', () =>
+                apiRequest(`/admin/api/v1/market-strategies/${strategyId}/status`, {
+                  method: 'PATCH', body: JSON.stringify({ status: 'paused', reason })
+                })
+              );
+              helpers.reload();
+            }}
+          />
+        ) : null}
         <ConfirmAction
+          key="toggle"
           actionText={actionText}
           disabled={!strategyId}
           title={`${actionText}行情策略`}
@@ -109,7 +137,7 @@ export function MarketStrategyRowActions({
           }}
         />
       </AdminRequestActionBoundary>
-    </>
+    </div>
   );
 }
 

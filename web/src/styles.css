@@ -1713,6 +1713,20 @@ body.admin-table-column-resizing * {
   flex-wrap: nowrap;
 }
 
+/* 行情策略动作较多：仅此资源允许按钮分行，避免固定列裁掉修改/暂停入口。 */
+.admin-resizable-table .semi-table-row-cell.admin-table-action-column .admin-table-action-buttons:has(.admin-market-strategy-row-actions) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.admin-market-strategy-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
 .admin-resizable-table .semi-table-tbody > .semi-table-row > .semi-table-row-cell.admin-table-action-column span {
   display: inline-flex;
   width: auto;

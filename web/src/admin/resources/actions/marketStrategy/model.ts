@@ -77,20 +77,23 @@ export function inputDateTimeFromUnixMillis(value: unknown): string {
   const timestamp = Number(value);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
   const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return '';
   const offsetMillis = date.getTimezoneOffset() * 60_000;
-  return new Date(timestamp - offsetMillis).toISOString().slice(0, 16);
+  const local = new Date(timestamp - offsetMillis).toISOString();
+  // 保留异常历史秒数，交由分钟对齐校验提示，不在回填时静默改写配置。
+  return date.getSeconds() || date.getMilliseconds() ? local.slice(0, -1) : local.slice(0, 16);
 }
 
 function inputDateTimeFromUnknown(value: unknown): string {
   if (typeof value === 'string' && value.includes('T') && Number.isFinite(Date.parse(value))) {
-    return value.slice(0, 16);
+    return inputDateTimeFromUnixMillis(Date.parse(value));
   }
   return inputDateTimeFromUnixMillis(value);
 }
 
 function unixMillisFromInputDateTime(value: string, label: string): number {
-  const timestamp = new Date(value).getTime();
-  if (!value.trim() || !Number.isFinite(timestamp) || timestamp <= 0) {
+  const timestamp = parseInputDateTime(value);
+  if (timestamp === null) {
     throw new Error(`${label}必须为有效日期时间`);
   }
   return timestamp;
@@ -150,76 +153,84 @@ function isDecimalInRange(value: string, minimum: string, maximum?: string): boo
 }
 
 function parseInputDateTime(value: string): number | null {
-  if (!value.trim()) return null;
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(value.trim());
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = '0', millis = '0'] = match;
+  const parts = [Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), Number(millis.padEnd(3, '0'))];
+  const date = new Date(0);
+  date.setFullYear(parts[0], parts[1], parts[2]);
+  date.setHours(parts[3], parts[4], parts[5], parts[6]);
+  const actual = [date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()];
+  // 拒绝日期滚动和本地 DST 空洞；回填与提交使用同一个本地日历语义。
+  return date.getTime() > 0 && parts.every((part, index) => part === actual[index]) ? date.getTime() : null;
 }
 
-function isMarketStrategyNodeSubmittable(node: MarketStrategyNodeDraft, targetTime: number): boolean {
-  const volumeMin = node.volumeMin.trim();
-  const volumeMax = node.volumeMax.trim();
-  return Boolean(
-    Number.isFinite(targetTime) &&
-      node.targetType &&
-      node.targetValue.trim() &&
-      node.executionMode &&
-      isDecimalInRange(node.tolerance, '0') &&
-      isDecimalInRange(node.volatility, '0') &&
-      ((!volumeMin && !volumeMax) ||
-        (isDecimalInRange(volumeMin, '0') &&
-          isDecimalInRange(volumeMax, '0') &&
-          (compareDecimalText(volumeMax, volumeMin) ?? -1) >= 0))
-  );
+function marketStrategyNodeValidationError(node: MarketStrategyNodeDraft, index: number): string | null {
+  const label = `节点${index + 1}`;
+  if (!['absolute_price', 'percent_from_start', 'percent_from_previous'].includes(node.targetType)) {
+    return `${label}目标类型无效`;
+  }
+  if (!['hard', 'soft', 'range'].includes(node.executionMode)) return `${label}执行模式无效`;
+  // 正的起始价与前序目标乘以正比例仍为正，无需把链式金额转成浮点数。
+  if (node.targetType === 'absolute_price') {
+    if (!isPositiveDecimalText(node.targetValue)) return `${label}目标值必须为大于 0 的价格`;
+  } else if (compareDecimalText(node.targetValue, '-100') !== 1) {
+    return `${label}目标值必须为大于 -100 的百分比`;
+  }
+  if (!isNonNegativeDecimalText(node.tolerance)) return `${label}容差必须为非负数`;
+  if (!isNonNegativeDecimalText(node.volatility)) return `${label}局部波动率必须为非负数`;
+  const minimum = node.volumeMin.trim();
+  const maximum = node.volumeMax.trim();
+  if (!minimum && !maximum) return null;
+  if (!minimum || !maximum) return `${label}最小和最大成交量须同时填写或同时留空`;
+  if (!isNonNegativeDecimalText(minimum) || !isNonNegativeDecimalText(maximum)) return `${label}成交量必须为非负数`;
+  if ((compareDecimalText(maximum, minimum) ?? -1) < 0) return `${label}最大成交量不得小于最小成交量`;
+  return null;
 }
 
-export function isMarketStrategySubmittable(values: MarketStrategyValues, includePairId: boolean): boolean {
+/** 预览、保存按钮和请求序列化共用同一校验，返回首个可操作的中文错误。 */
+export function marketStrategyValidationError(values: MarketStrategyValues, includePairId: boolean): string | null {
+  if (includePairId && (!values.pairId.trim() || !Number.isSafeInteger(Number(values.pairId)) || Number(values.pairId) <= 0)) {
+    return '请选择有效的交易对';
+  }
+  if (!values.strategyType.trim()) return '请选择策略类型';
+  if (!isPositiveDecimalText(values.startPrice)) return '起始价必须为大于 0 的价格';
+  if (!isPositiveDecimalText(values.targetPrice)) return '目标价必须为大于 0 的价格';
   const startTime = parseInputDateTime(values.startTime);
   const endTime = parseInputDateTime(values.endTime);
-  if (
-    startTime === null ||
-    endTime === null ||
-    endTime <= startTime ||
-    startTime % 60_000 !== 0 ||
-    endTime % 60_000 !== 0
-  ) {
-    return false;
-  }
+  if (startTime === null) return '开始时间必须为有效日期时间';
+  if (endTime === null) return '结束时间必须为有效日期时间';
+  if (endTime <= startTime) return '结束时间必须晚于开始时间';
+  if (startTime % 60_000 !== 0 || endTime % 60_000 !== 0) return '开始和结束时间必须对齐到整分钟';
+  if (!isNonNegativeDecimalText(values.volatility)) return '波动率必须为非负数';
+  if (!isNonNegativeDecimalText(values.volumeMin) || !isNonNegativeDecimalText(values.volumeMax)) return '成交量必须为非负数';
+  if ((compareDecimalText(values.volumeMax, values.volumeMin) ?? -1) < 0) return '最大成交量不得小于最小成交量';
 
   let previousNodeTime = startTime;
-  for (const node of values.nodes) {
+  for (const [index, node] of values.nodes.entries()) {
     const targetTime = parseInputDateTime(node.targetTime);
-    if (
-      targetTime === null ||
-      targetTime % 60_000 !== 0 ||
-      targetTime <= startTime ||
-      targetTime >= endTime ||
-      targetTime <= previousNodeTime ||
-      !isMarketStrategyNodeSubmittable(node, targetTime)
-    ) {
-      return false;
-    }
+    if (targetTime === null) return `节点${index + 1}目标时间必须为有效日期时间`;
+    if (targetTime % 60_000 !== 0) return `节点${index + 1}目标时间必须对齐到整分钟`;
+    if (targetTime <= startTime || targetTime >= endTime) return `节点${index + 1}目标时间须在开始与结束时间之间，不含边界`;
+    if (targetTime <= previousNodeTime) return `节点${index + 1}目标时间必须晚于上一节点`;
+    const error = marketStrategyNodeValidationError(node, index);
+    if (error) return error;
     previousNodeTime = targetTime;
   }
 
-  const fixedSeedValid =
-    values.seedMode !== 'fixed' ||
-    (values.seed.trim().length > 0 && [...values.seed.trim()].length <= 128);
-  return Boolean(
-    (!includePairId || values.pairId.trim()) &&
-      values.strategyType.trim() &&
-      isPositiveDecimalText(values.startPrice) &&
-      isPositiveDecimalText(values.targetPrice) &&
-      isNonNegativeDecimalText(values.volatility) &&
-      isNonNegativeDecimalText(values.volumeMin) &&
-      (compareDecimalText(values.volumeMax, values.volumeMin) ?? -1) >= 0 &&
-      scenarioOptions.some((option) => option.value === values.scenario) &&
-      seedModeOptions.some((option) => option.value === values.seedMode) &&
-      fixedSeedValid &&
-      isDecimalInRange(values.meanReversionStrength, '0', '2') &&
-      isDecimalInRange(values.noiseScale, '0', '5') &&
-      isDecimalInRange(values.wickScale, '0', '5') &&
-      volumeShapeOptions.some((option) => option.value === values.volumeShape)
-  );
+  if (!scenarioOptions.some((option) => option.value === values.scenario)) return '请选择有效的行情场景';
+  if (!seedModeOptions.some((option) => option.value === values.seedMode)) return '请选择有效的 Seed 模式';
+  if (values.seedMode === 'fixed' && (!values.seed.trim() || [...values.seed.trim()].length > 128)) return '固定 Seed 须为 1～128 个字符';
+  if (!isDecimalInRange(values.meanReversionStrength, '0', '2')) return '均值回归强度须在 0～2 之间';
+  if (!isDecimalInRange(values.noiseScale, '0', '5')) return '噪声强度须在 0～5 之间';
+  if (!isDecimalInRange(values.wickScale, '0', '5')) return '影线强度须在 0～5 之间';
+  if (!volumeShapeOptions.some((option) => option.value === values.volumeShape)) return '请选择有效的成交量形态';
+  if (includePairId && !['draft', 'active', 'paused', 'disabled'].includes(values.status)) return '请选择有效的策略状态';
+  return null;
+}
+
+export function isMarketStrategySubmittable(values: MarketStrategyValues, includePairId: boolean): boolean {
+  return marketStrategyValidationError(values, includePairId) === null;
 }
 
 function marketStrategyNodePayload(node: MarketStrategyNodeDraft, index: number) {
@@ -249,6 +260,8 @@ function marketStrategyGeneratorPayload(values: MarketStrategyValues) {
 }
 
 export function marketStrategyBasePayload(values: MarketStrategyValues) {
+  const error = marketStrategyValidationError(values, false);
+  if (error) throw new Error(error);
   return {
     strategy_type: requiredString(values.strategyType, '策略类型'),
     start_price: requiredString(values.startPrice, '起始价'),
@@ -274,19 +287,21 @@ function presetNodes(
 ): MarketStrategyNodeDraft[] | null {
   const start = parseInputDateTime(values.startTime);
   const end = parseInputDateTime(values.endTime);
-  if (start === null || end === null || end <= start) return null;
+  if (start === null || end === null || end <= start || start % 60_000 !== 0 || end % 60_000 !== 0) return null;
   const totalMinutes = Math.floor((end - start) / 60_000);
   if (totalMinutes <= 1) return preset.nodes.length === 0 ? [] : null;
 
-  const occupied = new Set<number>();
+  let previousMinute = 0;
   const nodes: MarketStrategyNodeDraft[] = [];
-  preset.nodes.forEach((node, index) => {
+  for (const [index, node] of preset.nodes.entries()) {
+    if (!Number.isFinite(node.progress_percent) || node.progress_percent <= 0 || node.progress_percent >= 100) return null;
     const minuteOffset = Math.max(
       1,
       Math.min(totalMinutes - 1, Math.round((totalMinutes * Number(node.progress_percent)) / 100))
     );
-    if (occupied.has(minuteOffset)) return;
-    occupied.add(minuteOffset);
+    // 整分钟舍入发生碰撞时拒绝整个预设，不丢节点、不改变相对前一节点的语义。
+    if (minuteOffset <= previousMinute) return null;
+    previousMinute = minuteOffset;
     nodes.push({
       clientId: `strategy-preset-${preset.code}-${minuteOffset}-${index}`,
       targetTime: inputDateTimeFromUnixMillis(start + minuteOffset * 60_000),
@@ -298,8 +313,8 @@ function presetNodes(
       volumeMin: node.volume_min == null ? '' : String(node.volume_min),
       volumeMax: node.volume_max == null ? '' : String(node.volume_max)
     });
-  });
-  return nodes.sort((left, right) => left.targetTime.localeCompare(right.targetTime));
+  }
+  return nodes;
 }
 
 export function applyPreset(

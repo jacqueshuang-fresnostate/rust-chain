@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-09-06 04:01 - 修复后台行情策略配置与操作入口
+
+- 完成内容：真实浏览器复现 288px 固定操作列裁掉“修改”等按钮（修改按钮 x=1711..1755，单元格右边界 1695）；仅为行情策略操作组增加受限宽度与整按钮换行，保留其他表格规则。新增带原因确认的暂停入口；编辑按最新详情状态阻止 active 配置提交，说明暂停/禁用后修改及保存不自动启用。统一预览、保存和请求序列化的中文校验，补齐节点目标/枚举、百分比严格大于 -100、成交量边界与真实本地日历/整分钟规则，保留精确十进制文本及历史秒数提示。预设分钟节点冲突时整体拒绝且保留草稿，消除静默丢节点；失败保存保留配置和确认原因。
+- 修改文件：`web/src/admin/resources/actions/marketStrategy/{model.ts,model.test.ts,MarketStrategyForm.tsx,actions.tsx}`、`web/src/admin/actions/MarketStrategyActions.test.tsx`、`web/src/styles.css`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-06-admin-market-strategy-config-fix/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增模型回归在修改前复现 9 项失败，修复后聚焦模型/动作 29/29；最终 Web 全量 67 文件/499 项、typecheck、lint、生产策略 15/15、覆盖率门禁 23 项、production build（3778 modules）和 budget 通过。独立 MySQL 测试库真实执行现有 Admin 行情策略接口回归 4/4，非跳过。Ego 在 1728px/1280px 检查操作按钮边界及中心命中，全部可点击且文档溢出为 0；确认启用状态禁改、实际暂停、节点 0 拒绝预览/保存、精确保存 `1.600000000000000001`、Seed 回填、新版本 V2 与操作审计；真实预览返回 V3/60 根样本且数据库仍为 2 个版本。只读复核登录壳层、总览、空现货表、资产表、KYC、安全策略及 920px 侧栏；测试环境总览保留预期的未接入链上监听提示。Trellis context 与 `git diff --check` 通过。
+- 后续事项：需提交并发布后台 Web 后在线上复验用户原场景；本轮未 commit/push、部署或改动真实策略、价格、生成算法。已关闭浏览器空间 10，停止 loopback 13035/18085，删除临时示例/会话及一次性数据库 `codex_market_strategy_20260906_0349`（确认剩余 0）。保留用户已有 `mobile/src/views/NewCoinRecordsView.vue` 改动。
+
 ## 2026-09-06 02:13 - 修复 GitHub Docker 构建前端镜像认证失败
 
 - 完成内容：定位 GitHub Actions 在解析 Dockerfile 首行 `# syntax=docker/dockerfile:1.7` 时访问 `auth.docker.io/token` 返回 502 的原因；移除对 Docker Hub 远程 Dockerfile frontend 的不必要依赖，让 Buildx/BuildKit 使用 runner 自带 frontend；保留 cache mount 与 `COPY --chmod`；新增 Dockerfile 契约回归测试，并将该构建约束写入容器交付规范。

@@ -23,6 +23,16 @@ vi.mock('../../api/client', async () => {
 const listAdminResourceMock = vi.mocked(listAdminResource);
 const apiRequestMock = vi.mocked(apiRequest);
 
+function editableStrategy(status = 'paused') {
+  return {
+    id: 91, pair_id: 21, strategy_type: 'price_path', start_price: '1', target_price: '2',
+    start_time: new Date('2026-08-12T10:00').getTime(), end_time: new Date('2026-08-12T11:00').getTime(),
+    volatility: '0.01', volume_min: '10', volume_max: '20', status,
+    generator: { scenario: 'custom_path', seed_mode: 'fixed', seed: 'unchanged-seed', mean_reversion_strength: '0.55', noise_scale: '1', wick_scale: '0.75', volume_shape: 'uniform' },
+    nodes: [{ sequence_no: 0, target_time: new Date('2026-08-12T10:30').getTime(), target_type: 'absolute_price', target_value: '1.5', execution_mode: 'hard', tolerance: '0', volatility: '0' }]
+  };
+}
+
 function render(element: ReactElement) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return testingLibraryRender(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
@@ -123,8 +133,98 @@ describe('MarketStrategyActions', () => {
     expect(await screen.findByRole('button', { name: '修改' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '版本历史' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '启用' })).toBeInTheDocument();
+    const actionGroup = screen.getByRole('button', { name: '修改' }).closest('.admin-market-strategy-row-actions');
+    expect(actionGroup).toBeInTheDocument();
+    expect(within(actionGroup as HTMLElement).getAllByRole('button')).toHaveLength(5);
     expect(screen.queryByText('更新策略状态')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
+  });
+
+  it('uses fresh detail status to prevent saving an active strategy despite a stale paused list', async () => {
+    const user = userEvent.setup();
+    apiRequestMock.mockImplementation(async (path) => path === '/admin/api/v1/market-strategies/91' ? editableStrategy('active') : {});
+    render(<MarketStrategyActions />);
+    await user.click(await screen.findByRole('button', { name: '修改' }));
+    const sheet = (await screen.findByText('修改行情策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
+    expect(within(sheet).getByRole('alert')).toHaveTextContent('策略启用中');
+    expect(within(sheet).getByRole('button', { name: '提交修改' })).toBeDisabled();
+    // 查看、试算继续可用，打开编辑器不会偷偷暂停真实策略。
+    expect(within(sheet).getByRole('button', { name: '生成 OHLCV 预览' })).toBeEnabled();
+    expect(apiRequestMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
+  it('pauses an active strategy with an explicit reason and reloads the editable status', async () => {
+    const user = userEvent.setup();
+    let status = 'active';
+    const previousList = listAdminResourceMock.getMockImplementation()!;
+    listAdminResourceMock.mockImplementation(async (...args) => {
+      const result = await previousList(...args);
+      return args[0] === '/admin/api/v1/market-strategies'
+        ? { ...result, rows: result.rows.map((row) => ({ ...row, status })) }
+        : result;
+    });
+    apiRequestMock.mockImplementation(async (path, init) => {
+      if (path === '/admin/api/v1/market-strategies/91/status' && init?.method === 'PATCH') {
+        status = 'paused';
+        return editableStrategy(status);
+      }
+      return path === '/admin/api/v1/market-strategies/91' ? editableStrategy(status) : {};
+    });
+    render(<MarketStrategyActions />);
+    await user.click(await screen.findByRole('button', { name: '暂停' }));
+    expect(await screen.findByRole('button', { name: '确认' })).toBeDisabled();
+    await user.type(screen.getByLabelText('操作原因'), '  调整策略配置  ');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91/status', {
+      method: 'PATCH', body: JSON.stringify({ status: 'paused', reason: '调整策略配置' })
+    }));
+    expect(await screen.findByRole('button', { name: '启用' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    expect(await screen.findByRole('button', { name: '提交修改' })).toBeEnabled();
+    expect(screen.getByLabelText('固定 Seed')).toHaveValue('unchanged-seed');
+    expect(screen.getByLabelText('节点1目标值')).toHaveValue('1.5');
+  });
+
+  it('explains invalid node targets, blocks requests, and preserves a failed save draft and reason', async () => {
+    const user = userEvent.setup();
+    let rejectSave = true;
+    apiRequestMock.mockImplementation(async (path, init) => {
+      if (path === '/admin/api/v1/market-strategies/91') {
+        if (init?.method === 'PATCH' && rejectSave) throw new Error('配置保存失败，请重试');
+        return editableStrategy();
+      }
+      return {};
+    });
+    render(<MarketStrategyActions />);
+    await user.click(await screen.findByRole('button', { name: '修改' }));
+    const sheet = (await screen.findByText('修改行情策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
+    const target = within(sheet).getByLabelText('节点1目标值');
+    fireEvent.change(target, { target: { value: 'abc' } });
+    expect(within(sheet).getByRole('alert')).toHaveTextContent('节点1目标值必须为大于 0 的价格');
+    expect(within(sheet).getByRole('button', { name: '提交修改' })).toBeDisabled();
+    expect(within(sheet).getByRole('button', { name: '生成 OHLCV 预览' })).toBeDisabled();
+    await selectSemiOption(user, sheet, '目标类型', '相对起始价百分比');
+    fireEvent.change(target, { target: { value: '-100' } });
+    expect(within(sheet).getByRole('alert')).toHaveTextContent('节点1目标值必须为大于 -100 的百分比');
+    expect(apiRequestMock.mock.calls.some(([, init]) => init?.method === 'PATCH' || init?.method === 'POST')).toBe(false);
+    fireEvent.change(target, { target: { value: '-99.999999999999999999' } });
+    expect(within(sheet).queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: '提交修改' }));
+    await user.type(await screen.findByLabelText('操作原因'), '保留精确节点价格');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(screen.getByLabelText('操作原因').closest('[role="dialog"]')).toHaveTextContent('配置保存失败，请重试'));
+    expect(screen.getByLabelText('操作原因')).toHaveValue('保留精确节点价格');
+    expect(target).toHaveValue('-99.999999999999999999');
+    rejectSave = false;
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(apiRequestMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(2));
+    const saves = apiRequestMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
+    expect(saves[0][1]?.body).toBe(saves[1][1]?.body);
+    expect(JSON.parse(String(saves[1][1]?.body))).toMatchObject({
+      reason: '保留精确节点价格',
+      nodes: [{ target_type: 'percent_from_start', target_value: '-99.999999999999999999' }],
+      generator: { seed_mode: 'fixed', seed: 'unchanged-seed', regenerate_seed: false }
+    });
   });
 
   it('loads the strategy detail before editing so configured nodes are retained', async () => {
