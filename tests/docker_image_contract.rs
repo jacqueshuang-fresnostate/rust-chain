@@ -272,6 +272,24 @@ fn integrated_image_injects_admin_same_origin_only_at_build_time() {
 }
 
 #[test]
+fn dockerfile_does_not_depend_on_remote_frontend() {
+    assert!(DOCKERFILE.lines().all(|line| {
+        !line
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("# syntax=")
+    }));
+    assert!(
+        DOCKERFILE.contains("RUN --mount=type=cache"),
+        "the Dockerfile must retain BuildKit cache mounts"
+    );
+    assert!(
+        DOCKERFILE.contains("COPY --chmod="),
+        "the Dockerfile must retain BuildKit copy-permission support"
+    );
+}
+
+#[test]
 fn legacy_unscoped_admin_build_is_rejected() {
     let legacy_dockerfile = r#"
 FROM node:24-bookworm-slim AS web-builder

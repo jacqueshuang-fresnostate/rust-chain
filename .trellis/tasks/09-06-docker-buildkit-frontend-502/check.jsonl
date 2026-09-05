@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/container-delivery.md","reason":"核对 Dockerfile 与 workflow 修改不违背容器交付规范。"}
+{"file":"tests/docker_image_contract.rs","reason":"运行镜像契约测试，验证移除远程 syntax 后仍保留稳定 BuildKit 特性。"}

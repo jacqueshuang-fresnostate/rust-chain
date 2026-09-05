@@ -119,6 +119,11 @@
   `unknown API capability source.git.checksum`; every platform job must therefore check out the
   repository and use local `context: .`.
 - Both matrix jobs enable GitHub Actions cache in `max` mode with architecture-specific scopes.
+- The Dockerfile must use the Dockerfile frontend bundled with the GitHub Buildx/BuildKit runner;
+  do not add a remote `docker/dockerfile` `# syntax=` image reference because resolving that
+  frontend creates an unnecessary Docker Hub authentication dependency before the build graph can
+  start. Keep the stable BuildKit instructions already covered by the image contract, including
+  cache mounts and `COPY --chmod`.
 - The pull-request matrix has only `contents: read`, sets `push: false`, does not request
   `packages: write`, and does not receive registry credentials.
 - Each publish platform job adds `packages: write`, authenticates with `GITHUB_TOKEN`, and pushes

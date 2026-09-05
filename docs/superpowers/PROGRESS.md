@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-09-06 02:13 - 修复 GitHub Docker 构建前端镜像认证失败
+
+- 完成内容：定位 GitHub Actions 在解析 Dockerfile 首行 `# syntax=docker/dockerfile:1.7` 时访问 `auth.docker.io/token` 返回 502 的原因；移除对 Docker Hub 远程 Dockerfile frontend 的不必要依赖，让 Buildx/BuildKit 使用 runner 自带 frontend；保留 cache mount 与 `COPY --chmod`；新增 Dockerfile 契约回归测试，并将该构建约束写入容器交付规范。
+- 修改文件：`Dockerfile`、`tests/docker_image_contract.rs`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/09-06-docker-buildkit-frontend-502/{prd.md,implement.jsonl,check.jsonl,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo test --test docker_image_contract -- --nocapture`（5/5）、`python3 scripts/source_integrity_gate.py`、`python3 -B -m unittest tests.test_source_integrity_gate`（16/16）、`cargo fmt --all -- --check`、`cargo check --all-targets`、`git diff --check` 均通过；本机 Docker CLI 存在但 Docker daemon 未运行，未执行真实镜像构建。
+- 后续事项：启动 Docker daemon 后重跑 GitHub Actions 或本地 `docker buildx build`，确认基础镜像拉取链路正常；若仍遇 Docker Hub 502，按网络服务恢复后重试。
+
 ## 2026-08-20 21:54 - 修复杠杆强平后的持仓实时同步
 
 - 完成内容：复用后端已存在的用户私有 `/api/v1/ws/private?token=<access_token>`，为手机杠杆工作台新增个人 WebSocket 生命周期；服务端自动绑定用户频道，客户端不发送订阅命令，连接建立/重连及 `margin.position.liquidated` 只作为静默 REST 对账提示。将原 5 秒单仓风险刷新升级为 `/margin/wallets` 权威账户对账，同一响应同步杠杆钱包与 `opened` 持仓，再仅刷新存活仓位风险；保留 5 秒单飞兜底和回前台补偿，覆盖推送丢失、断线与 API 重启。补齐最新 token 重连、心跳、有界退避、旧 socket 隔离、幂等清理、繁忙提示合并、前后台请求代次、账号/模式 ABA、退出/卸载迟到响应、静默失败保留与退出登录 loading 清理；强平后持仓会立即或最迟在下一轮对账移除，事件金额不直接参与资金计算。同步完成跨层 WebSocket/移动端规范和 break-loop 根因沉淀；后端强平事件与私有频道原实现满足合同，本轮未修改 Rust 代码。

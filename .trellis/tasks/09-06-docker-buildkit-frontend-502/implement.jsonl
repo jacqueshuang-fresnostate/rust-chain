@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/container-delivery.md","reason":"Dockerfile、BuildKit、GitHub Actions 镜像交付与验证合同。"}
+{"file":"tests/docker_image_contract.rs","reason":"现有集成镜像构建契约测试，补充远程 frontend 回归断言。"}
