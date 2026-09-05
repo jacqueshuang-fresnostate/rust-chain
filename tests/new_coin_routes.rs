@@ -900,12 +900,12 @@ async fn concurrent_new_coin_subscriptions_never_allocate_beyond_remaining_suppl
     .bind(project_id)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(reserved, decimal("0"));
-    assert_eq!(allocated.normalized(), decimal("10").normalized());
+    assert_eq!(reserved, decimal("10"));
+    assert_eq!(allocated.normalized(), decimal("0").normalized());
     assert_eq!(remaining.normalized(), decimal("5").normalized());
     assert_eq!(order_count, 1);
     assert_eq!(quote_available.normalized(), decimal("90").normalized());
-    assert_eq!(base_locked.normalized(), decimal("10").normalized());
+    assert_eq!(base_locked.normalized(), decimal("0").normalized());
 
     cleanup_order_fixture(
         &pool,
@@ -922,8 +922,8 @@ async fn concurrent_new_coin_subscriptions_never_allocate_beyond_remaining_suppl
 }
 
 #[tokio::test]
-async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocation()
--> Result<(), Box<dyn Error>> {
+async fn new_coin_subscription_freezes_quote_without_allocating_coins() -> Result<(), Box<dyn Error>>
+{
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1009,8 +1009,8 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     );
     let subscription: Value = serde_json::from_slice(&body)?;
     assert_eq!(subscription["idempotency_key"], idempotency_key);
-    assert_eq!(subscription["status"], "allocated");
-    let lock_position_id = subscription["lock_position_id"].as_u64().unwrap();
+    assert_eq!(subscription["status"], "pending");
+    assert!(subscription["lock_position_id"].is_null());
     let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
     let event: Value = serde_json::from_str(event_message.payload())?;
     assert_eq!(event["type"], "new_coin.subscription.created");
@@ -1020,8 +1020,8 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     assert_eq!(event["quote_asset_id"], quote_asset);
     assert_eq!(event["quote_amount"], "20.000000000000000000");
     assert_eq!(event["quantity"], "20.000000000000000000");
-    assert_eq!(event["status"], "allocated");
-    assert_eq!(event["lock_position_id"], lock_position_id);
+    assert_eq!(event["status"], "pending");
+    assert!(event["lock_position_id"].is_null());
 
     let (quote_available,): (BigDecimal,) =
         sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
@@ -1040,29 +1040,22 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
             .bind(base_asset)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(
-        base_locked.normalized(),
-        decimal("20.000000000000000000").normalized()
-    );
+    assert_eq!(base_locked.normalized(), decimal("0").normalized());
 
-    let (remaining, lock_status): (BigDecimal, String) =
-        sqlx::query_as("SELECT remaining_amount, status FROM asset_lock_positions WHERE id = ?")
-            .bind(lock_position_id)
+    let (quote_frozen,): (BigDecimal,) =
+        sqlx::query_as("SELECT frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(
-        remaining.normalized(),
-        decimal("20.000000000000000000").normalized()
-    );
-    assert_eq!(lock_status, "active");
-
+    assert_eq!(quote_frozen, decimal("20"));
     let (source_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM asset_lock_position_sources WHERE source_type = 'new_coin_subscription' AND source_id = ?",
     )
     .bind(&idempotency_key)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(source_count, 1);
+    assert_eq!(source_count, 0);
 
     let (ledger_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'new_coin_subscription' AND ref_id = ?",
@@ -1083,8 +1076,8 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     .bind(project_id)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(reserved_supply, decimal("0"));
-    assert_eq!(allocated_supply.normalized(), decimal("20").normalized());
+    assert_eq!(reserved_supply, decimal("20"));
+    assert_eq!(allocated_supply.normalized(), decimal("0").normalized());
     assert_eq!(
         remaining_supply.normalized(),
         decimal("999980").normalized()

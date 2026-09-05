@@ -84,11 +84,30 @@ pub(crate) async fn list_admin_new_coin_projects(
     pool: &Pool<MySql>,
     limit: u32,
     offset: u32,
+    symbol: Option<String>,
+    lifecycle_status: Option<String>,
+    status: Option<String>,
 ) -> AppResult<(Vec<NewCoinProjectResponse>, i64)> {
-    let total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_projects projects");
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_projects projects");
+    let mut rows = admin_new_coin_project_query();
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(value) = symbol.as_ref() {
+            builder
+                .push(" AND projects.symbol LIKE ")
+                .push_bind(format!("%{value}%"));
+        }
+        for (column, value) in [("lifecycle_status", &lifecycle_status), ("status", &status)] {
+            if let Some(value) = value.as_ref() {
+                builder
+                    .push(format!(" AND projects.{column} = "))
+                    .push_bind(value.clone());
+            }
+        }
+    }
     fetch_admin_page(
         pool,
-        admin_new_coin_project_query(),
+        rows,
         total,
         " ORDER BY projects.id DESC",
         limit,
@@ -104,8 +123,8 @@ pub(crate) async fn list_admin_new_coin_subscriptions(
     filter: AdminNewCoinFlatListFilter,
 ) -> AppResult<(Vec<NewCoinSubscriptionResponse>, i64)> {
     let mut rows = QueryBuilder::<MySql>::new(
-        r#"SELECT id, project_id, user_id, quote_asset, quote_amount, requested_quantity,
-                  allocated_quantity, status, idempotency_key, created_at
+        r#"SELECT id, project_id, user_id, quote_asset, issue_price, quote_amount, requested_quantity,
+                  allocated_quantity, settlement_mode, frozen_quote_amount, settled_quote_amount, refunded_quote_amount, status, idempotency_key, created_at
            FROM new_coin_subscriptions"#,
     );
     let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_subscriptions");
@@ -215,7 +234,11 @@ pub(crate) async fn list_admin_new_coin_lock_positions(
     filter: AdminNewCoinLockPositionListFilter,
 ) -> AppResult<(Vec<NewCoinLockPositionResponse>, i64)> {
     let mut rows = QueryBuilder::<MySql>::new(
-        r#"SELECT id, user_id, asset_id, unlock_type, unlock_at, locked_amount,
+        r#"SELECT id, user_id, asset_id, unlock_type,
+                  CASE WHEN listing_project_id IS NULL THEN unlock_at ELSE
+                    (SELECT actual_listed_at FROM new_coin_projects WHERE id = asset_lock_positions.listing_project_id AND lifecycle_status = 'listed' AND asset_id = asset_lock_positions.asset_id)
+                  END AS unlock_at, listing_project_id,
+                  (SELECT actual_listed_at FROM new_coin_projects WHERE id = asset_lock_positions.listing_project_id) AS actual_listing_at, locked_amount,
                   released_amount, remaining_amount, merge_key, status, created_at
            FROM asset_lock_positions"#,
     );
@@ -300,10 +323,10 @@ pub(crate) async fn insert_admin_new_coin_project_in_tx(
     let result = sqlx::query(
         r#"INSERT INTO new_coin_projects
            (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
-            reserved_supply, allocated_supply, remaining_supply, listed_at,
+            reserved_supply, allocated_supply, remaining_supply, listed_at, actual_listed_at,
             unlock_type, fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
             unlock_fee_rate, unlock_fee_basis, unlock_fee_asset, status)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')"#,
+           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(input.asset_id)
     .bind(&input.symbol)
@@ -313,6 +336,7 @@ pub(crate) async fn insert_admin_new_coin_project_in_tx(
     .bind(input.quote_asset_id)
     .bind(&input.total_supply)
     .bind(input.listed_at)
+    .bind((input.lifecycle_status == "listed").then(Utc::now))
     .bind(&input.unlock_type)
     .bind(input.fixed_unlock_at)
     .bind(input.relative_unlock_seconds)
@@ -331,14 +355,16 @@ pub(crate) async fn update_admin_new_coin_project_lifecycle_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
     lifecycle_status: &str,
-    listed_at: Option<DateTime<Utc>>,
+    actual_listed_at: Option<DateTime<Utc>>,
 ) -> AppResult<()> {
-    sqlx::query("UPDATE new_coin_projects SET lifecycle_status = ?, listed_at = ? WHERE id = ?")
-        .bind(lifecycle_status)
-        .bind(listed_at)
-        .bind(project_id)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query(
+        "UPDATE new_coin_projects SET lifecycle_status = ?, actual_listed_at = ? WHERE id = ?",
+    )
+    .bind(lifecycle_status)
+    .bind(actual_listed_at)
+    .bind(project_id)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -623,24 +649,7 @@ pub(crate) async fn ensure_admin_new_coin_post_listing_pair_in_tx(
     Ok(())
 }
 
-/// 在调用方事务中锁定查询指定业务表的幂等键，判断派发或规则写入是否已经执行。
-/// 表名仅由内部受控调用方传入，幂等键使用绑定参数；函数不提交事务，SQL 失败由上层回滚。
-pub(crate) async fn admin_new_coin_idempotency_key_exists_in_tx(
-    tx: &mut Transaction<'_, MySql>,
-    table_name: &str,
-    idempotency_key: &str,
-) -> AppResult<bool> {
-    let mut query = QueryBuilder::<MySql>::new("SELECT id FROM ");
-    query
-        .push(table_name)
-        .push(" WHERE idempotency_key = ")
-        .push_bind(idempotency_key)
-        .push(" LIMIT 1 FOR UPDATE");
-    let exists: Option<(u64,)> = query.build_query_as().fetch_optional(&mut **tx).await?;
-    Ok(exists.is_some())
-}
-
-/// 在调用方事务中插入新币生命周期事件并返回或保留数据库写入结果。
+/// 在调用方事务中追加项目生命周期事件，与项目变更或派发结果一并提交。
 /// 新币生命周期事件函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_new_coin_lifecycle_event_in_tx(
     tx: &mut Transaction<'_, MySql>,
@@ -942,15 +951,16 @@ async fn upsert_admin_new_coin_lock_position(
 ) -> AppResult<u64> {
     let result = sqlx::query(
         r#"INSERT INTO asset_lock_positions
-           (user_id, asset_id, unlock_type, unlock_at, locked_amount,
+           (user_id, asset_id, unlock_type, unlock_at, listing_project_id, locked_amount,
             released_amount, remaining_amount, merge_key, status)
-           VALUES (?, ?, ?, ?, 0, 0, 0, ?, 'active')
+           VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, 'active')
            ON DUPLICATE KEY UPDATE updated_at = updated_at"#,
     )
     .bind(position.user_id)
     .bind(position.asset_id)
     .bind(&position.unlock_type)
     .bind(position.unlock_at.naive_utc())
+    .bind(position.listing_project_id)
     .bind(&position.merge_key)
     .execute(&mut **tx)
     .await?;
@@ -1003,7 +1013,7 @@ fn admin_new_coin_project_query() -> QueryBuilder<'static, MySql> {
         r#"SELECT projects.id, projects.asset_id, projects.symbol, projects.lifecycle_status,
                   projects.total_supply, projects.issue_price, projects.quote_asset_id,
                   projects.reserved_supply, projects.allocated_supply, projects.remaining_supply,
-                  projects.listed_at,
+                  projects.listed_at, projects.actual_listed_at,
                   projects.unlock_type, projects.fixed_unlock_at, projects.relative_unlock_seconds,
                   projects.unlock_fee_enabled, projects.unlock_fee_rate, projects.unlock_fee_basis,
                   projects.unlock_fee_asset, projects.status, projects.post_listing_purchase_enabled,

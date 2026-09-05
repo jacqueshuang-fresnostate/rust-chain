@@ -8439,3 +8439,53 @@
 - 修改文件：`mobile/src/components/new-coin/NewCoinProjectCard.vue`、`mobile/tests/new-coin-pencil-contract.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/spec/backend/new-coin-mobile-contract.md`、`.trellis/tasks/09-05-mobile-new-coin-pencil-parity/{prd.md,review.md,research/runtime-asset-metadata-gap.md}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：新币聚焦测试 19/19、Mobile 完整 `release:gate` 通过（全量 672/672，生产/测试类型检查、PWA/Tauri production build、两类产物、Bundle 与治理门禁全部绿色）；Rust `cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、`cargo test new_coin`（含新币路由 11/11 与库内 15/15）及 Clippy `-D warnings` 通过。Ego 在 320/390/448px 验证计价符号槽均可见、页面横向溢出为 0；线上旧响应仍显示诚实 `--`，待包含本任务后端改动的新镜像部署后显示真实资产 Logo 与计价符号。Trellis context 11/11 + 11/11 与 `git diff --check` 通过。
 - 后续事项：需要提交、推送并部署包含公开新币资产联表 DTO 的新后端镜像，线上旧接口才会从字母/`--` 回退切换为后台配置的真实 Logo 与计价币种；本轮未提交或推送，未编辑或覆盖既有 `mobile/pencil` 脏文件。
+
+## 2026-09-05 19:43 - 修复后台新币预热转申购
+
+- 完成内容：在后台「新币项目」列表为 active 且处于 `preheat` 的记录新增带原因确认的「开始申购」行操作，精确调用既有生命周期 PATCH 推进到 `subscription`，成功后重载权威列表；非预热阶段不显示快捷操作，禁用项目不可执行。修复「配置与操作」在 `createBrowserRouter` 下错用 `window.location.hash` 导致无法进入操作页的根因，改为 React Router 导航并保留 `project_id` query。生命周期表格与详情中的 `subscription` 统一显示为「申购中」，行控件增加项目级可访问名称。
+- 修改文件：`web/src/admin/resources/actions/newCoins.tsx`、`web/src/admin/resources/actions/newCoins.test.tsx`、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/shared/{ConfirmAction,DetailDrawer,StatusTag}.tsx`、`web/src/shared/StatusTag.test.tsx`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-05-admin-new-coin-preheat-to-subscription/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新币/状态/资源页聚焦测试 5 文件 101/101 通过；Web 全量测试 64 文件 452/452、生产策略 15/15、覆盖率门禁 23/23、`npm --prefix web run typecheck`、`lint`、生产 `build`（3772 modules）与 `budget` 全部通过；Trellis task validate 与 `git diff --check` 通过。
+- 后续事项：需提交并部署 Admin Web 后，管理员再在目标预热项目行确认「开始申购」；本轮未直接改写数据库、未 commit/push，且保留用户已有的 `mobile/src/views/NewCoinsView.vue` 改动。
+
+## 2026-09-05 20:05 - 梳理后台新币全生命周期与重构方案
+
+- 完成内容：为用户新增的整体重整需求建立独立 planning 任务；静态追踪创建、状态推进、用户申购、后台派发、上市后购买和手动/自动解禁，确认即时申购已全额配币与关联订单派发语义冲突、操作页缺少当前配置回填及有效阶段约束、上市购买缺入口、计划上市与实际上市时间混用、自动/手动手续费凭证校验不一致等问题。形成源码定位审计、分阶段配售/即时成交两种候选模式、阶段操作矩阵、五个实施切片及资金/并发/历史兼容测试清单；已向用户询问申购资金模式，尚未确认。
+- 修改文件：`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/{task.json,prd.md,research/current-flow.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：研究引用校验脚本通过，23 个源码引用均存在，PRD 研究引用及 task planning 状态一致；`git diff --check` 通过。本切片只新增任务与研究文档，未修改生产代码，未运行资金路径或 MySQL 集成测试；历史并发异常仅作为待复现事项记录，未宣称本次复现。
+- 后续事项：确认申购为分阶段配售还是即时成交，再明确对应分配/退款规则并推进项目中心、后端状态与资金合同、解禁一致性及跨端回归；保留上一切片与 Mobile 既有改动，未 commit/push、部署或操作实际项目和资金。
+
+## 2026-09-05 20:42 - 确认新币分阶段结算方向并细化数量规则
+
+- 完成内容：记录用户“好的”对分阶段冻结、结算、派发方向的确认，明确保留历史成交结果；核对早期生命周期设计、当前供给预留和钱包/现货冻结退款事务模式，确认当前准入为额度内整单接受而非超募配售。补充全额额度配售、超募比例配售、人工确认数量三种策略的差异，以及订单级冻结义务、资金/供给守恒、结算与派发幂等边界，首版建议沿用不超募规则，等待数量策略确认。
+- 修改文件：`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/{prd.md,research/current-flow.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：源码与设计文档静态核对，研究引用存在性和 planning 状态校验通过；`git diff --check` 通过。本切片仅细化需求与设计，未修改生产代码或执行 MySQL 资金测试。
+- 后续事项：确认配售数量算法并收敛取消/退款边界，随后推进实施；未操作实际资金、部署或 commit/push，保留上一切片与 Mobile 的已有改动。
+
+## 2026-09-05 21:47 - 实现新币申购冻结、后台最终派发与差额退款
+
+- 完成内容：按用户明确规则改为申购只预留额度并冻结计价资金，不即时配币；后台按订单一次确认最终派发数量，支持满额、不足额和 0 数量全额退款，按原订单发行价快照计算实扣与退差额。扣款、退款、发币/锁仓、供给释放、订单终态、派发凭证、事件与审计在同一事务提交；同键重放返回原结果，变更参数或再次结算拒绝，待处理人工申购阻止上市。新增不可变迁移区分历史即时成交和新人工模式，并允许严格受限的零数量退款凭证；后台新增权威待派发订单选择、精确金额预览和原因确认，将额外赠币独立标识，生命周期只显示合法下一步；Mobile/PC 同步冻结、实扣、退款和部分派发状态。修复申购幂等预读对缺失键的间隙锁竞争，保留项目锁与唯一键回滚后重放。
+- 修改文件：`migrations/{0121_new_coin_manual_distribution,0122_new_coin_refund_receipt}.sql`、`src/modules/new_coin/{infrastructure,repository,presentation,service}.rs`、`src/modules/new_coin/infrastructure/subscription_freeze.rs`、`src/modules/admin/{application,infrastructure}.rs`、`src/modules/admin/{application,infrastructure,presentation,service}/new_coin.rs`、`src/modules/admin/infrastructure/new_coin_settlement.rs`、`tests/{admin_routes,new_coin_routes}.rs`、`tests/unit_src/new_coin_manual_settlement_tests.rs`、`web/src/admin/actions/{NewCoinManualDistribution,NewCoinActions}.tsx` 及对应测试、`web/src/admin/actions/helperCopy.test.tsx`、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/shared/{StatusTag,DetailDrawer}.tsx`、`mobile/src/{core/{newCoinModel,walletLedger}.ts,components/new-coin/NewCoinRecordCard.vue,i18n/messages/{zh-CN,en}.ts}` 及对应测试、`pc/src/{api/{activity,transaction}.ts,i18n/index.ts,views/User/LaunchpadOrders.vue}`、`.trellis/spec/{backend/{index,new-coin-manual-distribution},admin/ui-system,mobile/backend-integration}.md`、`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Rust `cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、Clippy `--all-targets --all-features -- -D warnings` 通过；架构测试 11/11、人工结算单元测试 2/2。一次性本地 MySQL 实际执行 `cargo test --test admin_routes admin_new_coin -- --nocapture` 14/14 和 `cargo test --test new_coin_routes -- --nocapture` 11/11，非跳过结果；最终新增的用户范围派发凭证失败触发器回滚测试聚焦复跑 1/1，通过满额/部分/零派发、并发重放、越界/重复拒绝、保留其他业务冻结款、资金/供给守恒与上市门禁断言。Web 全量 65 文件/455 项、生产策略 15/15、覆盖率、typecheck、lint、生产 build 与 budget 全部通过；Mobile 完整 `release:gate` 通过，全量 673/673 及类型/构建/产物/Bundle/治理门禁绿色；PC type-check 和 production build 通过。Ego 连接真实本地路由及测试库，验证 1728/1280px 无横向溢出、冻结 25 实派 4 时实扣 10/退款 15、零派发退 25 及原因弹窗取消；仅执行本切片聚焦界面检查，未做完整跨页面视觉矩阵或 PC 运行时验收。Trellis 上下文 12+12 条与 `git diff --check` 通过。
+- 后续事项：继续项目中心/配置回填、上市购买管理入口、计划与实际上市时间及手动/自动解禁一致性，整体重构任务保持 in_progress。测试会话已清除，两个临时服务已停止，临时示例及会话文件和一次性数据库已删除；未部署、操作实际项目资金或 commit/push，保留先前预热转申购切片及用户 Mobile 布局改动。
+
+## 2026-09-05 21:54 - 规划后台新币页面分类与阶段操作规则
+
+- 完成内容：回应用户对页面分类与逻辑规则整体重规划的需求，复核现有七个菜单、混合动作页、项目跳转及资源权限；提出“项目中心 + 跨项目处理工作台”的五类结构：项目管理、申购与配售、派发与退款记录、锁仓与解禁、上市后购买。明确配置归项目、结算归订单、记录只读、赠币单独标识，保留四阶段并用业务命令推进；记录配置回填、超过首批引用页的深链、逐标签权限、权威统计、旧路由兼容及退款/解禁边界。该方案仍为规划，未替换当前菜单或页面。
+- 修改文件：`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/{prd.md,research/page-and-rule-plan.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：5 个本地源码引用存在性、PRD 研究引用和任务 in_progress 状态校验通过；Trellis 上下文 12+12 条与 `git diff --check` 通过。本轮仅更新规划文档，未修改生产代码，未重复运行代码测试或数据库资金操作。
+- 后续事项：收敛页面结构后实现项目中心与处理工作台，再独立校准计划/实际上市及解禁规则；保留全部既有实现和用户改动，未 commit/push 或部署。
+
+## 2026-09-05 23:23 - 落地后台新币项目中心与五类处理工作台
+
+- 完成内容：将新币导航收敛为项目管理、申购与配售、派发与退款记录、锁仓与解禁、上市后购买；项目按 ID 读取完整配置、权威供给及累计/待处理订单数，不依赖前 100 个引用选项。新增预热且无订单/额度占用时的发行价/总量编辑，带原值冲突、资产精度和同事务审计保护；解禁、费用、上市购买配置回填现值，保留时间毫秒，固定草稿原始版本并在 409 时保留草稿供显式重载。合法下一步阶段命令、待结算上市门禁与项目记录链接归项目中心；最终派发/退款迁至申购行，固定用户及订单，额外赠币独立。合并锁仓/解禁标签并保留资源级权限、按需读取、旧 URL 和筛选；增加审计深链筛选。修复 Semi Space 条件子节点导致确认框重挂载丢失原因的问题，并由 ConfirmAction 捕获失败 Promise、保留弹窗及错误提示。
+- 修改文件：`src/modules/admin/{application,infrastructure,presentation}/new_coin.rs`、`src/modules/admin/infrastructure/new_coin_project_center.rs`、`src/modules/admin/infrastructure.rs`、`src/modules/admin/routes/new_coin_convert.rs`、`tests/admin_routes.rs`、`tests/unit_src/src_modules_admin_service_tests.rs`、`web/src/admin/new-coins/**`、`web/src/admin/actions/{NewCoinActions,NewCoinManualDistribution}.tsx` 及测试、`web/src/admin/actions/helperCopy.test.tsx`、`web/src/admin/resources/{AdminResourcePage,resourceConfigs,actions/newCoins}.tsx` 及相关测试、`web/src/admin/{navigation,routes}.tsx`、`web/src/admin/routes.test.tsx`、`web/src/layouts/AdminLayout{,.test}.tsx`、`web/src/admin/audit/AuditLogsPage{,.test}.tsx`、`web/src/shared/{ConfirmAction,SemiFormControls}.tsx`、`web/src/shared/ConfirmAction.test.tsx`、`.trellis/spec/admin/ui-system.md`、`.trellis/spec/backend/{index,new-coin-project-center}.md`、`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Web 全量 67 文件/474 项、生产策略 15/15、覆盖率门禁 23 项、typecheck、lint、production build 与 budget 全部通过；最终 Rust `cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、架构 11/11 及 Clippy `--all-targets --all-features -- -D warnings` 通过。一次性本地 MySQL 实际执行 Admin 新币 15/15、用户新币 11/11，非跳过结果；最终项目中心权限/精度增强用例单独复跑 1/1，覆盖只读 GET 成功/PATCH 403、计价精度拒绝、预热编辑、陈旧配置拒绝、统计/下一步及审计。Ego 连接真实本地 API 检查 1728px 登录、总览、空/有数据资源、KYC、安全策略、完整 920px 详情侧栏，以及 1280px 空资源/项目中心，无文档横向溢出；固定时间毫秒回填、部分派发 4 实扣 10/退 15、0 派发退 25、空原因禁用、取消、待处理上市阻断、旧项目链接与锁仓切换解禁保留资产筛选均验证。Trellis context 14+14 与 `git diff --check` 通过；已有 HydrateFallback 开发警告保留。
+- 后续事项：继续单独校准计划/实际上市时间及手动/自动解禁费用凭证一致性，整体任务保持 in_progress；本页切片不增加退款项目聚合、收据联表退款金额、管理员释放或暂停/撤单规则，实际退款金额仍在申购记录中查看。测试浏览器会话已清除并关闭，两个 loopback 服务停止，临时 Rust 示例/会话文件及一次性数据库 `codex_newcoin_center_20260905_2230` 已删除；未部署、操作实际项目资金或 commit/push，保留前序资金切片、预热快捷操作及用户 Mobile 布局改动。
+
+
+## 2026-09-06 01:00 - 分离新币计划与实际上市并统一手动自动解禁
+
+- 完成内容：保留 `listed_at` 为计划时间，新增服务端拥有的 `actual_listed_at`，确认上市和直接创建已上市项目记录实际事件；历史回填仅采信已存在的生命周期/创建事件，无证据保持空值。仅新形成的上市即解禁仓位绑定项目条件，计划过期、推迟或之后修改规则都不提前释放；固定/相对周期及历史空条件仓位维持原合同。手动和自动解禁共用身份、成熟条件、完整费用凭证、精度和资产→钱包→解禁/仓位锁序及资金事务，防止状态假成功、重复到账和部分提交。后台展示计划/实际时间，等待上市仓位返回空有效解禁时间并显示“待实际上市”，详情与导出不再误用来源时间。补充停止旧解禁路径、迁移与 API/worker/Admin 同步切换及兼容回滚的发布清单。
+- 修改文件：`migrations/0123_new_coin_actual_listing.sql`、`src/modules/admin/{application,infrastructure,presentation,service}/new_coin.rs`、`src/modules/admin/repository.rs`、`src/modules/new_coin/{domain,infrastructure,repository,service}.rs`、`src/modules/new_coin/infrastructure/{unlock,unlock_eligibility,unlock_scan}.rs`、`src/workers/unlock_scanner.rs`、`tests/{admin_routes,unlock_scanner,new_coin_listing_migration}.rs`、`tests/unit_src/src_modules_new_coin_mod_tests.rs`、`web/src/admin/new-coins/{projectModel,NewCoinProjectPage,NewCoinProjectSettings}.*` 及项目页测试/fixtures、`web/src/admin/resources/{resourceConfigs.tsx,resourceConfigs.test.tsx,actions/newCoins.tsx}`、`.trellis/spec/{admin/ui-system,backend/new-coin-project-center,backend/new-coin-manual-distribution}.md`、`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：一次性本地 MySQL 实际执行 Admin 新币 16/16、用户新币 11/11、共享手动/扫描器 10/10、精确迁移与历史合同演练 1/1；最终上市流程聚焦复跑 1/1，覆盖部分退款、合并锁仓、计划/规则变化、上市审计失败回滚、固定仓位保留、手动/扫描器并发及计划仍在未来时的上市后购买。Rust library 332/332、架构 11/11、最终 fmt、all-target/all-feature check、Clippy `-D warnings` 通过。Web 最终 typecheck/lint、67 文件 478 项全量、生产策略 15 项、覆盖率门禁 23 项、production build 与 budget 通过；首次高并发运行的 3 个无关界面测试超时，以原超时配置和 `--maxWorkers=2` 复跑全量通过。Ego 真实本地 API 聚焦检查 1728px 毫秒计划回填/无实际时间编辑器/原因确认取消，1280px 待实际上市仓位、空成熟时间详情、表内横向滚动及计划/实际双时间概览；文档横向溢出为 0，未提交浏览器变更。Trellis 15+15、当前切片新增源码/迁移空白检查和 `git diff --check` 通过。本轮未改变公共 DTO，Mobile/PC 沿用前序切片验证记录，未宣称重新执行其发布门禁。
+- 后续事项：按已记录清单进行代码提交和联合发布前准备，禁止旧 API/扫描器与新上市条件仓位混跑；未 commit/push、部署或操作实际项目资金。测试浏览器空间 7 已关闭、两个 loopback 服务停止、临时源文件/会话及一次性数据库 `codex_newcoin_unlock_20260906_0015` 已删除并核对剩余 schema 数为 0。保留所有前序切片及用户 Mobile 布局改动；任务维持 in_progress 等待提交/发布交接，未触发自动归档或 journal commit。

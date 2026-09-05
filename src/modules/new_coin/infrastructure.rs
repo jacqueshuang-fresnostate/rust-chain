@@ -33,7 +33,12 @@ use bigdecimal::BigDecimal;
 use chrono::Utc;
 use sqlx::{MySql, Pool, Transaction};
 
+mod subscription_freeze;
 mod unlock;
+mod unlock_eligibility;
+mod unlock_scan;
+pub(crate) use unlock_eligibility::UNLOCK_NOT_READY;
+pub(crate) use unlock_scan::{count_fee_blocked_unlocks, scan_due_unlocks};
 
 impl From<sqlx::Error> for NewCoinRepositoryError {
     /// 把 SQLx 底层错误折叠为仓储层的 `Storage` 变体，只保留其字符串描述。
@@ -282,7 +287,7 @@ impl NewCoinReadRepository for MySqlNewCoinReadRepository {
     ) -> AppResult<Vec<NewCoinSubscriptionRead>> {
         let rows = sqlx::query_as::<_, NewCoinSubscriptionReadRow>(
             r#"SELECT id, project_id, user_id, quote_asset, issue_price, quote_amount, requested_quantity,
-                      allocated_quantity, status, idempotency_key, created_at
+                      allocated_quantity, settlement_mode, frozen_quote_amount, settled_quote_amount, refunded_quote_amount, status, idempotency_key, created_at
                FROM new_coin_subscriptions
                WHERE user_id = ?
                ORDER BY id DESC
@@ -395,29 +400,23 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
         Ok(row.map(Into::into))
     }
 
-    /// 在单个事务内落地一笔新币申购：登记订单、扣计价资产、按锁仓计划分配新币，再把订单推进到 allocated。
-    /// 事务先锁全局幂等键；命中时只比较并回读原结果，未命中才锁项目并重读权威价格、供给和解禁规则。
-    /// 这样跨项目异参重放不会形成项目行反向锁环；项目行锁仍串行化所有真实供给预留。
-    /// 订单先以 `pending` 与零配额落库，扣款和分配都成功后再改写为实际配额与 `allocated`，
-    /// 因此中途失败回滚后不会残留一张显示已配额却没有资产到账的订单。
-    /// 资金方向为计价资产 `available` 单向扣减，余额不足时整体回滚；
-    /// 新币则按解禁规则进入 `locked`，无锁仓计划时直接落 `available`。
-    /// 两段变动分别以 `new_coin_subscription_payment` 与 `new_coin_subscription_lock`
-    /// 写入 `wallet_ledger`，ref_id 统一取申购幂等键，便于按单反查资金流。
-    /// 返回首个锁仓位置编号，`None` 表示本次无需锁仓而是即时到账；本函数不发布任何事件。
+    /// 申购只登记 pending 订单、预留供给，并将计价资产 available 等额转入 frozen。
+    /// 先锁项目串行化供给/阶段，再只读查重；新键不取间隙锁，跨项目唯一键竞争失败后回滚并回读胜者。
+    /// 同参重放不再冻结，异参返回冲突；余额不足或任一步失败回滚订单、供给与两桶流水。
+    /// 本次不创建新币余额、锁仓或解禁记录；最终数量由后台派发事务确认，返回 lock_position_id 为 None。
     async fn create_subscription_order(
         &self,
         order: NewCoinSubscriptionOrderWrite,
     ) -> AppResult<NewCoinOrderWriteOutcome> {
         let mut tx = self.pool.begin().await?;
+        let locked_project = lock_order_project_in_tx(&mut tx, order.project.id).await?;
         if let Some(replay) =
-            lock_subscription_replay_in_tx(&mut tx, &order.idempotency_key).await?
+            find_subscription_replay_in_tx(&mut tx, &order.idempotency_key).await?
         {
             ensure_subscription_replay_matches(&replay, &order)?;
             tx.commit().await?;
             return Ok(replay.into_outcome(false));
         }
-        let locked_project = lock_order_project_in_tx(&mut tx, order.project.id).await?;
         ensure_active_project(&locked_project)?;
         ensure_project_supply_invariant(&locked_project)?;
         if lifecycle_status(&locked_project.lifecycle_status)? != LifecycleStatus::Subscription {
@@ -459,20 +458,12 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
         )
         .await?;
         reserve_new_coin_supply_in_tx(&mut tx, locked_project.id, &order.quantity).await?;
-        let lock_positions = lock_positions_for_project(
-            &locked_project,
-            order.user_id,
-            locked_project.asset_id,
-            &order.idempotency_key,
-            order.quantity.clone(),
-            Utc::now(),
-            "new_coin_subscription",
-        )?;
         let inserted = sqlx::query(
             r#"INSERT INTO new_coin_subscriptions
                (project_id, user_id, quote_asset, issue_price, quote_amount, requested_quantity,
-                allocated_quantity, status, idempotency_key, request_fingerprint)
-               VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?)"#,
+                allocated_quantity, status, idempotency_key, request_fingerprint,
+                settlement_mode, frozen_quote_amount, settled_quote_amount, refunded_quote_amount)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, 'manual_distribution', ?, 0, 0)"#,
         )
         .bind(locked_project.id)
         .bind(order.user_id)
@@ -482,6 +473,7 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
         .bind(&order.quantity)
         .bind(&order.idempotency_key)
         .bind(&order.request_fingerprint)
+        .bind(&authoritative_quote)
         .execute(&mut *tx)
         .await;
         if let Err(error) = inserted {
@@ -492,55 +484,21 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
             return Err(error.into());
         }
 
-        debit_wallet_available(
+        subscription_freeze::freeze_subscription_quote_in_tx(
             &mut tx,
             order.user_id,
             order.quote_asset_id,
             &authoritative_quote,
-            NewCoinLedgerMetadata {
-                change_type: "new_coin_subscription_payment",
-                ref_type: "new_coin_subscription",
-                ref_id: &order.idempotency_key,
-            },
+            &order.idempotency_key,
         )
         .await?;
-        let lock_position_id = apply_new_coin_allocation(
-            &mut tx,
-            order.user_id,
-            locked_project.asset_id,
-            &order.quantity,
-            &lock_positions,
-            &locked_project.issue_price,
-            &authoritative_quote,
-            &locked_project,
-            NewCoinLedgerMetadata {
-                change_type: "new_coin_subscription_lock",
-                ref_type: "new_coin_subscription",
-                ref_id: &order.idempotency_key,
-            },
-        )
-        .await?;
-        let status = if lock_position_id.is_some() {
-            "allocated"
-        } else {
-            "available"
-        };
-        sqlx::query(
-            "UPDATE new_coin_subscriptions SET allocated_quantity = ?, status = ? WHERE idempotency_key = ?",
-        )
-        .bind(&order.quantity)
-        .bind(status)
-        .bind(&order.idempotency_key)
-        .execute(&mut *tx)
-        .await?;
-        finalize_new_coin_supply_in_tx(&mut tx, locked_project.id, &order.quantity).await?;
         tx.commit().await?;
         Ok(NewCoinOrderWriteOutcome {
             project_id: locked_project.id,
             asset_id: locked_project.asset_id,
             quote_asset_id: order.quote_asset_id,
-            lock_position_id,
-            status: status.to_owned(),
+            lock_position_id: None,
+            status: "pending".to_owned(),
             authoritative_price: locked_project.issue_price,
             authoritative_quote_amount: authoritative_quote,
             created: true,
@@ -780,7 +738,7 @@ fn new_coin_project_rule_select_sql(predicate: &str, suffix: &str) -> String {
     format!(
         r#"SELECT id, asset_id, status, lifecycle_status, total_supply, issue_price,
                   quote_asset_id, reserved_supply, allocated_supply, remaining_supply,
-                  listed_at, unlock_type,
+                  unlock_type,
                   fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
                   unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
                   post_listing_purchase_enabled, post_listing_pair_id
@@ -809,8 +767,8 @@ fn new_coin_pair_select_sql(for_update: bool) -> &'static str {
     }
 }
 
-/// 锁定申购幂等键并读回原始价格、金额、状态与首个锁仓结果。
-async fn lock_subscription_replay_in_tx(
+/// 只读查找已提交申购结果，不锁间隙或关联的其他项目；唯一键竞争由插入失败后的独立事务回读处理。
+async fn find_subscription_replay_in_tx(
     tx: &mut Transaction<'_, MySql>,
     idempotency_key: &str,
 ) -> AppResult<Option<NewCoinOrderReplayRow>> {
@@ -830,8 +788,7 @@ async fn lock_subscription_replay_in_tx(
            FROM new_coin_subscriptions subscriptions
            INNER JOIN new_coin_projects projects ON projects.id = subscriptions.project_id
            WHERE subscriptions.idempotency_key = ?
-           LIMIT 1
-           FOR UPDATE"#,
+           LIMIT 1"#,
     )
     .bind(idempotency_key)
     .fetch_optional(&mut **tx)
@@ -864,7 +821,7 @@ async fn replay_subscription_after_unique_conflict(
     order: &NewCoinSubscriptionOrderWrite,
 ) -> AppResult<NewCoinOrderWriteOutcome> {
     let mut tx = pool.begin().await?;
-    let replay = lock_subscription_replay_in_tx(&mut tx, &order.idempotency_key)
+    let replay = find_subscription_replay_in_tx(&mut tx, &order.idempotency_key)
         .await?
         .ok_or_else(|| {
             AppError::Conflict("new coin subscription idempotency key conflict".to_owned())
@@ -1222,7 +1179,7 @@ async fn ensure_unlock_record(
     Ok(())
 }
 
-/// 在事务内从用户某资产的 `available` 单向扣减指定金额，是新币申购与购买唯一的付款出口。
+/// 在事务内从用户某资产的 `available` 单向扣减指定金额，供上市后购买和手续费付款使用。
 /// 先以 `FOR UPDATE` 锁定钱包行再比较余额，把「读余额」与「写余额」压在同一把行锁内，杜绝并发超扣。
 /// 钱包行必须已经存在，缺失时返回 `Validation` 而不是隐式建号，
 /// 避免为本不该持有该资产的用户凭空开户后再扣款。
@@ -1389,15 +1346,16 @@ async fn upsert_lock_position(
 ) -> AppResult<u64> {
     let result = sqlx::query(
         r#"INSERT INTO asset_lock_positions
-           (user_id, asset_id, unlock_type, unlock_at, locked_amount,
+           (user_id, asset_id, unlock_type, unlock_at, listing_project_id, locked_amount,
             released_amount, remaining_amount, merge_key, status)
-           VALUES (?, ?, ?, ?, 0, 0, 0, ?, 'active')
+           VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, 'active')
            ON DUPLICATE KEY UPDATE updated_at = updated_at"#,
     )
     .bind(position.user_id)
     .bind(position.asset_id)
     .bind(&position.unlock_type)
     .bind(position.unlock_at.naive_utc())
+    .bind(position.listing_project_id)
     .bind(&position.merge_key)
     .execute(&mut **tx)
     .await?;
@@ -1527,6 +1485,10 @@ struct NewCoinSubscriptionReadRow {
     quote_asset: u64,
     issue_price: BigDecimal,
     quote_amount: BigDecimal,
+    settlement_mode: String,
+    frozen_quote_amount: BigDecimal,
+    settled_quote_amount: Option<BigDecimal>,
+    refunded_quote_amount: Option<BigDecimal>,
     requested_quantity: BigDecimal,
     allocated_quantity: BigDecimal,
     status: String,
@@ -1596,7 +1558,6 @@ struct NewCoinProjectRuleReadRow {
     reserved_supply: BigDecimal,
     allocated_supply: BigDecimal,
     remaining_supply: BigDecimal,
-    listed_at: Option<chrono::DateTime<chrono::Utc>>,
     unlock_type: String,
     fixed_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
     relative_unlock_seconds: Option<u64>,
@@ -1698,6 +1659,10 @@ impl From<NewCoinSubscriptionReadRow> for NewCoinSubscriptionRead {
             quote_asset: row.quote_asset,
             issue_price: row.issue_price,
             quote_amount: row.quote_amount,
+            settlement_mode: row.settlement_mode,
+            frozen_quote_amount: row.frozen_quote_amount,
+            settled_quote_amount: row.settled_quote_amount,
+            refunded_quote_amount: row.refunded_quote_amount,
             requested_quantity: row.requested_quantity,
             allocated_quantity: row.allocated_quantity,
             status: row.status,
@@ -1779,8 +1744,7 @@ impl From<NewCoinUnlockReadRow> for NewCoinUnlockRead {
 impl From<NewCoinProjectRuleReadRow> for NewCoinProjectRuleRead {
     /// 平移下单规则查询行，供不加锁预校验与事务内加锁重读共用同一份内存表示。
     /// 与公开项目模型相比少了符号、总供应量和状态列，多出的部分正是下单必须判定的解禁与购买开关配置。
-    /// 所有可空列原样保留，例如未上市项目的 `listed_at` 为空、
-    /// 非相对周期解禁的 `relative_unlock_seconds` 为空，转换不为它们编造默认值。
+    /// 可空规则列原样保留；上市即解禁由项目阶段判断，不读取计划上市时间。
     fn from(row: NewCoinProjectRuleReadRow) -> Self {
         Self {
             id: row.id,
@@ -1793,7 +1757,6 @@ impl From<NewCoinProjectRuleReadRow> for NewCoinProjectRuleRead {
             reserved_supply: row.reserved_supply,
             allocated_supply: row.allocated_supply,
             remaining_supply: row.remaining_supply,
-            listed_at: row.listed_at,
             unlock_type: row.unlock_type,
             fixed_unlock_at: row.fixed_unlock_at,
             relative_unlock_seconds: row.relative_unlock_seconds,

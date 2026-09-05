@@ -39,6 +39,8 @@ the feature contract for the business context being modified.
 | [Agent-Routed Online Support Contracts](./online-support.md) | Durable support messages, exact owning-agent isolation, admin fallback, reassignment, unread, pagination, and refresh contracts | Active |
 | [Synthetic Market and K-line Recovery Contracts](./synthetic-market-kline.md) | Deterministic strategy ticker/K-line generation, active-version leases, authoritative 1m aggregation, and admin-only historical recovery | Active |
 | [New Coin Mobile Contract](./new-coin-mobile-contract.md) | Public project purchase-pair exposure and authenticated mobile lifecycle actions | Active |
+| [Manual New Coin Distribution](./new-coin-manual-distribution.md) | Subscription freeze, final Admin allocation, partial refunds, replay and listing readiness | Active |
+| [Admin New-Coin Project Center](./new-coin-project-center.md) | Exact-ID read, guarded preheat issuance, config concurrency and stage readiness | Active |
 | [Container Delivery Contract](./container-delivery.md) | Backend image entrypoints, GHCR publication, migration gating, and Compose runtime contracts | Active |
 | [Market Favorites and Asset Logo Contract](./market-favorites.md) | Authenticated favorites and backend-owned market/convert/wallet logo metadata | Active |
 

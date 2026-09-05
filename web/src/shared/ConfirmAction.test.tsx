@@ -42,4 +42,17 @@ describe('ConfirmAction', () => {
     await user.type(await screen.findByLabelText('操作原因'), '链上重组');
     expect(await screen.findByRole('button', { name: '确认' })).toHaveClass('semi-button-danger');
   });
+  it('keeps the reason and surfaces a rejected action without an unhandled promise', async () => {
+    const action=vi.fn().mockRejectedValue(new Error('configuration conflict'));
+    render(<ConfirmAction actionText="保存" title="确认保存" onConfirm={action}/>);
+    await userEvent.click(screen.getByRole('button',{name:'保存'}));
+    await userEvent.type(screen.getByLabelText('操作原因'),'reviewed');
+    await userEvent.click(screen.getByRole('button',{name:'确认'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('configuration conflict');
+    expect(screen.getByLabelText('操作原因')).toHaveValue('reviewed');
+    await userEvent.click(screen.getByRole('button',{name:'取消'}));
+    await userEvent.click(screen.getByRole('button',{name:'保存'}));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
 });

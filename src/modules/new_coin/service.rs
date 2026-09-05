@@ -578,6 +578,9 @@ pub(crate) fn lock_positions_for_project(
         .lock_positions
         .into_iter()
         .map(|position| NewCoinLockPositionWrite {
+            listing_project_id: (project.unlock_type == "immediate_on_listing"
+                && project.lifecycle_status != "listed")
+                .then_some(project.id),
             user_id,
             asset_id,
             unlock_type: position.unlock_type,
@@ -592,16 +595,15 @@ pub(crate) fn lock_positions_for_project(
 }
 
 /// 从项目快照还原解禁规则，把存储中「类型字符串加多个可空列」的表示收敛为有效的领域枚举。
-/// 三种类型各自要求一个必填列：上市即解禁需要 `listed_at`，固定时点需要 `fixed_unlock_at`，
-/// 相对周期需要 `relative_unlock_seconds`，缺失时分别返回带列名的 `Validation` 错误。
+/// 上市即解禁由项目阶段和项目 ID 形成实际上市门禁，不把计划时间当作事件。
+/// 固定时点需要 `fixed_unlock_at`，相对周期需要 `relative_unlock_seconds`，缺失返回 Validation。
 /// 相对周期从无符号秒数转成有符号秒数，超出范围同样拒绝，避免溢出后算出过去的解禁时点。
 /// 未知解禁类型不做兜底，直接报错以防按错误规则锁仓；本函数不读写存储也不校验项目阶段。
 pub(crate) fn unlock_rule_from_project(project: &NewCoinProjectRuleRead) -> AppResult<UnlockRule> {
     match project.unlock_type.as_str() {
-        "immediate_on_listing" => Ok(UnlockRule::ImmediateOnListing {
-            listed_at: project.listed_at.ok_or_else(|| {
-                AppError::Validation("listed_at is required for immediate unlock".to_owned())
-            })?,
+        "immediate_on_listing" => Ok(UnlockRule::OnActualListing {
+            project_id: project.id.to_string(),
+            listed: project.lifecycle_status == "listed",
         }),
         "fixed_time" => Ok(UnlockRule::FixedTime {
             unlock_at: project.fixed_unlock_at.ok_or_else(|| {
@@ -700,3 +702,36 @@ pub(crate) fn calculate_unlock_fee_fields(
     };
     Ok((fee_paid_status, Some(fee_amount)))
 }
+
+/// 根据申购价格快照计算人工最终派发的实扣与退款；零数量全退，越界或不可精确表示的款额拒绝。
+/// 只计算金额，不修改订单或钱包；原始冻结额必须等于原始申购量应付额，杜绝按现价重算历史。
+pub(crate) fn manual_new_coin_settlement_amounts(
+    requested: &BigDecimal,
+    allocated: &BigDecimal,
+    price: &BigDecimal,
+    frozen: &BigDecimal,
+    quote_precision: i32,
+) -> AppResult<(BigDecimal, BigDecimal)> {
+    if allocated < &BigDecimal::from(0) || allocated > requested {
+        return Err(AppError::Validation(
+            "distribution quantity must be between zero and requested quantity".into(),
+        ));
+    }
+    let expected = authoritative_new_coin_quote_amount(price, requested, quote_precision)?;
+    if &expected != frozen {
+        return Err(AppError::Conflict(
+            "subscription quote snapshot is inconsistent".into(),
+        ));
+    }
+    let payment = if allocated == &BigDecimal::from(0) {
+        BigDecimal::from(0)
+    } else {
+        authoritative_new_coin_quote_amount(price, allocated, quote_precision)?
+    };
+    let refund = frozen - &payment;
+    Ok((payment, refund))
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/new_coin_manual_settlement_tests.rs"]
+mod tests_manual_settlement;

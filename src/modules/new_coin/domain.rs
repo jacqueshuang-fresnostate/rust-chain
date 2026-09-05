@@ -112,9 +112,20 @@ impl NewCoinOrderKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnlockRule {
-    ImmediateOnListing { listed_at: DateTime<Utc> },
-    FixedTime { unlock_at: DateTime<Utc> },
-    RelativePeriod { seconds_after_source: i64 },
+    /// 新项目按实际阶段解禁；待上市锁仓的时间仅为来源标记，必须同时持久化项目门禁。
+    OnActualListing {
+        project_id: String,
+        listed: bool,
+    },
+    ImmediateOnListing {
+        listed_at: DateTime<Utc>,
+    },
+    FixedTime {
+        unlock_at: DateTime<Utc>,
+    },
+    RelativePeriod {
+        seconds_after_source: i64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +231,39 @@ pub fn apply_unlock_rule(
     ensure_positive_sources(&sources)?;
 
     match unlock_rule {
+        UnlockRule::OnActualListing { project_id, listed } => {
+            let total = sources.iter().map(|source| source.amount.clone()).sum();
+            if *listed {
+                return Ok(UnlockApplication {
+                    available_amount: total,
+                    locked_amount: BigDecimal::from(0),
+                    lock_positions: Vec::new(),
+                });
+            }
+            let first = &sources[0];
+            let position = LockPosition {
+                user_id: first.user_id.clone(),
+                asset_id: first.asset_id.clone(),
+                unlock_type: "immediate_on_listing".into(),
+                // 待实际上市时不能把该来源时刻暴露为已成熟；持久化的 listing_project_id 是必需门禁。
+                unlock_at: sources
+                    .iter()
+                    .map(|source| source.source_time)
+                    .max()
+                    .unwrap_or(first.source_time),
+                remaining_amount: total,
+                merge_key: format!(
+                    "new_coin_listing:{project_id}:{}:{}",
+                    first.user_id, first.asset_id
+                ),
+                source_id: None,
+            };
+            Ok(UnlockApplication {
+                available_amount: BigDecimal::from(0),
+                locked_amount: position.remaining_amount.clone(),
+                lock_positions: vec![position],
+            })
+        }
         UnlockRule::ImmediateOnListing { listed_at } => {
             let mut available_amount = BigDecimal::from(0);
             let mut locked_sources = Vec::new();

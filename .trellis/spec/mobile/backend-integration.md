@@ -2168,6 +2168,14 @@ if (directory.state === 'loaded') {
 
 ## New-Coin Selected Read and Presentation Contract
 
+- Manual subscriptions (`settlement_mode=manual_distribution`) retain exact
+  frozen, settled and refunded DecimalText snapshots. These fields are required
+  for that mode; historical/older responses may omit them or carry null without
+  being rewritten as a new frozen obligation. Pending records display frozen
+  funds; final records display actual paid/refunded amounts. Partial allocation
+  and refund status codes have symmetric localized labels. Zero-allocation refund
+  receipts must not be described as credited coins or a lock position.
+
 - Public project mapping is strict: positive integer IDs, real booleans, non-empty status/symbol text, string-only decimals, and string-or-null metadata. Blank optional name/logo text normalizes to `undefined`; a non-string logo is a contract error.
 - New Coin project identity uses only the public DTO's `logo_url`, which is the `assets.logo_url` joined by `asset_id`; do not replace it with a market-pair image, a deposit/withdraw directory, or a symbol-derived external URL. The issue-price unit uses only `quote_asset_symbol`, joined by `quote_asset_id`. Render amount and unit in separate shrink boundaries so a long amount may ellipsize while the authoritative unit remains visible; when metadata is absent, keep the truthful localized unavailable marker instead of hard-coding a quote asset.
 - Project and record prices, quantities, supply counters, balances, and fees stay `DecimalText` through formatting and mutations. Number conversion is limited to bounded progress geometry and market presentation fields whose shared model is numeric.

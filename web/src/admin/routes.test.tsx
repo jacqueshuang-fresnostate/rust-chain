@@ -58,7 +58,8 @@ describe('adminRoutes', () => {
     'lazily loads every resource route through the shared resource page',
     async () => {
       const resourceRoutes = adminRoutes.filter((route) => Boolean((route.handle as { resourceKey?: string } | undefined)?.resourceKey));
-      expect(resourceRoutes.length).toBeGreaterThanOrEqual(40);
+      // Two lock/release resources now share a permission-scoped tab workbench.
+      expect(resourceRoutes.length).toBeGreaterThanOrEqual(38);
       resourceRoutes.forEach((route) => {
         expect(typeof route.lazy).toBe('function');
         expect(route.element).toBeUndefined();
@@ -85,6 +86,9 @@ describe('adminRoutes', () => {
     ['support', 'AdminSupportPage'],
     ['audit-logs', 'AuditLogsPage'],
     ['new-coins/actions', 'NewCoinActions'],
+    ['new-coins/projects/:projectId', 'NewCoinProjectPage'],
+    ['new-coins/lock-positions', 'NewCoinLocksPage'],
+    ['new-coins/unlocks', 'NewCoinLocksPage'],
     ['prediction/settings', 'PredictionSettingsPage'],
     ['prediction/sync', 'PredictionSyncPage']
   ])(

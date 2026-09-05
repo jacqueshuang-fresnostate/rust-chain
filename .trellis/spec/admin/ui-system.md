@@ -1,5 +1,78 @@
 # Admin UI System Contract
 
+## New-Coin Project Center and Work Queues
+
+- The five navigation entries are project management, subscriptions/allocation,
+  distribution/refund records, locks/unlocks and post-listing purchases. The old
+  actions URL redirects `project_id` to `/admin/new-coins/projects/:projectId`;
+  no ID returns the project list. Deep links use Router state, not location hash.
+- Read the complete project by exact ID, not from the first 100 reference rows.
+  Decimal fields must be strings; an incomplete/error response disables all
+  configuration writes. Query keys include the current Admin session generation.
+- Overview uses server supply counters and total/pending order counts. Do not
+  infer project totals from a page of orders. Outstanding/refund amounts remain
+  authoritative order-level fields; no unimplemented aggregate is implied.
+- Hydrate issuance, unlock, fee and purchase forms from the original response.
+  Only one configuration category may be dirty. Preserve local milliseconds and
+  omit inactive unlock-rule fields. Identity and quote assets are immutable;
+  issuance is editable only before orders/quota use in active preheat projects.
+- Pin the original `configuration_version` for the life of a draft. Confirm
+  changed values, impact and reason; a conflict preserves the draft and offers
+  explicit discard/reload. Never attach a silently refreshed version to an old
+  form. Dirty navigation is guarded, and lifecycle/grant actions do not discard it.
+- Lifecycle contains only the authoritative next command. The backend checks
+  again under lock, including pending settlement obligations before listing.
+  Purchase enablement activates the selected pair; disablement stops this project
+  only. Explain that side effect and fetch pair options only with read permission.
+- Records use whitelisted URL filters. Locks and unlocks keep their old URLs,
+  render only authorized tabs and mount only the selected list. Unlock-only roles
+  still receive the unified navigation entry. Asset-scoped lock links explicitly
+  include other projects/sources, never claim a project-level relationship.
+- Audit links initialize only sanitized target type/ID in the shared audit page.
+- Preserve stable React keys for stateful actions after conditional `Space`
+  children: Semi flattens null children, so insertion can otherwise remount an
+  open confirmation and lose its reason. ConfirmAction catches failed promises,
+  retains the dialog/reason and announces the error rather than leaking a rejected
+  promise into Semi Modal.
+
+### Planned / Actual Listing and Lock Maturity
+
+- Label `listed_at` as 计划上市时间, never as evidence of actual listing. Overview
+  and project lists separately display `actual_listed_at`; null means 尚未确认上市,
+  or 历史事件未记录 for a legacy listed project, never a guessed plan/event.
+- Only 计划上市时间 is editable. Explain that plans do not automatically advance
+  stages, that new 上市即解禁 holdings wait for the actual event, and that later
+  config edits do not change existing gates. Fixed/relative rules stay independent.
+- Lock resources require `listing_project_id`, `actual_listing_at`, and effective
+  nullable `unlock_at`. A gated pending record reads 待实际上市, not an expired
+  source timestamp. Detail/CSV use the same backend effective maturity projection.
+- Read DTO validation requires the actual-time field even when null. Listing
+  confirmation sends stage, original configuration snapshot and reason only.
+
+## Manual New-Coin Settlement Actions
+
+- Settlement is a subscription row action. User, project and subscription IDs
+  come from that row, not free-text inputs. Only pending `manual_distribution`
+  orders and users with project read/write permission can open the action.
+- Fetch the exact project on open; while loading/error or outside active
+  distribution, confirmation stays disabled. Existing per-order backend checks
+  remain authoritative against stale list rows and concurrent operators.
+- Quantity is the final allocation. Preview payment and refund using exact
+  decimal helpers and the order's issue-price snapshot. Zero means full refund;
+  negative/excess amounts disable submission. Require a nonblank reason.
+- Keep the same key and quantity on unknown-result retry; successful writes
+  reload orders and invalidate only the affected project/new-coin reference cache.
+- `额外赠币` lives separately in the project center, never sends a subscription ID
+  and never implies fulfillment/refunds. A dirty settings draft disables its tab.
+- Subscription tables distinguish original quote, outstanding freeze, actual
+  payment and refund. Receipt tables distinguish unlinked grants and zero refunds;
+  partial-refund amounts are inspected in the linked subscription records rather
+  than inferred from receipt quantity alone.
+- Regressions: `NewCoinProjectPage.test.tsx`, `NewCoinResourcePage.test.tsx`,
+  `NewCoinManualDistribution.test.tsx`, legacy action/routes/layout tests and
+  `ConfirmAction.test.tsx`. Backend contracts: `../backend/new-coin-project-center.md`
+  and `../backend/new-coin-manual-distribution.md`.
+
 ## Scope
 
 This contract applies to the operations console under `web/src/`. It covers
@@ -238,8 +311,9 @@ const scroll = containedTableScrollForColumns(
 
 ### 1. Scope / Trigger
 
-- Applies when changing the Admin new-coin create SideSheet, lifecycle action,
-  unlock-rule action, asset selectors, or their request serialization.
+- Applies when changing the Admin new-coin create SideSheet, project-row
+  actions, lifecycle action, unlock-rule action, asset selectors, or their
+  request serialization.
 - This is a cross-layer contract because Admin sends local wall-clock input and
   asset identifiers to Rust DTOs that deserialize absolute times as Unix
   milliseconds and enforce active-asset and unlock-rule invariants.
@@ -254,6 +328,7 @@ PATCH /admin/api/v1/new-coins/:projectId/unlock-rule
 isNewCoinProjectCreatable(values: NewCoinProjectValues): boolean
 requiredNewCoinLocalDateTimeMillis(value: string, label: string): number
 optionalNewCoinLocalDateTimeMillis(value: string, label: string): number | undefined
+newCoinProjectActionsPath(projectId: string): string
 ```
 
 The create request includes positive integer `asset_id` and `quote_asset_id`,
@@ -272,7 +347,7 @@ positive Decimal-text `total_supply` and `issue_price`, one supported
   Selecting a project asset or symbol that conflicts with the selected quote
   clears the quote immediately. Coupled state changes use functional React
   updates so a queued change cannot restore a stale conflicting value.
-- `上市时间` and `固定解禁时间` use `datetime-local`. Parse their numeric local
+- `计划上市时间` and `固定解禁时间` use `datetime-local`. Parse their numeric local
   calendar components, reject normalization such as February 30 or a DST gap,
   then send the resulting Unix milliseconds. Never interpret the value as UTC
   text or expose a raw timestamp input to an operator.
@@ -280,9 +355,23 @@ positive Decimal-text `total_supply` and `issue_price`, one supported
   `fixed_unlock_at` for `fixed_time`, or only positive integer
   `relative_unlock_seconds` for `relative_period`. The create button stays
   disabled until the currently selected schedule is valid.
-- Lifecycle and unlock-rule optional blank times become `undefined`; JSON
-  serialization therefore omits those keys. A nonblank invalid value raises a
-  Chinese field-specific validation error before any request is sent.
+- Lifecycle commands contain no editable timestamp; the server records actual
+  listing. Unlock configuration sends the exact active schedule only. Invalid
+  time values raise a Chinese field-specific validation error before sending.
+- An active row whose `lifecycle_status` is `preheat` exposes `开始申购`.
+  Confirmation sends only `{ lifecycle_status: 'subscription', reason }` to
+  the lifecycle PATCH and reloads the authoritative list after success. Other
+  lifecycle stages omit the shortcut; an inactive preheat row keeps it
+  disabled. The backend active-project and transition checks remain
+  authoritative under races.
+- The project-row `配置与操作` entry navigates to
+  `/admin/new-coins/actions?project_id=:id` through React Router. The admin app
+  uses `createBrowserRouter`, so row actions must not write that path into
+  `window.location.hash`.
+- Repeated project-row controls expose record-specific Chinese accessible
+  names while retaining concise visible action text. The generic
+  `subscription` lifecycle label is `申购中` in resource status cells,
+  details, and reference selectors.
 - Backend precision, active-status, mutually exclusive unlock fields, audit
   transaction, and unlock-fee rules remain authoritative. In particular, an
   enabled unlock-fee asset must equal the project's `quote_asset_id`.
@@ -298,14 +387,19 @@ positive Decimal-text `total_supply` and `issue_price`, one supported
 | Required schedule is blank, malformed, normalized, or non-positive relative seconds | Keep create disabled; boundary helper reports a Chinese field error |
 | Optional lifecycle/action time is blank | Return `undefined` and omit the JSON key |
 | Optional lifecycle/action time is nonblank but invalid | Report a Chinese field error and make no request |
+| Active project is in `preheat` | Offer `开始申购`; PATCH exactly to `subscription` after a reason is confirmed |
+| Project is already `subscription`, `distribution`, or `listed` | Omit the preheat shortcut; never offer a skip or replay |
+| Preheat project is inactive | Keep the shortcut disabled and send no request |
 
 ### 5. Good / Base / Bad Cases
 
 - Good: select active project asset 11 and active quote asset 12 even when both
   have deposit and withdrawal disabled; a fixed local time submits
   `quote_asset_id: 12` and the exact local-time Unix milliseconds.
-- Base: leave an optional lifecycle time blank; the PATCH body has no
-  `listed_at` key.
+- Base: confirm listing without a time input; the PATCH body has no
+  `listed_at` or `actual_listed_at` key.
+- Base: open a preheat project from the list, confirm `开始申购`, and
+  render the reloaded row as `申购中`.
 - Bad: retain quote 12 after switching the project asset to 12, convert
   `datetime-local` by appending `Z`, or keep all three schedule fields in the
   create payload. Each violates a backend invariant or changes the operator's
@@ -319,8 +413,12 @@ positive Decimal-text `total_supply` and `issue_price`, one supported
   inspect the exact POST body. Asserting only the fixture object is insufficient.
 - Button coverage exercises all three `unlock_type` values with missing,
   invalid, zero/fractional, and valid current schedule inputs.
-- Lifecycle/unlock UI coverage asserts `datetime-local`, exact PATCH
-  milliseconds, invalid-date rejection, and omission of blank optional keys.
+- Unlock UI coverage asserts `datetime-local`, exact planned PATCH milliseconds
+  and invalid-date rejection. Lifecycle UI sends no timestamps.
+- Project-row coverage asserts the exact `preheat -> subscription` PATCH body,
+  required reason, post-success reload, inactive/other-stage guards,
+  record-specific accessible names, and BrowserRouter pathname/query
+  navigation without a hash.
 - The focused Rust route test sets both transfer flags false and proves create
   succeeds, while a disabled asset remains rejected. If `DATABASE_URL` is
   absent and the test skips by contract, report that real-database assertions
@@ -345,6 +443,14 @@ setProject((current) => ({
   quoteAssetId: current.quoteAssetId === assetId ? '' : current.quoteAssetId
 }));
 body.fixed_unlock_at = requiredNewCoinLocalDateTimeMillis(fixedUnlockAt, '固定解禁时间');
+```
+
+```tsx
+// Wrong: createBrowserRouter does not route a path stored in the fragment.
+window.location.hash = newCoinProjectActionsPath(projectId);
+
+// Correct: use the active React Router navigation contract.
+navigate(newCoinProjectActionsPath(projectId));
 ```
 
 ## Margin Product Configuration Workflow

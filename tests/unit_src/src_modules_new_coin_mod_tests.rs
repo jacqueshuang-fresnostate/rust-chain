@@ -303,3 +303,45 @@ fn unlock_idempotency_keys_are_namespaced_by_issuance_flow() {
     assert_ne!(subscription, purchase);
     assert_eq!(subscription, "new_coin_subscription:same-key");
 }
+
+#[test]
+fn actual_listing_gate_never_uses_planned_time_and_keeps_project_identity() {
+    let sources = vec![
+        unlock_source("a", 4, at(100)),
+        unlock_source("b", 6, at(200)),
+    ];
+    let before = apply_unlock_rule(
+        &UnlockRule::OnActualListing {
+            project_id: "7".into(),
+            listed: false,
+        },
+        sources.clone(),
+    )
+    .unwrap();
+    assert_eq!(before.available_amount, amount(0));
+    assert_eq!(before.locked_amount, amount(10));
+    assert_eq!(before.lock_positions.len(), 1);
+    let other = apply_unlock_rule(
+        &UnlockRule::OnActualListing {
+            project_id: "8".into(),
+            listed: false,
+        },
+        sources.clone(),
+    )
+    .unwrap();
+    assert_ne!(
+        before.lock_positions[0].merge_key,
+        other.lock_positions[0].merge_key
+    );
+    let after = apply_unlock_rule(
+        &UnlockRule::OnActualListing {
+            project_id: "7".into(),
+            listed: true,
+        },
+        sources,
+    )
+    .unwrap();
+    assert_eq!(after.available_amount, amount(10));
+    assert_eq!(after.locked_amount, amount(0));
+    assert!(after.lock_positions.is_empty());
+}

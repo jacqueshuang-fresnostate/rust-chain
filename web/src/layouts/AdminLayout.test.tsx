@@ -22,6 +22,8 @@ function renderAdminLayout(initialEntry = '/admin/dashboard', access: AdminAcces
         path: '/admin',
         element: <AdminLayout />,
         children: [
+          { path: 'new-coins/projects/:id', element: <div>Project center content</div> },
+          { path: 'new-coins/unlocks', element: <div>Unlock content</div> },
           { path: 'dashboard', element: <div>仪表盘内容</div> },
           { path: 'support', element: <div>在线客服内容</div> },
           { path: 'users', element: <div>用户内容</div> },
@@ -74,8 +76,8 @@ describe('AdminLayout', () => {
       { group: '竞猜管理', children: ['竞猜配置', '竞猜市场', '竞猜订单', '同步运行'] },
       { group: '现货交易', children: ['现货订单', '现货成交'] },
       {
-        group: '新币生命周期',
-        children: ['新币项目', '生命周期动作', '发行申购', '派发记录', '上市认购', '锁仓仓位', '解禁记录']
+        group: '新币管理',
+        children: ['项目管理', '申购与配售', '派发与退款记录', '上市后购买', '锁仓与解禁']
       },
       { group: '行情市场', children: ['交易对配置', '行情策略', '行情订阅'] },
       { group: '闪兑管理', children: ['闪兑交易对', '闪兑订单'] },
@@ -116,6 +118,18 @@ describe('AdminLayout', () => {
     expect(screen.queryByRole('menuitem', { name: /用户与代理/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: '审计日志' })).not.toBeInTheDocument();
     expect(screen.getByText('只读总览')).toBeInTheDocument();
+  });
+
+  it('selects project management for a project deep link', () => {
+    renderAdminLayout('/admin/new-coins/projects/7001');
+    expect(screen.getByRole('menuitem', {name:'项目管理'})).toHaveClass('semi-navigation-item-selected');
+  });
+
+  it('keeps unified locks navigation available to an unlock-only role', () => {
+    renderAdminLayout('/admin/new-coins/unlocks', {...fullAccess,permissions:['new_coin.unlocks.read'],is_super_admin:false});
+    expect(screen.getByRole('menuitem', {name:'锁仓与解禁'})).toHaveClass('semi-navigation-item-selected');
+    expect(screen.queryByRole('menuitem', {name:'项目管理'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', {name:'生命周期动作'})).not.toBeInTheDocument();
   });
 
   it('uses Semi theme and Navigation defaults instead of admin shell style classes', () => {

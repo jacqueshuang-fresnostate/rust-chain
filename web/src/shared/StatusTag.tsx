@@ -15,6 +15,9 @@ type StatusMeta = {
 
 const STATUS_MAP: Record<string, StatusMeta> = {
   active: { label: '启用', color: 'green' },
+  allocated: { label: '已获配', color: 'green' },
+  partial_allocated: { label: '已部分派发', color: 'light-blue' },
+  refunded: { label: '已退款', color: 'grey' },
   allow: { label: '放行', color: 'green' },
   approved: { label: '已通过', color: 'green' },
   archived: { label: '已归档', color: 'grey' },
@@ -51,7 +54,7 @@ const STATUS_MAP: Record<string, StatusMeta> = {
   short: { label: '做空', color: 'red' },
   skipped: { label: '已跳过', color: 'grey' },
   subscribed: { label: '已申购', color: 'light-blue' },
-  subscription: { label: '发行申购', color: 'light-blue' },
+  subscription: { label: '申购中', color: 'light-blue' },
   success: { label: '成功', color: 'green' },
   suspended: { label: '暂停', color: 'orange' },
   unpaid: { label: '未支付', color: 'orange' },

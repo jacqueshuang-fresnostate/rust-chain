@@ -2,10 +2,11 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
 import { normalizeTickerSymbol, subscribeMarketTicker, type MarketTickerSnapshot } from '../../api/marketTickerSocket';
-import type { FilterField } from '../../shared/FilterBar';
+import type { FilterValues, FilterField } from '../../shared/FilterBar';
 import { AdminImageCell } from '../../shared/AdminImageUpload';
 import { formatAdminAmount, formatAdminNumber } from '../../shared/numberFormat';
 import { formatBusinessOrderNo } from '../../shared/orderNo';
+import { TimestampText } from '../../shared/TimestampText';
 import type { ApiRecord } from '../../api/types';
 import { AdminRequestActionBoundary, adminPermissionForRequest, hasAdminPermission, useOptionalAdminAccess } from '../access';
 
@@ -35,6 +36,7 @@ const SpotOrderRowActions = lazy(async () => ({ default: (await import('./action
 const CreateMarketStrategyAction = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).CreateMarketStrategyAction }));
 const MarketStrategyRowActions = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).MarketStrategyRowActions }));
 const CreateNewCoinProjectAction = lazy(async () => ({ default: (await import('./actions/newCoins')).CreateNewCoinProjectAction }));
+const NewCoinSubscriptionRowActions = lazy(async () => ({ default: (await import('../actions/NewCoinManualDistribution')).NewCoinSubscriptionRowActions }));
 const NewCoinProjectRowActions = lazy(async () => ({ default: (await import('./actions/newCoins')).NewCoinProjectRowActions }));
 const AdminNewsRowActions = lazy(async () => ({ default: (await import('./actions/news')).AdminNewsRowActions }));
 const CreateAdminNewsAction = lazy(async () => ({ default: (await import('./actions/news')).CreateAdminNewsAction }));
@@ -221,6 +223,8 @@ const walletLedgerChangeTypeLabels = {
   prediction_stake_refund: '竞猜本金退款',
   prediction_fee_refund: '竞猜手续费退款',
   new_coin_subscription_payment: '新币申购支付',
+  new_coin_subscription_freeze: '新币申购冻结',
+  new_coin_subscription_refund: '新币申购退款',
   new_coin_subscription_lock: '新币申购锁仓',
   new_coin_purchase_payment: '新币购买支付',
   new_coin_purchase_lock: '新币购买锁仓',
@@ -1086,12 +1090,12 @@ export const resourceConfigs = {
     ]
   },
   newCoinProjects: {
-    title: '新币项目',
+    title: '项目管理',
     actions: ({ reload }) => <CreateNewCoinProjectAction onCreated={reload} />,
     endpoint: '/admin/api/v1/new-coins',
     responseKey: 'projects',
-    filters: [limitFilter],
-    rowActions: (record) => <NewCoinProjectRowActions record={record} />,
+    filters: [{ key: 'symbol', label: '项目币种' }, { key: 'lifecycle_status', label: '项目阶段', type: 'select', options: [{ value: 'preheat', label: '预热中' }, { value: 'subscription', label: '申购中' }, { value: 'distribution', label: '派发中' }, { value: 'listed', label: '已上市' }] }, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <NewCoinProjectRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '项目ID' },
       { key: 'asset_id', title: '资产ID' },
@@ -1100,21 +1104,28 @@ export const resourceConfigs = {
       { key: 'total_supply', title: '总量', type: 'amount' },
       { key: 'issue_price', title: '发行价', type: 'amount' },
       { key: 'unlock_type', title: '解禁类型' },
-      { key: 'listed_at', title: '上市时间', type: 'timestamp' },
+      { key: 'listed_at', title: '计划上市时间', type: 'timestamp' },
+      { key: 'actual_listed_at', title: '实际上市时间', type: 'timestamp' },
       { key: 'status', title: '状态', type: 'status' }
     ]
   },
   newCoinSubscriptions: {
-    title: '发行申购',
+    title: '申购与配售',
     endpoint: '/admin/api/v1/new-coins/subscriptions',
     responseKey: 'subscriptions',
+    rowActions: (record, helpers) => <NewCoinSubscriptionRowActions order={record} onSettled={helpers.reload} openDetail={helpers.openDetail} />,
     filters: [projectFilter, userFilter, emailFilter, statusFilter, limitFilter],
     columns: [
       orderNoColumn('NC', '申购号'),
       { key: 'project_id', title: '项目ID' },
       { key: 'user_id', title: '用户ID' },
       { key: 'quote_asset', title: '支付资产' },
-      { key: 'quote_amount', title: '支付金额', type: 'amount' },
+      { key: 'issue_price', title: '申购发行价', type: 'amount' },
+      { key: 'settlement_mode', title: '结算模式', valueMap: { manual_distribution: '后台派发', legacy_instant: '历史即时成交' } },
+      { key: 'quote_amount', title: '申购金额', type: 'amount' },
+      { key: 'frozen_quote_amount', title: '待结算冻结', type: 'amount' },
+      { key: 'settled_quote_amount', title: '实际扣款', type: 'amount' },
+      { key: 'refunded_quote_amount', title: '退回差额', type: 'amount' },
       { key: 'requested_quantity', title: '申购数量', type: 'amount' },
       { key: 'allocated_quantity', title: '获配数量', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' },
@@ -1122,12 +1133,13 @@ export const resourceConfigs = {
     ]
   },
   newCoinDistributions: {
-    title: '派发记录',
+    title: '派发与退款记录',
     endpoint: '/admin/api/v1/new-coins/distributions',
     responseKey: 'distributions',
     filters: [projectFilter, userFilter, emailFilter, statusFilter, limitFilter],
     columns: [
       { key: 'id', title: '派发ID' },
+      { key: 'delivery_kind', title: '业务类型', source: 'derived', render: record => record.subscription_id == null ? '额外赠币' : record.status === 'refunded' ? '申购全额退款' : '申购派发（差额见申购单）' },
       { key: 'project_id', title: '项目ID' },
       { key: 'user_id', title: '用户ID' },
       { key: 'asset_id', title: '资产ID' },
@@ -1139,7 +1151,7 @@ export const resourceConfigs = {
     ]
   },
   newCoinPurchases: {
-    title: '上市认购',
+    title: '上市后购买',
     endpoint: '/admin/api/v1/new-coins/purchases',
     responseKey: 'purchases',
     filters: [projectFilter, userFilter, emailFilter, statusFilter, limitFilter],
@@ -1156,7 +1168,7 @@ export const resourceConfigs = {
     ]
   },
   newCoinLockPositions: {
-    title: '锁仓仓位',
+    title: '锁仓与解禁 · 锁仓仓位',
     endpoint: '/admin/api/v1/new-coins/lock-positions',
     responseKey: 'lock_positions',
     filters: [userFilter, emailFilter, assetFilter, statusFilter, limitFilter],
@@ -1165,7 +1177,9 @@ export const resourceConfigs = {
       { key: 'user_id', title: '用户ID' },
       { key: 'asset_id', title: '资产ID' },
       { key: 'unlock_type', title: '解禁类型' },
-      { key: 'unlock_at', title: '解禁时间', type: 'timestamp' },
+      { key: 'listing_project_id', title: '上市门禁项目' },
+      { key: 'actual_listing_at', title: '实际上市时间', type: 'timestamp' },
+      { key: 'unlock_at', title: '解禁时间', type: 'timestamp', render: record => record.listing_project_id != null ? (record.actual_listing_at == null ? '待实际上市' : <TimestampText value={record.actual_listing_at as number}/>) : <TimestampText value={record.unlock_at as number}/> },
       { key: 'locked_amount', title: '锁定数量', type: 'amount' },
       { key: 'released_amount', title: '已释放', type: 'amount' },
       { key: 'remaining_amount', title: '剩余', type: 'amount' },
@@ -1173,7 +1187,7 @@ export const resourceConfigs = {
     ]
   },
   newCoinUnlocks: {
-    title: '解禁记录',
+    title: '锁仓与解禁 · 解禁记录',
     endpoint: '/admin/api/v1/new-coins/unlocks',
     responseKey: 'unlocks',
     filters: [userFilter, emailFilter, assetFilter, statusFilter, { key: 'fee_paid_status', label: '矿工费状态' }, limitFilter],
@@ -1487,7 +1501,7 @@ export function isServerPagedResource(endpoint: string) {
   return SERVER_PAGED_ENDPOINTS.has(endpoint);
 }
 
-export function ResourcePage({ config }: { config: ResourceConfig }) {
+export function ResourcePage({ config, initialFilters }: { config: ResourceConfig; initialFilters?: FilterValues }) {
   const access = useOptionalAdminAccess();
   const writePermission = adminPermissionForRequest(config.endpoint, 'POST');
   const canWrite = writePermission === null || access === null || hasAdminPermission(access, writePermission);
@@ -1516,6 +1530,7 @@ export function ResourcePage({ config }: { config: ResourceConfig }) {
     <AdminResourcePage<ApiRecord>
       key={config.endpoint}
       {...config}
+      initialFilters={initialFilters}
       actions={actions}
       batchActions={batchActions}
       rowActions={rowActions}

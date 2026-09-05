@@ -9,11 +9,12 @@
 use super::*;
 
 /// 校验新币派发请求的审计原因以及可选幂等键长度，拒绝空白或超长标识。
-/// 同时要求派发数量为正；项目、用户和可派额度由应用事务锁行后确认，失败前不修改钱包。
+/// 赠币数量必须为正；关联申购允许零数量全额退款，原因必填，最终额度由应用事务锁行后确认。
 pub(crate) fn validate_distribute_new_coin(request: &DistributeNewCoinRequest) -> AppResult<()> {
-    if request.quantity <= 0 {
+    if request.quantity < 0 || (request.quantity == 0 && request.subscription_id.is_none()) {
         return Err(AppError::Validation("quantity must be positive".to_owned()));
     }
+    required_admin_audit_reason(request.reason.clone())?;
     if optional_string(Some(request.idempotency_key.clone())).is_none() {
         return Err(AppError::Validation(
             "idempotency_key must not be empty".to_owned(),
@@ -239,6 +240,9 @@ pub(crate) fn lock_positions_for_distribution(
         .lock_positions
         .into_iter()
         .map(|position| AdminNewCoinLockPositionWrite {
+            listing_project_id: (project.unlock_type == "immediate_on_listing"
+                && project.lifecycle_status != "listed")
+                .then_some(project.id),
             user_id,
             asset_id,
             unlock_type: position.unlock_type,
@@ -270,6 +274,7 @@ pub(crate) fn new_coin_project_audit_json(project: &NewCoinProjectResponse) -> V
         "allocated_supply": project.allocated_supply,
         "remaining_supply": project.remaining_supply,
         "listed_at": project.listed_at.map(|value| value.timestamp_millis()),
+        "actual_listed_at": project.actual_listed_at.map(|value| value.timestamp_millis()),
         "unlock_type": project.unlock_type,
         "fixed_unlock_at": project.fixed_unlock_at.map(|value| value.timestamp_millis()),
         "relative_unlock_seconds": project.relative_unlock_seconds,
@@ -319,8 +324,8 @@ pub(crate) fn new_coin_convert_rule_audit_json(rule: &NewCoinConvertRuleResponse
     })
 }
 
-/// 按解锁类型校验三组时间字段的互斥形状，确保配置能唯一确定解锁时刻。
-/// 上市即解锁必须给出上市时间且不得携带固定解锁时刻或相对周期；
+/// 按解锁类型校验三组时间字段的互斥形状；计划上市只作配置，不作为实际成熟依据。
+/// 上市即解锁必须给出计划上市时间且不得携带固定解锁时刻或相对周期；
 /// 固定时间解锁必须给出解锁时刻且不得携带上市时间或相对周期；
 /// 相对周期解锁必须给出正数秒数且不得携带任何绝对时间，秒数为 0 与缺失同等看待。
 /// 未知类型和空白类型分别报不支持与必填错误。
@@ -452,10 +457,9 @@ fn parse_lifecycle_status(value: &str) -> AppResult<LifecycleStatus> {
 /// 相对秒数需从无符号整数转换为领域所需的有符号类型，超范围时报周期过大而非静默溢出。
 fn unlock_rule_from_project(project: &NewCoinProjectResponse) -> AppResult<UnlockRule> {
     match project.unlock_type.as_str() {
-        "immediate_on_listing" => Ok(UnlockRule::ImmediateOnListing {
-            listed_at: project.listed_at.ok_or_else(|| {
-                AppError::Validation("listed_at is required for immediate unlock".to_owned())
-            })?,
+        "immediate_on_listing" => Ok(UnlockRule::OnActualListing {
+            project_id: project.id.to_string(),
+            listed: project.lifecycle_status == "listed",
         }),
         "fixed_time" => Ok(UnlockRule::FixedTime {
             unlock_at: project.fixed_unlock_at.ok_or_else(|| {

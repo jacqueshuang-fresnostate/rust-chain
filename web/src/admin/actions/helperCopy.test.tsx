@@ -7,7 +7,7 @@ import type { ReactElement } from 'react';
 import { apiRequest } from '../../api/client';
 import { AgentManagementPage } from './AgentManagementPage';
 import { MarketStrategyActions } from './MarketStrategyActions';
-import { NewCoinActions } from './NewCoinActions';
+
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client');
@@ -41,13 +41,7 @@ function stubResizeObserver() {
   vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 }
 
-function semiSelectByLabel(label: string, index = 0): HTMLElement {
-  const labelNode = screen.getAllByText(label)[index]?.closest('label') as HTMLElement | null;
-  expect(labelNode).toBeInTheDocument();
-  const select = labelNode?.querySelector('.semi-select') as HTMLElement | null;
-  expect(select).toBeInTheDocument();
-  return select as HTMLElement;
-}
+
 
 describe('Admin action helper copy', () => {
   beforeEach(() => {
@@ -99,30 +93,6 @@ describe('Admin action helper copy', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it('uses searchable references and omits static helper copy on new coin actions', async () => {
-    const user = userEvent.setup();
-    render(<NewCoinActions />);
-
-    expect(screen.getByText('新币生命周期动作')).toBeInTheDocument();
-    expect(screen.getByText('生命周期流转')).toBeInTheDocument();
-    await waitFor(() => expect(semiSelectByLabel('新币项目')).not.toHaveClass('semi-select-disabled'));
-    const projectSelect = semiSelectByLabel('新币项目');
-    await user.click(projectSelect);
-    expect(await screen.findByText('HIP · 派发中 · 启用（ID: 7）')).toBeInTheDocument();
-    const disabledProject = await screen.findByText('OLD · 已上市 · 禁用（ID: 8）');
-    expect(disabledProject.closest('.semi-select-option')).toHaveClass('semi-select-option-disabled');
-    expect(semiSelectByLabel('目标阶段')).toHaveTextContent('申购中');
-    expect(semiSelectByLabel('解禁类型')).toHaveTextContent('上市即解禁');
-    expect(screen.getByRole('checkbox', { name: '启用矿工费' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: '启用矿工费' }).closest('.semi-checkbox')).toBeInTheDocument();
-    expect(semiSelectByLabel('计费依据')).toHaveTextContent('市值');
-    expect(screen.queryByText('覆盖生命周期流转、后台派发、解禁规则和矿工费规则更新。')).not.toBeInTheDocument();
-    expect(screen.queryByText('按后端顺序推进 preheat → subscription → distribution → listed。')).not.toBeInTheDocument();
-    expect(screen.queryByText('项目必须处于 distribution 阶段，幂等键用于避免重复派发。')).not.toBeInTheDocument();
-    expect(screen.queryByText('时间字段按 Unix milliseconds 输入，relative_period 使用秒数。')).not.toBeInTheDocument();
-    expect(screen.queryByText('启用矿工费时需提供费率、计费依据和费用资产。')).not.toBeInTheDocument();
   });
 
   it('does not render static helper copy on market strategy actions', async () => {

@@ -98,6 +98,10 @@ export interface NewCoinSubscriptionRecord {
   allocatedQuantity: string
   status: string
   createdAt: number
+  settlementMode?: string
+  frozenQuoteAmount?: string
+  settledQuoteAmount?: string
+  refundedQuoteAmount?: string
 }
 
 export interface NewCoinDistributionRecord {
@@ -146,6 +150,10 @@ export async function fetchNewCoinSubscriptions(limit = 50): Promise<NewCoinSubs
     id: Number(item.id),
     projectId: Number(item.project_id),
     quoteAsset: Number(item.quote_asset),
+    settlementMode: item.settlement_mode == null ? undefined : String(item.settlement_mode),
+    frozenQuoteAmount: item.frozen_quote_amount == null ? undefined : String(item.frozen_quote_amount),
+    settledQuoteAmount: item.settled_quote_amount == null ? undefined : String(item.settled_quote_amount),
+    refundedQuoteAmount: item.refunded_quote_amount == null ? undefined : String(item.refunded_quote_amount),
     quoteAmount: String(item.quote_amount ?? '0'),
     requestedQuantity: String(item.requested_quantity ?? '0'),
     allocatedQuantity: String(item.allocated_quantity ?? '0'),

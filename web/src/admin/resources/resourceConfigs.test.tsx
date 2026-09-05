@@ -2207,7 +2207,7 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, dialog, '生命周期', '申购中');
     await selectSemiOption(user, dialog, '生命周期', '预热');
     await selectSemiOption(user, dialog, '解禁类型', '上市即解禁');
-    expect(within(dialog).getByLabelText('上市时间')).toHaveAttribute('type', 'datetime-local');
+    expect(within(dialog).getByLabelText('计划上市时间')).toHaveAttribute('type', 'datetime-local');
     await selectSemiOption(user, dialog, '解禁类型', '固定时间解禁');
     await selectSemiOption(user, dialog, '项目资产', 'BTC - Bitcoin（ID: 11）');
     await selectSemiOption(user, dialog, '项目符号', 'BTC - Bitcoin（ID: 11）');
@@ -2239,7 +2239,7 @@ describe('resourceConfigs create actions', () => {
     expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
     await selectSemiOption(user, dialog, '解禁类型', '上市即解禁');
     expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
-    fireEvent.change(within(dialog).getByLabelText('上市时间'), { target: { value: '2026-11-10T09:15' } });
+    fireEvent.change(within(dialog).getByLabelText('计划上市时间'), { target: { value: '2026-11-10T09:15' } });
     expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeEnabled();
     await selectSemiOption(user, dialog, '解禁类型', '相对周期解禁');
     expect(within(dialog).getByRole('button', { name: '提交添加新币项目' })).toBeDisabled();
@@ -4887,4 +4887,20 @@ describe('wallet review resources', () => {
       expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/wallet/deposits')).toHaveLength(2);
     });
   });
+});
+
+it('renders listing-gated maturity without treating source or planned time as unlock time',()=>{
+ const config=resourceConfigs.newCoinLockPositions;
+ const contract=buildAdminResourceRowContract(config.columns);
+ expect(contract.requiredFields).toEqual(expect.arrayContaining(['listing_project_id','actual_listing_at','unlock_at']));
+ const column=config.columns.find(c=>c.key==='unlock_at')!;
+ const pending=render(<>{column.render!({listing_project_id:7,actual_listing_at:null,unlock_at:null})}</>);
+ expect(screen.getByText('待实际上市')).toBeInTheDocument();pending.unmount();
+ const actual=1794309753250;
+ const listed=render(<>{column.render!({listing_project_id:7,actual_listing_at:actual,unlock_at:actual})}</>);
+ expect(document.querySelector('time')).toHaveAttribute('datetime',new Date(actual).toISOString());listed.unmount();
+ render(<>{column.render!({listing_project_id:null,actual_listing_at:null,unlock_at:946684800000})}</>);
+ expect(document.querySelector('time')).toHaveAttribute('datetime','2000-01-01T00:00:00.000Z');
+ expect(resourceConfigs.newCoinProjects.columns.find(c=>c.key==='listed_at')?.title).toBe('计划上市时间');
+ expect(resourceConfigs.newCoinProjects.columns.find(c=>c.key==='actual_listed_at')?.title).toBe('实际上市时间');
 });

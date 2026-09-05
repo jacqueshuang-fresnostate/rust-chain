@@ -18,11 +18,12 @@ const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
 
 function normalizePath(pathname: string): string {
+  if (pathname.startsWith('/admin/new-coins/projects/')) return '/admin/new-coins/projects';
   return pathname === '/admin' ? '/admin/dashboard' : pathname;
 }
 
-function containsActivePath(item: AdminNavItem, activePath: string) {
-  return item.path === activePath || Boolean(item.children?.some((child) => child.path === activePath));
+function containsActivePath(item: AdminNavItem, activePath: string): boolean {
+  return item.path === activePath || Boolean(item.relatedPaths?.includes(activePath)) || Boolean(item.children?.some((child) => containsActivePath(child, activePath)));
 }
 
 function activeGroupKeys(items: AdminNavItem[], activePath: string) {
@@ -35,7 +36,7 @@ function adminNavContext(activePath: string) {
       return { domain: '运营总览', page: item.label };
     }
 
-    const child = item.children?.find((candidate) => candidate.path === activePath);
+    const child = item.children?.find((candidate) => containsActivePath(candidate, activePath));
     if (child) {
       return { domain: item.label, page: child.label };
     }
@@ -70,9 +71,9 @@ function visibleNavigation(items: AdminNavItem[], permissions: AdminAccess): Adm
       const children = visibleNavigation(item.children, permissions);
       return children.length > 0 ? [{ ...item, children }] : [];
     }
-    if (!item.path || hasAdminPermission(permissions, adminReadPermissionForPath(item.path))) {
-      return [item];
-    }
+    if (!item.path) return [item];
+    const readablePath = [item.path, ...(item.relatedPaths ?? [])].find(path => hasAdminPermission(permissions, adminReadPermissionForPath(path)));
+    if (readablePath) return [{ ...item, path: readablePath }];
     return [];
   });
 }
@@ -159,7 +160,7 @@ export function AdminLayout() {
           onOpenChange={({ openKeys: nextOpenKeys }) => setOpenKeys((nextOpenKeys ?? []).map((key) => String(key)))}
           onSelect={handleNavSelect}
           openKeys={openKeys}
-          selectedKeys={[activePath]}
+          selectedKeys={[visibleNavItems.flatMap(item => item.children ?? [item]).find(item => containsActivePath(item, activePath))?.path ?? activePath]}
           subNavMotion={false}
         />
       </Sider>

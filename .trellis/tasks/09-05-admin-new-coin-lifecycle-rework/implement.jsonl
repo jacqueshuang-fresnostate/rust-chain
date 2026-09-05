@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend layer ownership and standalone test modules"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Executable architecture and verification requirements"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Immutable migration and MySQL contracts"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Exact quote payment, refund and ledger precision"}
+{"file": ".trellis/spec/backend/new-coin-manual-distribution.md", "reason": "Final manual allocation, legacy compatibility and atomic settlement"}
+{"file": ".trellis/spec/backend/new-coin-mobile-contract.md", "reason": "Public new-coin DTO and consumer compatibility"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Reference selection, reason confirmation, targeted invalidation and UI gates"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "Authoritative row and DecimalText contracts"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Strict manual-settlement DTO parsing and record presentation"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Bilingual labels without unrelated navigation changes"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify storage/API/Admin/Mobile/PC flow"}
+{"file": ".trellis/tasks/09-05-admin-new-coin-lifecycle-rework/research/current-flow.md", "reason": "Historical audit and confirmed final-decision addendum"}
+{"file": ".trellis/spec/backend/new-coin-project-center.md", "reason": "Authoritative project read, issuance compare-and-set and configuration guards"}
+{"file": ".trellis/tasks/09-05-admin-new-coin-lifecycle-rework/research/page-and-rule-plan.md", "reason": "Approved five-category architecture and explicitly bounded implementation"}
+{"file": ".trellis/tasks/09-05-admin-new-coin-lifecycle-rework/research/listing-and-unlock-plan.md", "reason": "Confirmed event-time, history and shared release transaction boundaries"}

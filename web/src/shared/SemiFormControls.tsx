@@ -116,13 +116,14 @@ export function AdminTextArea({ ariaLabel, autosize, onChange, placeholder, valu
 }
 
 type CheckboxProps = {
+  disabled?: boolean;
   checked: boolean;
   children: ReactNode;
   onChange: (checked: boolean) => void;
 };
 
-export function AdminCheckbox({ checked, children, onChange }: CheckboxProps) {
-  return <Checkbox checked={checked} onChange={(event) => onChange(Boolean(event.target.checked))}>{children}</Checkbox>;
+export function AdminCheckbox({ checked, children, onChange, disabled }: CheckboxProps) {
+  return <Checkbox disabled={disabled} checked={checked} onChange={(event) => onChange(Boolean(event.target.checked))}>{children}</Checkbox>;
 }
 
 type SwitchProps = {

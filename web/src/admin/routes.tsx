@@ -16,11 +16,12 @@ function resourceRoute(path: string, resourceKey: ResourceConfigKey): RouteObjec
     handle: { resourceKey, permission },
     lazy: async () => {
       const { ResourcePage, resourceConfigs } = await import('./resources/resourceConfigs');
+      const Page = path.startsWith('new-coins/') ? (await import('./new-coins/NewCoinResourcePage')).NewCoinResourcePage : ResourcePage;
       return {
         Component: function AdminResourceRoute() {
           return (
             <AdminPermissionBoundary permission={permission}>
-              <ResourcePage config={resourceConfigs[resourceKey]} />
+              <Page config={resourceConfigs[resourceKey]} />
             </AdminPermissionBoundary>
           );
         }
@@ -110,12 +111,13 @@ export const adminRoutes: RouteObject[] = [
   resourceRoute('spot/orders', 'spotOrders'),
   resourceRoute('spot/trades', 'spotTrades'),
   resourceRoute('new-coins/projects', 'newCoinProjects'),
+  guardedLazyRoute('new-coins/projects/:projectId', async () => (await import('./new-coins/NewCoinProjectPage')).NewCoinProjectPage),
   guardedLazyRoute('new-coins/actions', async () => (await import('./actions/NewCoinActions')).NewCoinActions),
   resourceRoute('new-coins/subscriptions', 'newCoinSubscriptions'),
   resourceRoute('new-coins/distributions', 'newCoinDistributions'),
   resourceRoute('new-coins/purchases', 'newCoinPurchases'),
-  resourceRoute('new-coins/lock-positions', 'newCoinLockPositions'),
-  resourceRoute('new-coins/unlocks', 'newCoinUnlocks'),
+  guardedLazyRoute('new-coins/lock-positions', async () => (await import('./new-coins/NewCoinResourcePage')).NewCoinLocksPage),
+  guardedLazyRoute('new-coins/unlocks', async () => (await import('./new-coins/NewCoinResourcePage')).NewCoinLocksPage),
   resourceRoute('market/pairs', 'marketPairs'),
   resourceRoute('market/strategies', 'marketStrategies'),
   {

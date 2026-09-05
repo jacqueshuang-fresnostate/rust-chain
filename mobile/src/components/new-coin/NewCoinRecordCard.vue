@@ -30,6 +30,8 @@ const status = computed(() => {
     processing: 'newCoin.statusProcessing',
     completed: 'newCoin.statusCompleted',
     allocated: 'newCoin.statusAllocated',
+    partial_allocated: 'newCoin.statusPartialAllocated',
+    refunded: 'newCoin.statusRefunded',
     distributed: 'newCoin.statusDistributed',
     locked: 'newCoin.statusLocked',
     available: 'newCoin.statusAvailable',
@@ -63,15 +65,24 @@ const quoteSymbol = computed(() => {
     : t('newCoin.unavailableValue')
 })
 const secondaryLabel = computed(() => {
+  if (props.record.subscription?.settlementMode === 'manual_distribution') return t(props.record.status === 'pending' ? 'newCoin.frozenLabel' : 'newCoin.settledRefundLabel')
   if (props.record.subscription) return t('newCoin.paidLabel')
   if (props.record.distribution) return t('newCoin.distributionDestination')
   if (props.record.purchase) return t('newCoin.paidLabel')
   return props.record.unlock?.unlockFeeEnabled ? t('newCoin.unlockFee') : t('newCoin.release')
 })
 const secondaryAmount = computed(() => {
-  if (props.record.subscription) return `${format(props.record.subscription.quoteAmountText, quoteSymbol.value)} ${quoteSymbol.value}`
+  const subscription = props.record.subscription
+  if (subscription?.settlementMode === 'manual_distribution') {
+    const amount = subscription.status === 'pending'
+      ? format(subscription.frozenQuoteAmountText, quoteSymbol.value)
+      : `${format(subscription.settledQuoteAmountText, quoteSymbol.value)} / ${format(subscription.refundedQuoteAmountText, quoteSymbol.value)}`
+    return `${amount} ${quoteSymbol.value}`
+  }
+  if (subscription) return `${format(subscription.quoteAmountText, quoteSymbol.value)} ${quoteSymbol.value}`
   if (props.record.purchase) return `${format(props.record.purchase.quoteAmountText, quoteSymbol.value)} ${quoteSymbol.value}`
   if (props.record.distribution) {
+    if (props.record.distribution.status === 'refunded') return t('newCoin.statusRefunded')
     return props.record.distribution.lockPositionId
       ? t('newCoin.lockPositionNumber', { id: props.record.distribution.lockPositionId })
       : t('newCoin.credited')

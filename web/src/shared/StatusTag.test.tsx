@@ -8,7 +8,7 @@ describe('StatusTag', () => {
     ['partially_filled', '部分成交'],
     ['cancelled', '已取消'],
     ['preheat', '预热中'],
-    ['subscription', '发行申购'],
+    ['subscription', '申购中'],
     ['distribution', '派发中'],
     ['listed', '已上市'],
     ['not_required', '无需支付'],

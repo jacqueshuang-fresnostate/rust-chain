@@ -45,13 +45,13 @@ function response(logs: AdminAuditLog[] = [auditLog()]): AdminAuditLogsResponse 
   return { logs, total: logs.length };
 }
 
-function renderPage(): ReturnType<typeof render> {
+function renderPage(initialEntry = "/admin/audit-logs"): ReturnType<typeof render> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } }
   });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{children}</MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>{children}</MemoryRouter>
     </QueryClientProvider>
   );
   return render(<AuditLogsPage />, { wrapper });
@@ -61,6 +61,13 @@ describe('AuditLogsPage', () => {
   beforeEach(() => {
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue(response());
+  });
+
+  it('applies project deep-link filters to the first authoritative request', async () => {
+    renderPage('/admin/audit-logs?target_type=new_coin_project&target_id=7001&unknown=ignored');
+    await waitFor(()=>expect(apiRequestMock).toHaveBeenCalled());
+    const params=new URL(String(apiRequestMock.mock.calls[0][0]),'http://localhost').searchParams;
+    expect(params.get('target_type')).toBe('new_coin_project');expect(params.get('target_id')).toBe('7001');expect(params.has('unknown')).toBe(false);
   });
 
   it('renders Chinese actions, object links, field-level differences, actor context, and recursive masks', async () => {

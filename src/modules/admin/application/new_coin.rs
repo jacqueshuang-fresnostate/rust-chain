@@ -6,6 +6,11 @@
 //! 派发是本文件唯一动用户资产的用例，它以请求幂等键防重复发币，并按项目解锁规则决定直接入账还是转锁仓。
 
 use super::*;
+use crate::modules::admin::infrastructure::{
+    ensure_manual_new_coin_subscriptions_settled_in_tx, find_admin_new_coin_distribution_in_tx,
+    new_coin_project_order_counts_in_tx, settle_manual_new_coin_subscription_in_tx,
+    update_new_coin_issuance_in_tx,
+};
 use crate::modules::new_coin::service::{
     ensure_new_coin_amount_precision, ensure_unlock_fee_asset_matches_quote_asset,
 };
@@ -78,7 +83,7 @@ fn ensure_active_distribution_user(user: &AdminUserResponse) -> AppResult<()> {
 }
 
 /// 分页读取新币项目的发行、生命周期、解锁、手续费和上市后购买配置，并返回总数。
-/// 当前查询不提供业务筛选，只裁剪 limit/offset；读取不锁项目，也不聚合认购或派发金额。
+/// 币种模糊匹配、阶段和启用状态使用同一列表/计数谓词；读取不锁项目，也不聚合认购或派发金额。
 pub(crate) async fn list_admin_new_coin_projects(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinProjectQuery,
@@ -88,6 +93,9 @@ pub(crate) async fn list_admin_new_coin_projects(
         &pool,
         route_limit(query.limit),
         route_offset(query.offset),
+        query.symbol.and_then(optional_string),
+        query.lifecycle_status.and_then(optional_string),
+        query.status.and_then(optional_string),
     )
     .await?;
     Ok(NewCoinProjectsResponse { projects, total })
@@ -353,7 +361,7 @@ pub(crate) async fn create_admin_new_coin_project(
 }
 
 /// 按领域迁移图推进新币项目生命周期，并返回更新后的项目快照。
-/// 请求目标只接受预热、认购、派发或上市；管理员权限由调用方保证，进入上市时缺省使用当前时间作为 listed_at。
+/// 请求目标只接受预热、认购、派发或上市；管理员权限由调用方保证，进入上市时只用服务端时间写 actual_listed_at，保留原计划 listed_at。
 /// 事务先锁项目，基于锁后旧状态校验迁移，再更新生命周期、回读并写生命周期事件和后台审计；非法迁移或数据库失败整体回滚。
 /// 相同目标重放通常因迁移图返回错误，不会重复推进；本用例不触发自动派发或交易对上线。
 pub(crate) async fn update_admin_new_coin_lifecycle(
@@ -363,26 +371,34 @@ pub(crate) async fn update_admin_new_coin_lifecycle(
     request: UpdateNewCoinLifecycleRequest,
 ) -> AppResult<NewCoinProjectResponse> {
     let target_status = parse_lifecycle_status_from_request(&request.lifecycle_status)?;
+    if request.listed_at.is_some() {
+        return Err(AppError::Validation(
+            "actual listing time is server-owned; configure the planned time in unlock settings"
+                .into(),
+        ));
+    }
     let pool = admin_mysql_pool(pool)?;
 
     // 生命周期流转必须先锁定项目行，再校验当前状态到目标状态的单向流转规则。
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
     ensure_active_new_coin_project(&before)?;
+    ensure_new_coin_config_version(&before, request.expected_config.as_deref())?;
     let current_status = parse_lifecycle_status_from_db(&before.lifecycle_status)?;
     current_status
         .transition_to(target_status)
         .map_err(|_| AppError::Validation("invalid new coin lifecycle transition".to_owned()))?;
-    let listed_at = if target_status == LifecycleStatus::Listed {
-        Some(request.listed_at.unwrap_or_else(Utc::now))
+    let actual_listed_at = if target_status == LifecycleStatus::Listed {
+        ensure_manual_new_coin_subscriptions_settled_in_tx(&mut tx, project_id).await?;
+        Some(Utc::now())
     } else {
-        before.listed_at
+        before.actual_listed_at
     };
     update_admin_new_coin_project_lifecycle_in_tx(
         &mut tx,
         project_id,
         lifecycle_status_value(target_status),
-        listed_at,
+        actual_listed_at,
     )
     .await?;
     let after = load_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
@@ -417,6 +433,7 @@ pub(crate) async fn update_admin_new_coin_unlock_rule(
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
     ensure_active_new_coin_project(&before)?;
+    ensure_new_coin_config_version(&before, request.expected_config.as_deref())?;
     let unlock_type = request.unlock_type.trim().to_owned();
     let listed_at = if unlock_type == "immediate_on_listing" {
         request.listed_at
@@ -466,6 +483,7 @@ pub(crate) async fn update_admin_new_coin_unlock_fee_rule(
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
     ensure_active_new_coin_project(&before)?;
+    ensure_new_coin_config_version(&before, request.expected_config.as_deref())?;
     ensure_unlock_fee_asset_matches_quote_asset(
         request.unlock_fee_enabled,
         request.unlock_fee_asset,
@@ -535,6 +553,7 @@ pub(crate) async fn update_admin_new_coin_post_listing_purchase(
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
     ensure_active_new_coin_project(&before)?;
+    ensure_new_coin_config_version(&before, request.expected_config.as_deref())?;
     ensure_post_listing_purchase_lifecycle(&before)?;
     if request.enabled {
         let pair_id = request.pair_id.ok_or_else(|| {
@@ -592,6 +611,19 @@ pub(crate) async fn distribute_admin_new_coin(
     // 派发会同时影响申购单、钱包余额、锁仓明细、生命周期事件和后台审计，必须放入同一事务。
     let mut tx = pool.begin().await?;
     let project = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    if let Some(replay) = find_admin_new_coin_distribution_in_tx(&mut tx, &idempotency_key).await? {
+        if replay.project_id != project_id
+            || replay.user_id != request.user_id
+            || replay.subscription_id != request.subscription_id
+            || replay.quantity != request.quantity
+        {
+            return Err(AppError::Conflict(
+                "distribution idempotency key is bound to a different request".into(),
+            ));
+        }
+        tx.commit().await?;
+        return Ok(replay);
+    }
     ensure_active_new_coin_project(&project)?;
     ensure_distribution_lifecycle(&project)?;
     ensure_admin_new_coin_supply_invariant(&project)?;
@@ -600,18 +632,10 @@ pub(crate) async fn distribute_admin_new_coin(
         project.unlock_fee_asset,
         project.quote_asset_id,
     )?;
-    if admin_new_coin_idempotency_key_exists_in_tx(
-        &mut tx,
-        "new_coin_distributions",
-        &idempotency_key,
-    )
-    .await?
-    {
-        return Err(AppError::Conflict(
-            "new coin distribution has already been created".to_owned(),
-        ));
-    }
     let mut asset_ids = vec![project.asset_id];
+    if request.subscription_id.is_some() {
+        asset_ids.extend(project.quote_asset_id);
+    }
     if project.unlock_fee_enabled {
         asset_ids.extend(project.unlock_fee_asset);
     }
@@ -634,52 +658,97 @@ pub(crate) async fn distribute_admin_new_coin(
     } else {
         None
     };
-    reserve_admin_new_coin_supply_in_tx(&mut tx, project_id, &request.quantity).await?;
     ensure_admin_user_exists_in_tx(&mut tx, request.user_id).await?;
     let distribution_user = load_admin_user_in_tx(&mut tx, request.user_id).await?;
     ensure_active_distribution_user(&distribution_user)?;
-    let purchase_cost = if let Some(subscription_id) = request.subscription_id {
-        apply_admin_new_coin_subscription_distribution_in_tx(
+    let mut wallet_assets = vec![project.asset_id];
+    if request.subscription_id.is_some() {
+        wallet_assets.extend(project.quote_asset_id);
+    }
+    wallet_assets.sort_unstable();
+    wallet_assets.dedup();
+    for asset_id in wallet_assets {
+        lock_admin_new_coin_distribution_wallet_in_tx(&mut tx, request.user_id, asset_id).await?;
+    }
+    let manual_payment = if let Some(subscription_id) = request.subscription_id {
+        let quote_asset = project
+            .quote_asset_id
+            .ok_or_else(|| AppError::Conflict("project quote asset is missing".into()))?;
+        settle_manual_new_coin_subscription_in_tx(
             &mut tx,
             subscription_id,
             project_id,
             request.user_id,
+            quote_asset,
             &request.quantity,
+            new_coin_asset_precision(&precisions, quote_asset)?,
         )
         .await?
     } else {
-        BigDecimal::from(0)
+        None
     };
-
-    lock_admin_new_coin_distribution_wallet_in_tx(&mut tx, request.user_id, project.asset_id)
-        .await?;
+    let purchase_cost = if let Some(payment) = manual_payment {
+        payment
+    } else {
+        // 旧模式订单与额外赠币没有新模式预留；仍须从剩余供给预留，不触碰历史已支付款。
+        if request.quantity <= 0 {
+            return Err(AppError::Validation(
+                "zero quantity refund requires a pending manual subscription".into(),
+            ));
+        }
+        reserve_admin_new_coin_supply_in_tx(&mut tx, project_id, &request.quantity).await?;
+        if let Some(subscription_id) = request.subscription_id {
+            apply_admin_new_coin_subscription_distribution_in_tx(
+                &mut tx,
+                subscription_id,
+                project_id,
+                request.user_id,
+                &request.quantity,
+            )
+            .await?
+        } else {
+            BigDecimal::from(0)
+        }
+    };
     let source_time = Utc::now();
-    let lock_positions = lock_positions_for_distribution(
-        &project,
-        request.user_id,
-        project.asset_id,
-        &idempotency_key,
-        request.quantity.clone(),
-        source_time,
-    )?;
-    let lock_position_id = apply_admin_new_coin_distribution_allocation_in_tx(
-        &mut tx,
-        request.user_id,
-        project.asset_id,
-        &request.quantity,
-        &lock_positions,
-        &project,
-        &purchase_cost,
-        unlock_fee_precision,
-        AdminNewCoinLedgerWrite {
-            change_type: "new_coin_distribution_lock",
-            ref_type: "new_coin_distribution",
-            ref_id: &idempotency_key,
-        },
-    )
-    .await?;
-    finalize_admin_new_coin_supply_in_tx(&mut tx, project_id, &request.quantity).await?;
-    let status = if lock_position_id.is_some() {
+    let lock_positions = if request.quantity == 0 {
+        Vec::new()
+    } else {
+        lock_positions_for_distribution(
+            &project,
+            request.user_id,
+            project.asset_id,
+            &idempotency_key,
+            request.quantity.clone(),
+            source_time,
+        )?
+    };
+    let lock_position_id = if request.quantity == 0 {
+        None
+    } else {
+        apply_admin_new_coin_distribution_allocation_in_tx(
+            &mut tx,
+            request.user_id,
+            project.asset_id,
+            &request.quantity,
+            &lock_positions,
+            &project,
+            &purchase_cost,
+            unlock_fee_precision,
+            AdminNewCoinLedgerWrite {
+                change_type: "new_coin_distribution_lock",
+                ref_type: "new_coin_distribution",
+                ref_id: &idempotency_key,
+            },
+        )
+        .await?
+    };
+    if request.quantity > 0 {
+        finalize_admin_new_coin_supply_in_tx(&mut tx, project_id, &request.quantity).await?;
+    }
+    let status = if request.quantity == 0 {
+        "refunded"
+    } else if lock_position_id.is_some() {
         "locked"
     } else {
         "completed"
@@ -819,4 +888,132 @@ async fn record_admin_new_coin_project_change_in_tx(
         },
     )
     .await
+}
+
+/// 按 ID 读取项目中心，项目与订单计数来自同一事务快照，不依赖引用列表首屏。
+pub(crate) async fn get_admin_new_coin_project_center(
+    pool: Option<Pool<MySql>>,
+    project_id: u64,
+) -> AppResult<crate::modules::admin::presentation::NewCoinProjectCenterResponse> {
+    let pool = admin_mysql_pool(pool)?;
+    let mut tx = pool.begin().await?;
+    let project = load_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    let (subscription_count, pending_manual_count) =
+        new_coin_project_order_counts_in_tx(&mut tx, project_id).await?;
+    let issuance_editable = new_coin_issuance_editable(&project, subscription_count);
+    let next = match project.lifecycle_status.as_str() {
+        "preheat" => Some("subscription"),
+        "subscription" => Some("distribution"),
+        "distribution" => Some("listed"),
+        _ => None,
+    };
+    let lifecycle_block_reason = if project.status != "active" {
+        Some("项目未启用".to_owned())
+    } else if next == Some("listed") && pending_manual_count > 0 {
+        Some("仍有待派发或待退款申购，请先完成结算".to_owned())
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok(
+        crate::modules::admin::presentation::NewCoinProjectCenterResponse {
+            configuration_version: new_coin_project_audit_json(&project).to_string(),
+            project,
+            subscription_count,
+            pending_manual_count,
+            issuance_editable,
+            next_lifecycle_status: next.map(str::to_owned),
+            lifecycle_block_reason,
+        },
+    )
+}
+
+fn new_coin_issuance_editable(project: &NewCoinProjectResponse, order_count: i64) -> bool {
+    project.status == "active"
+        && project.lifecycle_status == "preheat"
+        && order_count == 0
+        && project.reserved_supply == 0
+        && project.allocated_supply == 0
+        && project.remaining_supply == project.total_supply
+}
+
+/// 只编辑未产生业务的预热项目发行价/总量；锁后检查阶段、原值、订单和精度，成功写同事务审计。
+pub(crate) async fn update_admin_new_coin_issuance(
+    pool: Option<Pool<MySql>>,
+    admin_id: u64,
+    project_id: u64,
+    request: crate::modules::admin::presentation::UpdateNewCoinIssuanceRequest,
+) -> AppResult<NewCoinProjectResponse> {
+    crate::modules::admin::service::required_admin_audit_reason(request.reason.clone())?;
+    if request.total_supply <= 0 || request.issue_price <= 0 {
+        return Err(AppError::Validation(
+            "total_supply and issue_price must be positive".into(),
+        ));
+    }
+    let pool = admin_mysql_pool(pool)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    let (count, _) = new_coin_project_order_counts_in_tx(&mut tx, project_id).await?;
+    if !new_coin_issuance_editable(&before, count) {
+        return Err(AppError::Conflict(
+            "issuance can only be edited before subscription or allocation".into(),
+        ));
+    }
+    if before.issue_price != request.expected_issue_price
+        || before.total_supply != request.expected_total_supply
+    {
+        return Err(AppError::Conflict(
+            "new coin issuance changed; reload before editing".into(),
+        ));
+    }
+    let quote = before
+        .quote_asset_id
+        .ok_or_else(|| AppError::Validation("quote asset required".into()))?;
+    let precisions =
+        lock_new_coin_asset_precisions_in_order(&mut tx, [before.asset_id, quote]).await?;
+    ensure_new_coin_amount_precision(
+        &request.total_supply,
+        new_coin_asset_precision(&precisions, before.asset_id)?,
+        "total_supply",
+    )?;
+    // 与创建项目保持同一计价资产精度，禁止编辑写入时隐式舍入。
+    ensure_new_coin_amount_precision(
+        &request.issue_price,
+        new_coin_asset_precision(&precisions, quote)?,
+        "issue_price",
+    )?;
+    update_new_coin_issuance_in_tx(
+        &mut tx,
+        project_id,
+        &request.total_supply,
+        &request.issue_price,
+    )
+    .await?;
+    let after = load_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    record_admin_new_coin_project_change_in_tx(
+        &mut tx,
+        admin_id,
+        project_id,
+        "new_coin_project.issuance.update",
+        &before,
+        &after,
+        request.reason,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(after)
+}
+
+/// 新编辑器携带原始配置版本；旧调用保持兼容，版本不匹配时禁止覆盖陈旧快照。
+fn ensure_new_coin_config_version(
+    project: &NewCoinProjectResponse,
+    expected: Option<&str>,
+) -> AppResult<()> {
+    let current = new_coin_project_audit_json(project).to_string();
+    if expected.is_some_and(|value| value != current) {
+        return Err(AppError::Conflict(
+            "new coin configuration changed; reload before saving".into(),
+        ));
+    }
+    Ok(())
 }

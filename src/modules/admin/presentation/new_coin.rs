@@ -4,6 +4,9 @@ use super::*;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminNewCoinProjectQuery {
+    pub(crate) symbol: Option<String>,
+    pub(crate) lifecycle_status: Option<String>,
+    pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,
 }
@@ -95,6 +98,7 @@ impl PresentationLayer for CreateNewCoinProjectRequest {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateNewCoinLifecycleRequest {
+    pub(crate) expected_config: Option<String>,
     pub(crate) lifecycle_status: String,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) listed_at: Option<DateTime<Utc>>,
@@ -116,6 +120,7 @@ impl PresentationLayer for DistributeNewCoinRequest {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateNewCoinUnlockRuleRequest {
+    pub(crate) expected_config: Option<String>,
     pub(crate) unlock_type: String,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) listed_at: Option<DateTime<Utc>>,
@@ -129,6 +134,7 @@ impl PresentationLayer for UpdateNewCoinUnlockRuleRequest {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateNewCoinUnlockFeeRuleRequest {
+    pub(crate) expected_config: Option<String>,
     pub(crate) unlock_fee_enabled: bool,
     pub(crate) unlock_fee_rate: Option<BigDecimal>,
     pub(crate) unlock_fee_basis: Option<String>,
@@ -140,6 +146,7 @@ impl PresentationLayer for UpdateNewCoinUnlockFeeRuleRequest {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateNewCoinPostListingPurchaseRequest {
+    pub(crate) expected_config: Option<String>,
     pub(crate) enabled: bool,
     pub(crate) pair_id: Option<u64>,
     pub(crate) reason: Option<String>,
@@ -173,6 +180,8 @@ pub(crate) struct NewCoinProjectResponse {
     pub(crate) remaining_supply: BigDecimal,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) listed_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) actual_listed_at: Option<DateTime<Utc>>,
     pub(crate) unlock_type: String,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) fixed_unlock_at: Option<DateTime<Utc>>,
@@ -203,7 +212,12 @@ pub(crate) struct NewCoinSubscriptionResponse {
     pub(crate) project_id: u64,
     pub(crate) user_id: u64,
     pub(crate) quote_asset: u64,
+    pub(crate) issue_price: BigDecimal,
     pub(crate) quote_amount: BigDecimal,
+    pub(crate) settlement_mode: String,
+    pub(crate) frozen_quote_amount: BigDecimal,
+    pub(crate) settled_quote_amount: Option<BigDecimal>,
+    pub(crate) refunded_quote_amount: Option<BigDecimal>,
     pub(crate) requested_quantity: BigDecimal,
     pub(crate) allocated_quantity: BigDecimal,
     pub(crate) status: String,
@@ -280,9 +294,12 @@ pub(crate) struct NewCoinLockPositionResponse {
     pub(crate) id: u64,
     pub(crate) user_id: u64,
     pub(crate) asset_id: u64,
+    pub(crate) listing_project_id: Option<u64>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) actual_listing_at: Option<DateTime<Utc>>,
     pub(crate) unlock_type: String,
-    #[serde(with = "unix_millis")]
-    pub(crate) unlock_at: DateTime<Utc>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) unlock_at: Option<DateTime<Utc>>,
     pub(crate) locked_amount: BigDecimal,
     pub(crate) released_amount: BigDecimal,
     pub(crate) remaining_amount: BigDecimal,
@@ -344,3 +361,25 @@ pub(crate) struct NewCoinConvertRuleResponse {
 }
 
 impl PresentationLayer for NewCoinConvertRuleResponse {}
+
+/// 项目中心返回权威快照及阶段操作提示；提示不替代写事务中的二次校验。
+#[derive(Debug, Serialize)]
+pub(crate) struct NewCoinProjectCenterResponse {
+    pub(crate) configuration_version: String,
+    pub(crate) project: NewCoinProjectResponse,
+    pub(crate) subscription_count: i64,
+    pub(crate) pending_manual_count: i64,
+    pub(crate) issuance_editable: bool,
+    pub(crate) next_lifecycle_status: Option<String>,
+    pub(crate) lifecycle_block_reason: Option<String>,
+}
+
+/// 发行参数仅允许在预热且没有订单或供给占用时修改；原值用于拒绝陈旧编辑。
+#[derive(Debug, Deserialize)]
+pub(crate) struct UpdateNewCoinIssuanceRequest {
+    pub(crate) total_supply: BigDecimal,
+    pub(crate) issue_price: BigDecimal,
+    pub(crate) expected_total_supply: BigDecimal,
+    pub(crate) expected_issue_price: BigDecimal,
+    pub(crate) reason: Option<String>,
+}

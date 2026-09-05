@@ -25,6 +25,7 @@ export type AdminNavItem = {
   icon?: ReactNode;
   label: string;
   path?: string;
+  relatedPaths?: string[];
   children?: AdminNavItem[];
 };
 
@@ -86,16 +87,14 @@ export const adminNavItems: AdminNavItem[] = [
     ]
   },
   {
-    label: '新币生命周期',
+    label: '新币管理',
     icon: <IconBell aria-hidden="true" />,
     children: [
-      { path: '/admin/new-coins/projects', label: '新币项目' },
-      { path: '/admin/new-coins/actions', label: '生命周期动作' },
-      { path: '/admin/new-coins/subscriptions', label: '发行申购' },
-      { path: '/admin/new-coins/distributions', label: '派发记录' },
-      { path: '/admin/new-coins/purchases', label: '上市认购' },
-      { path: '/admin/new-coins/lock-positions', label: '锁仓仓位' },
-      { path: '/admin/new-coins/unlocks', label: '解禁记录' }
+      { path: '/admin/new-coins/projects', label: '项目管理' },
+      { path: '/admin/new-coins/subscriptions', label: '申购与配售' },
+      { path: '/admin/new-coins/distributions', label: '派发与退款记录' },
+      { path: '/admin/new-coins/purchases', label: '上市后购买' },
+      { path: '/admin/new-coins/lock-positions', relatedPaths: ['/admin/new-coins/unlocks'], label: '锁仓与解禁' }
     ]
   },
   {

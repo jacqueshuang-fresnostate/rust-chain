@@ -55,6 +55,10 @@ export interface NewCoinSubscription {
   status: string
   idempotencyKey: string
   createdAt: number
+  settlementMode?: string
+  frozenQuoteAmountText?: DecimalText
+  settledQuoteAmountText?: DecimalText
+  refundedQuoteAmountText?: DecimalText
 }
 
 export interface NewCoinDistribution {
@@ -135,6 +139,7 @@ export function mapNewCoinProject(raw: Record<string, unknown>): NewCoinProject 
 }
 
 export function mapNewCoinSubscription(raw: Record<string, unknown>): NewCoinSubscription {
+  const settlementDecimal = raw.settlement_mode === 'manual_distribution' ? decimal : optionalDecimal
   return {
     id: requiredId(raw.id, 'subscription.id'),
     projectId: requiredId(raw.project_id, 'subscription.project_id'),
@@ -143,6 +148,10 @@ export function mapNewCoinSubscription(raw: Record<string, unknown>): NewCoinSub
     quoteAmountText: decimal(raw.quote_amount, 'subscription.quote_amount'),
     requestedQuantityText: decimal(raw.requested_quantity, 'subscription.requested_quantity'),
     allocatedQuantityText: decimal(raw.allocated_quantity, 'subscription.allocated_quantity'),
+    settlementMode: optionalText(raw.settlement_mode, 'subscription.settlement_mode'),
+    frozenQuoteAmountText: settlementDecimal(raw.frozen_quote_amount, 'subscription.frozen_quote_amount'),
+    settledQuoteAmountText: settlementDecimal(raw.settled_quote_amount, 'subscription.settled_quote_amount'),
+    refundedQuoteAmountText: settlementDecimal(raw.refunded_quote_amount, 'subscription.refunded_quote_amount'),
     status: requiredText(raw.status, 'subscription.status'),
     idempotencyKey: requiredText(raw.idempotency_key, 'subscription.idempotency_key'),
     createdAt: requiredTimestamp(raw.created_at, 'subscription.created_at'),

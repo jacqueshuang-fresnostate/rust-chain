@@ -47,6 +47,10 @@ const FIELD_LABELS: Record<string, string> = {
   agent_code: '代理编号',
   agent_id: '代理ID',
   allocated_quantity: '获配数量',
+  settlement_mode: '结算模式',
+  frozen_quote_amount: '待结算冻结',
+  settled_quote_amount: '实际扣款',
+  refunded_quote_amount: '退回差额',
   amount: '金额',
   apr_rate: '年化利率',
   redemption_fee_rate: '提现赎回手续费率',
@@ -247,7 +251,7 @@ const FIELD_VALUE_LABELS: Record<string, Record<string, string>> = {
   },
   lifecycle_status: {
     preheat: '预热中',
-    subscription: '发行申购',
+    subscription: '申购中',
     distribution: '派发中',
     listed: '已上市'
   },

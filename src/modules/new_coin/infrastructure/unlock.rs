@@ -3,7 +3,9 @@
 //! 本子模块只负责两条紧密关联的资金链：真实扣除解禁费并固化结算证据，
 //! 以及在到期后复核证据、把 locked 原子迁移到 available。公共适配器类型仍由父 façade 导出。
 
-use super::{MySqlNewCoinReadRepository, debit_wallet_available, lock_wallet_row};
+use super::{
+    MySqlNewCoinReadRepository, debit_wallet_available, lock_wallet_row, unlock_eligibility::*,
+};
 use crate::{
     error::{AppError, AppResult},
     modules::new_coin::{
@@ -345,12 +347,23 @@ async fn ensure_paid_unlock_fee_evidence_in_tx(
 
 #[async_trait]
 impl NewCoinUnlockReleaseRepository for MySqlNewCoinReadRepository {
+    async fn release_due_paid_unlock(
+        &self,
+        key: &str,
+        user_id: u64,
+    ) -> AppResult<ReleaseUnlockOutcome> {
+        self.release_due_paid_unlock_at(key, user_id, chrono::Utc::now())
+            .await
+    }
+}
+
+impl MySqlNewCoinReadRepository {
     /// 在单个事务内完成一笔到期解禁的资金释放，把锁仓额度转成可用余额并留下完整审计。
     /// 进入事务前先无锁确认该幂等键与用户存在对应记录，缺失直接返回 `NotFound`，不为非法键开事务。
     /// 事务内按固定顺序取锁：资产、钱包，再用联表 `FOR UPDATE` 锁解禁记录与锁仓位置，
     /// 与下单及缴费路径保持同向，避免释放与新分配形成反向等待。
     /// 放行条件必须同时成立：记录未释放、锁仓仍为 active、解禁时点已到、剩余量足够本次数量，
-    /// 且项目未开启解禁收费或该记录已缴费。
+    /// 且记录无需费用、真实零费用，或具备钱包扣款与平台双腿费用证据；上市门禁等待真实事件。
     /// 条件不成立时若记录已是 released，判定为重放，提交空事务并以 `released = false`
     /// 回吐既有资产与数量；否则返回 `Validation` 表示未到期或未缴费，事务回滚不留痕迹。
     /// 资金只有一个流向：从 `wallet_accounts.locked` 扣减并等额加到 `available`，
@@ -360,10 +373,11 @@ impl NewCoinUnlockReleaseRepository for MySqlNewCoinReadRepository {
     /// 分别记录 locked 腿的负变动与 available 腿的正变动，ref_id 取解禁幂等键便于反查。
     /// 钱包账户缺失、locked 余额不足或锁仓剩余量被并发占用时整体回滚，
     /// 绝不出现只改了余额却没有账本、或只释放锁仓却没入账的中间态。
-    async fn release_due_paid_unlock(
+    pub(crate) async fn release_due_paid_unlock_at(
         &self,
         unlock_idempotency_key: &str,
         user_id: u64,
+        now: chrono::DateTime<chrono::Utc>,
     ) -> AppResult<ReleaseUnlockOutcome> {
         let locator = sqlx::query_as::<_, UnlockReleaseLocatorRow>(
             r#"SELECT asset_id, unlock_quantity, status
@@ -389,67 +403,23 @@ impl NewCoinUnlockReleaseRepository for MySqlNewCoinReadRepository {
         let precision = lock_asset_precision_in_tx(&mut tx, locator.asset_id).await?;
         ensure_new_coin_amount_precision(&locator.unlock_quantity, precision, "unlock_quantity")?;
         let wallet = lock_wallet_row(&mut tx, user_id, locator.asset_id).await?;
-        let Some(row) = sqlx::query_as::<_, ReleasableUnlockRow>(
+        let query = format!(
             r#"SELECT unlocks.id AS unlock_id, unlocks.asset_id, unlocks.lock_position_id,
                       unlocks.unlock_quantity, positions.remaining_amount
                FROM asset_unlock_records unlocks
                INNER JOIN asset_lock_positions positions ON positions.id = unlocks.lock_position_id
                WHERE unlocks.idempotency_key = ? AND unlocks.user_id = ?
-                 AND unlocks.status <> 'released'
-                 AND positions.status = 'active'
-                 AND positions.unlock_at <= CURRENT_TIMESTAMP(6)
-                 AND positions.remaining_amount >= unlocks.unlock_quantity
-                 AND (
-                    unlocks.unlock_fee_enabled = false
-                    OR (
-                        unlocks.fee_paid_status = 'not_required'
-                        AND unlocks.unlock_fee_asset IS NOT NULL
-                        AND unlocks.unlock_fee_amount = 0
-                    )
-                    OR (
-                        unlocks.fee_paid_status = 'paid'
-                        AND unlocks.fee_paid_at IS NOT NULL
-                        AND unlocks.unlock_fee_payment_ledger_id IS NOT NULL
-                        AND EXISTS (
-                            SELECT 1 FROM wallet_ledger ledger
-                            WHERE ledger.id = unlocks.unlock_fee_payment_ledger_id
-                              AND ledger.user_id = unlocks.user_id
-                              AND ledger.asset_id = unlocks.unlock_fee_asset
-                              AND ledger.change_type = 'new_coin_unlock_fee_payment'
-                              AND ledger.amount = -unlocks.unlock_fee_amount
-                              AND ledger.balance_type = 'available'
-                              AND ledger.ref_type = 'new_coin_unlock'
-                              AND ledger.ref_id = unlocks.idempotency_key
-                        )
-                        AND EXISTS (
-                            SELECT 1 FROM platform_financial_journal journal
-                            WHERE journal.transaction_key = CONCAT('new_coin_unlock_fee:', unlocks.id)
-                              AND journal.context = 'new_coin_unlock_fee'
-                              AND journal.account_code = 'user_unlock_fee_expense'
-                              AND journal.asset_id = unlocks.unlock_fee_asset
-                              AND journal.amount = -unlocks.unlock_fee_amount
-                              AND journal.ref_type = 'new_coin_unlock'
-                              AND journal.ref_id = CAST(unlocks.id AS CHAR)
-                        )
-                        AND EXISTS (
-                            SELECT 1 FROM platform_financial_journal journal
-                            WHERE journal.transaction_key = CONCAT('new_coin_unlock_fee:', unlocks.id)
-                              AND journal.context = 'new_coin_unlock_fee'
-                              AND journal.account_code = 'platform_unlock_fee_revenue'
-                              AND journal.asset_id = unlocks.unlock_fee_asset
-                              AND journal.amount = unlocks.unlock_fee_amount
-                              AND journal.ref_type = 'new_coin_unlock'
-                              AND journal.ref_id = CAST(unlocks.id AS CHAR)
-                        )
-                    )
-                 )
-               LIMIT 1
-               FOR UPDATE"#,
-        )
-        .bind(unlock_idempotency_key)
-        .bind(user_id)
-        .fetch_optional(&mut *tx)
-        .await?
+                 AND {UNLOCK_IDENTITY_SQL} AND {UNLOCK_MATURITY_SQL}
+                 AND {UNLOCK_FEE_EVIDENCE_SQL}
+               LIMIT 1 FOR UPDATE"#
+        );
+        let Some(row) = sqlx::query_as::<_, ReleasableUnlockRow>(&query)
+            .bind(unlock_idempotency_key)
+            .bind(user_id)
+            .bind(now.naive_utc())
+            .bind(now.naive_utc())
+            .fetch_optional(&mut *tx)
+            .await?
         else {
             if let Some((asset_id, unlock_quantity)) = sqlx::query_as::<_, (u64, BigDecimal)>(
                 r#"SELECT asset_id, unlock_quantity
@@ -470,10 +440,7 @@ impl NewCoinUnlockReleaseRepository for MySqlNewCoinReadRepository {
                     released: false,
                 });
             }
-            return Err(AppError::Validation(
-                "unlock is not releasable until unlock time is reached and required fee is paid"
-                    .to_owned(),
-            ));
+            return Err(AppError::Validation(UNLOCK_NOT_READY.to_owned()));
         };
 
         if row.asset_id != locator.asset_id
@@ -520,7 +487,7 @@ impl NewCoinUnlockReleaseRepository for MySqlNewCoinReadRepository {
         }
 
         let unlock_updated = sqlx::query(
-            "UPDATE asset_unlock_records SET status = 'released' WHERE id = ? AND status <> 'released'",
+            "UPDATE asset_unlock_records SET status = 'released' WHERE id = ? AND status = 'pending'",
         )
             .bind(row.unlock_id)
             .execute(&mut *tx)

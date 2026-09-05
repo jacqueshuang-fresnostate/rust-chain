@@ -367,7 +367,6 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 12px;
   margin: 0 auto;
-  max-width: 358px;
   width: 100%;
 }
 

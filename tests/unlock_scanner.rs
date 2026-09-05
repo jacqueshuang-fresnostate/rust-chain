@@ -1,8 +1,16 @@
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
 use exchange_api::{
     config::Settings,
-    modules::events::{EventBroadcastHub, WebSocketChannel},
+    modules::{
+        auth::{TokenScope, issue_token},
+        events::{EventBroadcastHub, WebSocketChannel},
+        new_coin::{MySqlNewCoinRepository, UnlockFeePaymentUpdate, routes::user_routes},
+    },
     state::AppState,
     workers::unlock_scanner::{UnlockScannerWorker, release_due_unlock_positions},
 };
@@ -10,6 +18,7 @@ use secrecy::SecretString;
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 use std::{error::Error, str::FromStr, time::Duration};
 use tokio::{sync::Mutex, time::timeout};
+use tower::ServiceExt;
 use uuid::Uuid;
 
 static TEST_LOCK: Mutex<()> = Mutex::const_new(());
@@ -125,7 +134,7 @@ async fn seed_due_unlock(
     user_id: u64,
     asset_id: u64,
     fee_paid_status: &str,
-) -> Result<(u64, String), sqlx::Error> {
+) -> Result<(u64, String), Box<dyn Error>> {
     seed_unlock_record(
         pool,
         user_id,
@@ -153,7 +162,7 @@ async fn seed_unlock_record(
     record_user_id: u64,
     record_asset_id: u64,
     position_status: &str,
-) -> Result<(u64, String), sqlx::Error> {
+) -> Result<(u64, String), Box<dyn Error>> {
     sqlx::query(
         r#"INSERT INTO wallet_accounts (user_id, asset_id, locked)
            VALUES (?, ?, ?)
@@ -198,13 +207,24 @@ async fn seed_unlock_record(
     .bind(fee_enabled)
     .bind(decimal("0.04000000"))
     .bind(record_asset_id)
-    .bind(decimal("2.000000000000000000"))
-    .bind(fee_paid_status)
+    .bind(if fee_paid_status == "not_required" {
+        decimal("0")
+    } else {
+        decimal("2")
+    })
+    .bind(if fee_paid_status == "paid" {
+        "pending"
+    } else {
+        fee_paid_status
+    })
     .bind(unlock_status)
     .bind(&unlock_key)
     .execute(pool)
     .await?;
 
+    if fee_paid_status == "paid" {
+        pay_fixture_fee(pool, record_user_id, record_asset_id, &unlock_key).await?;
+    }
     Ok((lock_position_id, unlock_key))
 }
 
@@ -215,11 +235,13 @@ async fn cleanup_fixture(
     lock_position_id: u64,
     unlock_key: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?")
+    sqlx::query("DELETE FROM platform_financial_journal WHERE transaction_key = (SELECT CONCAT('new_coin_unlock_fee:', id) FROM asset_unlock_records WHERE idempotency_key = ?)")
+        .bind(unlock_key).execute(pool).await?;
+    sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key = ?")
         .bind(unlock_key)
         .execute(pool)
         .await?;
-    sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key = ?")
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?")
         .bind(unlock_key)
         .execute(pool)
         .await?;
@@ -302,7 +324,7 @@ async fn unlock_scanner_releases_due_paid_unlock_and_is_idempotent() -> Result<(
     assert_eq!(unlock_status, "released");
 
     let (ledger_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?",
+        "SELECT COUNT(*) FROM wallet_ledger WHERE change_type = 'new_coin_unlock_release' AND ref_type = 'new_coin_unlock' AND ref_id = ?",
     )
     .bind(&unlock_key)
     .fetch_one(&pool)
@@ -319,7 +341,7 @@ async fn unlock_scanner_releases_due_paid_unlock_and_is_idempotent() -> Result<(
     );
 
     let (ledger_count_after_second,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?",
+        "SELECT COUNT(*) FROM wallet_ledger WHERE change_type = 'new_coin_unlock_release' AND ref_type = 'new_coin_unlock' AND ref_id = ?",
     )
     .bind(&unlock_key)
     .fetch_one(&pool)
@@ -373,7 +395,7 @@ async fn unlock_scanner_blocks_due_unlock_until_required_fee_is_paid() -> Result
     assert_eq!(unlock_status, "pending");
 
     let (ledger_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?",
+        "SELECT COUNT(*) FROM wallet_ledger WHERE change_type = 'new_coin_unlock_release' AND ref_type = 'new_coin_unlock' AND ref_id = ?",
     )
     .bind(&unlock_key)
     .fetch_one(&pool)
@@ -540,6 +562,16 @@ async fn unlock_scanner_skips_cancelled_mismatched_and_non_positive_unlock_recor
     let summary = release_due_unlock_positions(&pool, scanner_now(), 100).await?;
 
     assert_eq!(summary.released, 0);
+    for (user, key) in [
+        (cancelled_user_id, &cancelled_key),
+        (mismatch_user_id, &mismatch_key),
+        (zero_user_id, &zero_key),
+    ] {
+        assert_eq!(
+            manual_release(&pool, user, key).await,
+            StatusCode::BAD_REQUEST
+        );
+    }
     for unlock_key in [&cancelled_key, &mismatch_key, &zero_key] {
         let (unlock_status,): (String,) =
             sqlx::query_as("SELECT status FROM asset_unlock_records WHERE idempotency_key = ?")
@@ -548,7 +580,7 @@ async fn unlock_scanner_skips_cancelled_mismatched_and_non_positive_unlock_recor
                 .await?;
         assert_ne!(unlock_status, "released");
         let (ledger_count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?",
+            "SELECT COUNT(*) FROM wallet_ledger WHERE change_type = 'new_coin_unlock_release' AND ref_type = 'new_coin_unlock' AND ref_id = ?",
         )
         .bind(unlock_key)
         .fetch_one(&pool)
@@ -603,5 +635,265 @@ async fn unlock_scanner_worker_run_once_uses_pool_and_limit() -> Result<(), Box<
 
     assert_eq!(summary.released, 1);
     cleanup_fixture(&pool, user_id, asset_id, lock_position_id, &unlock_key).await?;
+    Ok(())
+}
+
+async fn pay_fixture_fee(
+    pool: &MySqlPool,
+    user_id: u64,
+    asset_id: u64,
+    key: &str,
+) -> Result<(), Box<dyn Error>> {
+    sqlx::query(
+        "UPDATE wallet_accounts SET available = available + 2 WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .execute(pool)
+    .await?;
+    assert!(
+        MySqlNewCoinRepository::new(pool.clone())
+            .mark_unlock_fee_paid(UnlockFeePaymentUpdate {
+                unlock_idempotency_key: key.to_owned(),
+                user_id,
+                payment_asset_id: asset_id,
+                amount: decimal("2"),
+            })
+            .await
+            .unwrap()
+    );
+    Ok(())
+}
+
+async fn manual_release(pool: &MySqlPool, user_id: u64, key: &str) -> StatusCode {
+    let settings = test_settings();
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    user_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{key}/release"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn manual_and_scanner_reject_the_same_incomplete_fee_evidence() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _guard = TEST_LOCK.lock().await;
+    for corruption in [
+        "paid_flag",
+        "fake_zero",
+        "missing_wallet",
+        "wrong_wallet",
+        "missing_expense",
+        "wrong_revenue",
+    ] {
+        let user = create_user(&pool).await;
+        let asset = create_asset(&pool).await;
+        let (position, key) = seed_due_unlock(
+            &pool,
+            user,
+            asset,
+            if matches!(corruption, "paid_flag" | "fake_zero") {
+                "pending"
+            } else {
+                "paid"
+            },
+        )
+        .await?;
+        let sql = match corruption {
+            "paid_flag" => {
+                "UPDATE asset_unlock_records SET fee_paid_status='paid', fee_paid_at=CURRENT_TIMESTAMP(6) WHERE idempotency_key=?"
+            }
+            "fake_zero" => {
+                "UPDATE asset_unlock_records SET fee_paid_status='not_required' WHERE idempotency_key=?"
+            }
+            "missing_wallet" => {
+                "UPDATE asset_unlock_records SET unlock_fee_payment_ledger_id=NULL WHERE idempotency_key=?"
+            }
+            "wrong_wallet" => {
+                "UPDATE wallet_ledger SET amount=-1 WHERE id=(SELECT unlock_fee_payment_ledger_id FROM asset_unlock_records WHERE idempotency_key=?)"
+            }
+            "missing_expense" => {
+                "DELETE FROM platform_financial_journal WHERE account_code='user_unlock_fee_expense' AND transaction_key=(SELECT CONCAT('new_coin_unlock_fee:',id) FROM asset_unlock_records WHERE idempotency_key=?)"
+            }
+            _ => {
+                "UPDATE platform_financial_journal SET amount=1 WHERE account_code='platform_unlock_fee_revenue' AND transaction_key=(SELECT CONCAT('new_coin_unlock_fee:',id) FROM asset_unlock_records WHERE idempotency_key=?)"
+            }
+        };
+        sqlx::query(sql).bind(&key).execute(&pool).await?;
+        assert_eq!(
+            manual_release(&pool, user, &key).await,
+            StatusCode::BAD_REQUEST,
+            "{corruption}"
+        );
+        let summary = release_due_unlock_positions(&pool, scanner_now(), 100).await?;
+        assert_eq!(summary.released, 0, "{corruption}");
+        assert!(summary.blocked_fee >= 1, "{corruption}");
+        let (available, locked): (BigDecimal, BigDecimal) = sqlx::query_as(
+            "SELECT available,locked FROM wallet_accounts WHERE user_id=? AND asset_id=?",
+        )
+        .bind(user)
+        .bind(asset)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(available, decimal("0"));
+        assert_eq!(locked, decimal("10"));
+        cleanup_fixture(&pool, user, asset, position, &key).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn manual_and_scanner_race_releases_once_and_retains_other_wallet_buckets()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _guard = TEST_LOCK.lock().await;
+    // Cover actual zero fee as well as positive fee with complete evidence.
+    for status in ["not_required", "paid"] {
+        let user = create_user(&pool).await;
+        let asset = create_asset(&pool).await;
+        let (position, key) = seed_due_unlock(&pool, user, asset, status).await?;
+        sqlx::query("UPDATE wallet_accounts SET available=3, frozen=7, locked=locked+5 WHERE user_id=? AND asset_id=?").bind(user).bind(asset).execute(&pool).await?;
+        let (manual, worker) = tokio::join!(
+            manual_release(&pool, user, &key),
+            release_due_unlock_positions(&pool, scanner_now(), 100)
+        );
+        assert_eq!(manual, StatusCode::OK);
+        assert!(worker?.released <= 1);
+        assert_eq!(manual_release(&pool, user, &key).await, StatusCode::OK);
+        assert_eq!(
+            release_due_unlock_positions(&pool, scanner_now(), 100)
+                .await?
+                .released,
+            0
+        );
+        let balances: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+            "SELECT available,frozen,locked FROM wallet_accounts WHERE user_id=? AND asset_id=?",
+        )
+        .bind(user)
+        .bind(asset)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(balances, (decimal("13"), decimal("7"), decimal("5")));
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM wallet_ledger WHERE change_type='new_coin_unlock_release' AND ref_id=?").bind(&key).fetch_one(&pool).await?;
+        assert_eq!(count, 2);
+        cleanup_fixture(&pool, user, asset, position, &key).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn manual_and_scanner_rollback_when_release_ledger_fails() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _guard = TEST_LOCK.lock().await;
+    let user = create_user(&pool).await;
+    let asset = create_asset(&pool).await;
+    let (position, key) = seed_due_unlock(&pool, user, asset, "paid").await?;
+    let trigger = format!("unlock_fail_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON wallet_ledger FOR EACH ROW BEGIN IF NEW.user_id={user} AND NEW.change_type='new_coin_unlock_release' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test release rollback'; END IF; END")).execute(&pool).await?;
+    let manual = manual_release(&pool, user, &key).await;
+    let worker = release_due_unlock_positions(&pool, scanner_now(), 100).await;
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
+        .await?;
+    assert_eq!(manual, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(worker.is_err());
+    let balances: (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available,locked FROM wallet_accounts WHERE user_id=? AND asset_id=?",
+    )
+    .bind(user)
+    .bind(asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(balances, (decimal("0"), decimal("10")));
+    let state:(BigDecimal,BigDecimal,String,String)=sqlx::query_as("SELECT p.remaining_amount,p.released_amount,p.status,u.status FROM asset_lock_positions p JOIN asset_unlock_records u ON u.lock_position_id=p.id WHERE u.idempotency_key=?").bind(&key).fetch_one(&pool).await?;
+    assert_eq!(
+        state,
+        (
+            decimal("10"),
+            decimal("0"),
+            "active".into(),
+            "pending".into()
+        )
+    );
+    assert_eq!(
+        release_due_unlock_positions(&pool, scanner_now(), 100)
+            .await?
+            .released,
+        1
+    );
+    cleanup_fixture(&pool, user, asset, position, &key).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn manual_and_scanner_reject_unrepresentable_release_precision() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _guard = TEST_LOCK.lock().await;
+    let user = create_user(&pool).await;
+    let asset = create_asset(&pool).await;
+    let (position, key) = seed_unlock_record(
+        &pool,
+        user,
+        asset,
+        decimal("10.5"),
+        false,
+        "not_required",
+        "pending",
+        user,
+        asset,
+        "active",
+    )
+    .await?;
+    sqlx::query("UPDATE assets SET precision_scale=0 WHERE id=?")
+        .bind(asset)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        manual_release(&pool, user, &key).await,
+        StatusCode::BAD_REQUEST
+    );
+    assert!(
+        release_due_unlock_positions(&pool, scanner_now(), 100)
+            .await
+            .is_err()
+    );
+    let locked: BigDecimal =
+        sqlx::query_scalar("SELECT locked FROM wallet_accounts WHERE user_id=? AND asset_id=?")
+            .bind(user)
+            .bind(asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(locked, decimal("10.5"));
+    sqlx::query("UPDATE assets SET precision_scale=18, status='disabled' WHERE id=?")
+        .bind(asset)
+        .execute(&pool)
+        .await?;
+    // Restoring precision permits release even if the asset is inactive; funds must not be trapped.
+    assert_eq!(
+        release_due_unlock_positions(&pool, scanner_now(), 100)
+            .await?
+            .released,
+        1
+    );
+    cleanup_fixture(&pool, user, asset, position, &key).await?;
     Ok(())
 }

@@ -47,6 +47,7 @@ fn admin_recharge_fingerprint_normalizes_decimal_and_reason() {
 #[test]
 fn new_coin_unlock_fee_rate_must_fit_persisted_precision() {
     let request = UpdateNewCoinUnlockFeeRuleRequest {
+        expected_config: None,
         unlock_fee_enabled: true,
         unlock_fee_rate: Some(decimal("0.123456789")),
         unlock_fee_basis: Some("market_value".to_owned()),

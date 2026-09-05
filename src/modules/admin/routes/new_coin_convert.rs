@@ -20,6 +20,8 @@ pub(super) fn routes() -> Router<AppState> {
             "/new-coins",
             get(list_new_coin_projects).post(create_new_coin_project),
         )
+        .route("/new-coins/:id", get(get_new_coin_project_center))
+        .route("/new-coins/:id/issuance", patch(update_new_coin_issuance))
         .route("/new-coins/:id/lifecycle", patch(update_new_coin_lifecycle))
         .route("/new-coins/:id/distribute", post(distribute_new_coin))
         .route(
@@ -381,4 +383,38 @@ async fn delete_convert_pair(
     let admin_id = admin_id_from_subject(&claims.sub)?;
     delete_convert_pair_use_case(state.mysql.clone(), admin_id, pair_id, request).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// 项目中心按主键获取权威配置，不从分页列表推断项目是否存在。
+async fn get_new_coin_project_center(
+    _admin: AdminAuth,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> AppResult<Json<crate::modules::admin::presentation::NewCoinProjectCenterResponse>> {
+    Ok(Json(
+        crate::modules::admin::application::get_admin_new_coin_project_center(
+            state.mysql.clone(),
+            id,
+        )
+        .await?,
+    ))
+}
+
+/// 发行参数编辑只转发请求与管理员主体，字段及并发约束在应用事务执行。
+async fn update_new_coin_issuance(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    Json(request): Json<crate::modules::admin::presentation::UpdateNewCoinIssuanceRequest>,
+) -> AppResult<Json<NewCoinProjectResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        crate::modules::admin::application::update_admin_new_coin_issuance(
+            state.mysql.clone(),
+            admin_id,
+            id,
+            request,
+        )
+        .await?,
+    ))
 }

@@ -283,6 +283,8 @@ const CHANGE_TYPE_TRANSLATION_KEYS = {
   convert_settlement: 'ledger.typeConvertSettlement',
   earn_subscribe: 'ledger.typeEarnSubscribe',
   earn_redeem: 'ledger.typeEarnRedeem',
+  new_coin_subscription_freeze: 'ledger.typeNewCoinSubscriptionFreeze',
+  new_coin_subscription_refund: 'ledger.typeNewCoinSubscriptionRefund',
   new_coin_subscription_payment: 'ledger.typeNewCoinSubscriptionPayment',
   new_coin_subscription_lock: 'ledger.typeNewCoinSubscriptionLock',
   new_coin_distribution_lock: 'ledger.typeNewCoinDistributionLock',

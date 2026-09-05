@@ -43,7 +43,12 @@
             <tr v-if="subscriptions.length === 0"><td colspan="6" class="px-4 py-10 text-center text-muted-foreground">{{ t('launchpad.records_empty') }}</td></tr>
             <tr v-for="record in subscriptions" :key="record.id" class="border-b border-border">
               <td class="px-4 py-4 font-mono">#{{ record.id }}</td>
-              <td class="px-4 py-4 font-mono">{{ trim(record.quoteAmount) }} {{ assetSymbol(record.quoteAsset) }}</td>
+              <td class="px-4 py-4 font-mono"><template v-if="record.settlementMode === 'manual_distribution'">
+                  <span v-if="record.status === 'pending'">{{ t('launchpad.record_frozen') }}: {{ trim(record.frozenQuoteAmount || '0') }}</span>
+                  <span v-else>{{ t('launchpad.record_paid') }}: {{ trim(record.settledQuoteAmount || '0') }} / {{ t('launchpad.record_refund') }}: {{ trim(record.refundedQuoteAmount || '0') }}</span>
+                  {{ assetSymbol(record.quoteAsset) }}
+                </template>
+                <template v-else>{{ trim(record.quoteAmount) }} {{ assetSymbol(record.quoteAsset) }}</template></td>
               <td class="px-4 py-4 font-mono">{{ trim(record.requestedQuantity) }}</td>
               <td class="px-4 py-4 font-mono">{{ trim(record.allocatedQuantity) }}</td>
               <td class="px-4 py-4"><span class="rounded-full px-3 py-1 text-xs font-bold" :class="statusClass(record.status)">{{ statusText(record.status) }}</span></td>

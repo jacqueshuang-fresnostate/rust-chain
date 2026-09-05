@@ -1,10 +1,12 @@
 import { Button, Card, Space } from '@douyinfe/semi-ui';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
+import { AdminRequestActionBoundary } from '../../access';
 import { isValidNewCoinLocalDateTime, requiredNewCoinLocalDateTimeMillis } from '../../newCoinDateTime';
 import {
   type AssetOption,
@@ -12,6 +14,7 @@ import {
   BooleanSelect,
   type CreateActionProps,
   FormModal,
+  type RowActionHelpers,
   booleanFromSelect,
   completeCreate,
   recordString,
@@ -22,22 +25,49 @@ import {
 } from './shared';
 
 export function newCoinProjectActionsPath(projectId: string): string {
-  return `/admin/new-coins/actions?project_id=${encodeURIComponent(projectId)}`;
+  return `/admin/new-coins/projects/${encodeURIComponent(projectId)}`;
 }
 
-export function NewCoinProjectRowActions({ record }: { record: ApiRecord }) {
+export function NewCoinProjectRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const navigate = useNavigate();
   const projectId = recordString(record, 'id');
+  const lifecycleStatus = recordString(record, 'lifecycle_status').toLowerCase();
+  const projectStatus = recordString(record, 'status').toLowerCase();
+  const symbol = recordString(record, 'symbol');
+  const projectIdentity = symbol ? `${symbol}（ID: ${projectId || '-'}）` : `ID: ${projectId || '-'}`;
+  const canStartSubscription = Boolean(projectId) && lifecycleStatus === 'preheat' && projectStatus === 'active';
+
   return (
-    <Button
-      disabled={!projectId}
-      onClick={() => {
-        window.location.hash = newCoinProjectActionsPath(projectId);
-      }}
-      size="small"
-      theme="borderless"
-    >
-      配置与操作
-    </Button>
+    <>
+      {lifecycleStatus === 'preheat' ? (
+        <AdminRequestActionBoundary endpoint={`/admin/api/v1/new-coins/${projectId}/lifecycle`} method="PATCH">
+          <ConfirmAction
+            actionAriaLabel={`开始申购 ${projectIdentity}`}
+            actionText="开始申购"
+            disabled={!canStartSubscription}
+            title={`确认 ${projectIdentity} 开始申购`}
+            onConfirm={async (reason) => {
+              await submitAction('开始新币申购', () =>
+                apiRequest(`/admin/api/v1/new-coins/${requiredPositiveInteger(projectId, '项目ID')}/lifecycle`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({ lifecycle_status: 'subscription', reason })
+                })
+              );
+              helpers.reload();
+            }}
+          />
+        </AdminRequestActionBoundary>
+      ) : null}
+      <Button
+        aria-label={`配置新币项目 ${projectIdentity}`}
+        disabled={!projectId}
+        onClick={() => navigate(newCoinProjectActionsPath(projectId))}
+        size="small"
+        theme="borderless"
+      >
+        项目中心
+      </Button>
+    </>
   );
 }
 
@@ -232,7 +262,7 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
                 value={project.unlockType}
               />
             </label>
-            {project.unlockType === 'immediate_on_listing' ? <label>上市时间<AdminTextInput ariaLabel="上市时间" type="datetime-local" value={project.listedAt} onChange={(listedAt) => setProject((current) => ({ ...current, listedAt }))} /></label> : null}
+            {project.unlockType === 'immediate_on_listing' ? <label>计划上市时间<AdminTextInput ariaLabel="计划上市时间" type="datetime-local" value={project.listedAt} onChange={(listedAt) => setProject((current) => ({ ...current, listedAt }))} /></label> : null}
             {project.unlockType === 'fixed_time' ? <label>固定解禁时间<AdminTextInput ariaLabel="固定解禁时间" type="datetime-local" value={project.fixedUnlockAt} onChange={(fixedUnlockAt) => setProject((current) => ({ ...current, fixedUnlockAt }))} /></label> : null}
             {project.unlockType === 'relative_period' ? <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={project.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setProject((current) => ({ ...current, relativeUnlockSeconds }))} /></label> : null}
             <label>启用解禁矿工费<BooleanSelect label="启用解禁矿工费" value={project.unlockFeeEnabled} onChange={(unlockFeeEnabledValue) => setProject((current) => ({ ...current, unlockFeeEnabled: unlockFeeEnabledValue }))} /></label>
@@ -269,7 +299,7 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
                 reason
               };
               if (project.unlockType === 'immediate_on_listing') {
-                body.listed_at = requiredNewCoinLocalDateTimeMillis(project.listedAt, '上市时间');
+                body.listed_at = requiredNewCoinLocalDateTimeMillis(project.listedAt, '计划上市时间');
               }
               if (project.unlockType === 'fixed_time') {
                 body.fixed_unlock_at = requiredNewCoinLocalDateTimeMillis(project.fixedUnlockAt, '固定解禁时间');

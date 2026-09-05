@@ -2,7 +2,7 @@ import { IconDownload, IconRefresh, IconSearch } from '@douyinfe/semi-icons';
 import { Button, Card, Empty, Pagination, Space, Spin, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { ApiError } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
@@ -193,8 +193,13 @@ function AuditLogCard({ log }: { log: AdminAuditLog }) {
 }
 
 export function AuditLogsPage() {
-  const [appliedFilters, setAppliedFilters] = useState<AppliedAuditFilters>({});
-  const [draftFilters, setDraftFilters] = useState<AuditFilterDraft>(EMPTY_FILTERS);
+  const { search } = useLocation();
+  const [initialTarget] = useState(() => {
+    const params = new URLSearchParams(search);
+    return { ...EMPTY_FILTERS, targetType: params.get('target_type') ?? '', targetId: params.get('target_id') ?? '' };
+  });
+  const [appliedFilters, setAppliedFilters] = useState<AppliedAuditFilters>(() => normalizeAuditFilters(initialTarget).filters);
+  const [draftFilters, setDraftFilters] = useState<AuditFilterDraft>(initialTarget);
   const [filterError, setFilterError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);

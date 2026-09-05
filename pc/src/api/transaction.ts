@@ -23,6 +23,8 @@ export const WALLET_LEDGER_TRANSACTION_TYPES = [
     'loan_disbursement',
     'loan_repayment',
     'new_coin_subscription_payment',
+    'new_coin_subscription_freeze',
+    'new_coin_subscription_refund',
     'new_coin_subscription_lock',
     'new_coin_purchase_payment',
     'new_coin_purchase_lock',

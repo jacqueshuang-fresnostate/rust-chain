@@ -12243,9 +12243,9 @@ async fn admin_new_coin_post_listing_purchase_updates_project_pair_and_audit()
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
            (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
-            quote_asset_id, unlock_type, fixed_unlock_at, status)
+            quote_asset_id, unlock_type, fixed_unlock_at, status, remaining_supply)
            VALUES (?, ?, 'listed', ?, ?, CURRENT_TIMESTAMP(6), ?, 'fixed_time',
-                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY), 'active')"#,
+                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY), 'active', 1000000)"#,
     )
     .bind(asset_id)
     .bind(&base_symbol)
@@ -12843,8 +12843,8 @@ async fn admin_new_coin_rule_updates_modify_project_events_and_audits() -> Resul
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
            (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
-            listed_at, unlock_type, fixed_unlock_at, status)
-           VALUES (?, ?, 'listed', ?, ?, ?, ?, 'fixed_time', ?, 'active')"#,
+            listed_at, unlock_type, fixed_unlock_at, status, remaining_supply)
+           VALUES (?, ?, 'listed', ?, ?, ?, ?, 'fixed_time', ?, 'active', 1000000)"#,
     )
     .bind(asset_id)
     .bind(&symbol)
@@ -13190,7 +13190,7 @@ async fn admin_new_coin_distribution_routes_require_admin_scope_and_mysql()
     let body = json!({
         "user_id": 1,
         "quantity": "10.000000000000000000",
-        "idempotency_key": "admin-dist-key-1"
+        "idempotency_key": "admin-dist-key-1", "reason": "manual distribution"
     })
     .to_string();
 
@@ -13233,7 +13233,7 @@ async fn admin_new_coin_distribution_routes_require_admin_scope_and_mysql()
                     json!({
                         "user_id": 1,
                         "quantity": "0.000000000000000000",
-                        "idempotency_key": "admin-dist-key-1"
+                        "idempotency_key": "admin-dist-key-1", "reason": "manual distribution"
                     })
                     .to_string(),
                 ))
@@ -13539,14 +13539,15 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
                     json!({
                         "user_id": user_id,
                         "quantity": "10.000000000000000000",
-                        "idempotency_key": idempotency_key
+                        "idempotency_key": idempotency_key, "reason": "manual distribution"
                     })
                     .to_string(),
                 ))
                 .unwrap(),
         )
         .await?;
-    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    assert_eq!(duplicate.status(), StatusCode::OK);
+    assert_eq!(body_json(duplicate).await?, distributed);
 
     let duplicate_with_spaces = app
         .oneshot(
@@ -13559,14 +13560,15 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
                     json!({
                         "user_id": user_id,
                         "quantity": "10.000000000000000000",
-                        "idempotency_key": format!("  {idempotency_key}  ")
+                        "idempotency_key": format!("  {idempotency_key}  "), "reason": "manual distribution"
                     })
                     .to_string(),
                 ))
                 .unwrap(),
         )
         .await?;
-    assert_eq!(duplicate_with_spaces.status(), StatusCode::CONFLICT);
+    assert_eq!(duplicate_with_spaces.status(), StatusCode::OK);
+    assert_eq!(body_json(duplicate_with_spaces).await?, distributed);
 
     delete_new_coin_distribution_fixture(&pool, project_id, asset_id, user_id, admin_id, role_id)
         .await?;
@@ -13598,8 +13600,8 @@ async fn admin_new_coin_lifecycle_transition_updates_project_events_and_audits()
 
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
-           (asset_id, symbol, lifecycle_status, total_supply, issue_price, unlock_type, status)
-           VALUES (?, ?, 'preheat', ?, ?, 'immediate_on_listing', 'active')"#,
+           (asset_id, symbol, lifecycle_status, total_supply, issue_price, unlock_type, status, remaining_supply)
+           VALUES (?, ?, 'preheat', ?, ?, 'immediate_on_listing', 'active', 1000000)"#,
     )
     .bind(asset_id)
     .bind(&symbol)
@@ -13679,7 +13681,7 @@ async fn admin_new_coin_lifecycle_transition_updates_project_events_and_audits()
         .await?;
     assert_eq!(distribution.status(), StatusCode::OK);
 
-    let listed_at = 1794309753000_i64;
+    let listing_started_at = chrono::Utc::now().timestamp_millis();
     let listed = app
         .clone()
         .oneshot(
@@ -13691,7 +13693,6 @@ async fn admin_new_coin_lifecycle_transition_updates_project_events_and_audits()
                 .body(Body::from(
                     json!({
                         "lifecycle_status": "listed",
-                        "listed_at": listed_at,
                         "reason": "list project"
                     })
                     .to_string(),
@@ -13703,7 +13704,8 @@ async fn admin_new_coin_lifecycle_transition_updates_project_events_and_audits()
     let listed_payload = body_json(listed).await?;
     assert_eq!(listed_status, StatusCode::OK, "payload: {listed_payload}");
     assert_eq!(listed_payload["lifecycle_status"], "listed");
-    assert_eq!(listed_payload["listed_at"], 1794309753000_i64);
+    assert!(listed_payload["listed_at"].is_null());
+    assert!(listed_payload["actual_listed_at"].as_i64().unwrap() >= listing_started_at);
 
     let backward = app
         .oneshot(
@@ -15552,8 +15554,8 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
            (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
-            unlock_type, fixed_unlock_at, status)
-           VALUES (?, ?, 'listed', ?, ?, ?, 'fixed_time', ?, 'active')"#,
+            unlock_type, fixed_unlock_at, status, remaining_supply)
+           VALUES (?, ?, 'listed', ?, ?, ?, 'fixed_time', ?, 'active', 1000000)"#,
     )
     .bind(asset_id)
     .bind(&symbol)
@@ -17160,5 +17162,769 @@ async fn admin_config_change_requires_two_people_and_replays_without_duplicate_a
             .execute(&pool)
             .await?;
     }
+    Ok(())
+}
+
+// 真实 HTTP -> 申购冻结 -> 管理员最终派发/退差额；每个数量案例使用独立订单和项目。
+#[tokio::test]
+async fn admin_new_coin_manual_distribution_settles_and_refunds_exactly_once()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    for (allocated, payment, refund, expected_status) in [
+        ("4", "10", "15", "partial_allocated"),
+        ("0", "0", "25", "refunded"),
+        ("10", "25", "0", "allocated"),
+    ] {
+        let settings = test_settings();
+        let (role_id, admin_id) = create_admin_user(&pool).await;
+        let user_id = create_user(&pool).await;
+        let asset = create_asset(&pool, "MSB").await;
+        let quote = create_asset(&pool, "MSQ").await;
+        let symbol = format!("MS{}", Uuid::now_v7().simple());
+        let project = sqlx::query("INSERT INTO new_coin_projects (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id, remaining_supply, unlock_type, relative_unlock_seconds, status) VALUES (?, ?, 'subscription', 100, 2.5, ?, 100, 'relative_period', 86400, 'active')")
+            .bind(asset).bind(&symbol).bind(quote).execute(&pool).await?.last_insert_id();
+        sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked) VALUES (?, ?, 100, 7, 0)")
+            .bind(user_id).bind(quote).execute(&pool).await?;
+        let token = issue_token(
+            &settings,
+            format!("admin:{admin_id}"),
+            TokenScope::Admin,
+            900,
+        )?;
+        let user_token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+        let app = build_router(AppState::new(settings.clone()).with_mysql(pool.clone()));
+        let user_app = exchange_api::modules::new_coin::routes::user_routes()
+            .with_state(AppState::new(settings).with_mysql(pool.clone()));
+        let subscription_key = format!("manual-sub-{}", Uuid::now_v7());
+        let submit = || {
+            Request::builder().method("POST").uri(format!("/new-coins/{symbol}/subscriptions"))
+            .header(AUTHORIZATION, format!("Bearer {user_token}")).header("content-type", "application/json")
+            .body(Body::from(json!({"quote_asset_id": quote, "quote_amount": "25", "quantity": "10", "idempotency_key": subscription_key}).to_string())).unwrap()
+        };
+        let response = user_app.clone().oneshot(submit()).await?;
+        let code = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(code, StatusCode::OK, "{payload}");
+        assert_eq!(payload["status"], "pending");
+        assert!(payload["lock_position_id"].is_null());
+        assert_eq!(user_app.oneshot(submit()).await?.status(), StatusCode::OK);
+        let (subscription,): (u64,) =
+            sqlx::query_as("SELECT id FROM new_coin_subscriptions WHERE idempotency_key = ?")
+                .bind(&subscription_key)
+                .fetch_one(&pool)
+                .await?;
+        let (available, frozen, locked): (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as("SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?").bind(user_id).bind(quote).fetch_one(&pool).await?;
+        assert_eq!(
+            (available, frozen, locked),
+            (decimal("75"), decimal("32"), decimal("0"))
+        );
+        let (base_available, base_locked): (BigDecimal, BigDecimal) = sqlx::query_as(
+            "SELECT available, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(asset)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!((base_available, base_locked), (decimal("0"), decimal("0")));
+        let lifecycle = |target: &str| {
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/new-coins/{project}/lifecycle"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"lifecycle_status": target, "reason": "manual settlement test"})
+                        .to_string(),
+                ))
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone()
+                .oneshot(lifecycle("distribution"))
+                .await?
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.clone().oneshot(lifecycle("listed")).await?.status(),
+            StatusCode::CONFLICT
+        );
+        let center_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/admin/api/v1/new-coins/{project}"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(center_response.status(), StatusCode::OK);
+        let center = body_json(center_response).await?;
+        assert_eq!(center["subscription_count"], 1);
+        assert_eq!(center["pending_manual_count"], 1);
+        assert_eq!(center["issuance_editable"], false);
+        assert!(
+            center["lifecycle_block_reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
+        let key = format!("manual-dist-{}", Uuid::now_v7());
+        let distribute = |quantity: &str, key: &str| {
+            Request::builder().method("POST").uri(format!("/admin/api/v1/new-coins/{project}/distribute"))
+            .header(AUTHORIZATION, format!("Bearer {token}")).header("content-type", "application/json")
+            .body(Body::from(json!({"user_id": user_id, "subscription_id": subscription, "quantity": quantity, "idempotency_key": key, "reason": "final allocation and refund"}).to_string())).unwrap()
+        };
+        assert_eq!(
+            app.clone().oneshot(distribute("11", &key)).await?.status(),
+            StatusCode::BAD_REQUEST
+        );
+        if allocated == "4" {
+            // 在最后的派发收据写入处制造失败，验证已执行的扣款、退款和锁仓全部回滚。
+            let trigger = format!("manual_distribution_failure_{user_id}");
+            sqlx::raw_sql(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON new_coin_distributions FOR EACH ROW BEGIN IF NEW.user_id = {user_id} THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test distribution receipt failure'; END IF; END"))
+                .execute(&pool).await?;
+            let failed = app.clone().oneshot(distribute(allocated, &key)).await?;
+            sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+                .execute(&pool)
+                .await?;
+            assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+            let obligation: (String, BigDecimal) = sqlx::query_as(
+                "SELECT status, frozen_quote_amount FROM new_coin_subscriptions WHERE id = ?",
+            )
+            .bind(subscription)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(obligation, ("pending".into(), decimal("25")));
+            let funds: (BigDecimal, BigDecimal) = sqlx::query_as(
+                "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+            )
+            .bind(user_id)
+            .bind(quote)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(funds, (decimal("75"), decimal("32")));
+            let supply: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as("SELECT reserved_supply, allocated_supply, remaining_supply FROM new_coin_projects WHERE id = ?")
+                .bind(project).fetch_one(&pool).await?;
+            assert_eq!(supply, (decimal("10"), decimal("0"), decimal("90")));
+            let (positions,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM asset_lock_positions WHERE user_id = ? AND asset_id = ?",
+            )
+            .bind(user_id)
+            .bind(asset)
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(positions, 0);
+        }
+        // 同键并发确认只产生一次派发和资金动作；失败的超量尝试没有占用幂等键。
+        let (first, second) = tokio::join!(
+            app.clone().oneshot(distribute(allocated, &key)),
+            app.clone().oneshot(distribute(allocated, &key))
+        );
+        let first = first?;
+        let code = first.status();
+        let payload = body_json(first).await?;
+        assert_eq!(code, StatusCode::OK, "{payload}");
+        let second = second?;
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(body_json(second).await?, payload);
+        assert_eq!(
+            app.clone()
+                .oneshot(distribute(allocated, &format!("{key}-again")))
+                .await?
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            app.clone().oneshot(distribute("9", &key)).await?.status(),
+            StatusCode::CONFLICT
+        );
+        let order: (String, BigDecimal, BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as("SELECT status, allocated_quantity, frozen_quote_amount, settled_quote_amount, refunded_quote_amount FROM new_coin_subscriptions WHERE id = ?").bind(subscription).fetch_one(&pool).await?;
+        assert_eq!(
+            order,
+            (
+                expected_status.into(),
+                decimal(allocated),
+                decimal("0"),
+                decimal(payment),
+                decimal(refund)
+            )
+        );
+        let funds: (BigDecimal, BigDecimal) = sqlx::query_as(
+            "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(quote)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(funds, (decimal("100") - decimal(payment), decimal("7"))); // 其他业务冻结款不受影响。
+        let (base_locked,): (BigDecimal,) =
+            sqlx::query_as("SELECT locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+                .bind(user_id)
+                .bind(asset)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(base_locked, decimal(allocated));
+        let supply: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as("SELECT reserved_supply, allocated_supply, remaining_supply FROM new_coin_projects WHERE id = ?").bind(project).fetch_one(&pool).await?;
+        assert_eq!(
+            supply,
+            (
+                decimal("0"),
+                decimal(allocated),
+                decimal("100") - decimal(allocated)
+            )
+        );
+        let (net_quote,): (BigDecimal,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(amount),0) FROM wallet_ledger WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(user_id)
+        .bind(quote)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(net_quote, -decimal(payment));
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM new_coin_distributions WHERE subscription_id = ?")
+                .bind(subscription)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(count, 1);
+        assert_eq!(
+            app.clone().oneshot(lifecycle("listed")).await?.status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.oneshot(distribute(allocated, &key)).await?.status(),
+            StatusCode::OK
+        ); // 上市后同参重放。
+        sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote)
+            .execute(&pool)
+            .await?;
+        // 先移除派发外键，再删申购，最后复用现有锁仓/审计清理。
+        sqlx::query("DELETE FROM new_coin_distributions WHERE project_id = ?")
+            .bind(project)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM new_coin_subscriptions WHERE project_id = ?")
+            .bind(project)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'new_coin_project'",
+        )
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+        delete_new_coin_distribution_fixture(&pool, project, asset, user_id, admin_id, role_id)
+            .await?;
+        sqlx::query("DELETE FROM assets WHERE id = ?")
+            .bind(quote)
+            .execute(&pool)
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_new_coin_project_center_guards_issuance_and_stale_configuration()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let asset = create_asset(&pool, "PCB").await;
+    let quote = create_asset(&pool, "PCQ").await;
+    let symbol = format!("CENTER{}", Uuid::now_v7().simple());
+    let id = sqlx::query("INSERT INTO new_coin_projects (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id, remaining_supply, unlock_type, relative_unlock_seconds, status) VALUES (?, ?, 'preheat', 100, 2.5, ?, 100, 'relative_period', 86400, 'active')")
+        .bind(asset).bind(&symbol).bind(quote).execute(&pool).await?.last_insert_id();
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let request = |method: &str, uri: String, body: Value| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(if body.is_null() {
+                Body::empty()
+            } else {
+                Body::from(body.to_string())
+            })
+            .unwrap()
+    };
+    let endpoint = format!("/admin/api/v1/new-coins/{id}");
+    let response = app
+        .clone()
+        .oneshot(request("GET", endpoint.clone(), Value::Null))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let center = body_json(response).await?;
+    assert_eq!(center["project"]["id"], id);
+    assert_eq!(center["issuance_editable"], true);
+    assert_eq!(center["pending_manual_count"], 0);
+    assert_eq!(center["next_lifecycle_status"], "subscription");
+    let original_version = center["configuration_version"].clone();
+    let response = app.clone().oneshot(request("GET", format!("/admin/api/v1/new-coins?symbol={symbol}&lifecycle_status=preheat&status=active&limit=1"), Value::Null)).await?;
+    let listing = body_json(response).await?;
+    assert_eq!(listing["total"], 1);
+    assert_eq!(listing["projects"][0]["id"], id);
+    let payload = json!({"total_supply":"150", "issue_price":"3.25", "expected_total_supply":"100", "expected_issue_price":"2.5", "reason":"correct preheat issuance"});
+    let mut blank_reason = payload.clone();
+    blank_reason["reason"] = json!(" ");
+    let missing_reason = app
+        .clone()
+        .oneshot(request(
+            "PATCH",
+            format!("{endpoint}/issuance"),
+            blank_reason,
+        ))
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+    sqlx::query(
+        "UPDATE admin_roles SET permissions=JSON_ARRAY('new_coin.projects.read') WHERE id=?",
+    )
+    .bind(role_id)
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        app.clone()
+            .oneshot(request("GET", endpoint.clone(), Value::Null))
+            .await?
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(request(
+                "PATCH",
+                format!("{endpoint}/issuance"),
+                payload.clone()
+            ))
+            .await?
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    sqlx::query("UPDATE admin_roles SET permissions=JSON_ARRAY('*') WHERE id=?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET precision_scale=2 WHERE id=?")
+        .bind(quote)
+        .execute(&pool)
+        .await?;
+    let mut excessive_precision = payload.clone();
+    excessive_precision["issue_price"] = json!("3.251");
+    assert_eq!(
+        app.clone()
+            .oneshot(request(
+                "PATCH",
+                format!("{endpoint}/issuance"),
+                excessive_precision
+            ))
+            .await?
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let updated = app
+        .clone()
+        .oneshot(request(
+            "PATCH",
+            format!("{endpoint}/issuance"),
+            payload.clone(),
+        ))
+        .await?;
+    let status = updated.status();
+    let body = body_json(updated).await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        decimal(body["remaining_supply"].as_str().unwrap()),
+        decimal("150")
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(request(
+                "PATCH",
+                format!("{endpoint}/issuance"),
+                payload.clone()
+            ))
+            .await?
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let stale = json!({"unlock_type":"relative_period","relative_unlock_seconds":172800,"expected_config":original_version,"reason":"stale editor"});
+    assert_eq!(
+        app.clone()
+            .oneshot(request("PATCH", format!("{endpoint}/unlock-rule"), stale))
+            .await?
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let center = body_json(
+        app.clone()
+            .oneshot(request("GET", endpoint.clone(), Value::Null))
+            .await?,
+    )
+    .await?;
+    assert_ne!(center["configuration_version"], original_version);
+    let stage = json!({"lifecycle_status":"subscription","expected_config":center["configuration_version"],"reason":"open project"});
+    assert_eq!(
+        app.clone()
+            .oneshot(request("PATCH", format!("{endpoint}/lifecycle"), stage))
+            .await?
+            .status(),
+        StatusCode::OK
+    );
+    let payload = json!({"total_supply":"200","issue_price":"4","expected_total_supply":"150","expected_issue_price":"3.25","reason":"late edit"});
+    assert_eq!(
+        app.clone()
+            .oneshot(request("PATCH", format!("{endpoint}/issuance"), payload))
+            .await?
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let center = body_json(
+        app.clone()
+            .oneshot(request("GET", endpoint.clone(), Value::Null))
+            .await?,
+    )
+    .await?;
+    assert_eq!(center["issuance_editable"], false);
+    assert_eq!(center["next_lifecycle_status"], "distribution");
+    let (audits,):(i64,)=sqlx::query_as("SELECT COUNT(*) FROM admin_audit_logs WHERE target_type='new_coin_project' AND target_id=? AND action='new_coin_project.issuance.update'").bind(id.to_string()).fetch_one(&pool).await?;
+    assert_eq!(audits, 1);
+    assert_eq!(
+        app.oneshot(request(
+            "GET",
+            "/admin/api/v1/new-coins/18446744073709551614".into(),
+            Value::Null
+        ))
+        .await?
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    delete_new_coin_project_fixture(&pool, id, asset, admin_id, role_id).await?;
+    sqlx::query("DELETE FROM assets WHERE id=?")
+        .bind(quote)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_new_coin_actual_listing_gates_new_locks_without_rewriting_history()
+-> Result<(), Box<dyn Error>> {
+    use exchange_api::workers::unlock_scanner::release_due_unlock_positions;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role, admin) = create_admin_user(&pool).await;
+    let user = create_user(&pool).await;
+    let asset = create_asset(&pool, "LGB").await;
+    let quote = create_asset(&pool, "LGQ").await;
+    let symbol = format!("LG{}", Uuid::now_v7().simple());
+    let token = issue_token(&settings, format!("admin:{admin}"), TokenScope::Admin, 900)?;
+    let user_token = issue_token(&settings, format!("user:{user}"), TokenScope::User, 900)?;
+    let app = build_router(AppState::new(settings.clone()).with_mysql(pool.clone()));
+    let user_app = exchange_api::modules::new_coin::routes::user_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let request = |method: &str, path: String, payload: Value| {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap()
+    };
+    let past = 946684800000_i64;
+    let future = chrono::Utc::now().timestamp_millis() + 86_400_000;
+    let created=app.clone().oneshot(request("POST","/admin/api/v1/new-coins".into(),json!({"asset_id":asset,"symbol":symbol,"quote_asset_id":quote,"lifecycle_status":"preheat","total_supply":"100","issue_price":"2.5","unlock_type":"immediate_on_listing","listed_at":past,"unlock_fee_enabled":false,"reason":"actual listing regression"}))).await?;
+    assert_eq!(created.status(), StatusCode::OK);
+    let created = body_json(created).await?;
+    let project = created["id"].as_u64().unwrap();
+    assert_eq!(created["listed_at"], past);
+    assert!(created["actual_listed_at"].is_null());
+    let lifecycle = |stage: &str| {
+        request(
+            "PATCH",
+            format!("/admin/api/v1/new-coins/{project}/lifecycle"),
+            json!({"lifecycle_status":stage,"reason":"actual event"}),
+        )
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(lifecycle("subscription"))
+            .await?
+            .status(),
+        StatusCode::OK
+    );
+    sqlx::query("INSERT INTO wallet_accounts (user_id,asset_id,available) VALUES (?,?,100)")
+        .bind(user)
+        .bind(quote)
+        .execute(&pool)
+        .await?;
+    let subscription_key = format!("listing-sub-{}", Uuid::now_v7());
+    let sub=user_app.clone().oneshot(Request::builder().method("POST").uri(format!("/new-coins/{symbol}/subscriptions")).header(AUTHORIZATION,format!("Bearer {user_token}")).header("content-type","application/json").body(Body::from(json!({"quote_asset_id":quote,"quote_amount":"25","quantity":"10","idempotency_key":subscription_key}).to_string()))?).await?;
+    assert_eq!(sub.status(), StatusCode::OK);
+    let subscription: u64 =
+        sqlx::query_scalar("SELECT id FROM new_coin_subscriptions WHERE idempotency_key=?")
+            .bind(&subscription_key)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        app.clone()
+            .oneshot(lifecycle("distribution"))
+            .await?
+            .status(),
+        StatusCode::OK
+    );
+    let allocate = |quantity: &str, subscription_id: Option<u64>| {
+        request(
+            "POST",
+            format!("/admin/api/v1/new-coins/{project}/distribute"),
+            json!({"user_id":user,"quantity":quantity,"subscription_id":subscription_id,"idempotency_key":Uuid::now_v7().to_string(),"reason":"listing-gated allocation"}),
+        )
+    };
+    for payload in [allocate("4", Some(subscription)), allocate("2", None)] {
+        let response = app.clone().oneshot(payload).await?;
+        let status = response.status();
+        let body = body_json(response).await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body["lock_position_id"].is_number());
+    }
+    type ListingLockSnapshot = (
+        u64,
+        Option<u64>,
+        chrono::DateTime<chrono::Utc>,
+        String,
+        BigDecimal,
+    );
+    let locks: Vec<ListingLockSnapshot> = sqlx::query_as("SELECT id,listing_project_id,unlock_at,merge_key,remaining_amount FROM asset_lock_positions WHERE user_id=? AND asset_id=?").bind(user).bind(asset).fetch_all(&pool).await?;
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].1, Some(project));
+    assert_eq!(locks[0].4, decimal("6"));
+    let gate = locks[0].clone();
+    let unlock_keys: Vec<String> = sqlx::query_scalar(
+        "SELECT idempotency_key FROM asset_unlock_records WHERE lock_position_id=?",
+    )
+    .bind(gate.0)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(unlock_keys.len(), 2);
+    let release = |key: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/new-coins/unlocks/{key}/release"))
+            .header(AUTHORIZATION, format!("Bearer {user_token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    for key in &unlock_keys {
+        assert_eq!(
+            user_app.clone().oneshot(release(key)).await?.status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    release_due_unlock_positions(&pool, chrono::Utc::now(), 100).await?;
+    let held: BigDecimal =
+        sqlx::query_scalar("SELECT locked FROM wallet_accounts WHERE user_id=? AND asset_id=?")
+            .bind(user)
+            .bind(asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(held, decimal("6"));
+    let list = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            format!("/admin/api/v1/new-coins/lock-positions?user_id={user}&asset_id={asset}"),
+            Value::Null,
+        ))
+        .await?;
+    assert_eq!(list.status(), StatusCode::OK);
+    let list = body_json(list).await?;
+    assert_eq!(list["lock_positions"][0]["listing_project_id"], project);
+    assert!(list["lock_positions"][0]["unlock_at"].is_null());
+    assert!(list["lock_positions"][0]["actual_listing_at"].is_null());
+    // Later fixed-time rule affects only a new allocation; it must not release the pinned listing gate.
+    let fixed=app.clone().oneshot(request("PATCH",format!("/admin/api/v1/new-coins/{project}/unlock-rule"),json!({"unlock_type":"fixed_time","fixed_unlock_at":past,"reason":"future allocations only"}))).await?;
+    assert_eq!(fixed.status(), StatusCode::OK);
+    assert_eq!(
+        app.clone().oneshot(allocate("3", None)).await?.status(),
+        StatusCode::OK
+    );
+    release_due_unlock_positions(&pool, chrono::Utc::now(), 100).await?;
+    let balances: (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available,locked FROM wallet_accounts WHERE user_id=? AND asset_id=?",
+    )
+    .bind(user)
+    .bind(asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(balances, (decimal("3"), decimal("6")));
+    let historic:(u64,chrono::DateTime<chrono::Utc>,Option<u64>,String)=sqlx::query_as("SELECT id,unlock_at,listing_project_id,status FROM asset_lock_positions WHERE user_id=? AND asset_id=? AND listing_project_id IS NULL").bind(user).bind(asset).fetch_one(&pool).await?;
+    assert_eq!(historic.1.timestamp_millis(), past);
+    assert_eq!(historic.3, "released");
+    let plan=app.clone().oneshot(request("PATCH",format!("/admin/api/v1/new-coins/{project}/unlock-rule"),json!({"unlock_type":"immediate_on_listing","listed_at":future,"reason":"plan is not an event"}))).await?;
+    assert_eq!(plan.status(), StatusCode::OK);
+    let unchanged: ListingLockSnapshot = sqlx::query_as("SELECT id,listing_project_id,unlock_at,merge_key,remaining_amount FROM asset_lock_positions WHERE id=?").bind(gate.0).fetch_one(&pool).await?;
+    assert_eq!(unchanged, gate);
+    let spoof=app.clone().oneshot(request("PATCH",format!("/admin/api/v1/new-coins/{project}/lifecycle"),json!({"lifecycle_status":"listed","listed_at":past,"reason":"reject manual actual timestamp"}))).await?;
+    assert_eq!(spoof.status(), StatusCode::BAD_REQUEST);
+    let trigger = format!("listing_audit_failure_{admin}");
+    sqlx::raw_sql(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON admin_audit_logs FOR EACH ROW BEGIN IF NEW.admin_id={admin} AND NEW.action='new_coin_project.lifecycle.update' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test listing audit rollback'; END IF; END")).execute(&pool).await?;
+    let failed = app.clone().oneshot(lifecycle("listed")).await?;
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
+        .await?;
+    assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let failed_event: (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT lifecycle_status,actual_listed_at FROM new_coin_projects WHERE id=?",
+    )
+    .bind(project)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(failed_event, ("distribution".into(), None));
+    assert_eq!(
+        user_app
+            .clone()
+            .oneshot(release(&unlock_keys[0]))
+            .await?
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let started = chrono::Utc::now().timestamp_millis();
+    let listed = app.clone().oneshot(lifecycle("listed")).await?;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = body_json(listed).await?;
+    assert_eq!(listed["listed_at"], future);
+    let actual = listed["actual_listed_at"].as_i64().unwrap();
+    assert!(actual >= started && actual <= chrono::Utc::now().timestamp_millis());
+    let (manual, worker) = tokio::join!(
+        user_app.clone().oneshot(release(&unlock_keys[0])),
+        release_due_unlock_positions(&pool, chrono::Utc::now(), 100)
+    );
+    assert_eq!(manual?.status(), StatusCode::OK);
+    worker?;
+    release_due_unlock_positions(&pool, chrono::Utc::now(), 100).await?;
+    // New grants remain distribution-only. Listed holdings enter through the separate purchase flow.
+    assert_eq!(
+        app.clone().oneshot(allocate("2", None)).await?.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let pair=sqlx::query("INSERT INTO trading_pairs (base_asset,quote_asset,symbol,price_precision,qty_precision,min_order_value,status,market_type) VALUES (?,?,?,8,8,1,'disabled','spot')").bind(asset).bind(quote).bind(format!("LGP{}",Uuid::now_v7().simple())).execute(&pool).await?.last_insert_id();
+    let enabled = app
+        .clone()
+        .oneshot(request(
+            "PATCH",
+            format!("/admin/api/v1/new-coins/{project}/post-listing-purchase"),
+            json!({"enabled":true,"pair_id":pair,"reason":"listed purchase test"}),
+        ))
+        .await?;
+    assert_eq!(enabled.status(), StatusCode::OK);
+    let purchase=user_app.clone().oneshot(Request::builder().method("POST").uri(format!("/new-coins/{symbol}/purchase")).header(AUTHORIZATION,format!("Bearer {user_token}")).header("content-type","application/json").body(Body::from(json!({"pair_id":pair,"price":"2.5","quantity":"2","idempotency_key":Uuid::now_v7().to_string()}).to_string()))?).await?;
+    let purchase_status = purchase.status();
+    let purchase = body_json(purchase).await?;
+    assert_eq!(purchase_status, StatusCode::OK, "{purchase}");
+    assert_eq!(purchase["status"], "available");
+    assert!(purchase["lock_position_id"].is_null());
+    let balances: (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available,locked FROM wallet_accounts WHERE user_id=? AND asset_id=?",
+    )
+    .bind(user)
+    .bind(asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(balances, (decimal("11"), decimal("0")));
+    let quote_balances: (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available,frozen FROM wallet_accounts WHERE user_id=? AND asset_id=?",
+    )
+    .bind(user)
+    .bind(quote)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(quote_balances, (decimal("85"), decimal("0")));
+    let historic_after: (u64, chrono::DateTime<chrono::Utc>, Option<u64>, String) = sqlx::query_as(
+        "SELECT id,unlock_at,listing_project_id,status FROM asset_lock_positions WHERE id=?",
+    )
+    .bind(historic.0)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(historic_after, historic);
+    for key in &unlock_keys {
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM wallet_ledger WHERE change_type='new_coin_unlock_release' AND ref_id=?").bind(key).fetch_one(&pool).await?;
+        assert_eq!(count, 2);
+    }
+    let list = body_json(
+        app.clone()
+            .oneshot(request(
+                "GET",
+                format!("/admin/api/v1/new-coins/lock-positions?user_id={user}&asset_id={asset}"),
+                Value::Null,
+            ))
+            .await?,
+    )
+    .await?;
+    let gated = list["lock_positions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == gate.0)
+        .unwrap();
+    assert_eq!(gated["unlock_at"], actual);
+    assert_eq!(gated["actual_listing_at"], actual);
+    sqlx::query("DELETE FROM new_coin_purchase_orders WHERE project_id=?")
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE new_coin_projects SET post_listing_pair_id=NULL WHERE id=?")
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id=?")
+        .bind(pair)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM new_coin_distributions WHERE project_id=?")
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM new_coin_subscriptions WHERE project_id=?")
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id=? AND asset_id=?")
+        .bind(user)
+        .bind(quote)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id=? AND asset_id=?")
+        .bind(user)
+        .bind(quote)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id=? AND target_type='new_coin_project'")
+        .bind(admin)
+        .execute(&pool)
+        .await?;
+    delete_new_coin_distribution_fixture(&pool, project, asset, user, admin, role).await?;
+    sqlx::query("DELETE FROM assets WHERE id=?")
+        .bind(quote)
+        .execute(&pool)
+        .await?;
     Ok(())
 }

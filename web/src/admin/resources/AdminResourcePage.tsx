@@ -60,6 +60,7 @@ type AdminResourcePageProps<T extends ApiRecord> = {
   csvFileName?: string;
   endpoint: string;
   filters?: FilterField[];
+  initialFilters?: FilterValues;
   responseKey: string;
   rowActions?: (
     record: T,
@@ -221,6 +222,7 @@ export function AdminResourcePage<T extends ApiRecord>({
   csvFileName,
   endpoint,
   filters,
+  initialFilters,
   responseKey,
   rowActions,
   serverPaged = false,
@@ -230,7 +232,7 @@ export function AdminResourcePage<T extends ApiRecord>({
 }: AdminResourcePageProps<T>) {
   const [detail, setDetail] = useState<DetailDrawerData | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  const [filterValues, setFilterValues] = useState<FilterValues>({});
+  const [filterValues, setFilterValues] = useState<FilterValues>(initialFilters ?? {});
   const [toolbarFilterValues, setToolbarFilterValues] = useState<FilterValues>({});
   const [loading, setLoading] = useState(true);
   const [reloadVersion, setReloadVersion] = useState(0);

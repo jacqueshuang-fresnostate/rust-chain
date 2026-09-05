@@ -169,6 +169,10 @@ pub(crate) struct NewCoinSubscriptionRead {
     pub(crate) quote_asset: u64,
     pub(crate) issue_price: BigDecimal,
     pub(crate) quote_amount: BigDecimal,
+    pub(crate) settlement_mode: String,
+    pub(crate) frozen_quote_amount: BigDecimal,
+    pub(crate) settled_quote_amount: Option<BigDecimal>,
+    pub(crate) refunded_quote_amount: Option<BigDecimal>,
     pub(crate) requested_quantity: BigDecimal,
     pub(crate) allocated_quantity: BigDecimal,
     pub(crate) status: String,
@@ -260,7 +264,6 @@ pub(crate) struct NewCoinProjectRuleRead {
     pub(crate) reserved_supply: BigDecimal,
     pub(crate) allocated_supply: BigDecimal,
     pub(crate) remaining_supply: BigDecimal,
-    pub(crate) listed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) unlock_type: String,
     pub(crate) fixed_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) relative_unlock_seconds: Option<u64>,
@@ -287,6 +290,7 @@ pub(crate) struct NewCoinWalletRead {
 
 #[derive(Debug, Clone)]
 pub(crate) struct NewCoinLockPositionWrite {
+    pub(crate) listing_project_id: Option<u64>,
     pub(crate) user_id: u64,
     pub(crate) asset_id: u64,
     pub(crate) unlock_type: String,

@@ -165,3 +165,21 @@ test('new-coin record mapping rejects legacy numeric financial fields', () => {
     created_at: 1_720_000_000_000,
   }), NewCoinContractError)
 })
+
+test('manual subscription snapshots preserve exact frozen, paid and refunded decimals', () => {
+  const raw = {
+    id: 9, project_id: 11, quote_asset: 31, issue_price: '2.5', quote_amount: '25',
+    requested_quantity: '10', allocated_quantity: '4', status: 'partial_allocated',
+    idempotency_key: 'manual-9', created_at: 1720000000000,
+    settlement_mode: 'manual_distribution', frozen_quote_amount: '0',
+    settled_quote_amount: '10', refunded_quote_amount: '15',
+  }
+  const record = mapNewCoinSubscription(raw)
+  assert.equal(record.settlementMode, 'manual_distribution')
+  assert.equal(record.frozenQuoteAmountText, '0')
+  assert.equal(record.settledQuoteAmountText, '10')
+  assert.equal(record.refundedQuoteAmountText, '15')
+  assert.throws(() => mapNewCoinSubscription({ ...raw, refunded_quote_amount: 15 }), NewCoinContractError)
+  const legacy = mapNewCoinSubscription({ ...raw, settlement_mode: 'legacy_instant', settled_quote_amount: null, refunded_quote_amount: null })
+  assert.equal(legacy.refundedQuoteAmountText, undefined)
+})

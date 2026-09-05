@@ -295,6 +295,7 @@ pub(crate) struct AdminUploadObjectWrite {
 
 #[derive(Debug, Clone)]
 pub(crate) struct AdminNewCoinLockPositionWrite {
+    pub(crate) listing_project_id: Option<u64>,
     // 后台新币派发可能直接入账，也可能生成锁仓计划；应用层只传递锁仓业务字段。
     pub(crate) user_id: u64,
     pub(crate) asset_id: u64,
