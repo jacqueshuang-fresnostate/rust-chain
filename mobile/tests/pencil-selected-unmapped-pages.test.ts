@@ -40,7 +40,7 @@ test('此前未映射页面均声明当前 Pencil 选中画板来源', () => {
     swap: 'x9T4CL eXdnN sf288 xvVss',
     earn: 'zIzOm tCHZ9 nqP6W aXxul',
     loan: 'kIOBX yrsRy',
-    newCoins: 'oOJ0q ZTtvY',
+    newCoins: 'oOJ0q ZTtvY XG67j E2qzxN',
     newCoinDetail: 'nFwYy B6Qh9J',
   }
   for (const [name, id] of Object.entries(expected) as [keyof typeof views, string][]) {
@@ -145,7 +145,8 @@ test('视觉重构没有移除真实接口、状态与危险操作复核', () =>
   assert.match(views.swap, /const requestAmount = amountText\.value[\s\S]*requestConvertQuote\(selectedPair\.value, requestAmount\)/)
   assert.match(views.earn, /const requestAmount = amountText\.value[\s\S]*subscribeEarnProduct\(selected\.value\.id, requestAmount\)/)
   assert.match(views.loan, /applyLoan\(\{[\s\S]*?repayLoanOrder\(order\.id\)/)
-  assert.match(views.newCoins, /fetchNewCoinProjects\(\)/)
+  assert.match(views.newCoins, /fetchNewCoinProjects\(50, \{ force \}\)/)
+  assert.match(views.newCoins, /useMarketStore\(\)/)
   assert.match(views.newCoinDetail, /subscribeNewCoin\(\{[\s\S]*?createNewCoinPurchase\(\{/)
   for (const source of [views.assets, views.orders, views.swap, views.earn, views.loan, views.newCoinDetail]) {
     assert.match(source, /role="dialog"/)

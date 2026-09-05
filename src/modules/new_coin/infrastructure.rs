@@ -202,20 +202,30 @@ impl MySqlNewCoinReadRepository {
 #[async_trait]
 impl NewCoinReadRepository for MySqlNewCoinReadRepository {
     /// 读取 `status = 'active'` 的公开新币项目，按主键倒序返回最新上架的若干条并受 `limit` 截断。
-    /// 单行同时带出生命周期状态、发行价、上市时间、解禁类型与解禁费配置，
+    /// 单行同时带出项目资产和计价资产的权威名称、符号与图标，
+    /// 以及生命周期状态、发行价、上市时间、解禁类型与解禁费配置，
     /// 以及上市后购买开关和后台指定的唯一交易对，供项目列表页一次渲染完成。
     /// 查询不带用户维度条件，返回的是面向所有人的公告数据；
     /// 被后台停用的项目在此不可见，也不会回退去读草稿态记录。
     async fn list_active_projects(&self, limit: u32) -> AppResult<Vec<NewCoinProjectRead>> {
         let rows = sqlx::query_as::<_, NewCoinProjectReadRow>(
-            r#"SELECT id, asset_id, symbol, lifecycle_status, total_supply, issue_price,
-                      quote_asset_id, reserved_supply, allocated_supply, remaining_supply, listed_at,
-                      unlock_type, fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
-                      unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
-                      post_listing_purchase_enabled, post_listing_pair_id, status
-               FROM new_coin_projects
-               WHERE status = 'active'
-               ORDER BY id DESC
+            r#"SELECT projects.id, projects.asset_id, projects.symbol,
+                      project_asset.name, project_asset.logo_url,
+                      projects.lifecycle_status, projects.total_supply, projects.issue_price,
+                      projects.quote_asset_id, quote_asset.symbol AS quote_asset_symbol,
+                      quote_asset.logo_url AS quote_asset_logo_url,
+                      projects.reserved_supply, projects.allocated_supply,
+                      projects.remaining_supply, projects.listed_at, projects.unlock_type,
+                      projects.fixed_unlock_at, projects.relative_unlock_seconds,
+                      projects.unlock_fee_enabled, projects.unlock_fee_rate,
+                      projects.unlock_fee_basis, projects.unlock_fee_asset,
+                      projects.post_listing_purchase_enabled, projects.post_listing_pair_id,
+                      projects.status
+               FROM new_coin_projects AS projects
+               LEFT JOIN assets AS project_asset ON project_asset.id = projects.asset_id
+               LEFT JOIN assets AS quote_asset ON quote_asset.id = projects.quote_asset_id
+               WHERE projects.status = 'active'
+               ORDER BY projects.id DESC
                LIMIT ?"#,
         )
         .bind(limit as i64)
@@ -235,13 +245,22 @@ impl NewCoinReadRepository for MySqlNewCoinReadRepository {
         symbol: &str,
     ) -> AppResult<Option<NewCoinProjectRead>> {
         let row = sqlx::query_as::<_, NewCoinProjectReadRow>(
-            r#"SELECT id, asset_id, symbol, lifecycle_status, total_supply, issue_price,
-                      quote_asset_id, reserved_supply, allocated_supply, remaining_supply, listed_at,
-                      unlock_type, fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
-                      unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
-                      post_listing_purchase_enabled, post_listing_pair_id, status
-               FROM new_coin_projects
-               WHERE symbol = ? AND status = 'active'
+            r#"SELECT projects.id, projects.asset_id, projects.symbol,
+                      project_asset.name, project_asset.logo_url,
+                      projects.lifecycle_status, projects.total_supply, projects.issue_price,
+                      projects.quote_asset_id, quote_asset.symbol AS quote_asset_symbol,
+                      quote_asset.logo_url AS quote_asset_logo_url,
+                      projects.reserved_supply, projects.allocated_supply,
+                      projects.remaining_supply, projects.listed_at, projects.unlock_type,
+                      projects.fixed_unlock_at, projects.relative_unlock_seconds,
+                      projects.unlock_fee_enabled, projects.unlock_fee_rate,
+                      projects.unlock_fee_basis, projects.unlock_fee_asset,
+                      projects.post_listing_purchase_enabled, projects.post_listing_pair_id,
+                      projects.status
+               FROM new_coin_projects AS projects
+               LEFT JOIN assets AS project_asset ON project_asset.id = projects.asset_id
+               LEFT JOIN assets AS quote_asset ON quote_asset.id = projects.quote_asset_id
+               WHERE projects.symbol = ? AND projects.status = 'active'
                LIMIT 1"#,
         )
         .bind(symbol)
@@ -1476,10 +1495,14 @@ struct NewCoinProjectReadRow {
     id: u64,
     asset_id: u64,
     symbol: String,
+    name: Option<String>,
+    logo_url: Option<String>,
     lifecycle_status: String,
     total_supply: BigDecimal,
     issue_price: BigDecimal,
     quote_asset_id: Option<u64>,
+    quote_asset_symbol: Option<String>,
+    quote_asset_logo_url: Option<String>,
     reserved_supply: BigDecimal,
     allocated_supply: BigDecimal,
     remaining_supply: BigDecimal,
@@ -1638,10 +1661,14 @@ impl From<NewCoinProjectReadRow> for NewCoinProjectRead {
             id: row.id,
             asset_id: row.asset_id,
             symbol: row.symbol,
+            name: row.name,
+            logo_url: row.logo_url,
             lifecycle_status: row.lifecycle_status,
             total_supply: row.total_supply,
             issue_price: row.issue_price,
             quote_asset_id: row.quote_asset_id,
+            quote_asset_symbol: row.quote_asset_symbol,
+            quote_asset_logo_url: row.quote_asset_logo_url,
             reserved_supply: row.reserved_supply,
             allocated_supply: row.allocated_supply,
             remaining_supply: row.remaining_supply,

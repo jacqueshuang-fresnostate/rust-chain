@@ -530,3 +530,101 @@
 - 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
 - 验证结果：通过 Pencil execute 完成双主题横幅及整页截图检查；oOJ0q、ZTtvY 布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
 - 后续事项：无
+
+## 2026-09-04 15:45 - 优化双主题通用打新横幅
+
+- 完成内容：替换 ebjOB、ihoYv 的原深色高亮横幅，改用鼠尾草绿、珍珠灰与柔和石墨色组成的中性明暗过渡图片；采用半透明币种、细轨道与低对比反射，减少霓虹和纯黑面积。横幅增加 16px 主题背景留白与 14px 圆角，使同一图片在白色、黑色主题中均自然衔接。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成双主题横幅及整页截图检查；oOJ0q、ZTtvY 布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 15:50 - 强化打新横幅区块链主题
+
+- 完成内容：重新生成并替换 ebjOB、ihoYv 的双主题通用横幅；画面采用链式透明账本方块、分布式网络节点、数据连线及新币浮现元素，强化区块链与新币发行语义，同时维持柔和鼠尾草绿、珍珠灰和石墨色中性色调。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成双主题横幅及整页截图检查；oOJ0q、ZTtvY 布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 17:48 - 新增交易先机双主题页面
+
+- 完成内容：补充 XG67j、E2qzxN 两个“交易先机”浅色与深色独立页面；保留打新专区公共标题、区块链横幅与待上市预告，切换一级标签选中态，并新增“全部、即将上线、今日上线、热门涨幅”筛选，以及 DEBIT、TMX、DGAI 三张交易机会卡，展示币种 Logo、上线时间、最新价、24h 涨幅、成交量与去交易操作。同步将打新专区分类扩展为 8 个设计。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 XG67j、E2qzxN 双主题整页截图检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：前端实现时使用后台 coin.logoUrl 替换币种 Logo 占位，并接入行情与交易入口数据。
+
+## 2026-09-04 17:53 - 移除交易先机标题区
+
+- 完成内容：从 XG67j、E2qzxN 交易先机浅色与深色页面移除 mEz6s、vLHaK 标题说明区域，使筛选控件与交易机会列表直接承接一级标签。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成双主题交易先机内容区截图检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 17:58 - 移除打新专区待上市预告
+
+- 完成内容：从打新活动与交易先机浅色、深色四个页面移除 UWxLC、iar9L、RhwBF、N015PU 待上市预告区域，使区块链横幅直接衔接一级标签与页面内容。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 oOJ0q、ZTtvY、XG67j、E2qzxN 四页整页截图检查；布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 23:24 - 重建设计打新详情双主题页面
+
+- 完成内容：完全重建 nFwYy、B6Qh9J 打新详情浅色与深色页面。新方案采用主题化 CP 项目主视觉，集中展示币种身份、申购状态、打新价格、结束倒计时和募集进度；增加募集目标、已募集、参与人数三项统计；以预热中、申购中、待上市、已上市四阶段状态区呈现发行进程；重新整理发行规则，并重构参与申购面板，补充可用余额、个人上限、金额输入、快捷比例、预计分配、链上分配提示与主操作按钮。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 nFwYy、B6Qh9J 双主题整页截图与布局检查；修复发行阶段标题及申购标题的局部裁切后，两页布局问题均为 0，无重叠、溢出或 placeholder 残留。
+- 后续事项：前端实现时接入币种 Logo、募集进度、倒计时、用户余额、个人限额与预计分配数据。
+
+## 2026-09-04 23:30 - 优化打新详情币种 Logo 与功能图标
+
+- 完成内容：为 nFwYy、B6Qh9J 生成并应用全新的 CP 币种 Logo，采用互锁区块链结构组成 CP 几何标记，并保留 coin.logoUrl 后台替换语义；同步重构申购状态、发行价格、倒计时、预热中、申购中、待上市、已上市、链上分配及申购按钮图标，分别使用进行状态、美元徽章、沙漏、火焰、手持代币、火箭、行情趋势、区块与右箭头图标强化业务语义。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 CP Logo 独立截图及 nFwYy、B6Qh9J 双主题整页截图检查；两页布局问题均为 0，无裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：前端接入后由后台 coin.logoUrl 覆盖设计占位 Logo。
+
+## 2026-09-04 23:37 - 移除申购面板链上分配标签
+
+- 完成内容：从 TXjKy、oJR62 参与申购面板标题行右侧移除“链上分配”图标与文字，保留简洁的“参与申购”标题。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成浅色与深色申购面板截图检查；nFwYy、B6Qh9J 布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 23:40 - 移除打新详情发行统计
+
+- 完成内容：从 nFwYy、B6Qh9J 打新详情浅色与深色页面移除 Tgih7、AgBIy 发行统计区域，不再单独展示募集目标、已募集和参与人数三项统计。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成双主题整页截图检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-04 23:45 - 移除打新记录概览
+
+- 完成内容：从 A9It6g、h4gfd 打新记录浅色与深色页面移除 WukeH、ATErg 打新记录概览区域，使状态筛选与记录列表直接衔接标题栏。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成双主题打新记录整页截图检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-05 00:18 - 打新记录圆形 Logo 与卡片二次优化
+
+- 完成内容：将 A9It6g、h4gfd 中 HIPPO、NOVA、ORBIT 六个币种 Logo 统一改为 42px 圆形，并修正 ORBIT 占位字母为 O；同步优化浅色与深色三组记录卡片，增加状态色顶部强调线、状态圆点、内嵌申购数据区、精简圆角与描边、浅色柔和阴影，以及带箭头的胶囊操作按钮，强化记录状态和操作层级。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 A9It6g、h4gfd 双主题整页截图与布局检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：前端实现时继续使用后台 coin.logoUrl 替换圆形 Logo 占位。
+
+## 2026-09-05 00:33 - 打新记录卡片全新版本重构
+
+- 完成内容：再次完全重建 A9It6g、h4gfd 的六张打新记录卡片。新版本采用圆形币种 Logo、左侧状态色轨、简洁项目与申购时间标题、状态圆点胶囊；中部改为主结果与申购金额左右分栏，分别突出实际分配、开放时间或预计分配；底部仅保留短记录号和轻量圆形箭头入口，移除上一版顶部强调线、灰色数据块和黑白胶囊按钮，整体更轻盈清晰。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 A9It6g、h4gfd 双主题整页截图与布局检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：前端实现时使用 coin.logoUrl 替换圆形 Logo 占位，并根据记录状态切换主结果字段和状态色。
+
+## 2026-09-05 00:43 - 统一打新记录卡片配色
+
+- 完成内容：降低 ZceA6、l5B3h 打新记录列表的颜色多样性，将 HIPPO、NOVA、ORBIT 三组卡片的圆形 Logo、左侧状态轨、状态圆点、状态文字、核心结果数值及详情箭头统一为品牌薄荷绿色；状态标签与箭头底座仅保留浅色、深色主题对应的绿色层级，移除紫色和橙色强调。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成记录列表及 A9It6g、h4gfd 双主题整页截图检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无
+
+## 2026-09-05 01:14 - 打新记录卡片主题配色适配
+
+- 完成内容：重新校准 ZceA6、l5B3h 卡片与页面整体色阶。浅色卡片改为柔和米白表面、浅灰绿描边与极弱阴影；深色卡片改为接近页面背景的墨绿色表面和低对比描边。圆形 Logo、状态侧轨、状态标签、结果数值与详情箭头统一使用低饱和森林绿和鼠尾草绿，减少高亮薄荷绿面积，使卡片更自然地融入浅色与深色页面。
+- 修改文件：hippo-mobile-uiux.pen、docs/superpowers/PROGRESS.md
+- 验证结果：通过 Pencil execute 完成 A9It6g、h4gfd 双主题整页截图与布局检查；两页布局问题均为 0，未发现裁切、重叠、溢出或 placeholder 残留。
+- 后续事项：无

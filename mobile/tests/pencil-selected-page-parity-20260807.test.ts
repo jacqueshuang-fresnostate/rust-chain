@@ -210,7 +210,7 @@ test('compact actions expose effective 44px pointer targets', () => {
   assert.match(sources.assets, /\.assets-transfer-amount__meta button \{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
   assert.match(sources.help, /\.help-support-search[\s\S]*?height: 44px;/)
   assert.match(sources.help, /\.help-support-row[\s\S]*?height: 64px;[\s\S]*?min-height: 64px;/)
-  assert.match(sources.newCoinRecords, /\.record-tabs button[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
+  assert.match(sources.newCoinRecords, /\.new-coin-record-status-filters button[\s\S]*?height: 44px;/)
   assert.match(sources.transactionOrder, /\.transaction-order-record__actions button \{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
   assert.match(sources.transactionOrder, /\.transaction-order-record__actions button::before[\s\S]*?inset: 1px 0;/)
   assert.match(sources.messages, /\.message-filter-bar button::before[\s\S]*?inset: -9px -4px;/)
@@ -231,9 +231,9 @@ test('new coin, ledger, and messages preserve their authoritative APIs', () => {
   }
   assert.match(sources.newCoinRecords, /await payNewCoinUnlockFee\(/)
   assert.match(sources.newCoinRecords, /await releaseNewCoinUnlock\(/)
-  assert.match(sources.newCoinRecords, /\.record-tabs[\s\S]*?height: 44px;/)
-  assert.match(sources.newCoinRecords, /\.record-list article[\s\S]*?min-height: 72px;/)
-  assert.match(sources.newCoinRecords, /\.record-icon[\s\S]*?height: 36px;[\s\S]*?width: 36px;/)
+  assert.match(sources.newCoinRecords, /\.new-coin-record-status-filters[\s\S]*?height: 56px;/)
+  assert.match(sources.newCoinRecords, /\.new-coin-record-stack[\s\S]*?gap: 14px;/)
+  assert.match(sources.newCoinRecords, /<NewCoinRecordCard/)
 
   assert.match(sources.ledger, /createWalletLedgerPaginationController\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
   assert.match(sources.ledger, /paginationController\.loadInitial\(\)/)

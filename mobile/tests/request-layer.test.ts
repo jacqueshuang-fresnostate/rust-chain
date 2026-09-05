@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import axios, { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
-import { installAuthSessionInterceptors, isAuthBootstrapRequest } from '../src/api/requestAuth.ts'
+import {
+  installAuthSessionInterceptors,
+  isAuthBootstrapRequest,
+  publicApiRequestConfig,
+} from '../src/api/requestAuth.ts'
 import { normalizeApiError, resolveSafeApiErrorMessage } from '../src/core/apiError.ts'
 import { createSessionOwner, type SessionLease } from '../src/core/sessionOwner.ts'
 
@@ -115,6 +119,36 @@ test('guest 401 responses stay local and cannot redirect a later public page', a
     adapter: async (config) => { throw unauthorized(config) },
   }))
 
+  assert.equal(refreshCalls, 0)
+  assert.equal(clearCalls, 0)
+  assert.equal(expiredCalls, 0)
+})
+
+test('explicit public requests strip stale credentials and never expire the session', async () => {
+  const instance = axios.create()
+  let capturedAuthorization: unknown
+  let refreshCalls = 0
+  let clearCalls = 0
+  let expiredCalls = 0
+  installAuthSessionInterceptors(instance, {
+    readAccessToken: () => 'stale-access',
+    refreshAccessToken: async () => {
+      refreshCalls += 1
+      return null
+    },
+    clearSession: () => { clearCalls += 1 },
+    onSessionExpired: () => { expiredCalls += 1 },
+  })
+
+  await assert.rejects(instance.get('/api/v1/new-coins', publicApiRequestConfig({
+    headers: { Authorization: 'Bearer caller-stale' },
+    adapter: async (config) => {
+      capturedAuthorization = config.headers.Authorization
+      throw unauthorized(config)
+    },
+  })))
+
+  assert.equal(capturedAuthorization, undefined)
   assert.equal(refreshCalls, 0)
   assert.equal(clearCalls, 0)
   assert.equal(expiredCalls, 0)

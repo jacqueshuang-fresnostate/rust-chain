@@ -2,6 +2,7 @@
 import { computed, useSlots } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
+import { ChevronLeft } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { goBackOr } from '@/core/navigation'
 
@@ -14,6 +15,7 @@ const props = defineProps<{
   pencil?: boolean
   fallback?: RouteLocationRaw
   preferFallback?: boolean
+  backIcon?: 'arrow' | 'chevron'
 }>()
 
 const route = useRoute()
@@ -53,7 +55,8 @@ function back(): void {
       :tabindex="showBack ? undefined : -1"
       @click="back"
     >
-      <ArrowLeft :size="pencil ? 22 : 20" />
+      <ChevronLeft v-if="backIcon === 'chevron'" :size="pencil ? 26 : 22" />
+      <ArrowLeft :size="pencil ? 22 : 20" v-else />
     </button>
     <div class="page-header__copy">
       <slot name="center">

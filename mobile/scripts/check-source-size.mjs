@@ -12,11 +12,11 @@ export const SOURCE_SIZE_BUDGETS = Object.freeze([
   Object.freeze({ path: 'src/styles/base.css', maxLines: 601, maxBytes: 13_522, group: 'shared-css' }),
   Object.freeze({ path: 'src/styles/prototype-base.css', maxLines: 8_032, maxBytes: 141_686, group: 'shared-css' }),
   Object.freeze({ path: 'src/styles/prototype-parity.css', maxLines: 3_686, maxBytes: 91_152, group: 'shared-css' }),
-  Object.freeze({ path: 'src/styles/pencil-selected-pages.css', maxLines: 889, maxBytes: 21_540, group: 'shared-css' }),
+  Object.freeze({ path: 'src/styles/pencil-selected-pages.css', maxLines: 976, maxBytes: 26_224, group: 'shared-css' }),
 ])
 
 export const SOURCE_GROUP_BUDGETS = Object.freeze({
-  'shared-css': Object.freeze({ maxLines: 13_208, maxBytes: 267_900 }),
+  'shared-css': Object.freeze({ maxLines: 13_295, maxBytes: 272_584 }),
 })
 
 function lineCount(text) {

@@ -85,18 +85,20 @@ test('预测页保留市场本地化、钱包、报价和订单确认链路', ()
 })
 
 test('新币三页保留项目路由、认购购买、四类记录、手续费和释放合同', () => {
-  assert.match(newCoinsSource, /fetchNewCoinProjects\(\)/)
-  assert.match(newCoinsSource, /fetchNewCoinSubscriptions\(\)/)
+  assert.match(newCoinsSource, /fetchNewCoinProjects\(50, \{ force \}\)/)
+  assert.match(newCoinsSource, /useMarketStore\(\)/)
+  assert.match(newCoinsSource, /buildNewCoinOpportunities\(/)
   assert.match(newCoinsSource, /router\.push\(\{ name: 'new-coin-detail', params: \{ symbol: project\.symbol \} \}\)/)
   assert.match(newCoinsSource, /router\.push\(\{ name: 'new-coin-records' \}\)/)
 
   assert.match(newCoinDetailSource, /fetchNewCoinProject\(props\.symbol\)/)
   assert.match(newCoinDetailSource, /fetchWalletAccounts\(\)/)
-  assert.match(newCoinDetailSource, /fetchMarketTickers\(\)/)
-  assert.match(newCoinDetailSource, /<select v-if="canSubscribe" v-model="quoteAssetId">/)
-  assert.match(newCoinDetailSource, /const budget = decimalPortion\(availableText\.value,[\s\S]*decimalDivide\(budget, executionPriceText\.value, 18\)/)
-  assert.match(newCoinDetailSource, /const requestAmount = amountText\.value[\s\S]*await subscribeNewCoin\(\{\s*symbol: project\.value\.symbol,\s*quoteAssetId: quoteAssetId\.value,\s*quoteAmount: requestAmount,\s*issuePrice: project\.value\.issuePriceText,/)
-  assert.match(newCoinDetailSource, /await createNewCoinPurchase\(\{\s*symbol: project\.value\.symbol,\s*pairId: project\.value\.postListingPairId,\s*price: executionPriceText\.value \|\| project\.value\.issuePriceText,\s*quantity: requestAmount,/)
+  assert.match(newCoinDetailSource, /account\.assetId === project\.value\?\.quoteAssetId/)
+  assert.match(newCoinDetailSource, /project\.value\?\.issuePriceText \|\| null/)
+  assert.doesNotMatch(newCoinDetailSource, /fetchMarketTickers|useMarketStore|<select|symbol === 'USDT'/)
+  assert.match(newCoinDetailSource, /const budget = decimalPortion\(availableText\.value, percentage, 100, 18\)[\s\S]*decimalDivide\(budget, executionPriceText\.value, 18\)/)
+  assert.match(newCoinDetailSource, /const requestAmount = amountText\.value[\s\S]*await subscribeNewCoin\(\{\s*symbol: project\.value\.symbol,\s*quoteAssetId: project\.value\.quoteAssetId,\s*quoteAmount: requestAmount,\s*issuePrice: project\.value\.issuePriceText,/)
+  assert.match(newCoinDetailSource, /await createNewCoinPurchase\(\{\s*symbol: project\.value\.symbol,\s*pairId: project\.value\.postListingPairId,\s*price: project\.value\.issuePriceText,\s*quantity: requestAmount,/)
 
   for (const request of [
     'fetchNewCoinProjects',
@@ -108,9 +110,9 @@ test('新币三页保留项目路由、认购购买、四类记录、手续费�
   ]) {
     assert.match(newCoinRecordsSource, new RegExp(`${request}\\(\\)`))
   }
-  assert.match(newCoinRecordsSource, /await payNewCoinUnlockFee\(\{\s*idempotencyKey: pendingUnlock\.value\.idempotencyKey,\s*paymentAssetId: paymentAssetId\.value,\s*amount: paymentAmountText\.value,/)
+  assert.match(newCoinRecordsSource, /await payNewCoinUnlockFee\(\{\s*idempotencyKey: pendingUnlock\.value\.idempotencyKey,\s*paymentAssetId: pendingUnlock\.value\.unlockFeeAssetId,\s*amount: paymentAmountText\.value,/)
   assert.match(newCoinRecordsSource, /await releaseNewCoinUnlock\(unlock\.idempotencyKey\)/)
-  assert.match(newCoinRecordsSource, /unlock\.feePaidStatus\.toLowerCase\(\) === 'paid'/)
+  assert.match(newCoinRecordsSource, /buildUnifiedNewCoinRecords\(/)
 })
 
 test('资金弹层具备焦点闭环、Escape、滚动锁和主题化遮罩', () => {
@@ -128,9 +130,8 @@ test('资金弹层具备焦点闭环、Escape、滚动锁和主题化遮罩', ()
     assert.match(source, /trap\w+Focus\(event, close\w+\)/)
   }
 
-  assert.match(newCoinRecordsSource, /event\.key === 'Escape'/)
-  assert.match(newCoinRecordsSource, /event\.key !== 'Tab'/)
-  assert.match(newCoinRecordsSource, /document\.body\.style\.overflow = 'hidden'/)
+  assert.match(newCoinRecordsSource, /useModalDialog\(/)
+  assert.match(newCoinRecordsSource, /trapFeeFocus\(event, closeFeePayment\)/)
   assert.match(modalDialogSource, /event\.key === 'Escape'/)
   assert.match(modalDialogSource, /event\.key !== 'Tab'/)
   assert.match(modalDialogSource, /document\.body\.style\.overflow = 'hidden'/)

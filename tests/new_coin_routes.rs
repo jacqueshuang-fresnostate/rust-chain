@@ -283,6 +283,78 @@ async fn new_coin_routes_return_clear_error_without_mysql() {
 }
 
 #[tokio::test]
+async fn public_new_coin_routes_return_authoritative_asset_metadata() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let (asset_id, symbol) = create_asset(&pool, "NM").await;
+    let (quote_asset_id, quote_symbol) = create_asset(&pool, "NQ").await;
+    let project_id = create_new_coin_project(&pool, asset_id, &symbol, Some(quote_asset_id)).await;
+    let project_name = format!("{symbol} launch");
+    let project_logo = format!("https://assets.example.test/{symbol}.png");
+    let quote_logo = format!("https://assets.example.test/{quote_symbol}.png");
+    sqlx::query("UPDATE assets SET name = ?, logo_url = ? WHERE id = ?")
+        .bind(&project_name)
+        .bind(&project_logo)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(&quote_logo)
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
+
+    let app = user_routes().with_state(AppState::new(test_settings()).with_mysql(pool.clone()));
+    let list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/new-coins?limit=100")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_body = axum::body::to_bytes(list_response.into_body(), 131072).await?;
+    let list_payload: Value = serde_json::from_slice(&list_body)?;
+    let listed_project = list_payload["projects"]
+        .as_array()
+        .and_then(|projects| projects.iter().find(|project| project["id"] == project_id))
+        .expect("seeded project must be present")
+        .clone();
+
+    let detail_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/new-coins/{symbol}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_body = axum::body::to_bytes(detail_response.into_body(), 131072).await?;
+    let detail_project: Value = serde_json::from_slice(&detail_body)?;
+
+    assert_eq!(detail_project, listed_project);
+    assert_eq!(detail_project["name"], project_name);
+    assert_eq!(detail_project["logo_url"], project_logo);
+    assert_eq!(detail_project["quote_asset_id"], quote_asset_id);
+    assert_eq!(detail_project["quote_asset_symbol"], quote_symbol);
+    assert_eq!(detail_project["quote_asset_logo_url"], quote_logo);
+
+    sqlx::query("DELETE FROM new_coin_projects WHERE id = ?")
+        .bind(project_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(asset_id)
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn new_coin_routes_list_projects_and_allow_fee_payment() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -323,6 +395,11 @@ async fn new_coin_routes_list_projects_and_allow_fee_payment() -> Result<(), Box
                 project["id"] == project_id
                     && project["symbol"] == symbol
                     && project["lifecycle_status"] == "listed"
+                    && project["name"] == symbol
+                    && project["logo_url"].is_null()
+                    && project["quote_asset_id"].is_null()
+                    && project["quote_asset_symbol"].is_null()
+                    && project["quote_asset_logo_url"].is_null()
                     && project["post_listing_purchase_enabled"] == false
                     && project["post_listing_pair_id"].is_null()
             }),

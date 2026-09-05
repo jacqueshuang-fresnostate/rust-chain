@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile implementation checklist and quality gate."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Mobile shell, safe-area, theme, interaction, and Pencil parity rules."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Secondary-route navigation and symmetric i18n contracts."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Strict API mapping, DecimalText, caching, and realtime-data contracts."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend implementation checklist and boundary rules."}
+{"file": ".trellis/spec/backend/new-coin-mobile-contract.md", "reason": "Existing public new-coin DTO and mobile business contracts."}
+{"file": ".trellis/spec/backend/market-favorites.md", "reason": "Backend-owned nullable asset-logo contract and market-store reuse."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust DTO/query/testing and warning-free quality rules."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "New-coin repository/infrastructure/presentation ownership boundaries."}
+{"file": ".trellis/tasks/09-05-mobile-new-coin-pencil-parity/research/pencil-selected-new-coin-frames.md", "reason": "Exact geometry, palettes, copy, icons, and state truth from the eight selected Pencil frames."}
+{"file": ".trellis/tasks/09-05-mobile-new-coin-pencil-parity/research/current-new-coin-audit.md", "reason": "Current routes, business flows, API gaps, reusable patterns, and regression risks."}

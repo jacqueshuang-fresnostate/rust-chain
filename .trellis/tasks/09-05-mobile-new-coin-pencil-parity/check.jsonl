@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify Mobile quality checklist and release gates."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Verify shell, safe-area, accessibility, theme, and visual parity."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Verify route semantics and locale symmetry."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Verify strict mapping, exact decimals, shared realtime store, and request behavior."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend quality and package boundaries."}
+{"file": ".trellis/spec/backend/new-coin-mobile-contract.md", "reason": "Verify public new-coin response remains truthful and compatible."}
+{"file": ".trellis/spec/backend/market-favorites.md", "reason": "Verify configured logo ownership and absence of derived external URLs."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify Rust checks, tests, and DTO/query coverage."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Verify code remains in correct new-coin layers."}
+{"file": ".trellis/tasks/09-05-mobile-new-coin-pencil-parity/research/pencil-selected-new-coin-frames.md", "reason": "Compare every route and theme against exact selected Pencil truth."}
+{"file": ".trellis/tasks/09-05-mobile-new-coin-pencil-parity/research/current-new-coin-audit.md", "reason": "Ensure all identified business and visual gaps are closed without regressions."}

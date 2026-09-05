@@ -1,4 +1,4 @@
-import { client, requestUrl } from './client'
+import { client, publicApiRequestConfig, requestUrl } from './client'
 import {
   createReferenceRequestKey,
   referenceRequestRegistry,
@@ -52,7 +52,7 @@ export async function fetchMarketPairs(options: ReferenceRequestOptions = {}): P
   const url = requestUrl('/markets')
   // 只缓存公开交易对元数据；ticker、K 线、深度与成交始终走实时请求。
   return referenceRequestRegistry.request(createReferenceRequestKey(url, { projection: 'pairs' }), 2 * 60_000, async () => {
-    const response = await client.get<{ markets?: BackendMarket[] }>(url)
+    const response = await client.get<{ markets?: BackendMarket[] }>(url, publicApiRequestConfig())
     return (response.data.markets || [])
       .map((market) => {
         const pair = splitSymbol(market.symbol, market.base_asset, market.quote_asset)
@@ -68,10 +68,16 @@ export async function fetchMarketPairs(options: ReferenceRequestOptions = {}): P
 }
 
 export async function fetchMarketTickers(): Promise<MarketTicker[]> {
-  const response = await client.get<{ markets?: BackendMarket[] }>(requestUrl('/markets'))
+  const response = await client.get<{ markets?: BackendMarket[] }>(
+    requestUrl('/markets'),
+    publicApiRequestConfig(),
+  )
   const markets = Array.isArray(response.data.markets) ? response.data.markets : []
   const results = await Promise.allSettled(
-    markets.map((market) => client.get<BackendTicker>(requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(market.symbol))}/ticker`))),
+    markets.map((market) => client.get<BackendTicker>(
+      requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(market.symbol))}/ticker`),
+      publicApiRequestConfig(),
+    )),
   )
 
   return markets
@@ -92,7 +98,7 @@ export async function fetchKlines(
   const start = end - intervalDuration(interval) * limit
   const response = await client.get<BackendKline[] | { klines?: BackendKline[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/klines`),
-    { params: { interval, start, end, limit } },
+    publicApiRequestConfig({ params: { interval, start, end, limit } }),
   )
   const rawRows = Array.isArray(response.data) ? response.data : response.data.klines || []
 
@@ -102,6 +108,7 @@ export async function fetchKlines(
 export async function fetchOrderBook(symbol: string): Promise<{ bids: OrderBookLevel[]; asks: OrderBookLevel[] }> {
   const response = await client.get<{ bids?: BackendDepthLevel[]; asks?: BackendDepthLevel[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/depth`),
+    publicApiRequestConfig(),
   )
   return mapMarketDepthSnapshot(response.data)
 }
@@ -109,7 +116,7 @@ export async function fetchOrderBook(symbol: string): Promise<{ bids: OrderBookL
 export async function fetchRecentTrades(symbol: string, limit = 16): Promise<TradePrint[]> {
   const response = await client.get<{ trades?: BackendTrade[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/trades`),
-    { params: { limit } },
+    publicApiRequestConfig({ params: { limit } }),
   )
   const rows = Array.isArray(response.data.trades) ? response.data.trades : []
   return mapMarketTrades(rows, limit)

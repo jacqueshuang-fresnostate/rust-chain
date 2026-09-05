@@ -23,6 +23,8 @@ import {
   type AuthRequestSession,
 } from './requestAuth'
 
+export { publicApiRequestConfig } from './requestAuth'
+
 const ACCESS_TOKEN_KEY = 'hippo_mobile_access_token'
 const REFRESH_TOKEN_KEY = 'hippo_mobile_refresh_token'
 const SESSION_STORAGE_KEY = 'hippo_mobile_session_v2'

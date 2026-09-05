@@ -2,6 +2,7 @@ import {
   CanceledError,
   type AxiosError,
   type AxiosInstance,
+  type AxiosRequestConfig,
   type GenericAbortSignal,
   type InternalAxiosRequestConfig,
 } from 'axios'
@@ -28,8 +29,14 @@ type RetriableRequest = InternalAxiosRequestConfig & {
   _hippoCallerSignalCaptured?: boolean
   _hippoDisposeSignal?: () => void
   _hippoHadAuth?: boolean
+  _hippoPublic?: boolean
   _hippoRetried?: boolean
   _hippoSession?: AuthRequestSession
+}
+
+/** Marks a backend endpoint as public even when stale credentials remain in storage. */
+export function publicApiRequestConfig(config: AxiosRequestConfig = {}): AxiosRequestConfig {
+  return { ...config, _hippoPublic: true } as AxiosRequestConfig
 }
 
 export interface AuthSessionInterceptorDependencies {
@@ -108,7 +115,7 @@ export function installAuthSessionInterceptors(
       config._hippoCallerSignalCaptured = true
     }
 
-    if (isAuthBootstrapRequest(config.url)) {
+    if (config._hippoPublic || isAuthBootstrapRequest(config.url)) {
       config.headers.delete('Authorization')
       config._hippoHadAuth = false
       config._hippoSession = undefined

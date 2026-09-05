@@ -1655,3 +1655,11 @@ await runPwaUpdate({ updateServiceWorker, timeoutMs: PWA_UPDATE_TIMEOUT_MS })
 const install = createPwaInstallEligibilitySession({ routeName, now, storage })
 showInstallPrompt.value = install.evaluate({ deferredPrompt, standalone }).eligible
 ```
+
+## Selected New-Coin Route Geometry
+
+- `/products/new-coins` owns `oOJ0q/ZTtvY/XG67j/E2qzxN`, detail owns `nFwYy/B6Qh9J`, and records owns `A9It6g/h4gfd`. The Pencil 28px status row is native chrome and is not duplicated.
+- At 390px, Zone/Opportunity uses 54px Header, 148px banner, 50px primary tabs, 300px project cards and 140px opportunity cards. The activity path adds a 36px filter rail, then content top padding 8px, a 36px section heading, and a 12px heading-to-card gap, placing the first card at web-body y=344. Detail uses 56/210/112/104/328px tracks; Records uses 58px Header, 56px status rail, and 168px cards.
+- Production owns the selected banner under `src/assets`; no runtime source imports `mobile/pencil`. All fixed tracks are fluid inside 16px insets and must remain horizontally contained at 320px and 448px.
+- Light/dark theme switches only route-scoped paint tokens in `pencil-selected-pages.css`; geometry, focus order, 44px effective controls, dialog behavior, and safe-area padding remain unchanged.
+- Record state remains semantic copy, not a hue switch: every selected-frame record uses the same forest/sage system for fallback Logo, left rail, status mark/text, primary result, and action arrow in both themes.

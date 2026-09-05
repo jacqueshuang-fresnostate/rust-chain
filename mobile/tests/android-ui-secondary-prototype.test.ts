@@ -59,8 +59,8 @@ test('复核层没有改变真实校验、请求与载荷合同', () => {
   assert.match(sources.swap, /@click="openReview"/)
 
   assert.match(sources.newCoinDetail, /decimalCompare\(paymentAmount\.value, availableText\.value\) > 0/)
-  assert.match(sources.newCoinDetail, /const requestAmount = amountText\.value[\s\S]*await subscribeNewCoin\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*quoteAssetId: quoteAssetId\.value,[\s\S]*quoteAmount: requestAmount,[\s\S]*issuePrice: project\.value\.issuePriceText,/)
-  assert.match(sources.newCoinDetail, /await createNewCoinPurchase\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*pairId: project\.value\.postListingPairId,[\s\S]*price: executionPriceText\.value \|\| project\.value\.issuePriceText,[\s\S]*quantity: requestAmount,/)
+  assert.match(sources.newCoinDetail, /const requestAmount = amountText\.value[\s\S]*await subscribeNewCoin\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*quoteAssetId: project\.value\.quoteAssetId,[\s\S]*quoteAmount: requestAmount,[\s\S]*issuePrice: project\.value\.issuePriceText,/)
+  assert.match(sources.newCoinDetail, /await createNewCoinPurchase\(\{[\s\S]*symbol: project\.value\.symbol,[\s\S]*pairId: project\.value\.postListingPairId,[\s\S]*price: project\.value\.issuePriceText,[\s\S]*quantity: requestAmount,/)
   assert.match(sources.newCoinDetail, /@click="requestSubmit"/)
 })
 

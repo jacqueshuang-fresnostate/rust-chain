@@ -16,7 +16,7 @@ export const DEFAULT_BUNDLE_BUDGET = Object.freeze({
   },
   totals: {
     js: { raw: 1_500 * KIB, gzip: 510 * KIB, count: 105 },
-    css: { raw: 640 * KIB, gzip: 128 * KIB, count: 50 },
+    css: { raw: 656 * KIB, gzip: 128 * KIB, count: 50 },
   },
 })
 

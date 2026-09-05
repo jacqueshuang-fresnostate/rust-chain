@@ -887,3 +887,90 @@ html[data-theme='dark'] .seconds-settlement-layer[data-pencil-source='tFcTH FBdq
     transition-duration: .01ms !important;
   }
 }
+
+/* Selected new-coin light/dark canvases share geometry and expose route-local paint tokens. */
+.new-coins-pencil {
+  --new-coin-header: #ffffff; --new-coin-card: #ffffff; --new-coin-card-border: #e7ece9;
+  --new-coin-countdown: #f5f6f5; --new-coin-filter-selected: #f3f5f3;
+  --new-coin-opportunity-filter: #f0f3f1; --new-coin-progress-track: #e5ebe7;
+  --new-coin-action: #101412; --new-coin-action-ink: #ffffff; --new-coin-ink: #101412;
+  --new-coin-muted: #69766f; --new-coin-tab-muted: #919a95; --new-coin-signal: #19c98d;
+  --new-coin-status: #e7fbf3; --page: #ffffff; --surface: #ffffff;
+  background: var(--page);
+}
+
+html[data-theme='dark'] .new-coins-pencil {
+  --new-coin-header: #0f1110; --new-coin-card: #111512; --new-coin-card-border: #29322d;
+  --new-coin-countdown: #191e1b; --new-coin-filter-selected: #1a201c;
+  --new-coin-opportunity-filter: #151a18; --new-coin-progress-track: #2a332e;
+  --new-coin-action: #f1f5f2; --new-coin-action-ink: #101412; --new-coin-ink: #f3f6f4;
+  --new-coin-muted: #77827c; --new-coin-tab-muted: #76817b; --new-coin-signal: #67edbc;
+  --new-coin-status: #15372b; --page: #070908; --surface: #070908;
+  background: var(--page);
+}
+
+.new-coin-detail-pencil,
+.new-coin-detail-review-layer {
+  --new-coin-detail-header: #f6f8f6; --new-coin-detail-visual: linear-gradient(135deg, #e9f7f0, #ddf2e8);
+  --new-coin-detail-ink: #102018; --new-coin-detail-muted: #65706a; --new-coin-detail-signal: #19c98d;
+  --new-coin-detail-status: #d9f8ea; --new-coin-detail-plate: rgb(255 255 255 / 72%);
+  --new-coin-detail-progress: #c6ded2; --new-coin-detail-stage: #edf1ee; --new-coin-detail-stage-active: #dff8ed;
+  --new-coin-detail-rule: #ffffff; --new-coin-detail-line: #dce5df; --new-coin-detail-panel: #ffffff;
+  --new-coin-detail-field: #f5f7f5; --new-coin-detail-action: #101412; --new-coin-detail-action-ink: #ffffff;
+  --new-coin-detail-action-icon: #102018; --page: #f6f8f6; --surface: #f6f8f6;
+  color: var(--new-coin-detail-ink);
+}
+
+.new-coin-detail-pencil {
+  background: var(--page);
+}
+
+html[data-theme='dark'] .new-coin-detail-pencil,
+html[data-theme='dark'] .new-coin-detail-review-layer {
+  --new-coin-detail-header: #070908; --new-coin-detail-visual: linear-gradient(135deg, #101713, #17382c);
+  --new-coin-detail-ink: #f4faf7; --new-coin-detail-muted: #8f9b94; --new-coin-detail-signal: #70c9a5;
+  --new-coin-detail-status: #173b2e; --new-coin-detail-plate: rgb(17 28 23 / 84%);
+  --new-coin-detail-progress: #2c4438; --new-coin-detail-stage: #111714; --new-coin-detail-stage-active: #17352a;
+  --new-coin-detail-rule: #111512; --new-coin-detail-line: #29322d; --new-coin-detail-panel: #111512;
+  --new-coin-detail-field: #191e1b; --new-coin-detail-action: #f1f5f2; --new-coin-detail-action-ink: #101412;
+  --new-coin-detail-action-icon: #102018; --page: #070908; --surface: #070908;
+  color: var(--new-coin-detail-ink);
+}
+
+html[data-theme='dark'] .new-coin-detail-pencil {
+  background: var(--page);
+}
+
+.new-coin-records-page,
+.new-coin-record-dialog-layer {
+  --new-coin-record-header: #f6f7f4; --new-coin-record-card: #fcfdfb; --new-coin-record-border: #e9ecea;
+  --new-coin-record-shadow: 0 4px 14px rgb(25 44 34 / 6%); --new-coin-record-ink: #102018;
+  --new-coin-record-muted: #69766f; --new-coin-record-line: #e8ece9; --new-coin-record-active: #287a5a;
+  --new-coin-record-rail: #8fb9a8; --new-coin-record-mark: #dff1e9; --new-coin-record-mark-border: #c7dcd3;
+  --new-coin-record-status: #eff5f2;
+  --new-coin-record-filter: #e9eeea; --new-coin-record-filter-face: #e7ede9;
+  --new-coin-record-filter-active: #101412; --new-coin-record-filter-active-ink: #ffffff;
+  --new-coin-record-action: #eaf5f0;
+  --page: #f6f7f4; --surface: #f6f7f4; color: var(--new-coin-record-ink);
+}
+
+.new-coin-records-page {
+  background: var(--page);
+}
+
+html[data-theme='dark'] .new-coin-records-page,
+html[data-theme='dark'] .new-coin-record-dialog-layer {
+  --new-coin-record-header: #060a08; --new-coin-record-card: #0f1411; --new-coin-record-border: #121614;
+  --new-coin-record-shadow: 0 4px 14px rgb(0 0 0 / 24%); --new-coin-record-ink: #f4faf7;
+  --new-coin-record-muted: #8c9690; --new-coin-record-line: #29322d; --new-coin-record-active: #70c9a5;
+  --new-coin-record-rail: #315e4b; --new-coin-record-mark: #163b2d; --new-coin-record-mark-border: #274136;
+  --new-coin-record-status: #182a22;
+  --new-coin-record-filter: #151a18; --new-coin-record-filter-face: #1a201c;
+  --new-coin-record-filter-active: #f3f6f4; --new-coin-record-filter-active-ink: #101412;
+  --new-coin-record-action: #153126;
+  --page: #060a08; --surface: #060a08; color: var(--new-coin-record-ink);
+}
+
+html[data-theme='dark'] .new-coin-records-page {
+  background: var(--page);
+}
