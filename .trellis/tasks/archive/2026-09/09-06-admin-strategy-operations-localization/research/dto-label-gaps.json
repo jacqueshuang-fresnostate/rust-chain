@@ -1,0 +1,603 @@
+{
+  "requires_relogin": [
+    "AdminAgentPasswordResetResponse"
+  ],
+  "owner_agent_id": [
+    "AdminAgentUserResponse"
+  ],
+  "owner_agent_level": [
+    "AdminAgentUserResponse"
+  ],
+  "agents": [
+    "AdminAgentsResponse"
+  ],
+  "total": [
+    "AdminAgentsResponse",
+    "AdminAgentUsersResponse",
+    "AdminAgentCommissionsResponse",
+    "AdminAgentCommissionRulesResponse",
+    "AdminMarginLiquidationsResponse",
+    "AdminAuditLogsResponse",
+    "AdminDashboardUsersSummary",
+    "AdminTradingPairsResponse",
+    "AdminMarketStrategiesResponse",
+    "MarketStrategyVersionsResponse",
+    "MarketStrategyRecoveryJobsResponse",
+    "ConvertPairsResponse",
+    "ConvertOrdersResponse",
+    "AdminUsersResponse",
+    "AdminCountriesResponse",
+    "AdminNewsItemsResponse",
+    "AdminConfigCenterSummaryResponse",
+    "AdminConfigCenterResponse",
+    "AdminConfigChangesResponse",
+    "AdminAssetsResponse",
+    "AdminWalletAccountsResponse",
+    "NewCoinProjectsResponse",
+    "NewCoinSubscriptionsResponse",
+    "NewCoinDistributionsResponse",
+    "NewCoinPurchasesResponse",
+    "NewCoinLockPositionsResponse",
+    "NewCoinUnlocksResponse",
+    "RiskRulesResponse",
+    "RiskEventsResponse"
+  ],
+  "users": [
+    "AdminAgentUsersResponse",
+    "AdminDashboardResponse",
+    "AdminUsersResponse"
+  ],
+  "commissions": [
+    "AdminAgentCommissionsResponse"
+  ],
+  "results": [
+    "AdminAgentCommissionBatchStatusResponse"
+  ],
+  "rules": [
+    "AdminAgentCommissionRulesResponse",
+    "RiskRulesResponse"
+  ],
+  "maintenance_margin": [
+    "AdminMarginLiquidationResponse"
+  ],
+  "realized_pnl": [
+    "AdminMarginLiquidationResponse"
+  ],
+  "liquidations": [
+    "AdminMarginLiquidationsResponse"
+  ],
+  "before_json": [
+    "AdminAuditLogResponse",
+    "AdminConfigChangeResponse"
+  ],
+  "after_json": [
+    "AdminAuditLogResponse"
+  ],
+  "logs": [
+    "AdminAuditLogsResponse"
+  ],
+  "generated_at": [
+    "AdminDashboardResponse"
+  ],
+  "environment": [
+    "AdminDashboardResponse"
+  ],
+  "wallet": [
+    "AdminDashboardResponse"
+  ],
+  "market": [
+    "AdminDashboardResponse"
+  ],
+  "trading": [
+    "AdminDashboardResponse"
+  ],
+  "products": [
+    "AdminDashboardResponse"
+  ],
+  "risk": [
+    "AdminDashboardResponse"
+  ],
+  "audit": [
+    "AdminDashboardResponse"
+  ],
+  "new_24h": [
+    "AdminDashboardUsersSummary"
+  ],
+  "active_assets": [
+    "AdminDashboardWalletSummary"
+  ],
+  "wallet_accounts": [
+    "AdminDashboardWalletSummary"
+  ],
+  "non_zero_accounts": [
+    "AdminDashboardWalletSummary"
+  ],
+  "pending_unlocks": [
+    "AdminDashboardWalletSummary"
+  ],
+  "pending_deposits": [
+    "AdminDashboardWalletSummary"
+  ],
+  "pending_withdrawals": [
+    "AdminDashboardWalletSummary"
+  ],
+  "custody_status": [
+    "AdminDashboardWalletSummary"
+  ],
+  "active_pairs": [
+    "AdminDashboardMarketSummary"
+  ],
+  "disabled_pairs": [
+    "AdminDashboardMarketSummary"
+  ],
+  "external_pairs": [
+    "AdminDashboardMarketSummary"
+  ],
+  "strategy_pairs": [
+    "AdminDashboardMarketSummary"
+  ],
+  "feed_runtime_status": [
+    "AdminDashboardMarketSummary"
+  ],
+  "feed_needs_reload": [
+    "AdminDashboardMarketSummary"
+  ],
+  "feed_symbols": [
+    "AdminDashboardMarketSummary"
+  ],
+  "feed_providers": [
+    "AdminDashboardMarketSummary"
+  ],
+  "spot_open_orders": [
+    "AdminDashboardTradingSummary"
+  ],
+  "spot_trades_24h": [
+    "AdminDashboardTradingSummary"
+  ],
+  "convert_pending_orders": [
+    "AdminDashboardTradingSummary"
+  ],
+  "convert_completed_24h": [
+    "AdminDashboardTradingSummary"
+  ],
+  "seconds_open_orders": [
+    "AdminDashboardProductsSummary"
+  ],
+  "margin_open_positions": [
+    "AdminDashboardProductsSummary"
+  ],
+  "margin_liquidated_24h": [
+    "AdminDashboardProductsSummary"
+  ],
+  "earn_active_subscriptions": [
+    "AdminDashboardProductsSummary"
+  ],
+  "earn_maturing_24h": [
+    "AdminDashboardProductsSummary"
+  ],
+  "risk_events_24h": [
+    "AdminDashboardRiskSummary"
+  ],
+  "blocked_events_24h": [
+    "AdminDashboardRiskSummary"
+  ],
+  "pending_outbox_events": [
+    "AdminDashboardRiskSummary"
+  ],
+  "retry_inbox_events": [
+    "AdminDashboardRiskSummary"
+  ],
+  "dead_letter_inbox_events": [
+    "AdminDashboardRiskSummary"
+  ],
+  "admin_actions_24h": [
+    "AdminDashboardAuditSummary"
+  ],
+  "latest_actions": [
+    "AdminDashboardAuditSummary"
+  ],
+  "pairs": [
+    "AdminTradingPairsResponse",
+    "ConvertPairsResponse"
+  ],
+  "strategies": [
+    "AdminMarketStrategiesResponse"
+  ],
+  "sample_count": [
+    "MarketStrategyPreviewResponse"
+  ],
+  "samples": [
+    "MarketStrategyPreviewResponse",
+    "MarketStrategyRecoveryPreviewResponse"
+  ],
+  "progress_percent": [
+    "MarketStrategyPresetNodeResponse"
+  ],
+  "description": [
+    "MarketStrategyPresetResponse"
+  ],
+  "target_price_change_percent": [
+    "MarketStrategyPresetResponse"
+  ],
+  "presets": [
+    "MarketStrategyPresetsResponse"
+  ],
+  "versions": [
+    "MarketStrategyVersionsResponse"
+  ],
+  "strategy_id": [
+    "MarketStrategyGapsResponse",
+    "MarketStrategyRecoveryPreviewResponse",
+    "MarketStrategyRecoveryJobResponse"
+  ],
+  "gaps": [
+    "MarketStrategyGapsResponse"
+  ],
+  "total_1m_count": [
+    "MarketStrategyGapsResponse"
+  ],
+  "aggregate_intervals": [
+    "MarketStrategyRecoveryPreviewResponse"
+  ],
+  "first_price": [
+    "MarketStrategyRecoveryPreviewResponse"
+  ],
+  "last_price": [
+    "MarketStrategyRecoveryPreviewResponse"
+  ],
+  "preview_token": [
+    "MarketStrategyRecoveryPreviewResponse"
+  ],
+  "requested_by": [
+    "MarketStrategyRecoveryJobResponse"
+  ],
+  "expected_1m_count": [
+    "MarketStrategyRecoveryJobResponse"
+  ],
+  "actual_1m_count": [
+    "MarketStrategyRecoveryJobResponse"
+  ],
+  "completed_at": [
+    "MarketStrategyRecoveryJobResponse"
+  ],
+  "jobs": [
+    "MarketStrategyRecoveryJobsResponse"
+  ],
+  "orders": [
+    "ConvertOrdersResponse"
+  ],
+  "recharge_id": [
+    "AdminUserRechargeResponse"
+  ],
+  "login_2fa_enabled": [
+    "AdminUserTwoFactorResetResponse"
+  ],
+  "needs_reload": [
+    "MarketFeedConfigResponse"
+  ],
+  "saved_config": [
+    "MarketFeedStatusResponse"
+  ],
+  "credentials": [
+    "MarketSourceCredentialsResponse"
+  ],
+  "assigned_user_id": [
+    "AdminDepositAddressPoolResponse"
+  ],
+  "addresses": [
+    "AdminDepositAddressPoolBatchResponse"
+  ],
+  "countries": [
+    "AdminCountriesResponse"
+  ],
+  "content_json": [
+    "AdminNewsItemResponse"
+  ],
+  "created_by_admin_id": [
+    "AdminNewsItemResponse"
+  ],
+  "updated_by_admin_id": [
+    "AdminNewsItemResponse"
+  ],
+  "news": [
+    "AdminNewsItemsResponse"
+  ],
+  "group": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "group_name": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "config_path": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "operation_path": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "configured_count": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "config_status": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "published_version": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "runtime_status": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "last_modified_at": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "last_applied_at": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "last_tested_at": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "last_error_summary": [
+    "AdminConfigCenterItemResponse"
+  ],
+  "unconfigured": [
+    "AdminConfigCenterSummaryResponse"
+  ],
+  "pending_apply": [
+    "AdminConfigCenterSummaryResponse"
+  ],
+  "runtime_error": [
+    "AdminConfigCenterSummaryResponse"
+  ],
+  "normal": [
+    "AdminConfigCenterSummaryResponse"
+  ],
+  "items": [
+    "AdminConfigCenterResponse"
+  ],
+  "summary": [
+    "AdminConfigCenterResponse"
+  ],
+  "must_change_password": [
+    "AdminAccessResponse"
+  ],
+  "role_id": [
+    "AdminAccessResponse"
+  ],
+  "is_super_admin": [
+    "AdminAccessResponse"
+  ],
+  "request_no": [
+    "AdminConfigChangeResponse"
+  ],
+  "reviewed_by": [
+    "AdminConfigChangeResponse"
+  ],
+  "applied_by": [
+    "AdminConfigChangeResponse"
+  ],
+  "reviewed_at": [
+    "AdminConfigChangeResponse"
+  ],
+  "applied_at": [
+    "AdminConfigChangeResponse"
+  ],
+  "requests": [
+    "AdminConfigChangesResponse"
+  ],
+  "security": [
+    "SmtpConfigResponse"
+  ],
+  "username_mask": [
+    "SmtpConfigResponse"
+  ],
+  "from_name": [
+    "SmtpConfigResponse"
+  ],
+  "verification_code_template_html": [
+    "SmtpConfigResponse"
+  ],
+  "verification_code_templates": [
+    "SmtpConfigResponse"
+  ],
+  "configs": [
+    "SmtpConfigListResponse"
+  ],
+  "delivery_settings": [
+    "SmtpConfigListResponse"
+  ],
+  "sent": [
+    "SendSmtpTestResponse"
+  ],
+  "recipient": [
+    "SendSmtpTestResponse"
+  ],
+  "config_id": [
+    "SendSmtpTestResponse"
+  ],
+  "config_name": [
+    "SendSmtpTestResponse"
+  ],
+  "endpoint": [
+    "UploadConfigResponse"
+  ],
+  "file_field": [
+    "UploadConfigResponse"
+  ],
+  "bearer_token_mask": [
+    "UploadConfigResponse"
+  ],
+  "bearer_token_set": [
+    "UploadConfigResponse"
+  ],
+  "access_key_mask": [
+    "UploadConfigResponse"
+  ],
+  "access_key_set": [
+    "UploadConfigResponse"
+  ],
+  "secret_key_set": [
+    "UploadConfigResponse"
+  ],
+  "bucket": [
+    "UploadConfigResponse"
+  ],
+  "region": [
+    "UploadConfigResponse"
+  ],
+  "public_base_url": [
+    "UploadConfigResponse"
+  ],
+  "local_root": [
+    "UploadConfigResponse"
+  ],
+  "key_prefix": [
+    "UploadConfigResponse"
+  ],
+  "max_file_size_bytes": [
+    "UploadConfigResponse"
+  ],
+  "allowed_mime_types": [
+    "UploadConfigResponse"
+  ],
+  "object_key": [
+    "UploadImageResponse"
+  ],
+  "download_url": [
+    "UploadImageResponse"
+  ],
+  "share_url": [
+    "UploadImageResponse"
+  ],
+  "delete_url": [
+    "UploadImageResponse"
+  ],
+  "mime_type": [
+    "UploadImageResponse"
+  ],
+  "size_bytes": [
+    "UploadImageResponse"
+  ],
+  "assets": [
+    "AdminAssetsResponse"
+  ],
+  "account_exists": [
+    "AdminWalletAccountResponse"
+  ],
+  "available_after": [
+    "AdminWalletLedgerResponse"
+  ],
+  "frozen_after": [
+    "AdminWalletLedgerResponse"
+  ],
+  "locked_after": [
+    "AdminWalletLedgerResponse"
+  ],
+  "accounts": [
+    "AdminWalletAccountsResponse"
+  ],
+  "reserved_supply": [
+    "NewCoinProjectResponse"
+  ],
+  "allocated_supply": [
+    "NewCoinProjectResponse"
+  ],
+  "remaining_supply": [
+    "NewCoinProjectResponse"
+  ],
+  "fixed_unlock_at": [
+    "NewCoinProjectResponse"
+  ],
+  "relative_unlock_seconds": [
+    "NewCoinProjectResponse"
+  ],
+  "unlock_fee_enabled": [
+    "NewCoinProjectResponse",
+    "NewCoinUnlockResponse"
+  ],
+  "unlock_fee_rate": [
+    "NewCoinProjectResponse",
+    "NewCoinUnlockResponse"
+  ],
+  "unlock_fee_basis": [
+    "NewCoinProjectResponse",
+    "NewCoinUnlockResponse"
+  ],
+  "unlock_fee_asset": [
+    "NewCoinProjectResponse",
+    "NewCoinUnlockResponse"
+  ],
+  "post_listing_purchase_enabled": [
+    "NewCoinProjectResponse"
+  ],
+  "post_listing_pair_id": [
+    "NewCoinProjectResponse"
+  ],
+  "post_listing_pair_status": [
+    "NewCoinProjectResponse"
+  ],
+  "projects": [
+    "NewCoinProjectsResponse"
+  ],
+  "idempotency_key": [
+    "NewCoinSubscriptionResponse",
+    "NewCoinDistributionResponse",
+    "NewCoinPurchaseResponse",
+    "NewCoinUnlockResponse"
+  ],
+  "subscriptions": [
+    "NewCoinSubscriptionsResponse"
+  ],
+  "distributions": [
+    "NewCoinDistributionsResponse"
+  ],
+  "purchases": [
+    "NewCoinPurchasesResponse"
+  ],
+  "merge_key": [
+    "NewCoinLockPositionResponse"
+  ],
+  "lock_positions": [
+    "NewCoinLockPositionsResponse"
+  ],
+  "unlock_price": [
+    "NewCoinUnlockResponse"
+  ],
+  "unlocks": [
+    "NewCoinUnlocksResponse"
+  ],
+  "rate_source": [
+    "NewCoinConvertRuleResponse"
+  ],
+  "fixed_rate": [
+    "NewCoinConvertRuleResponse"
+  ],
+  "floating_rate_json": [
+    "NewCoinConvertRuleResponse"
+  ],
+  "configuration_version": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "project": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "subscription_count": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "pending_manual_count": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "issuance_editable": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "next_lifecycle_status": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "lifecycle_block_reason": [
+    "NewCoinProjectCenterResponse"
+  ],
+  "payload_json": [
+    "RiskEventResponse"
+  ],
+  "events": [
+    "RiskEventsResponse"
+  ]
+}

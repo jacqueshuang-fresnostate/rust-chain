@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Shared Chinese presentation and strategy operation contracts"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "Strict API columns, raw filters/CSV and decimal invariants"}
+{"file": ".trellis/spec/admin/auth-turnstile.md", "reason": "Keep login/challenge workflow unchanged while localizing errors and password label"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Display-only transformations must not change request or API error objects"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse central dictionaries and UI formatter"}
+{"file": ".trellis/tasks/archive/2026-09/09-06-admin-strategy-operations-localization/research/findings.md", "reason": "Repository-wide inventory and confirmed strategy defects"}
+{"file": ".trellis/spec/admin/chinese-presentation.md", "reason": "Shared Chinese field, enum, error and raw-value contracts"}

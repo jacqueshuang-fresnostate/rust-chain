@@ -1,0 +1,8 @@
+{
+  "baseline": "dto-label-gaps.json is the initial pre-fix scan, not remaining defects",
+  "baselineMissingKeys": 186,
+  "resolvedKeys": 186,
+  "remainingKeys": [],
+  "sharedFieldLabels": 623,
+  "routeCoverage": "Every registered Admin navigation category and API resource column is asserted by adminPresentation.test.tsx. Browser route coverage is partial; see verification.md."
+}

@@ -1,0 +1,2838 @@
+{
+  "files": 111,
+  "routes": [
+    {
+      "route": "/admin/dashboard",
+      "label": "总览仪表盘",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/config-center",
+      "label": "配置中心",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/support",
+      "label": "在线客服",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/users",
+      "label": "用户管理",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/users/kyc/reviews",
+      "label": "KYC 审核队列",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/users/kyc/settings",
+      "label": "KYC 规则配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/agents",
+      "label": "代理管理",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/agent-commissions",
+      "label": "代理佣金",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/agent-commission-rules",
+      "label": "佣金规则",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/assets",
+      "label": "资产管理",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/accounts",
+      "label": "钱包账户",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/deposit-network-configs",
+      "label": "充值网络配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/deposit-address-pool",
+      "label": "充值地址池",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/quick-recharge",
+      "label": "快速充值配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/quick-recharge-orders",
+      "label": "快速充值订单",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/deposits",
+      "label": "充值记录",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/withdrawals",
+      "label": "提现审核",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/wallet/ledger",
+      "label": "钱包流水",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/loan/products",
+      "label": "贷款产品",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/loan/orders",
+      "label": "贷款订单",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/prediction/settings",
+      "label": "竞猜配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/prediction/markets",
+      "label": "竞猜市场",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/prediction/orders",
+      "label": "竞猜订单",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/prediction/sync",
+      "label": "同步运行",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/spot/orders",
+      "label": "现货订单",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/spot/trades",
+      "label": "现货成交",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/new-coins/projects",
+      "label": "项目管理",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/new-coins/subscriptions",
+      "label": "申购与配售",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/new-coins/distributions",
+      "label": "派发与退款记录",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/new-coins/purchases",
+      "label": "上市后购买",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/new-coins/lock-positions",
+      "label": "锁仓与解禁",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/market/pairs",
+      "label": "交易对配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/market/strategies",
+      "label": "行情策略",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/market/feed-config",
+      "label": "行情订阅",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/convert/pairs",
+      "label": "闪兑交易对",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/convert/orders",
+      "label": "闪兑订单",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/seconds-contract/products",
+      "label": "秒合约产品",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/seconds-contract/orders",
+      "label": "秒合约订单",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/margin/products",
+      "label": "杠杆产品",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/margin/positions",
+      "label": "杠杆仓位",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/margin/liquidations",
+      "label": "强平记录",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/margin/interest",
+      "label": "利息汇总",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/earn/categories",
+      "label": "理财分类",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/earn/products",
+      "label": "理财产品",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/earn/subscriptions",
+      "label": "理财申购",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/news",
+      "label": "新闻中心",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/risk",
+      "label": "风控规则",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/risk/events",
+      "label": "风控事件",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/system/countries",
+      "label": "国家配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/system/security-policy",
+      "label": "安全策略",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/system/brand",
+      "label": "PC 品牌配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/system/smtp",
+      "label": "SMTP 邮件配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/system/uploads",
+      "label": "上传配置",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/account/security",
+      "label": "账号安全",
+      "file": "web/src/admin/navigation.tsx"
+    },
+    {
+      "route": "/admin/audit-logs",
+      "label": "审计日志",
+      "file": "web/src/admin/navigation.tsx"
+    }
+  ],
+  "fields": {
+    "user_id": [
+      {
+        "label": "用户ID",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "email": [
+      {
+        "label": "邮箱",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      },
+      {
+        "label": "用户邮箱",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "status": [
+      {
+        "label": "状态",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      },
+      {
+        "label": "订单状态",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "仓位状态",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "kyc_level": [
+      {
+        "label": "KYC等级",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "owner_agent_code": [
+      {
+        "label": "归属代理",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "depth": [
+      {
+        "label": "层级深度",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "referred_at": [
+      {
+        "label": "加入时间",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "reassign": [
+      {
+        "label": "转移归属",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "id": [
+      {
+        "label": "代理ID",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      },
+      {
+        "label": "申请ID",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      },
+      {
+        "label": "任务ID",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      },
+      {
+        "label": "用户ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "资产ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "提现ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "充值ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "流水ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "规则ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "事件ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "国家配置ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "新闻ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "交易对ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "成交ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "项目ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "派发ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "仓位ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "解禁ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "策略ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "产品ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "日志ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "agent_code": [
+      {
+        "label": "代理编号",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "level": [
+      {
+        "label": "层级",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "parent_agent_code": [
+      {
+        "label": "直属上级",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "root_agent_code": [
+      {
+        "label": "归属总代理",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "direct_user_count": [
+      {
+        "label": "直属用户",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "child_agent_count": [
+      {
+        "label": "下级代理",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "team_user_count": [
+      {
+        "label": "团队用户",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "admin_username": [
+      {
+        "label": "代理后台账号",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "admin_status": [
+      {
+        "label": "后台账号状态",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "created_at": [
+      {
+        "label": "创建时间",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      },
+      {
+        "label": "申请时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "成交时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "actions": [
+      {
+        "label": "操作",
+        "file": "web/src/admin/actions/AgentManagementPage.tsx"
+      }
+    ],
+    "submission_type": [
+      {
+        "label": "认证类型",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "real_name": [
+      {
+        "label": "姓名",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "enterprise_name": [
+      {
+        "label": "企业名称",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "business_registration_number": [
+      {
+        "label": "统一社会信用代码",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "country": [
+      {
+        "label": "国家",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      },
+      {
+        "label": "国家 / 地区",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "document_type": [
+      {
+        "label": "证件类型",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "id_number": [
+      {
+        "label": "证件号",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "target_kyc_level": [
+      {
+        "label": "目标等级",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "submitted_at": [
+      {
+        "label": "提交时间",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "document_types": [
+      {
+        "label": "允许证件类型",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "handheld_document_types": [
+      {
+        "label": "需手持证件照",
+        "file": "web/src/admin/actions/KycManagementPage.tsx"
+      }
+    ],
+    "typeLabel": [
+      {
+        "label": "类型",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      }
+    ],
+    "item": [
+      {
+        "label": "订阅项",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      }
+    ],
+    "enabled": [
+      {
+        "label": "配置态",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      },
+      {
+        "label": "状态",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      },
+      {
+        "label": "启用",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "启用状态",
+        "file": "web/src/admin/actions/smtp/SmtpConfigTable.tsx"
+      }
+    ],
+    "runtimeEnabled": [
+      {
+        "label": "运行态",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      }
+    ],
+    "provider": [
+      {
+        "label": "行情源",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      }
+    ],
+    "auth_type": [
+      {
+        "label": "鉴权方式",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      }
+    ],
+    "api_key_mask": [
+      {
+        "label": "Key 掩码",
+        "file": "web/src/admin/actions/MarketFeedConfigPage.tsx"
+      }
+    ],
+    "withdraw": [
+      {
+        "label": "提现",
+        "file": "web/src/admin/actions/SecurityPolicyPage.tsx"
+      }
+    ],
+    "spot_order": [
+      {
+        "label": "现货下单",
+        "file": "web/src/admin/actions/SecurityPolicyPage.tsx"
+      }
+    ],
+    "convert": [
+      {
+        "label": "闪兑",
+        "file": "web/src/admin/actions/SecurityPolicyPage.tsx"
+      }
+    ],
+    "earn_subscribe": [
+      {
+        "label": "理财申购",
+        "file": "web/src/admin/actions/SecurityPolicyPage.tsx"
+      }
+    ],
+    "coinbase_wallet_enabled": [
+      {
+        "label": "Coinbase 钱包",
+        "file": "web/src/admin/actions/SecurityPolicyPage.tsx"
+      }
+    ],
+    "telegram_account_enabled": [
+      {
+        "label": "TG 账号",
+        "file": "web/src/admin/actions/SecurityPolicyPage.tsx"
+      }
+    ],
+    "range_start": [
+      {
+        "label": "开始时间（含）",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "range_end": [
+      {
+        "label": "结束时间（不含）",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "one_minute_count": [
+      {
+        "label": "缺失根数",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "open_time": [
+      {
+        "label": "开盘时间",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "open": [
+      {
+        "label": "开",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "high": [
+      {
+        "label": "高",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "low": [
+      {
+        "label": "低",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "close": [
+      {
+        "label": "收",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "volume": [
+      {
+        "label": "成交量",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "range": [
+      {
+        "label": "范围 [开始, 结束)",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "progress": [
+      {
+        "label": "1m 进度",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "actual_aggregate_count": [
+      {
+        "label": "聚合根数",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "message": [
+      {
+        "label": "原因/错误",
+        "file": "web/src/admin/components/MarketStrategyRecoverySheet.tsx"
+      }
+    ],
+    "limit": [
+      {
+        "label": "数量限制",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "pair_id": [
+      {
+        "label": "交易对ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "交易对",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "project_id": [
+      {
+        "label": "项目ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "asset_id": [
+      {
+        "label": "资产ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "include_internal": [
+      {
+        "label": "显示机器人订单",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "显示机器人数据",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "network": [
+      {
+        "label": "网络",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "change_type": [
+      {
+        "label": "变动类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "ref_type": [
+      {
+        "label": "来源类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "loan_type": [
+      {
+        "label": "贷款类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "display_status": [
+      {
+        "label": "显示状态",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "settlement_status": [
+      {
+        "label": "结算状态",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "product_type": [
+      {
+        "label": "产品类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "asset_type": [
+      {
+        "label": "资产类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "category": [
+      {
+        "label": "分类",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "分类代码",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "symbol": [
+      {
+        "label": "交易对",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "资产符号",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "最新价格",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "项目币种",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "币种",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "market_type": [
+      {
+        "label": "市场类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "phone": [
+      {
+        "label": "手机号",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "invite_code": [
+      {
+        "label": "邀请码",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "updated_at": [
+      {
+        "label": "更新时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "logo_url": [
+      {
+        "label": "Logo",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "name": [
+      {
+        "label": "资产名称",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "默认产品名",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "产品名称",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "配置名称",
+        "file": "web/src/admin/actions/smtp/SmtpConfigTable.tsx"
+      }
+    ],
+    "precision_scale": [
+      {
+        "label": "精度",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "deposit_enabled": [
+      {
+        "label": "支持充值",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "withdraw_enabled": [
+      {
+        "label": "支持提现",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "margin_transfer_enabled": [
+      {
+        "label": "允许转入杠杆",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "min_deposit_amount": [
+      {
+        "label": "最小充值数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "deposit_fee": [
+      {
+        "label": "充值手续费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "withdraw_fee": [
+      {
+        "label": "提现手续费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "withdraw_fee_tiers": [
+      {
+        "label": "提现梯度手续费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "user_email": [
+      {
+        "label": "用户邮箱",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "asset_symbol": [
+      {
+        "label": "资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "资产符号",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "到账资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "放款资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "下注资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "available": [
+      {
+        "label": "可用",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "frozen": [
+      {
+        "label": "冻结",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "locked": [
+      {
+        "label": "锁定",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "address_group_code": [
+      {
+        "label": "地址集合编号",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "display_name": [
+      {
+        "label": "显示名称",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "address_group_name": [
+      {
+        "label": "地址集合名称",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "asset_symbols": [
+      {
+        "label": "支持充值币种",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "限定资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "sort_order": [
+      {
+        "label": "排序",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "排序值",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "address": [
+      {
+        "label": "充值地址",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "提现地址",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "assigned_user_email": [
+      {
+        "label": "绑定用户邮箱",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "assigned_asset_symbol": [
+      {
+        "label": "绑定资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "assigned_at": [
+      {
+        "label": "绑定时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "memo": [
+      {
+        "label": "Memo / Tag",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "remark": [
+      {
+        "label": "备注",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "备注（中文名称）",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "order_id": [
+      {
+        "label": "平台订单号",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "provider_trade_id": [
+      {
+        "label": "GMPay 交易号",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fiat_amount": [
+      {
+        "label": "充值金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "actual_amount": [
+      {
+        "label": "到账数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "return_target": [
+      {
+        "label": "回跳端",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "redirect_url": [
+      {
+        "label": "回跳地址",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "block_transaction_id": [
+      {
+        "label": "链上交易哈希",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "paid_at": [
+      {
+        "label": "入账时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "amount": [
+      {
+        "label": "提现金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "充值金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "借款本金",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "申购金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fee": [
+      {
+        "label": "手续费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "total_reserved": [
+      {
+        "label": "冻结总额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "tx_hash": [
+      {
+        "label": "交易哈希",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "review_reason": [
+      {
+        "label": "审核原因",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "failure_reason": [
+      {
+        "label": "失败原因",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "异常原因",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "confirmations": [
+      {
+        "label": "确认数",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "required_confirmations": [
+      {
+        "label": "所需确认数",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "credited_at": [
+      {
+        "label": "入账时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "balance_type": [
+      {
+        "label": "余额类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "balance_after": [
+      {
+        "label": "变动后余额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "name_json": [
+      {
+        "label": "多语言名称",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "term_days": [
+      {
+        "label": "期限天数",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "interest_rate": [
+      {
+        "label": "期限利率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "interest_calculation_mode": [
+      {
+        "label": "提前还款计息",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "计息方式",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "min_kyc_level": [
+      {
+        "label": "最低KYC等级",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "min_amount": [
+      {
+        "label": "最小借款金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "源资产最小金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "max_amount": [
+      {
+        "label": "最大借款金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "源资产最大金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "product_id": [
+      {
+        "label": "贷款产品ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "产品ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "product_name": [
+      {
+        "label": "贷款产品",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "collateral_asset_symbol": [
+      {
+        "label": "抵押资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "collateral_amount": [
+      {
+        "label": "抵押数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "interest_amount": [
+      {
+        "label": "实际利息",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "累计利息",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "利息合计",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "repayment_amount": [
+      {
+        "label": "还款总额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "due_at": [
+      {
+        "label": "到期时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "keyword": [
+      {
+        "label": "关键词",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "title": [
+      {
+        "label": "市场标题",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "标题",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "yes_price": [
+      {
+        "label": "YES 概率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "no_price": [
+      {
+        "label": "NO 概率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "external_resolution": [
+      {
+        "label": "外部结果",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "local_resolution": [
+      {
+        "label": "本地结果",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "settlement_mode_override": [
+      {
+        "label": "结算覆盖",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fee_rate_override": [
+      {
+        "label": "手续费覆盖",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "last_synced_at": [
+      {
+        "label": "同步时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "market_id": [
+      {
+        "label": "市场ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "market_title": [
+      {
+        "label": "市场",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "outcome": [
+      {
+        "label": "方向",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "stake_amount": [
+      {
+        "label": "下注金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "押注金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fee_amount": [
+      {
+        "label": "手续费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "手续费金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "accepted_price": [
+      {
+        "label": "成交概率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "shares": [
+      {
+        "label": "份额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "theoretical_payout": [
+      {
+        "label": "理论赔付",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "effective_payout_cap": [
+      {
+        "label": "赔付封顶",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "result": [
+      {
+        "label": "结果",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "payout_amount": [
+      {
+        "label": "派彩金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "返还金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "refund_amount": [
+      {
+        "label": "退款本金",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fee_refund_amount": [
+      {
+        "label": "退回手续费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "settled_at": [
+      {
+        "label": "结算时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "trigger_type": [
+      {
+        "label": "触发方式",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "imported_count": [
+      {
+        "label": "新增数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "新增",
+        "file": "web/src/admin/actions/prediction/PredictionSyncWorkspace.tsx"
+      }
+    ],
+    "updated_count": [
+      {
+        "label": "更新数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "更新",
+        "file": "web/src/admin/actions/prediction/PredictionSyncWorkspace.tsx"
+      }
+    ],
+    "error_message": [
+      {
+        "label": "错误信息",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "started_at": [
+      {
+        "label": "开始时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "finished_at": [
+      {
+        "label": "结束时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "rule_type": [
+      {
+        "label": "规则类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "target_type": [
+      {
+        "label": "对象类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "target_id": [
+      {
+        "label": "对象ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "created_by": [
+      {
+        "label": "创建管理员",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "decision": [
+      {
+        "label": "决策",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "risk_level": [
+      {
+        "label": "风险等级",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "actor_type": [
+      {
+        "label": "触发方",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "actor_id": [
+      {
+        "label": "触发方ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "event_type": [
+      {
+        "label": "事件类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "reason": [
+      {
+        "label": "原因",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "agent_id": [
+      {
+        "label": "代理ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "source_type": [
+      {
+        "label": "来源类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "source_id": [
+      {
+        "label": "来源ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "source_amount": [
+      {
+        "label": "来源金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "payout_asset_id": [
+      {
+        "label": "结算资产ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "commission_rate": [
+      {
+        "label": "实际差额比例",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "累计返佣比例",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "commission_amount": [
+      {
+        "label": "佣金金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "country_code": [
+      {
+        "label": "国家代码",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "国家",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "registration_enabled": [
+      {
+        "label": "开放注册",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "country_name": [
+      {
+        "label": "国家名称",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "default_locale": [
+      {
+        "label": "默认语言",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "supported_locales": [
+      {
+        "label": "支持语言",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "q": [
+      {
+        "label": "关键词",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "locale": [
+      {
+        "label": "语言",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "banner_url": [
+      {
+        "label": "Banner",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "small_logo_url": [
+      {
+        "label": "小 Logo",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "published_at": [
+      {
+        "label": "发布时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "base_asset": [
+      {
+        "label": "基础资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "quote_asset": [
+      {
+        "label": "计价资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "支付资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "price_precision": [
+      {
+        "label": "价格精度",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "qty_precision": [
+      {
+        "label": "数量精度",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "min_order_value": [
+      {
+        "label": "最小下单额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "side": [
+      {
+        "label": "方向",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "order_type": [
+      {
+        "label": "订单类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "price": [
+      {
+        "label": "价格",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "average_price": [
+      {
+        "label": "成交价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "quantity": [
+      {
+        "label": "数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "派发数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "filled_quantity": [
+      {
+        "label": "已成交数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "lifecycle_status": [
+      {
+        "label": "项目阶段",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "生命周期",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "total_supply": [
+      {
+        "label": "总量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "issue_price": [
+      {
+        "label": "发行价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "申购发行价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "unlock_type": [
+      {
+        "label": "解禁类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "listed_at": [
+      {
+        "label": "计划上市时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "actual_listed_at": [
+      {
+        "label": "实际上市时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "settlement_mode": [
+      {
+        "label": "结算模式",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "quote_amount": [
+      {
+        "label": "申购金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "支付金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "frozen_quote_amount": [
+      {
+        "label": "待结算冻结",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "settled_quote_amount": [
+      {
+        "label": "实际扣款",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "refunded_quote_amount": [
+      {
+        "label": "退回差额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "requested_quantity": [
+      {
+        "label": "申购数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "allocated_quantity": [
+      {
+        "label": "获配数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "delivery_kind": [
+      {
+        "label": "业务类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "lock_position_id": [
+      {
+        "label": "锁仓ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "listing_project_id": [
+      {
+        "label": "上市门禁项目",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "actual_listing_at": [
+      {
+        "label": "实际上市时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "unlock_at": [
+      {
+        "label": "解禁时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "locked_amount": [
+      {
+        "label": "锁定数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "released_amount": [
+      {
+        "label": "已释放",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "remaining_amount": [
+      {
+        "label": "剩余",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fee_paid_status": [
+      {
+        "label": "矿工费状态",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "unlock_quantity": [
+      {
+        "label": "解禁数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "unlock_fee_amount": [
+      {
+        "label": "矿工费",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "from_asset_symbol": [
+      {
+        "label": "源资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "to_asset_symbol": [
+      {
+        "label": "目标资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "pricing_mode": [
+      {
+        "label": "定价模式",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "spread_rate": [
+      {
+        "label": "价差率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "fee_rate": [
+      {
+        "label": "手续费率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "target_min_amount": [
+      {
+        "label": "目标资产最小金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "target_max_amount": [
+      {
+        "label": "目标资产最大金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "from_amount": [
+      {
+        "label": "源金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "to_amount": [
+      {
+        "label": "目标金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "rate": [
+      {
+        "label": "汇率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "runtime_health": [
+      {
+        "label": "运行诊断",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "start_price": [
+      {
+        "label": "起始价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "target_price": [
+      {
+        "label": "目标价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "strategy_type": [
+      {
+        "label": "策略类型",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "stake_asset_symbol": [
+      {
+        "label": "押注资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "cycles": [
+      {
+        "label": "周期 / 赔率 / 押注范围",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "direction": [
+      {
+        "label": "方向",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "entry_price": [
+      {
+        "label": "入场价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "settlement_price": [
+      {
+        "label": "结算价格",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "expires_at": [
+      {
+        "label": "到期时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "margin_asset_symbol": [
+      {
+        "label": "保证金资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "margin_mode": [
+      {
+        "label": "默认保证金模式",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "margin_modes": [
+      {
+        "label": "支持保证金模式",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "leverage_levels": [
+      {
+        "label": "杠杆档位",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "max_leverage": [
+      {
+        "label": "最大杠杆",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "min_margin": [
+      {
+        "label": "最小保证金",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "maintenance_margin_rate": [
+      {
+        "label": "维持保证金率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "hourly_interest_rate": [
+      {
+        "label": "小时利率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "margin_amount": [
+      {
+        "label": "保证金",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "notional_amount": [
+      {
+        "label": "名义金额",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "borrowed_amount": [
+      {
+        "label": "借款本金",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      },
+      {
+        "label": "借款合计",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "position_id": [
+      {
+        "label": "仓位ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "mark_price": [
+      {
+        "label": "标记价",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "equity": [
+      {
+        "label": "权益",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "liquidated_at": [
+      {
+        "label": "强平时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "margin_asset": [
+      {
+        "label": "保证金资产",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "position_count": [
+      {
+        "label": "仓位数量",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "code": [
+      {
+        "label": "分类代码",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "default_name": [
+      {
+        "label": "默认栏目名",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "category_name": [
+      {
+        "label": "产品分类",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "apr_rate": [
+      {
+        "label": "年化利率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "redemption_fee_rate": [
+      {
+        "label": "赎回手续费率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "maturity_profit_fee_rate": [
+      {
+        "label": "到期收益手续费率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "early_redeem_fee_basis": [
+      {
+        "label": "提前赎回扣费基准",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "early_redeem_fee_rate": [
+      {
+        "label": "提前赎回扣费率",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "min_subscribe": [
+      {
+        "label": "最小申购",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "matures_at": [
+      {
+        "label": "到期时间",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "admin_id": [
+      {
+        "label": "管理员ID",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "action": [
+      {
+        "label": "操作",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "ip": [
+      {
+        "label": "IP",
+        "file": "web/src/admin/resources/resourceConfigs.tsx"
+      }
+    ],
+    "max_payout_amount": [
+      {
+        "label": "默认最大赔付",
+        "file": "web/src/admin/actions/prediction/PredictionSettingsWorkspace.tsx"
+      }
+    ],
+    "host": [
+      {
+        "label": "SMTP host",
+        "file": "web/src/admin/actions/smtp/SmtpConfigTable.tsx"
+      }
+    ],
+    "from_email": [
+      {
+        "label": "发件邮箱",
+        "file": "web/src/admin/actions/smtp/SmtpConfigTable.tsx"
+      }
+    ],
+    "priority": [
+      {
+        "label": "优先级",
+        "file": "web/src/admin/actions/smtp/SmtpConfigTable.tsx"
+      }
+    ],
+    "password_set": [
+      {
+        "label": "凭据状态",
+        "file": "web/src/admin/actions/smtp/SmtpConfigTable.tsx"
+      }
+    ],
+    "field": [
+      {
+        "label": "字段",
+        "file": "web/src/shared/DetailDrawer.tsx"
+      }
+    ],
+    "value": [
+      {
+        "label": "内容",
+        "file": "web/src/shared/DetailDrawer.tsx"
+      }
+    ]
+  },
+  "enumOptions": {
+    "pending": [
+      "待审核",
+      "待结算"
+    ],
+    "approved": [
+      "已通过"
+    ],
+    "rejected": [
+      "已拒绝"
+    ],
+    "enabled": [
+      "启用"
+    ],
+    "disabled": [
+      "禁用",
+      "停用"
+    ],
+    "identity_front": [
+      "身份证件正面"
+    ],
+    "identity_back": [
+      "身份证件反面"
+    ],
+    "identity_card": [
+      "身份证"
+    ],
+    "passport": [
+      "护照"
+    ],
+    "driver_license": [
+      "驾驶证"
+    ],
+    "residence_permit": [
+      "居住证"
+    ],
+    "bitget": [
+      "Bitget 行情"
+    ],
+    "htx": [
+      "HTX 行情"
+    ],
+    "coinbase": [
+      "Coinbase 行情"
+    ],
+    "api_key": [
+      "API Key 鉴权"
+    ],
+    "none": [
+      "无需鉴权",
+      "不要求",
+      "不加密",
+      "不扣费"
+    ],
+    "klinecharts": [
+      "系统 K 线"
+    ],
+    "tradingview": [
+      "TradingView Lightweight Charts"
+    ],
+    "active": [
+      "显示",
+      "启用"
+    ],
+    "hidden": [
+      "隐藏"
+    ],
+    "manual_confirm": [
+      "外部结果 + 人工确认"
+    ],
+    "auto": [
+      "外部结果 + 自动结算",
+      "自动 Seed"
+    ],
+    "cny": [
+      "人民币 CNY"
+    ],
+    "usd": [
+      "美元 USD"
+    ],
+    "hkd": [
+      "港币 HKD"
+    ],
+    "usdt": [
+      "USDT"
+    ],
+    "usdc": [
+      "USDC"
+    ],
+    "trx": [
+      "TRX"
+    ],
+    "sol": [
+      "SOL"
+    ],
+    "btc": [
+      "BTC"
+    ],
+    "eth": [
+      "ETH"
+    ],
+    "tron": [
+      "Tron 波场",
+      "Tron"
+    ],
+    "ethereum": [
+      "Ethereum 以太坊"
+    ],
+    "base": [
+      "Base 网络",
+      "Base"
+    ],
+    "bsc": [
+      "BSC 币安智能链"
+    ],
+    "polygon": [
+      "Polygon"
+    ],
+    "solana": [
+      "Solana"
+    ],
+    "ton": [
+      "TON"
+    ],
+    "user_enabled": [
+      "用户自选"
+    ],
+    "mandatory": [
+      "强制要求"
+    ],
+    "fund_password": [
+      "资金密码"
+    ],
+    "two_factor": [
+      "双因素认证"
+    ],
+    "fund_password_and_two_factor": [
+      "资金密码 + 双因素认证"
+    ],
+    "image_bed": [
+      "图床"
+    ],
+    "oss": [
+      "阿里云 OSS"
+    ],
+    "s3": [
+      "S3 兼容存储"
+    ],
+    "local": [
+      "本地"
+    ],
+    "absolute_price": [
+      "绝对价格"
+    ],
+    "percent_from_start": [
+      "相对起始价百分比"
+    ],
+    "percent_from_previous": [
+      "相对上一节点百分比"
+    ],
+    "hard": [
+      "硬命中"
+    ],
+    "soft": [
+      "软命中"
+    ],
+    "range": [
+      "范围命中",
+      "区间震荡"
+    ],
+    "market": [
+      "行情与交易",
+      "市场价格",
+      "市场资讯"
+    ],
+    "compliance": [
+      "合规与安全"
+    ],
+    "products": [
+      "产品配置"
+    ],
+    "platform": [
+      "平台集成",
+      "平台币"
+    ],
+    "normal": [
+      "正常"
+    ],
+    "pending_apply": [
+      "待应用"
+    ],
+    "runtime_error": [
+      "运行异常"
+    ],
+    "unconfigured": [
+      "未配置"
+    ],
+    "issuance": [
+      "发行参数"
+    ],
+    "unlock-rule": [
+      "解禁规则"
+    ],
+    "unlock-fee-rule": [
+      "解禁费用"
+    ],
+    "post-listing-purchase": [
+      "上市后购买"
+    ],
+    "immediate_on_listing": [
+      "上市即解禁"
+    ],
+    "fixed_time": [
+      "固定时间解禁"
+    ],
+    "relative_period": [
+      "相对周期解禁"
+    ],
+    "market_value": [
+      "市值",
+      "按解禁市值计费"
+    ],
+    "profit": [
+      "收益",
+      "按收益比例扣除",
+      "按解禁收益计费"
+    ],
+    "preheat": [
+      "预热中",
+      "预热"
+    ],
+    "subscription": [
+      "申购中"
+    ],
+    "distribution": [
+      "派发中",
+      "分发中"
+    ],
+    "listed": [
+      "已上市"
+    ],
+    "true": [
+      "启用"
+    ],
+    "false": [
+      "停用",
+      "禁用"
+    ],
+    "settled": [
+      "已结算"
+    ],
+    "convert": [
+      "闪兑"
+    ],
+    "prediction": [
+      "竞猜"
+    ],
+    "spot": [
+      "现货"
+    ],
+    "margin": [
+      "杠杆"
+    ],
+    "seconds_contract": [
+      "秒合约"
+    ],
+    "draft": [
+      "草稿"
+    ],
+    "published": [
+      "已发布"
+    ],
+    "archived": [
+      "已归档"
+    ],
+    "refund_stake_and_fee": [
+      "退本金 + 退手续费"
+    ],
+    "refund_stake_only": [
+      "只退本金"
+    ],
+    "manual": [
+      "无效结算时人工选择"
+    ],
+    "strategy": [
+      "按当前策略选择",
+      "策略行情"
+    ],
+    "starttls": [
+      "STARTTLS 加密"
+    ],
+    "tls": [
+      "TLS/SSL 加密"
+    ],
+    "default": [
+      "通用验证码"
+    ],
+    "bind": [
+      "绑定邮箱"
+    ],
+    "two_factor_reset": [
+      "重置双因素认证"
+    ],
+    "login_2fa_reset": [
+      "重置登录双因素认证"
+    ],
+    "fund_password_reset": [
+      "重置资金密码"
+    ],
+    "priority": [
+      "按优先级发送"
+    ],
+    "round_robin": [
+      "轮询发送"
+    ],
+    "fixed": [
+      "固定价格",
+      "固定 Seed"
+    ],
+    "principal": [
+      "按本金比例扣除"
+    ],
+    "credit": [
+      "信用贷"
+    ],
+    "collateralized": [
+      "抵押贷"
+    ],
+    "full_term": [
+      "完整周期计息"
+    ],
+    "actual_days": [
+      "按实际天数计息"
+    ],
+    "isolated": [
+      "逐仓"
+    ],
+    "cross": [
+      "全仓"
+    ],
+    "external": [
+      "外部行情"
+    ],
+    "internal": [
+      "内部撮合"
+    ],
+    "general": [
+      "通用资讯"
+    ],
+    "product": [
+      "产品资讯"
+    ],
+    "system": [
+      "系统公告"
+    ],
+    "promotion": [
+      "活动推广"
+    ],
+    "global": [
+      "全局范围"
+    ],
+    "user": [
+      "指定用户"
+    ],
+    "pair": [
+      "指定交易对"
+    ],
+    "asset": [
+      "指定资产"
+    ],
+    "zh": [
+      "中文"
+    ],
+    "en": [
+      "英文"
+    ],
+    "coin": [
+      "数字货币"
+    ],
+    "stablecoin": [
+      "稳定币"
+    ],
+    "fiat": [
+      "法币"
+    ],
+    "available": [
+      "可用"
+    ],
+    "paused": [
+      "暂停"
+    ],
+    "custom_path": [
+      "自定义路径"
+    ],
+    "trend_up": [
+      "稳步上涨"
+    ],
+    "trend_down": [
+      "缓慢下行"
+    ],
+    "high_volatility": [
+      "高波动"
+    ],
+    "crash_recovery": [
+      "急跌修复"
+    ],
+    "pump_then_dump": [
+      "拉升回落"
+    ],
+    "uniform": [
+      "均匀分布"
+    ],
+    "trend": [
+      "随时间递增"
+    ],
+    "bell": [
+      "中段放量"
+    ],
+    "end_spike": [
+      "尾段放量"
+    ],
+    "price_path": [
+      "价格路径（OHLCV）"
+    ]
+  },
+  "englishUi": [
+    {
+      "text": "API Key",
+      "file": "web/src/admin/actions/MarketFeedConfigPage.tsx",
+      "line": 518
+    },
+    {
+      "text": "API Secret",
+      "file": "web/src/admin/actions/MarketFeedConfigPage.tsx",
+      "line": 522
+    },
+    {
+      "text": "Passphrase",
+      "file": "web/src/admin/actions/MarketFeedConfigPage.tsx",
+      "line": 526
+    },
+    {
+      "text": "PC Logo",
+      "file": "web/src/admin/actions/PlatformBrandPage.tsx",
+      "line": 161
+    },
+    {
+      "text": "Logo",
+      "file": "web/src/admin/actions/PlatformBrandPage.tsx",
+      "line": 190
+    },
+    {
+      "text": "https://pay.example.com",
+      "file": "web/src/admin/actions/QuickRechargeConfigPage.tsx",
+      "line": 346
+    },
+    {
+      "text": "https://api.example.com/api/v1/payments/gmpay/notify",
+      "file": "web/src/admin/actions/QuickRechargeConfigPage.tsx",
+      "line": 404
+    },
+    {
+      "text": "https://www.example.com/user/recharge",
+      "file": "web/src/admin/actions/QuickRechargeConfigPage.tsx",
+      "line": 409
+    },
+    {
+      "text": "Endpoint",
+      "file": "web/src/admin/actions/UploadConfigPage.tsx",
+      "line": 248
+    },
+    {
+      "text": "Bucket",
+      "file": "web/src/admin/actions/UploadConfigPage.tsx",
+      "line": 252
+    },
+    {
+      "text": "Region",
+      "file": "web/src/admin/actions/UploadConfigPage.tsx",
+      "line": 257
+    },
+    {
+      "text": "Access Key",
+      "file": "web/src/admin/actions/UploadConfigPage.tsx",
+      "line": 270
+    },
+    {
+      "text": "Secret Key",
+      "file": "web/src/admin/actions/UploadConfigPage.tsx",
+      "line": 274
+    },
+    {
+      "text": "Request ID",
+      "file": "web/src/admin/audit/AuditLogsPage.tsx",
+      "line": 187
+    },
+    {
+      "text": "SMTP host",
+      "file": "web/src/admin/actions/smtp/SmtpConfigFields.tsx",
+      "line": 29
+    },
+    {
+      "text": "SMTP port",
+      "file": "web/src/admin/actions/smtp/SmtpConfigFields.tsx",
+      "line": 33
+    },
+    {
+      "text": "fixed_term",
+      "file": "web/src/admin/resources/actions/earn.tsx",
+      "line": 399
+    },
+    {
+      "text": "BTC-USDT",
+      "file": "web/src/admin/resources/actions/market.tsx",
+      "line": 240
+    },
+    {
+      "text": "CN",
+      "file": "web/src/admin/resources/actions/system.tsx",
+      "line": 130
+    },
+    {
+      "text": "Memo / Tag",
+      "file": "web/src/admin/resources/actions/wallet.tsx",
+      "line": 885
+    },
+    {
+      "text": "Memo / Tag",
+      "file": "web/src/admin/resources/actions/wallet.tsx",
+      "line": 954
+    },
+    {
+      "text": "A / EVM / BTC",
+      "file": "web/src/admin/resources/actions/wallet.tsx",
+      "line": 978
+    },
+    {
+      "text": "EVM / Bitcoin / Tron",
+      "file": "web/src/admin/resources/actions/wallet.tsx",
+      "line": 979
+    },
+    {
+      "text": "BTC",
+      "file": "web/src/admin/resources/actions/wallet.tsx",
+      "line": 1370
+    },
+    {
+      "text": "Bitcoin",
+      "file": "web/src/admin/resources/actions/wallet.tsx",
+      "line": 1371
+    },
+    {
+      "text": "HIPPO",
+      "file": "web/src/layouts/AdminLayout.tsx",
+      "line": 151
+    },
+    {
+      "text": "AG",
+      "file": "web/src/layouts/AgentLayout.tsx",
+      "line": 98
+    }
+  ]
+}
