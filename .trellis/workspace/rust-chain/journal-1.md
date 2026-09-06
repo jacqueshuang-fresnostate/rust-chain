@@ -1884,3 +1884,36 @@ Split independent earn/news regressions, optimize only observed slow form fixtur
 ### Next Steps
 
 - None - task complete
+
+
+## Session 56: 修复行情策略 K 线形态并提交推送
+
+**Date**: 2026-09-06
+**Task**: 修复行情策略 K 线形态并提交推送
+**Branch**: `main`
+
+### Summary
+
+只读确认线上 volatility=6 实际为 600%，wick_scale=0.75；补齐全局/节点小数比例提示与影线风险、真实 OHLC 采样预览及 Mobile 六位/微小价格格式。完整 Web 514、Mobile 685、后端相关 41 项及受影响门禁通过；提交前复跑 Web 33、Mobile 16、Rust 29 与 fmt、source integrity、diff/context 全通过。用户确认提交并推送，仅收口本任务的工作、归档和日志提交链至 origin/main，远端 SHA 与 CI 状态另验。未部署、未修改线上策略/历史或资金；6% 的原意仍待单独确认。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4daab5f7cf294fcc2c43547e3dcc389f55c1489b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
