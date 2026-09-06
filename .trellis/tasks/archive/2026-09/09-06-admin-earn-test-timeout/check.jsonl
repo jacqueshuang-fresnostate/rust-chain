@@ -1,4 +1,4 @@
 {"file": ".trellis/spec/admin/ui-system.md", "reason": "Real Semi form and confirmation contracts; complete Admin quality gate"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse scoped setup without proliferating fixture helpers"}
-{"file": ".trellis/tasks/09-06-admin-earn-test-timeout/research/findings.md", "reason": "Timeout evidence, isolated scope and verification command"}
+{"file": ".trellis/tasks/archive/2026-09/09-06-admin-earn-test-timeout/research/findings.md", "reason": "Timeout evidence, isolated scope and verification command"}
 {"file": ".trellis/spec/admin/backend-origin.md", "reason": "Production configuration regression and Docker contract checks after Vite config edits"}
