@@ -1917,3 +1917,36 @@ Split independent earn/news regressions, optimize only observed slow form fixtur
 ### Next Steps
 
 - None - task complete
+
+
+## Session 57: 提交行情策略操作优化与后台中文展示修复
+
+**Date**: 2026-09-06
+**Task**: 提交行情策略操作优化与后台中文展示修复
+**Branch**: `main`
+
+### Summary
+
+用户确认既定 77 文件清单并授权推送 main。工作提交修复场景预设覆盖手填价格、草稿操作、版本恢复/补偿门禁与全后台中文展示；全量 547 项、最终聚焦 128 项及类型/lint/构建等门禁通过。提交前仅清理三个新字典文件的尾部空行，并脱敏历史进度日志的明文口令；建议轮换旧凭据，未重写历史。归档仅本轮实现任务，剩余生产浏览器矩阵保留为后续事项；未部署或改写线上策略/历史/资金。完成记录后按授权执行普通 main 推送及远端 SHA 核对。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80f1030` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
