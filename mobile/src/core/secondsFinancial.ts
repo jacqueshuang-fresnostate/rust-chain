@@ -359,7 +359,9 @@ export function createSecondsFinancialPresentation(options: SecondsFinancialPres
       .some((value) => value.toUpperCase().includes(query))
   }
   const cycleHasMaximum = (cycle: SecondsCycleFinancialSource | undefined): boolean => (
-    cycle?.maxStakeText !== undefined || cycle?.maxStake !== undefined
+    cycle?.maxStakeText !== undefined
+      ? cycle.maxStakeText !== null
+      : cycle?.maxStake != null
   )
   const hasExactStakeRange = (cycle: SecondsCycleFinancialSource | undefined): boolean => Boolean(
     cycle

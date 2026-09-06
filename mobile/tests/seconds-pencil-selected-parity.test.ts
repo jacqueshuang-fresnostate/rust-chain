@@ -14,7 +14,7 @@ const secondsTemplate = secondsSource.slice(
 )
 const secondsStyle = secondsSource.match(/<style\s+scoped\s*>([\s\S]*?)<\/style>/)?.[1] || ''
 
-test('Seconds 生产根只声明当前 Pencil 选稿并按 Header、420px 操作区、订单区排序', () => {
+test('Seconds 生产根只声明当前 Pencil 选稿并按 Header、自适应操作区、订单区排序', () => {
   assert.match(secondsSource, /data-pencil-source="VL8er\/g9agt"/)
   assert.doesNotMatch(secondsSource, /Lpt6q|WxeB8/)
 
@@ -34,8 +34,8 @@ test('Seconds 生产根只声明当前 Pencil 选稿并按 Header、420px 操作
   ])
 
   const operationRule = blockOf(secondsStyle, '.seconds-trading-operation {')
-  assert.match(operationRule, /height:\s*420px;/)
-  assert.match(operationRule, /grid-template-rows:\s*22px 53px 112px 202px;/)
+  assert.match(operationRule, /height:\s*auto;/)
+  assert.match(operationRule, /grid-template-rows:\s*22px 53px 112px auto;/)
   assert.match(operationRule, /padding:\s*2px 20px 10px;/)
   assert.match(operationRule, /row-gap:\s*6px;/)
 
@@ -101,26 +101,31 @@ test('Seconds 行情摘要只消费实时快照、真实订单轮次和 112px �
   assert.doesNotMatch(secondsSource, /(?:63,?085|01842|mock|fixture|demoData|fakeOrder)/i)
 })
 
-test('Seconds 202px 下单表单锁定期限、限额、金额、方向和 44px 主操作几何', () => {
+test('Seconds 下单表单展示完整限额与余额并保留金额、方向和 44px 主操作几何', () => {
   assertOrdered(secondsTemplate, [
     'class="seconds-duration-scroll"',
     'class="seconds-cycle-limit"',
     'seconds-amount-field',
+    'class="seconds-balance-hint"',
     'class="seconds-direction-grid"',
     'class="button button--primary button--full seconds-submit"',
   ])
 
   const consoleRule = blockOf(secondsStyle, '.seconds-order-console {')
   assert.match(consoleRule, /gap:\s*6px;/)
-  assert.match(consoleRule, /grid-template-rows:\s*30px 26px 38px 40px 44px;/)
-  assert.match(consoleRule, /height:\s*202px;/)
+  assert.match(consoleRule, /grid-template-rows:\s*30px auto 38px auto 40px 44px;/)
+  assert.match(consoleRule, /height:\s*auto;/)
 
   assert.match(secondsStyle, /\.seconds-duration-grid\s*\{[\s\S]*?grid-auto-columns:\s*calc\(\(100% - 18px\) \/ 4\);[\s\S]*?grid-auto-flow:\s*column;/)
   assert.match(secondsStyle, /\.seconds-duration-grid\s*\{[\s\S]*?grid-template-columns:\s*none;/)
   assert.match(secondsStyle, /\.seconds-duration-scroll\s*\{[\s\S]*?overflow-x:\s*auto;/)
   assert.match(secondsStyle, /\.seconds-duration-grid button\s*\{[\s\S]*?border-radius:\s*9px;[\s\S]*?height:\s*30px;[\s\S]*?min-height:\s*30px(?: !important)?;/)
-  assert.match(secondsStyle, /\.seconds-cycle-limit\s*\{[\s\S]*?border-radius:\s*8px;[\s\S]*?height:\s*26px;/)
-  assert.match(secondsStyle, /\.seconds-cycle-limit\s*\{[\s\S]*?background:\s*var\(--seconds-positive-soft\);/)
+  assert.match(secondsStyle, /\.seconds-cycle-limit,\s*\.seconds-balance-hint\s*\{[\s\S]*?border-radius:\s*8px;[\s\S]*?min-height:\s*26px;/)
+  assert.match(secondsStyle, /\.seconds-cycle-limit,\s*\.seconds-balance-hint\s*\{[\s\S]*?background:\s*var\(--seconds-positive-soft\);/)
+  const limitValueRule = blockOf(secondsStyle, '.seconds-balance-hint > b {')
+  assert.match(limitValueRule, /overflow-wrap:\s*anywhere;/)
+  assert.doesNotMatch(limitValueRule, /ellipsis|nowrap|overflow:\s*hidden/)
+  assert.match(blockOf(secondsStyle, '.seconds-balance-hint {'), /flex-wrap:\s*wrap;/)
   assert.match(secondsStyle, /\.seconds-amount-field\s*\{[\s\S]*?border-radius:\s*10px;[\s\S]*?height:\s*38px;/)
   assert.match(secondsStyle, /\.seconds-direction-grid button\s*\{[\s\S]*?border-radius:\s*14px;[\s\S]*?height:\s*40px;[\s\S]*?min-height:\s*40px(?: !important)?;/)
   assert.match(secondsStyle, /\.seconds-direction-grid button\.up\.active\s*\{[\s\S]*?box-shadow:\s*none;/)
@@ -197,6 +202,7 @@ test('Seconds 浅深主题精确声明 VL8er/g9agt 颜色且文案中英文对�
     'cycleLimitRange',
     'cycleLimitMinimum',
     'cycleOrderLimit',
+    'availableBalance',
     'orderAction',
     'inProgressOrders',
     'allOrders',

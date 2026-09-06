@@ -338,6 +338,22 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 - Seconds "estimated profit" is exactly
   `stakeAmount * payoutRate`. `payoutRate` is the profit rate, so neither the
   preview nor an active order may add the stake principal a second time.
+- Seconds stake drafts are user-owned: initialization and clearing leave `''`,
+  and neither `load()` nor duration selection may insert a configured minimum
+  (including 500). Duration changes preserve the manual text and revalidate it
+  against the selected cycle; selecting another product clears the draft.
+- `mapSecondsCycle()` maps nullable `max_stake` to `maxStakeText: null`.
+  `cycleHasMaximum()` must treat this authoritative null as no product ceiling,
+  not as an invalid required bound. A present empty, malformed, zero, negative,
+  or numeric-only maximum is still invalid. Minimum remains required. Render
+  both limits, with explicit localized no-maximum copy for null; never disguise
+  invalid limits as unlimited. Wallet availability still bounds every stake.
+- The visible Seconds balance and stake validation share `walletAvailable()`
+  for the wallet whose `assetId === selected.stakeAssetId`. Read exact
+  `availableText`, not locked/frozen funds or another asset's wallet. Render
+  `'0'` as zero, missing/unusable funds as `--`, loading as loading, and guests
+  with login copy. Do not hide the balance in `sr-only` or label a missing
+  authenticated wallet as logged out.
 - A resolved `openSecondsOrder()` response is the mutation commit point. Upsert
   that returned order immediately by `id`, close/lock the confirmation path,
   and show success before any reconciliation fetch. A later refresh failure is
@@ -526,6 +542,9 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 | Seconds product exists but has no market image | Render the deterministic `AssetMark` symbol fallback; do not guess another asset image |
 | Seconds ticker is absent or invalid for one picker row | Render `--` for that row and keep all other products selectable |
 | Seconds pair is selected while other pairs have active orders | Switch only selected product/cycle/amount/K-line state; retain every active order and the shared product subscription |
+| Seconds duration changes with a manual stake draft | Preserve the text, update both displayed limits, and revalidate; never insert/clamp to the minimum |
+| Seconds `maxStakeText` is null / malformed | Null means explicit no maximum; malformed means unavailable limits and no review |
+| Seconds matched wallet is zero / absent / loading / guest | Show zero / `--` / loading / login, respectively; never substitute frozen or locked funds |
 | Seconds history price is missing or malformed | Render the unavailable placeholder; do not coerce it to zero or substitute market data |
 | Seconds history result/status is unknown | Show the trimmed backend source value instead of an incorrect known translation |
 | Seconds history result is `win` | Show signed net profit `stakeAmount * payoutRate` in `stakeAssetSymbol`; do not add principal |
@@ -595,6 +614,12 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   `stakeAmount * payoutRate`, immediate upsert of the returned create order,
   and a delayed refresh rejection that leaves success/order state intact and
   does not enable a second mutation.
+- Seconds stake-form regressions must cover empty/cleared/manual drafts,
+  per-duration revalidation, bounded versus nullable/malformed maximums, and
+  asset-matched available/zero/absent/loading/guest balances. Browser checks
+  must use isolated read-only responses and cancel review dialogs without
+  creating orders; supplement behavior tests with narrow-width no-clipping
+  layout assertions.
 - Seconds history tests must execute delayed page promises to prove guest
   isolation, exact-token/ABA isolation, latest-request-wins retry,
   logout/unmount invalidation, and initial versus append error recovery. They

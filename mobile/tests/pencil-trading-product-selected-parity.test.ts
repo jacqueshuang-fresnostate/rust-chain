@@ -213,9 +213,9 @@ test('秒合约锁定 VL8er/g9agt 选中稿几何并直用真实订单与现货�
   assert.match(secondsSource, /await openSecondsOrder\(\{[\s\S]*?productId:[\s\S]*?durationSeconds:[\s\S]*?direction:[\s\S]*?stakeAmount:/)
 
   assert.match(css, /\.seconds-header\s*\{[\s\S]*?height: 60px !important;[\s\S]*?padding: 10px 20px !important;/)
-  assert.match(css, /\.seconds-trading-operation\s*\{[\s\S]*?grid-template-rows: 22px 53px 112px 202px;[\s\S]*?height: 420px;[\s\S]*?padding: 2px 20px 10px;/)
+  assert.match(css, /\.seconds-trading-operation\s*\{[\s\S]*?grid-template-rows: 22px 53px 112px auto;[\s\S]*?height: auto;[\s\S]*?padding: 2px 20px 10px;/)
   assert.match(css, /\.seconds-micro-chart\s*\{[\s\S]*?height: 112px;/)
-  assert.match(css, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px 26px 38px 40px 44px;[\s\S]*?height: 202px;/)
+  assert.match(css, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px auto 38px auto 40px 44px;[\s\S]*?height: auto;/)
   assert.match(css, /\.seconds-active-order\s*\{[\s\S]*?border-radius: 12px;[\s\S]*?height: 82px;[\s\S]*?padding: 8px 10px;/)
   assert.match(css, /\.seconds-direction-grid button\s*\{[\s\S]*?height: 40px;/)
   assert.match(css, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 30px;/)

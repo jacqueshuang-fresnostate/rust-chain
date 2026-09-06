@@ -619,11 +619,20 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   contained overscroll; 320px short screens contract safely, 448px centers the
   390px sheet, and reduced motion removes the reveal without changing geometry.
 - At the 390px reference width, every Seconds content track is 350px with 20px
-  side insets. The operation grid is `22px 53px 112px 202px` with 6px row gaps;
-  the form grid is `30px 26px 38px 40px 44px`, also with 6px gaps. The chart
+  side insets. The operation grid is `22px 53px 112px auto` with 6px row gaps;
+  the form grid is `30px auto 38px auto 40px 44px`, also with 6px gaps. Its rows
+  are duration, selected-cycle limits, stake input, visible available balance,
+  direction, and submit. Both grids grow with their content, rather than
+  retaining the old 420px operation / 202px form heights. The chart
   remains 112px high, the active-order cards are 350x82 with 8px gaps, and the
   list grows naturally rather than clipping a fourth order. At narrower and
   wider widths these tracks remain fluid and never create document overflow.
+- Selected-cycle minimum and maximum stakes must both remain visible. Limits
+  and balance rows wrap at narrow widths or for long decimals; do not truncate
+  either with ellipsis, fixed row heights, or an 8px font override. The balance
+  hint stays visible outside the fixed-height amount label and remains its
+  `aria-describedby` target. Keep light/dark semantic tokens and localized
+  guest/loading/unavailable/zero states. Verify 320px and 390px in both locales.
 - Seconds uses the selected flat white/pure-black canvas without the retired
   prototype grid. Light tokens are `#ffffff`, `#111714`, `#68736d`, `#dde4e0`,
   `#d9f9eb`, `#087b52`, `#43efa9`, and `#ff654a`; dark tokens are `#000000`,

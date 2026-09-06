@@ -113,7 +113,7 @@ test('交易表单保持可用触控，Seconds 视觉几何锁定 30/38/40/44px 
   assert.match(tradeCss, /\.input-stack \.field-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
   assert.match(secondsCss, /\.seconds-pair-field\s*\{[\s\S]*?height: 44px;[\s\S]*?margin: -11px 0;[\s\S]*?padding: 11px 0;/)
-  assert.match(secondsCss, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px 26px 38px 40px 44px;[\s\S]*?height: 202px;/)
+  assert.match(secondsCss, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px auto 38px auto 40px 44px;[\s\S]*?height: auto;/)
   assert.match(secondsCss, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 30px;/)
   assert.match(secondsCss, /\.seconds-duration-grid button::before\s*\{[\s\S]*?inset: -8px 0;/)
   assert.match(secondsCss, /\.seconds-amount-field\s*\{[\s\S]*?height: 38px;/)
@@ -152,7 +152,7 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
       assert.match(css, /@media \(max-width: 359px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\) 132px;/)
     } else {
       assert.match(css, /\.seconds-duration-scroll\s*\{[\s\S]*?overflow-x: auto;/)
-      assert.match(css, /\.seconds-trading-operation\s*\{[\s\S]*?height: 420px;/)
+      assert.match(css, /\.seconds-trading-operation\s*\{[\s\S]*?height: auto;/)
       assert.match(css, /\.seconds-orders-workspace\s*\{[\s\S]*?padding: 12px 20px calc\(16px \+ env\(safe-area-inset-bottom\)\);/)
       assert.doesNotMatch(css, /#[0-9a-f]{3,8}|rgba?\(/i)
     }

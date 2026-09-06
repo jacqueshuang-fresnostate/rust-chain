@@ -614,7 +614,6 @@ async function load(): Promise<void> {
     if (selected.value) {
       const stillAvailable = selected.value.cycles.some((item) => item.id === selectedCycleId.value)
       if (!stillAvailable) selectedCycleId.value = selected.value.cycles[0]?.id || 0
-      if (!amount.value) amount.value = cycleMin(cycle.value) ?? ''
       void loadSparkline(selected.value.symbol)
     } else {
       void loadSparkline('')
@@ -744,7 +743,7 @@ function selectProduct(product: SecondsProduct): void {
   selected.value = product
   selectedCycleId.value = product.cycles[0]?.id || 0
   direction.value = 'up'
-  amount.value = cycleMin(product.cycles[0]) ?? ''
+  amount.value = ''
   error.value = ''
   void loadSparkline(product.symbol)
 }
@@ -756,7 +755,6 @@ function choosePairProduct(product: SecondsProduct): void {
 
 function selectCycle(cycleId: number): void {
   selectedCycleId.value = cycleId
-  amount.value = cycleMin(cycle.value) ?? ''
   error.value = ''
 }
 
@@ -1155,16 +1153,14 @@ onBeforeUnmount(() => {
                 />
                 <b>{{ selected?.stakeAssetSymbol || '--' }}</b>
               </div>
-              <small id="seconds-balance-hint" class="sr-only">
-                {{ selected && session.isAuthenticated && account
-                  ? t('seconds.balanceMinimum', {
-                    available: moneyText(walletAvailable(account)),
-                    asset: selected.stakeAssetSymbol,
-                    minimum: moneyText(cycleMin(cycle), 8, '0'),
-                  })
-                  : t('seconds.loginDescription') }}
-              </small>
             </label>
+
+            <div id="seconds-balance-hint" class="seconds-balance-hint" aria-live="polite">
+              <span>{{ t('seconds.availableBalance') }}</span>
+              <b v-if="!session.isAuthenticated">{{ t('common.loginRequiredTitle') }}</b>
+              <b v-else-if="loading">{{ t('common.loading') }}</b>
+              <b v-else class="numeric">{{ moneyText(availableStakeBalance) }} {{ selected?.stakeAssetSymbol || '--' }}</b>
+            </div>
 
             <div class="seconds-direction-grid" role="group" :aria-label="t('seconds.direction')">
               <button
@@ -2019,8 +2015,8 @@ onBeforeUnmount(() => {
   background: var(--seconds-page);
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: 22px 53px 112px 202px;
-  height: 420px;
+  grid-template-rows: 22px 53px 112px auto;
+  height: auto;
   padding: 2px 20px 10px;
   row-gap: 6px;
 }
@@ -2168,8 +2164,8 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   display: grid;
   gap: 6px;
-  grid-template-rows: 30px 26px 38px 40px 44px;
-  height: 202px;
+  grid-template-rows: 30px auto 38px auto 40px 44px;
+  height: auto;
   min-width: 0;
   padding: 0;
 }
@@ -2238,37 +2234,39 @@ onBeforeUnmount(() => {
   opacity: .55;
 }
 
-.seconds-cycle-limit {
+.seconds-cycle-limit,
+.seconds-balance-hint {
   align-items: center;
   background: var(--seconds-positive-soft);
   border-radius: 8px;
   color: var(--seconds-muted);
   display: flex;
+  flex-wrap: wrap;
   font-size: 9px;
   gap: 8px;
-  height: 26px;
+  min-height: 26px;
   justify-content: space-between;
-  line-height: 13px;
+  line-height: 16px;
   min-width: 0;
-  padding: 0 10px;
+  padding: 6px 10px;
 }
 
-.seconds-cycle-limit > span {
+.seconds-cycle-limit > span,
+.seconds-balance-hint > span {
   color: var(--seconds-positive-text);
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
 }
 
-.seconds-cycle-limit > b {
+.seconds-cycle-limit > b,
+.seconds-balance-hint > b {
   color: var(--seconds-text);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   min-width: 0;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .seconds-amount-field {
@@ -3364,10 +3362,6 @@ onBeforeUnmount(() => {
   .seconds-live-state {
     font-size: 9px;
     max-width: 68px;
-  }
-
-  .seconds-cycle-limit > b {
-    font-size: 8px;
   }
 
   .seconds-direction-grid button {

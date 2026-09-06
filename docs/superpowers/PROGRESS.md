@@ -1,3 +1,10 @@
+## 2026-09-06 13:43 - 修复秒合约金额输入、周期限额与可用资金展示
+
+- 完成内容：取消加载、切换交易对/周期时按最低投注额自动填入金额（包括 500）；切换周期保留手动草稿并按新限额重新校验，切换交易对清空草稿。限额区显示最小/最大投注并自适应换行，修复 `max_stake: null` 被误判为非法上限的问题，明确显示“最大投注不限”。将隐藏余额改为独立可见的可用资金行，复用当前 stakeAssetId 对应钱包的精确 availableText，区分真实零余额、缺失、加载和未登录，不计入冻结/锁定资金；订单确认、结算和后端接口保持不变。
+- 修改文件：mobile/src/views/SecondsView.vue、mobile/src/core/secondsFinancial.ts、mobile/src/i18n/messages/{zh-CN,en}.ts、mobile/tests/{seconds-stake-form,seconds-pencil-selected-parity,award-ui-trading-workspaces,pencil-trading-product-selected-parity,trading-lending-views}.test.ts、.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md、.trellis/tasks/09-06-seconds-stake-balance-limits/**、docs/superpowers/PROGRESS.md。
+- 验证结果：新增回归先复现 3 项失败，修复后聚焦 36/36；最终 `npm --prefix mobile run release:gate` 全部通过（680/680 测试、生产/测试类型检查、PWA/Tauri 构建与产物/体积/源码/测试质量门禁）。Ego 使用独立只读 API 样本验证金额空白/保留/重新校验、两种确认后取消、钱包按币种匹配、零余额/缺失/延迟/503/未登录；320px/390px × 中英文 × 深浅主题共 8 组真实 DOM 几何检查无溢出或限额/余额截断，390px 浅色截图已目视复核。后续截图工具超时，窄屏检查采用实际 DOM 尺寸断言；订单 POST 为 0。Trellis context、source integrity 与 `git diff --check` 通过，源码预算未放宽。
+- 后续事项：待提交并重新发布 Mobile 后在线上复验；未 commit/push 或部署。已关闭浏览器空间 14，停止临时 13037/18087 服务并删除临时 API 样本脚本。
+
 ## 2026-09-06 05:37 - 修复行情策略实时链路与后台运营规则
 
 - 完成内容：从同一权威 1m 派生稳定的最多 20 档模拟盘口和按秒分摊的逐笔，独立 Redis 最近 100 条队列与成交号去重，保留 strategy 来源且不写真实成交/账本；补齐 5m/15m/1h/4h/1d 当前形成中缓存与推送，严格完整闭合规则保留；历史 API 改取最新 N 根并升序返回，合并当前高周期但不把残缺窗口写入正式历史；修复毫秒/微秒检查点重放冲突、Redis 成功/Mongo 失败的同事件修复，以及相同盘口掩盖冲突成交的重放判断顺序。后台创建/启用增加过期、交易对有效性和同交易对重叠时段并发互斥，允许相邻排期；列表提供基于真实错误/最后 tick 的加载时运行诊断，前置诊断列并禁用过期启用按钮，补充分钟成交量与模拟数据说明。手机端切片验证见下方记录。
