@@ -681,7 +681,7 @@ describe('resourceConfigs create actions', () => {
     const user = userEvent.setup();
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
-      await user.type(reasonInputs.at(-1)!, reason);
+      fireEvent.change(reasonInputs.at(-1)!, { target: { value: reason } });
       const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
       await user.click(confirmButtons.at(-1)!);
     };
@@ -719,6 +719,7 @@ describe('resourceConfigs create actions', () => {
 
     expect(await screen.findByText('United States')).toBeInTheDocument();
     expect(screen.getByText('美国')).toBeInTheDocument();
+    await waitForLazyResourceActions();
     expect(screen.getByRole('button', { name: '添加国家' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '修改' })).toBeInTheDocument();
@@ -736,16 +737,14 @@ describe('resourceConfigs create actions', () => {
     semiSelectByLabel(dialog, '开放注册');
     semiSelectByLabel(dialog, '初始状态');
     semiInputByLabel(dialog, '排序');
-    await user.type(within(dialog).getByLabelText('国家代码'), ' jp ');
-    await user.type(within(dialog).getByLabelText('国家名称'), '日本');
-    await user.type(within(dialog).getByLabelText('备注（中文名称）'), '日本');
+    fireEvent.change(within(dialog).getByLabelText('国家代码'), { target: { value: ' jp ' } });
+    fireEvent.change(within(dialog).getByLabelText('国家名称'), { target: { value: '日本' } });
+    fireEvent.change(within(dialog).getByLabelText('备注（中文名称）'), { target: { value: '日本' } });
     await selectSemiOption(user, dialog, '默认语言', '英文');
-    await user.clear(within(dialog).getByLabelText('支持语言'));
-    await user.type(within(dialog).getByLabelText('支持语言'), 'en, zh');
+    fireEvent.change(within(dialog).getByLabelText('支持语言'), { target: { value: 'en, zh' } });
     await selectSemiOption(user, dialog, '开放注册', '启用');
     await selectSemiOption(user, dialog, '初始状态', '启用');
-    await user.clear(within(dialog).getByLabelText('排序'));
-    await user.type(within(dialog).getByLabelText('排序'), '30');
+    fireEvent.change(within(dialog).getByLabelText('排序'), { target: { value: '30' } });
     await user.click(within(dialog).getByRole('button', { name: '提交添加国家' }));
     await confirmWithReason('create country');
 
@@ -780,16 +779,12 @@ describe('resourceConfigs create actions', () => {
     semiInputByLabel(dialog, '支持语言');
     semiSelectByLabel(dialog, '开放注册');
     semiInputByLabel(dialog, '排序');
-    await user.clear(within(dialog).getByLabelText('国家名称'));
-    await user.type(within(dialog).getByLabelText('国家名称'), '台灣');
-    await user.clear(within(dialog).getByLabelText('备注（中文名称）'));
-    await user.type(within(dialog).getByLabelText('备注（中文名称）'), '台湾');
+    fireEvent.change(within(dialog).getByLabelText('国家名称'), { target: { value: '台灣' } });
+    fireEvent.change(within(dialog).getByLabelText('备注（中文名称）'), { target: { value: '台湾' } });
     await selectSemiOption(user, dialog, '默认语言', '中文');
-    await user.clear(within(dialog).getByLabelText('支持语言'));
-    await user.type(within(dialog).getByLabelText('支持语言'), 'zh,en');
+    fireEvent.change(within(dialog).getByLabelText('支持语言'), { target: { value: 'zh,en' } });
     await selectSemiOption(user, dialog, '开放注册', '停用');
-    await user.clear(within(dialog).getByLabelText('排序'));
-    await user.type(within(dialog).getByLabelText('排序'), '5');
+    fireEvent.change(within(dialog).getByLabelText('排序'), { target: { value: '5' } });
     await user.click(within(dialog).getByRole('button', { name: '提交修改' }));
     await confirmWithReason('edit country');
 
@@ -873,14 +868,7 @@ describe('resourceConfigs create actions', () => {
     expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/news', 'news', { limit: 50, offset: 0 }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('creates edits publishes and archives Admin news', async () => {
-    const user = userEvent.setup();
-    const confirmWithReason = async (reason: string) => {
-      const reasonInputs = await screen.findAllByLabelText('操作原因');
-      await user.type(reasonInputs.at(-1)!, reason);
-      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
-      await user.click(confirmButtons.at(-1)!);
-    };
+  describe('news actions', () => {
     const newsContent = {
       version: 1,
       default_locale: 'zh-CN',
@@ -903,241 +891,294 @@ describe('resourceConfigs create actions', () => {
       ]
     };
 
-    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
-      if (endpoint === '/admin/api/v1/news') {
-        const rows = [
-          {
-            id: 7,
-            title: '平台公告',
-            banner_url: 'https://cdn.example.test/news-banner.png',
-            small_logo_url: 'https://cdn.example.test/news-logo.png',
-            category: 'system',
-            country_code: 'CN',
-            default_locale: 'zh-CN',
-            status: 'draft',
-            content_json: newsContent,
-            updated_at: 1_700_000_100_000
-          }
-        ];
-        return { rows, raw: { [responseKey]: rows } };
-      }
-      if (endpoint === '/admin/api/v1/countries') {
-        const rows = [
-          {
-            id: 1,
-            country_code: 'US',
-            country_name: '美国',
-            remark: '美国',
-            default_locale: 'en',
-            supported_locales: ['en'],
-            status: 'active'
-          },
-          {
-            id: 2,
-            country_code: 'CN',
-            country_name: '中国',
-            remark: '中国',
-            default_locale: 'zh',
-            supported_locales: ['zh', 'en'],
-            status: 'active'
-          }
-        ];
-        return { rows, raw: { [responseKey]: rows } };
-      }
+    beforeEach(() => {
+      listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+        if (endpoint === '/admin/api/v1/news') {
+          const rows = [
+            {
+              id: 7,
+              title: '平台公告',
+              banner_url: 'https://cdn.example.test/news-banner.png',
+              small_logo_url: 'https://cdn.example.test/news-logo.png',
+              category: 'system',
+              country_code: 'CN',
+              default_locale: 'zh-CN',
+              status: 'draft',
+              content_json: structuredClone(newsContent),
+              updated_at: 1_700_000_100_000
+            }
+          ];
+          return { rows, raw: { [responseKey]: rows } };
+        }
+        if (endpoint === '/admin/api/v1/countries') {
+          const rows = [
+            {
+              id: 1,
+              country_code: 'US',
+              country_name: '美国',
+              remark: '美国',
+              default_locale: 'en',
+              supported_locales: ['en'],
+              status: 'active'
+            },
+            {
+              id: 2,
+              country_code: 'CN',
+              country_name: '中国',
+              remark: '中国',
+              default_locale: 'zh',
+              supported_locales: ['zh', 'en'],
+              status: 'active'
+            }
+          ];
+          return { rows, raw: { [responseKey]: rows } };
+        }
 
-      return { rows: [], raw: {} };
-    });
-    apiRequestMock.mockImplementation(async (path) => {
-      if (path === '/admin/api/v1/uploads/images') {
-        return {
-          delete_url: null,
-          download_url: 'https://cdn.example.test/news-inline.png',
-          mime_type: 'image/png',
-          object_key: 'news-inline.png',
-          provider: 'image_bed',
-          share_url: null,
-          size_bytes: 8
-        };
-      }
-      if (path === '/admin/api/v1/news/7') {
-        return { id: 7, detail: 'news-detail' };
-      }
+        return { rows: [], raw: {} };
+      });
+      apiRequestMock.mockImplementation(async (path) => {
+        if (path === '/admin/api/v1/uploads/images') {
+          return {
+            delete_url: null,
+            download_url: 'https://cdn.example.test/news-inline.png',
+            mime_type: 'image/png',
+            object_key: 'news-inline.png',
+            provider: 'image_bed',
+            share_url: null,
+            size_bytes: 8
+          };
+        }
+        if (path === '/admin/api/v1/news/7') {
+          return { id: 7, detail: 'news-detail' };
+        }
 
-      return {};
-    });
-
-    render(<ResourcePage config={resourceConfigs.news} />);
-
-    expect(await screen.findByText('平台公告')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '添加新闻' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '发布' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '归档' })).toBeInTheDocument();
-    const initialNewsLoadCount = listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news').length;
-
-    await user.click(screen.getByRole('button', { name: '添加新闻' }));
-    let dialog = await findActionSheet('添加新闻');
-    expectCreateModalSize(dialog, 'extra-wide');
-    expectAdminNewsLayout(dialog, true);
-    expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
-    expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
-    expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
-    expect(within(dialog).getByText('新闻正文')).toBeInTheDocument();
-    semiInputByLabel(dialog, '新闻标题');
-    semiSelectByLabel(dialog, '分类');
-    semiSelectByLabel(dialog, '国家');
-    expect(within(dialog).queryByLabelText('默认语言')).not.toBeInTheDocument();
-    semiSelectByLabel(dialog, '初始状态');
-    expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('翻译国家')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('翻译标题')).not.toBeInTheDocument();
-    const createSummaryEditor = within(dialog).getByLabelText('摘要');
-    expect(createSummaryEditor).toHaveAttribute('contenteditable', 'true');
-    expect(createSummaryEditor.closest('.ql-editor')).toHaveAttribute('data-placeholder', '请输入新闻摘要');
-    const createEditor = within(dialog).getByLabelText('富文本内容');
-    expect(createEditor).toHaveAttribute('contenteditable', 'true');
-    expect(createEditor.closest('.ql-editor')).toHaveAttribute('data-placeholder', '请输入新闻内容');
-    expect(within(dialog).getAllByRole('button', { name: '插入图片' }).length).toBeGreaterThan(0);
-    await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenCalledWith(
-        '/admin/api/v1/countries',
-        'countries',
-        expect.objectContaining({ status: 'active' }),
-        expect.objectContaining({ signal: expect.any(AbortSignal) })
-      );
-      expect(semiSelectByLabel(dialog, '国家')).not.toHaveClass('semi-select-disabled');
-    });
-    await user.type(within(dialog).getByLabelText('新闻标题'), '平台新公告');
-    await selectSemiOption(user, dialog, '分类', '市场资讯');
-    await selectSemiOption(user, dialog, '国家', '美国 (US)');
-    await selectSemiOption(user, dialog, '初始状态', '已发布');
-    fireEvent.input(createSummaryEditor, { target: { innerText: '公告摘要' } });
-    expect(within(dialog).getByRole('button', { name: '提交添加新闻' })).toBeDisabled();
-    fireEvent.input(createEditor, { target: { innerText: '公告正文' } });
-    const inlineImageInput = dialog.querySelector('.quill-rich-text-upload input[type="file"]') as HTMLInputElement | null;
-    expect(inlineImageInput).toBeInTheDocument();
-    const inlineImage = new File(['png-data'], 'news-inline.png', { type: 'image/png' });
-    await user.upload(inlineImageInput as HTMLInputElement, inlineImage);
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/uploads/images', expect.objectContaining({ method: 'POST', body: expect.any(FormData) }));
-    });
-    expect(within(dialog).queryByRole('button', { name: '新增语言内容' })).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: '提交添加新闻' }));
-    await confirmWithReason('create news');
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news', expect.objectContaining({ method: 'POST' }));
-    });
-    let request = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/news' && init && 'method' in init)?.[1];
-    let body = JSON.parse(String(request?.body));
-    expect(body).toMatchObject({
-      title: '平台新公告',
-      category: 'market',
-      status: 'published',
-      country_code: 'US',
-      default_locale: 'en',
-      reason: 'create news'
-    });
-    expect(body.content_json).toMatchObject({
-      version: 1,
-      default_locale: 'en',
-      items: [
-        { locale: 'en', country_code: 'US', title: '平台新公告' }
-      ]
-    });
-    expect(body.content_json.items[0].summary).toEqual([{ type: 'p', children: [{ text: '公告摘要' }] }]);
-    expect(body.content_json.items[0].content).toEqual([
-      { type: 'p', children: [{ text: '公告正文' }] },
-      { type: 'image', url: 'https://cdn.example.test/news-inline.png' }
-    ]);
-
-    await user.click(screen.getByRole('button', { name: '查看详情' }));
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7');
-    });
-    await expectFormattedDetail('news-detail', /"detail": "news-detail"/);
-
-    await user.click(screen.getByRole('button', { name: '编辑' }));
-    dialog = await findActionSheet('编辑新闻');
-    expectCreateModalSize(dialog, 'extra-wide');
-    expectAdminNewsLayout(dialog, false);
-    expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
-    expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
-    expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
-    expect(within(dialog).getByText('新闻正文')).toBeInTheDocument();
-    semiInputByLabel(dialog, '新闻标题');
-    semiSelectByLabel(dialog, '分类');
-    semiSelectByLabel(dialog, '国家');
-    expect(within(dialog).queryByLabelText('初始状态')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('默认语言')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('翻译国家')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('翻译标题')).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole('button', { name: '新增语言内容' })).not.toBeInTheDocument();
-    expect(dialog.querySelector('img[src="https://cdn.example.test/news-banner.png"]')).toBeInTheDocument();
-    expect(dialog.querySelector('img[src="https://cdn.example.test/news-logo.png"]')).toBeInTheDocument();
-    const editSummaryEditor = within(dialog).getByLabelText('摘要');
-    const editContentEditor = within(dialog).getByLabelText('富文本内容');
-    expect(editSummaryEditor).toHaveTextContent('旧摘要');
-    expect(editContentEditor).toHaveTextContent('旧内容');
-    await waitFor(() => {
-      expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN)');
-      expect(semiSelectByLabel(dialog, '国家')).not.toHaveClass('semi-select-disabled');
-    });
-    await user.clear(within(dialog).getByLabelText('新闻标题'));
-    await user.type(within(dialog).getByLabelText('新闻标题'), '平台公告更新');
-    await selectSemiOption(user, dialog, '分类', '产品资讯');
-    await selectSemiOption(user, dialog, '国家', '美国 (US)');
-    expect(within(dialog).getByLabelText('摘要')).toHaveTextContent('旧摘要');
-    expect(within(dialog).getByLabelText('富文本内容')).toHaveTextContent('旧内容');
-    await user.click(within(dialog).getByRole('button', { name: '提交编辑新闻' }));
-    await confirmWithReason('edit news');
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7', expect.objectContaining({ method: 'PATCH' }));
-    });
-    request = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/news/7' && init && 'method' in init)?.[1];
-    body = JSON.parse(String(request?.body));
-    expect(body).toMatchObject({
-      title: '平台公告更新',
-      category: 'product',
-      banner_url: 'https://cdn.example.test/news-banner.png',
-      small_logo_url: 'https://cdn.example.test/news-logo.png',
-      country_code: 'US',
-      default_locale: 'en',
-      reason: 'edit news'
-    });
-    expect(body.content_json).toMatchObject({
-      version: 1,
-      default_locale: 'en'
-    });
-    expect(body.content_json.items[0]).toMatchObject({ locale: 'en', country_code: 'US', title: '平台公告更新' });
-    expect(body.content_json.items[0].summary).toEqual([{ type: 'p', children: [{ text: '旧摘要' }] }]);
-    expect(body.content_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '旧内容' }] }]);
-    expect(body.content_json.items).toHaveLength(2);
-    expect(body.content_json.items[1]).toEqual(newsContent.items[1]);
-    expect(body).not.toHaveProperty('status');
-
-    await user.click(screen.getByRole('button', { name: '发布' }));
-    await confirmWithReason('publish news');
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7/status', {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'published', reason: 'publish news' })
+        return {};
       });
     });
 
-    await user.click(screen.getByRole('button', { name: '归档' }));
-    await confirmWithReason('archive news');
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7/status', {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'archived', reason: 'archive news' })
+    async function confirmWithReason(user: ReturnType<typeof userEvent.setup>, reason: string) {
+      const reasonInputs = await screen.findAllByLabelText('操作原因');
+      fireEvent.change(reasonInputs.at(-1)!, { target: { value: reason } });
+      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
+      await user.click(confirmButtons.at(-1)!);
+    }
+
+    async function renderNews() {
+      render(<ResourcePage config={resourceConfigs.news} />);
+
+      expect(await screen.findByText('平台公告')).toBeInTheDocument();
+      await waitForLazyResourceActions();
+      expect(screen.getByRole('button', { name: '添加新闻' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '发布' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '归档' })).toBeInTheDocument();
+      return listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news').length;
+    }
+
+    it('creates news with rich summary, uploaded content, and country settings', async () => {
+      const user = userEvent.setup();
+      const initialNewsLoadCount = await renderNews();
+
+      await user.click(screen.getByRole('button', { name: '添加新闻' }));
+      const dialog = await findActionSheet('添加新闻');
+      expectCreateModalSize(dialog, 'extra-wide');
+      expectAdminNewsLayout(dialog, true);
+      expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
+      expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
+      expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
+      expect(within(dialog).getByText('新闻正文')).toBeInTheDocument();
+      semiInputByLabel(dialog, '新闻标题');
+      semiSelectByLabel(dialog, '分类');
+      semiSelectByLabel(dialog, '国家');
+      expect(within(dialog).queryByLabelText('默认语言')).not.toBeInTheDocument();
+      semiSelectByLabel(dialog, '初始状态');
+      expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText('翻译国家')).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText('翻译标题')).not.toBeInTheDocument();
+      const createSummaryEditor = within(dialog).getByLabelText('摘要');
+      expect(createSummaryEditor).toHaveAttribute('contenteditable', 'true');
+      expect(createSummaryEditor.closest('.ql-editor')).toHaveAttribute('data-placeholder', '请输入新闻摘要');
+      const createEditor = within(dialog).getByLabelText('富文本内容');
+      expect(createEditor).toHaveAttribute('contenteditable', 'true');
+      expect(createEditor.closest('.ql-editor')).toHaveAttribute('data-placeholder', '请输入新闻内容');
+      expect(within(dialog).getAllByRole('button', { name: '插入图片' }).length).toBeGreaterThan(0);
+      await waitFor(() => {
+        expect(listAdminResourceMock).toHaveBeenCalledWith(
+          '/admin/api/v1/countries',
+          'countries',
+          expect.objectContaining({ status: 'active' }),
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        );
+        expect(semiSelectByLabel(dialog, '国家')).not.toHaveClass('semi-select-disabled');
       });
-      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news').length).toBeGreaterThanOrEqual(initialNewsLoadCount + 4);
+      fireEvent.change(within(dialog).getByLabelText('新闻标题'), { target: { value: '平台新公告' } });
+      await selectSemiOption(user, dialog, '分类', '市场资讯');
+      await selectSemiOption(user, dialog, '国家', '美国 (US)');
+      await selectSemiOption(user, dialog, '初始状态', '已发布');
+      fireEvent.input(createSummaryEditor, { target: { innerText: '公告摘要' } });
+      expect(within(dialog).getByRole('button', { name: '提交添加新闻' })).toBeDisabled();
+      fireEvent.input(createEditor, { target: { innerText: '公告正文' } });
+      const inlineImageInput = dialog.querySelector('.quill-rich-text-upload input[type="file"]') as HTMLInputElement | null;
+      expect(inlineImageInput).toBeInTheDocument();
+      const inlineImage = new File(['png-data'], 'news-inline.png', { type: 'image/png' });
+      await user.upload(inlineImageInput as HTMLInputElement, inlineImage);
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/uploads/images', expect.objectContaining({ method: 'POST', body: expect.any(FormData) }));
+      });
+      expect(within(dialog).queryByRole('button', { name: '新增语言内容' })).not.toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: '提交添加新闻' }));
+      await confirmWithReason(user, 'create news');
+
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news', expect.objectContaining({ method: 'POST' }));
+      });
+      const request = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/news' && init && 'method' in init)?.[1];
+      const body = JSON.parse(String(request?.body));
+      expect(body).toMatchObject({
+        title: '平台新公告',
+        category: 'market',
+        status: 'published',
+        country_code: 'US',
+        default_locale: 'en',
+        reason: 'create news'
+      });
+      expect(body.content_json).toMatchObject({
+        version: 1,
+        default_locale: 'en',
+        items: [
+          { locale: 'en', country_code: 'US', title: '平台新公告' }
+        ]
+      });
+      expect(body.content_json.items[0].summary).toEqual([{ type: 'p', children: [{ text: '公告摘要' }] }]);
+      expect(body.content_json.items[0].content).toEqual([
+        { type: 'p', children: [{ text: '公告正文' }] },
+        { type: 'image', url: 'https://cdn.example.test/news-inline.png' }
+      ]);
+      await waitFor(() => {
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news')).toHaveLength(initialNewsLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(2);
     });
-  }, 40_000);
+
+    it('shows formatted news details without refreshing the list', async () => {
+      const user = userEvent.setup();
+      const initialNewsLoadCount = await renderNews();
+
+      await user.click(screen.getByRole('button', { name: '查看详情' }));
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7');
+      });
+      await expectFormattedDetail('news-detail', /"detail": "news-detail"/);
+      await waitFor(() => {
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news')).toHaveLength(initialNewsLoadCount);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('edits news while retaining existing content and legacy translations', async () => {
+      const user = userEvent.setup();
+      const initialNewsLoadCount = await renderNews();
+
+      await user.click(screen.getByRole('button', { name: '编辑' }));
+      const dialog = await findActionSheet('编辑新闻');
+      expectCreateModalSize(dialog, 'extra-wide');
+      expectAdminNewsLayout(dialog, false);
+      expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
+      expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
+      expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
+      expect(within(dialog).getByText('新闻正文')).toBeInTheDocument();
+      semiInputByLabel(dialog, '新闻标题');
+      semiSelectByLabel(dialog, '分类');
+      semiSelectByLabel(dialog, '国家');
+      expect(within(dialog).queryByLabelText('初始状态')).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText('默认语言')).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText('翻译国家')).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText('翻译标题')).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole('button', { name: '新增语言内容' })).not.toBeInTheDocument();
+      expect(dialog.querySelector('img[src="https://cdn.example.test/news-banner.png"]')).toBeInTheDocument();
+      expect(dialog.querySelector('img[src="https://cdn.example.test/news-logo.png"]')).toBeInTheDocument();
+      const editSummaryEditor = within(dialog).getByLabelText('摘要');
+      const editContentEditor = within(dialog).getByLabelText('富文本内容');
+      expect(editSummaryEditor).toHaveTextContent('旧摘要');
+      expect(editContentEditor).toHaveTextContent('旧内容');
+      await waitFor(() => {
+        expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN)');
+        expect(semiSelectByLabel(dialog, '国家')).not.toHaveClass('semi-select-disabled');
+      });
+      fireEvent.change(within(dialog).getByLabelText('新闻标题'), { target: { value: '平台公告更新' } });
+      await selectSemiOption(user, dialog, '分类', '产品资讯');
+      await selectSemiOption(user, dialog, '国家', '美国 (US)');
+      expect(within(dialog).getByLabelText('摘要')).toHaveTextContent('旧摘要');
+      expect(within(dialog).getByLabelText('富文本内容')).toHaveTextContent('旧内容');
+      await user.click(within(dialog).getByRole('button', { name: '提交编辑新闻' }));
+      await confirmWithReason(user, 'edit news');
+
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7', expect.objectContaining({ method: 'PATCH' }));
+      });
+      const request = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/news/7' && init && 'method' in init)?.[1];
+      const body = JSON.parse(String(request?.body));
+      expect(body).toMatchObject({
+        title: '平台公告更新',
+        category: 'product',
+        banner_url: 'https://cdn.example.test/news-banner.png',
+        small_logo_url: 'https://cdn.example.test/news-logo.png',
+        country_code: 'US',
+        default_locale: 'en',
+        reason: 'edit news'
+      });
+      expect(body.content_json).toMatchObject({
+        version: 1,
+        default_locale: 'en'
+      });
+      expect(body.content_json.items[0]).toMatchObject({ locale: 'en', country_code: 'US', title: '平台公告更新' });
+      expect(body.content_json.items[0].summary).toEqual([{ type: 'p', children: [{ text: '旧摘要' }] }]);
+      expect(body.content_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '旧内容' }] }]);
+      expect(body.content_json.items).toHaveLength(2);
+      expect(body.content_json.items[1]).toEqual(newsContent.items[1]);
+      expect(body).not.toHaveProperty('status');
+      await waitFor(() => {
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news')).toHaveLength(initialNewsLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('publishes news with a reason and refreshes the list once', async () => {
+      const user = userEvent.setup();
+      const initialNewsLoadCount = await renderNews();
+
+      await user.click(screen.getByRole('button', { name: '发布' }));
+      await confirmWithReason(user, 'publish news');
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7/status', {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'published', reason: 'publish news' })
+        });
+      });
+      await waitFor(() => {
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news')).toHaveLength(initialNewsLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('archives news with a reason and refreshes the list once', async () => {
+      const user = userEvent.setup();
+      const initialNewsLoadCount = await renderNews();
+
+      await user.click(screen.getByRole('button', { name: '归档' }));
+      await confirmWithReason(user, 'archive news');
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7/status', {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'archived', reason: 'archive news' })
+        });
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news')).toHaveLength(initialNewsLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+  });
 
   it('keeps the user ID column visible on user management', () => {
     expect(resourceConfigs.users.columns).toContainEqual({ key: 'id', title: '用户ID' });
@@ -1314,16 +1355,16 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, dialog, '网络', 'Base');
     await selectSemiOption(user, dialog, '支持币种', 'USDT - Tether（ID: 12）');
     expect(within(dialog).getByLabelText('地址集合编号')).toHaveValue('A');
-    await user.type(within(dialog).getAllByLabelText('充值地址')[0], '0x1234567890abcdef1234567890abcdef12345678');
-    await user.type(within(dialog).getAllByLabelText('Memo / Tag')[0], 'memo-1');
-    await user.type(within(dialog).getAllByLabelText('备注')[0], 'pool address');
+    fireEvent.change(within(dialog).getAllByLabelText('充值地址')[0], { target: { value: '0x1234567890abcdef1234567890abcdef12345678' } });
+    fireEvent.change(within(dialog).getAllByLabelText('Memo / Tag')[0], { target: { value: 'memo-1' } });
+    fireEvent.change(within(dialog).getAllByLabelText('备注')[0], { target: { value: 'pool address' } });
     await user.click(within(dialog).getByRole('button', { name: '新增一行' }));
     expect(within(dialog).getByText('地址 2')).toBeInTheDocument();
-    await user.type(within(dialog).getAllByLabelText('充值地址')[1], '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd');
-    await user.type(within(dialog).getAllByLabelText('Memo / Tag')[1], 'memo-2');
-    await user.type(within(dialog).getAllByLabelText('备注')[1], 'backup pool address');
+    fireEvent.change(within(dialog).getAllByLabelText('充值地址')[1], { target: { value: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd' } });
+    fireEvent.change(within(dialog).getAllByLabelText('Memo / Tag')[1], { target: { value: 'memo-2' } });
+    fireEvent.change(within(dialog).getAllByLabelText('备注')[1], { target: { value: 'backup pool address' } });
     await user.click(within(dialog).getByRole('button', { name: '提交添加' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'create deposit address');
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'create deposit address' } });
     await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
@@ -1548,22 +1589,14 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getAllByRole('button', { name: '修改' })[0]);
     const editDialog = await findActionSheet('修改资产配置');
-    await user.clear(within(editDialog).getByLabelText('资产名称'));
-    await user.type(within(editDialog).getByLabelText('资产名称'), 'Bitcoin Updated');
-    await user.clear(within(editDialog).getByLabelText('资产精度'));
-    await user.type(within(editDialog).getByLabelText('资产精度'), '6');
-    await user.clear(within(editDialog).getByLabelText('最小充值数量'));
-    await user.type(within(editDialog).getByLabelText('最小充值数量'), '3');
-    await user.clear(within(editDialog).getByLabelText('充值手续费'));
-    await user.type(within(editDialog).getByLabelText('充值手续费'), '0.03');
-    await user.clear(within(editDialog).getByLabelText('提现手续费'));
-    await user.type(within(editDialog).getByLabelText('提现手续费'), '0.3');
-    await user.clear(within(editDialog).getByLabelText('梯度最小金额 1'));
-    await user.type(within(editDialog).getByLabelText('梯度最小金额 1'), '2');
-    await user.clear(within(editDialog).getByLabelText('梯度最大金额 1'));
-    await user.type(within(editDialog).getByLabelText('梯度最大金额 1'), '200');
-    await user.clear(within(editDialog).getByLabelText('梯度手续费比例 1'));
-    await user.type(within(editDialog).getByLabelText('梯度手续费比例 1'), '1.5');
+    fireEvent.change(within(editDialog).getByLabelText('资产名称'), { target: { value: 'Bitcoin Updated' } });
+    fireEvent.change(within(editDialog).getByLabelText('资产精度'), { target: { value: '6' } });
+    fireEvent.change(within(editDialog).getByLabelText('最小充值数量'), { target: { value: '3' } });
+    fireEvent.change(within(editDialog).getByLabelText('充值手续费'), { target: { value: '0.03' } });
+    fireEvent.change(within(editDialog).getByLabelText('提现手续费'), { target: { value: '0.3' } });
+    fireEvent.change(within(editDialog).getByLabelText('梯度最小金额 1'), { target: { value: '2' } });
+    fireEvent.change(within(editDialog).getByLabelText('梯度最大金额 1'), { target: { value: '200' } });
+    fireEvent.change(within(editDialog).getByLabelText('梯度手续费比例 1'), { target: { value: '1.5' } });
     await selectSemiOption(user, editDialog, '资产类型', '稳定币');
     await selectSemiOption(user, editDialog, '状态', '禁用');
     await user.click(within(editDialog).getByLabelText('支持充值'));
@@ -1573,7 +1606,7 @@ describe('resourceConfigs create actions', () => {
     expect(submitAssetEdit).toHaveClass('semi-button-primary', 'semi-button-solid');
     expect(submitAssetEdit).not.toHaveClass('semi-button-danger');
     await user.click(submitAssetEdit);
-    await user.type(await screen.findByLabelText('操作原因'), 'update asset config');
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'update asset config' } });
     await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
@@ -1600,7 +1633,7 @@ describe('resourceConfigs create actions', () => {
     expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/assets')).toHaveLength(3);
 
     await user.click(screen.getByRole('button', { name: '删除' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'delete disabled asset');
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'delete disabled asset' } });
     await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
@@ -3559,15 +3592,12 @@ describe('resourceConfigs create actions', () => {
     const editMaxStakeInputs = within(editDialog).getAllByLabelText('最大押注');
     expect(editDurationInputs).toHaveLength(2);
     expect(editMaxStakeInputs[0]).toHaveAttribute('placeholder', '留空表示无上限');
-    await user.clear(editDurationInputs[0]);
-    await user.type(editDurationInputs[0], '180');
-    await user.clear(editPayoutInputs[0]);
-    await user.type(editPayoutInputs[0], '0.95');
-    await user.clear(editMinStakeInputs[0]);
-    await user.type(editMinStakeInputs[0], '30');
+    fireEvent.change(editDurationInputs[0], { target: { value: '180' } });
+    fireEvent.change(editPayoutInputs[0], { target: { value: '0.95' } });
+    fireEvent.change(editMinStakeInputs[0], { target: { value: '30' } });
     await user.clear(editMaxStakeInputs[0]);
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'edit seconds product');
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'edit seconds product' } });
     await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
@@ -3597,7 +3627,7 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '启用' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'enable seconds product');
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'enable seconds product' } });
     await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
@@ -3609,7 +3639,7 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '删除' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'delete disabled seconds product');
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'delete disabled seconds product' } });
     await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
@@ -3861,311 +3891,339 @@ describe('resourceConfigs create actions', () => {
     });
   });
 
-  it('creates earn products with category and multilingual rich text, then supports row actions', async () => {
-    const user = userEvent.setup();
-    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
-      if (endpoint === '/admin/api/v1/assets') {
-        return { rows: assetRows, raw: { [responseKey]: assetRows } };
-      }
+  describe('earn products', () => {
+    // Independent operations share fixtures, not a cumulative create/edit/disable deadline.
+    beforeEach(() => {
+      listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+        if (endpoint === '/admin/api/v1/assets') {
+          return { rows: assetRows, raw: { [responseKey]: assetRows } };
+        }
 
-      if (endpoint === '/admin/api/v1/countries') {
-        const rows = [
-          { id: 1, country_code: 'CN', country_name: '中国', default_locale: 'zh-CN', status: 'active' },
-          { id: 2, country_code: 'US', country_name: 'United States', default_locale: 'en-US', status: 'active' }
-        ];
-        return { rows, raw: { [responseKey]: rows } };
-      }
+        if (endpoint === '/admin/api/v1/countries') {
+          const rows = [
+            { id: 1, country_code: 'CN', country_name: '中国', default_locale: 'zh-CN', status: 'active' },
+            { id: 2, country_code: 'US', country_name: 'United States', default_locale: 'en-US', status: 'active' }
+          ];
+          return { rows, raw: { [responseKey]: rows } };
+        }
 
-      if (endpoint === '/admin/api/v1/earn/categories') {
-        const rows = [
-          {
-            id: 501,
-            code: 'fixed_term',
-            default_name: '定期',
-            name_json: { version: 1, default_locale: 'zh-CN', items: [{ locale: 'zh-CN', country: 'CN', title: '定期' }] },
-            sort_order: 10,
-            status: 'active'
-          },
-          {
-            id: 502,
-            code: 'structured',
-            default_name: '结构化',
-            name_json: { version: 1, default_locale: 'zh-CN', items: [{ locale: 'zh-CN', country: 'CN', title: '结构化' }] },
-            sort_order: 20,
-            status: 'active'
-          }
-        ];
-        return { rows, raw: { [responseKey]: rows } };
-      }
-
-      if (endpoint === '/admin/api/v1/earn/products') {
-        const rows = [
-          {
-            id: 61,
-            asset_id: 12,
-            asset_symbol: 'USDT',
-            name: 'USDT 30D',
-            banner_url: 'https://static.example.com/earn-banner.png',
-            small_logo_url: 'https://static.example.com/earn-logo.png',
-            category: 'fixed_term',
-            category_name: '定期',
-            category_name_json: {
-              version: 1,
-              default_locale: 'zh-CN',
-              items: [{ locale: 'zh-CN', country: 'CN', title: '定期' }]
+        if (endpoint === '/admin/api/v1/earn/categories') {
+          const rows = [
+            {
+              id: 501,
+              code: 'fixed_term',
+              default_name: '定期',
+              name_json: { version: 1, default_locale: 'zh-CN', items: [{ locale: 'zh-CN', country: 'CN', title: '定期' }] },
+              sort_order: 10,
+              status: 'active'
             },
-            introduction_json: {
-              version: 1,
-              default_locale: 'zh-CN',
-              items: [
-                {
-                  locale: 'zh-CN',
-                  country: 'CN',
-                  title: 'USDT 定期',
-                  content: [{ type: 'p', children: [{ text: '定期理财说明。' }] }]
-                }
-              ]
-            },
-            term_days: 30,
-            apr_rate: '0.12000000',
-            redemption_fee_rate: '0.01000000',
-            maturity_profit_fee_rate: '0.10000000',
-            early_redeem_fee_basis: 'principal',
-            early_redeem_fee_rate: '0.02000000',
-            min_subscribe: '10.0000',
-            max_subscribe: '1000.0000',
-            status: 'active'
-          }
-        ];
-        return { rows, raw: { [responseKey]: rows } };
-      }
+            {
+              id: 502,
+              code: 'structured',
+              default_name: '结构化',
+              name_json: { version: 1, default_locale: 'zh-CN', items: [{ locale: 'zh-CN', country: 'CN', title: '结构化' }] },
+              sort_order: 20,
+              status: 'active'
+            }
+          ];
+          return { rows, raw: { [responseKey]: rows } };
+        }
 
-      return { rows: [], raw: {} };
-    });
-    apiRequestMock.mockImplementation(async (path) => {
-      if (path === '/admin/api/v1/earn/products/61') {
-        return { id: 61, detail: 'earn-product-detail' };
-      }
+        if (endpoint === '/admin/api/v1/earn/products') {
+          const rows = [
+            {
+              id: 61,
+              asset_id: 12,
+              asset_symbol: 'USDT',
+              name: 'USDT 30D',
+              banner_url: 'https://static.example.com/earn-banner.png',
+              small_logo_url: 'https://static.example.com/earn-logo.png',
+              category: 'fixed_term',
+              category_name: '定期',
+              category_name_json: {
+                version: 1,
+                default_locale: 'zh-CN',
+                items: [{ locale: 'zh-CN', country: 'CN', title: '定期' }]
+              },
+              introduction_json: {
+                version: 1,
+                default_locale: 'zh-CN',
+                items: [
+                  {
+                    locale: 'zh-CN',
+                    country: 'CN',
+                    title: 'USDT 定期',
+                    content: [{ type: 'p', children: [{ text: '定期理财说明。' }] }]
+                  }
+                ]
+              },
+              term_days: 30,
+              apr_rate: '0.12000000',
+              redemption_fee_rate: '0.01000000',
+              maturity_profit_fee_rate: '0.10000000',
+              early_redeem_fee_basis: 'principal',
+              early_redeem_fee_rate: '0.02000000',
+              min_subscribe: '10.0000',
+              max_subscribe: '1000.0000',
+              status: 'active'
+            }
+          ];
+          return { rows, raw: { [responseKey]: rows } };
+        }
 
-      return {};
-    });
-
-    render(
-      <StrictMode>
-        <ResourcePage config={resourceConfigs.earnProducts} />
-      </StrictMode>
-    );
-
-    expect(await screen.findByText('USDT 30D')).toBeInTheDocument();
-    await waitForLazyResourceActions();
-    expect(screen.getByText('定期', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '添加理财产品' })).toBeInTheDocument();
-    const initialEarnProductLoadCount = listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products').length;
-
-    await user.click(screen.getByRole('button', { name: '添加理财产品' }));
-    const dialog = await findActionSheet('添加理财产品');
-    expectCreateModalSize(dialog, 'extra-wide');
-    const earnProductLayout = dialog.querySelector('.admin-earn-product-layout') as HTMLElement | null;
-    expect(earnProductLayout).toBeInTheDocument();
-    expect(getComputedStyle(earnProductLayout as HTMLElement).display).toBe('grid');
-    expect(dialog.querySelector('.admin-earn-product-basic-grid')).toBeInTheDocument();
-    expect(dialog.querySelector('.admin-earn-introduction-card')).toBeInTheDocument();
-    expect(dialog.querySelector('.admin-earn-introduction-meta')).toBeInTheDocument();
-    expect(dialog.querySelector('.admin-earn-product-footer')).toBeInTheDocument();
-    expect(dialog.querySelector('.admin-earn-category-descriptions')).not.toBeInTheDocument();
-    expect(within((earnProductLayout as HTMLElement).children[0] as HTMLElement).getByText('基础信息')).toBeInTheDocument();
-    expect(within((earnProductLayout as HTMLElement).children[1] as HTMLElement).getByText('收益与申购参数')).toBeInTheDocument();
-    expect(within((earnProductLayout as HTMLElement).children[2] as HTMLElement).getByText('手续费配置')).toBeInTheDocument();
-    semiSelectByLabel(dialog, '理财资产');
-    semiSelectByLabel(dialog, '产品分类');
-    semiSelectByLabel(dialog, '初始状态');
-    semiInputByLabel(dialog, '产品名称');
-    semiInputByLabel(dialog, '期限天数');
-    semiInputByLabel(dialog, '年化利率');
-    semiInputByLabel(dialog, '提现赎回手续费率');
-    semiInputByLabel(dialog, '到期获利手续费率');
-    semiSelectByLabel(dialog, '提前赎回扣费基准');
-    semiInputByLabel(dialog, '提前赎回扣费率');
-    semiInputByLabel(dialog, '最小申购');
-    semiInputByLabel(dialog, '最大申购');
-    semiSelectByLabel(dialog, '国家');
-    expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
-    semiInputByLabel(dialog, '介绍标题');
-    await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenCalledWith(
-        '/admin/api/v1/countries',
-        'countries',
-        expect.objectContaining({ status: 'active' }),
-        expect.objectContaining({ signal: expect.any(AbortSignal) })
-      );
-      expect(listAdminResourceMock).toHaveBeenCalledWith(
-        '/admin/api/v1/earn/categories',
-        'categories',
-        expect.objectContaining({ status: 'active' }),
-        expect.objectContaining({ signal: expect.any(AbortSignal) })
-      );
-      expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN / zh-CN)');
-    });
-    await selectSemiOption(user, dialog, '理财资产', 'USDT - Tether（ID: 12）');
-    expect(semiSelectByLabel(dialog, '理财资产')).toHaveTextContent('USDT - Tether（ID: 12）');
-    await user.type(within(dialog).getByLabelText('产品名称'), 'USDT 稳健理财');
-    await selectSemiOption(user, dialog, '产品分类', '结构化（structured）');
-    expect(semiSelectByLabel(dialog, '产品分类')).toHaveTextContent('结构化（structured）');
-    await user.type(within(dialog).getByLabelText('期限天数'), '30');
-    await user.type(within(dialog).getByLabelText('年化利率'), '0.12');
-    await user.clear(within(dialog).getByLabelText('提现赎回手续费率'));
-    await user.type(within(dialog).getByLabelText('提现赎回手续费率'), '0.01');
-    await user.clear(within(dialog).getByLabelText('到期获利手续费率'));
-    await user.type(within(dialog).getByLabelText('到期获利手续费率'), '0.1');
-    await selectSemiOption(user, dialog, '提前赎回扣费基准', '按本金比例扣除');
-    await user.clear(within(dialog).getByLabelText('提前赎回扣费率'));
-    await user.type(within(dialog).getByLabelText('提前赎回扣费率'), '0.02');
-    await user.type(within(dialog).getByLabelText('最小申购'), '10');
-    await user.type(within(dialog).getByLabelText('最大申购'), '1000');
-    await user.type(within(dialog).getByLabelText('介绍标题'), 'USDT 稳健理财');
-    const firstRichTextEditor = within(dialog).getByLabelText('富文本内容');
-    expect(firstRichTextEditor).toHaveAttribute('contenteditable', 'true');
-    expect(firstRichTextEditor.tagName).not.toBe('TEXTAREA');
-    const firstEditorShell = firstRichTextEditor.closest('[data-quill-editor="true"]') as HTMLElement | null;
-    expect(firstEditorShell).toBeInTheDocument();
-    expect(firstEditorShell).toHaveClass('quill-rich-text-editor');
-    expect(getComputedStyle(firstEditorShell as HTMLElement).width).toBe('100%');
-    expect(firstRichTextEditor).toHaveClass('ql-editor');
-    const firstEditorToolbar = within(firstEditorShell as HTMLElement).getByRole('toolbar', { name: '富文本工具栏' });
-    expect(firstEditorToolbar).toHaveClass('ql-toolbar', 'ql-snow');
-    expect(firstEditorToolbar.querySelectorAll('.ql-formats')).toHaveLength(2);
-    expect(firstEditorToolbar.querySelector('.ql-header')).toBeInTheDocument();
-    expect(firstEditorToolbar.querySelector('.ql-blockquote')).toBeInTheDocument();
-    expect(firstEditorToolbar.querySelector('.ql-bold')).toBeInTheDocument();
-    expect(firstEditorToolbar.querySelector('.ql-italic')).toBeInTheDocument();
-    expect(firstEditorToolbar.querySelector('.ql-underline')).toBeInTheDocument();
-    const firstEditorContainer = firstEditorShell?.querySelector('.quill-rich-text-container') as HTMLElement | null;
-    expect(firstEditorContainer).toHaveClass('ql-container', 'ql-snow');
-    expect(getComputedStyle(firstEditorToolbar).display).toBe('block');
-    expect(getComputedStyle(firstEditorToolbar).borderTopWidth).toBe('1px');
-    expect(getComputedStyle(firstEditorToolbar).backgroundImage).toBe('none');
-    expect(getComputedStyle(firstEditorContainer as HTMLElement).borderLeftWidth).toBe('1px');
-    expect(getComputedStyle(firstRichTextEditor).whiteSpace).toBe('pre-wrap');
-    fireEvent.input(firstRichTextEditor, { target: { innerText: '适合稳健型用户。' } });
-    await user.click(within(dialog).getByRole('button', { name: '新增国家介绍' }));
-    await selectSemiOption(user, dialog, '国家', 'United States (US / en-US)', 1);
-    const titleInputs = within(dialog).getAllByLabelText('介绍标题');
-    await user.clear(titleInputs[1]);
-    await user.type(titleInputs[1], 'USDT Earn');
-    const contentEditors = within(dialog).getAllByLabelText('富文本内容');
-    expect(contentEditors).toHaveLength(2);
-    expect(contentEditors[1]).toHaveAttribute('contenteditable', 'true');
-    expect(contentEditors[1].tagName).not.toBe('TEXTAREA');
-    fireEvent.input(contentEditors[1], { target: { innerText: 'For stable users.' } });
-    const submitEarnProductButton = within(dialog).getByRole('button', { name: '提交添加理财产品' });
-    await waitFor(() => {
-      expect(submitEarnProductButton).not.toBeDisabled();
-    });
-    await user.click(submitEarnProductButton);
-    await user.type(await screen.findByLabelText('操作原因'), 'add earn product');
-    await user.click(await screen.findByRole('button', { name: '确认' }));
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products', expect.objectContaining({ method: 'POST' }));
-    });
-    const createRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/earn/products' && init && 'method' in init)?.[1];
-    const createBody = JSON.parse(String(createRequest?.body));
-    expect(createBody).toMatchObject({
-      asset_id: 12,
-      name: 'USDT 稳健理财',
-      category: 'structured',
-      term_days: 30,
-      apr_rate: '0.12',
-      redemption_fee_rate: '0.01',
-      maturity_profit_fee_rate: '0.1',
-      early_redeem_fee_basis: 'principal',
-      early_redeem_fee_rate: '0.02',
-      min_subscribe: '10',
-      max_subscribe: '1000',
-      status: 'active',
-      reason: 'add earn product'
-    });
-    expect(createBody.introduction_json).toMatchObject({
-      version: 1,
-      default_locale: 'zh-CN',
-      items: [
-        { locale: 'zh-CN', country: 'CN', title: 'USDT 稳健理财' },
-        { locale: 'en-US', country: 'US', title: 'USDT Earn' }
-      ]
-    });
-    expect(createBody.introduction_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '适合稳健型用户。' }] }]);
-    expect(createBody.introduction_json.items[1].content).toEqual([{ type: 'p', children: [{ text: 'For stable users.' }] }]);
-    expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 1);
-
-    await user.click(screen.getByRole('button', { name: '查看详情' }));
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61');
-    });
-    await expectFormattedDetail('earn-product-detail', /"detail": "earn-product-detail"/);
-
-    await user.click(screen.getByRole('button', { name: '修改' }));
-    const editDialog = await findActionSheet('修改理财产品');
-    semiSelectByLabel(editDialog, '理财资产');
-    semiSelectByLabel(editDialog, '产品分类');
-    semiSelectByLabel(editDialog, '状态');
-    semiSelectByLabel(editDialog, '提前赎回扣费基准');
-    semiSelectByLabel(editDialog, '国家');
-    expect(within(editDialog).queryByLabelText('语言')).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(semiSelectByLabel(editDialog, '国家')).toHaveTextContent('中国 (CN / zh-CN)');
-    });
-    await user.clear(within(editDialog).getByLabelText('产品名称'));
-    await user.type(within(editDialog).getByLabelText('产品名称'), 'USDT 90D');
-    await user.clear(within(editDialog).getByLabelText('期限天数'));
-    await user.type(within(editDialog).getByLabelText('期限天数'), '90');
-    await selectSemiOption(user, editDialog, '提前赎回扣费基准', '按收益比例扣除');
-    await user.clear(within(editDialog).getByLabelText('提前赎回扣费率'));
-    await user.type(within(editDialog).getByLabelText('提前赎回扣费率'), '0.03');
-    await selectSemiOption(user, editDialog, '国家', 'United States (US / en-US)');
-    await user.clear(within(editDialog).getByLabelText('介绍标题'));
-    await user.type(within(editDialog).getByLabelText('介绍标题'), 'USDT Earn Updated');
-    await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'update earn product');
-    await user.click(await screen.findByRole('button', { name: '确认' }));
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61', expect.objectContaining({ method: 'PATCH' }));
-    });
-    const updateRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/earn/products/61' && init && 'method' in init)?.[1];
-    const updateBody = JSON.parse(String(updateRequest?.body));
-    expect(updateBody).toMatchObject({
-      asset_id: 12,
-      name: 'USDT 90D',
-      category: 'fixed_term',
-      term_days: 90,
-      apr_rate: '0.12000000',
-      redemption_fee_rate: '0.01000000',
-      maturity_profit_fee_rate: '0.10000000',
-      early_redeem_fee_basis: 'profit',
-      early_redeem_fee_rate: '0.03',
-      min_subscribe: '10.0000',
-      max_subscribe: '1000.0000',
-      status: 'active',
-      reason: 'update earn product'
-    });
-    expect(updateBody.introduction_json).toMatchObject({
-      version: 1,
-      default_locale: 'en-US',
-      items: [{ locale: 'en-US', country: 'US', title: 'USDT Earn Updated' }]
-    });
-    expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 2);
-
-    await user.click(screen.getByRole('button', { name: '禁用' }));
-    await user.type(await screen.findByLabelText('操作原因'), 'disable earn product');
-    await user.click(await screen.findByRole('button', { name: '确认' }));
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61/status', {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'disabled', reason: 'disable earn product' })
+        return { rows: [], raw: {} };
       });
-      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 3);
+      apiRequestMock.mockImplementation(async (path) => {
+        if (path === '/admin/api/v1/earn/products/61') {
+          return { id: 61, detail: 'earn-product-detail' };
+        }
+
+        return {};
+      });
+    });
+
+    async function renderEarnProducts() {
+      render(
+        <StrictMode>
+          <ResourcePage config={resourceConfigs.earnProducts} />
+        </StrictMode>
+      );
+
+      expect(await screen.findByText('USDT 30D')).toBeInTheDocument();
+      await waitForLazyResourceActions();
+      expect(screen.getByText('定期', { selector: 'span' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '添加理财产品' })).toBeInTheDocument();
+      return listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products').length;
+    }
+
+    it('creates earn products with category and multilingual rich text', async () => {
+      const user = userEvent.setup();
+      const initialEarnProductLoadCount = await renderEarnProducts();
+
+      await user.click(screen.getByRole('button', { name: '添加理财产品' }));
+      const dialog = await findActionSheet('添加理财产品');
+      expectCreateModalSize(dialog, 'extra-wide');
+      const earnProductLayout = dialog.querySelector('.admin-earn-product-layout') as HTMLElement | null;
+      expect(earnProductLayout).toBeInTheDocument();
+      expect(getComputedStyle(earnProductLayout as HTMLElement).display).toBe('grid');
+      expect(dialog.querySelector('.admin-earn-product-basic-grid')).toBeInTheDocument();
+      expect(dialog.querySelector('.admin-earn-introduction-card')).toBeInTheDocument();
+      expect(dialog.querySelector('.admin-earn-introduction-meta')).toBeInTheDocument();
+      expect(dialog.querySelector('.admin-earn-product-footer')).toBeInTheDocument();
+      expect(dialog.querySelector('.admin-earn-category-descriptions')).not.toBeInTheDocument();
+      expect(within((earnProductLayout as HTMLElement).children[0] as HTMLElement).getByText('基础信息')).toBeInTheDocument();
+      expect(within((earnProductLayout as HTMLElement).children[1] as HTMLElement).getByText('收益与申购参数')).toBeInTheDocument();
+      expect(within((earnProductLayout as HTMLElement).children[2] as HTMLElement).getByText('手续费配置')).toBeInTheDocument();
+      semiSelectByLabel(dialog, '理财资产');
+      semiSelectByLabel(dialog, '产品分类');
+      semiSelectByLabel(dialog, '初始状态');
+      semiInputByLabel(dialog, '产品名称');
+      semiInputByLabel(dialog, '期限天数');
+      semiInputByLabel(dialog, '年化利率');
+      semiInputByLabel(dialog, '提现赎回手续费率');
+      semiInputByLabel(dialog, '到期获利手续费率');
+      semiSelectByLabel(dialog, '提前赎回扣费基准');
+      semiInputByLabel(dialog, '提前赎回扣费率');
+      semiInputByLabel(dialog, '最小申购');
+      semiInputByLabel(dialog, '最大申购');
+      semiSelectByLabel(dialog, '国家');
+      expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
+      semiInputByLabel(dialog, '介绍标题');
+      await waitFor(() => {
+        expect(listAdminResourceMock).toHaveBeenCalledWith(
+          '/admin/api/v1/countries',
+          'countries',
+          expect.objectContaining({ status: 'active' }),
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        );
+        expect(listAdminResourceMock).toHaveBeenCalledWith(
+          '/admin/api/v1/earn/categories',
+          'categories',
+          expect.objectContaining({ status: 'active' }),
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        );
+        expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN / zh-CN)');
+      });
+      await selectSemiOption(user, dialog, '理财资产', 'USDT - Tether（ID: 12）');
+      expect(semiSelectByLabel(dialog, '理财资产')).toHaveTextContent('USDT - Tether（ID: 12）');
+      // These cases assert completed values/payloads, not per-key input behavior in the rich form.
+      fireEvent.change(within(dialog).getByLabelText('产品名称'), { target: { value: 'USDT 稳健理财' } });
+      await selectSemiOption(user, dialog, '产品分类', '结构化（structured）');
+      expect(semiSelectByLabel(dialog, '产品分类')).toHaveTextContent('结构化（structured）');
+      fireEvent.change(within(dialog).getByLabelText('期限天数'), { target: { value: '30' } });
+      fireEvent.change(within(dialog).getByLabelText('年化利率'), { target: { value: '0.12' } });
+      fireEvent.change(within(dialog).getByLabelText('提现赎回手续费率'), { target: { value: '0.01' } });
+      fireEvent.change(within(dialog).getByLabelText('到期获利手续费率'), { target: { value: '0.1' } });
+      await selectSemiOption(user, dialog, '提前赎回扣费基准', '按本金比例扣除');
+      fireEvent.change(within(dialog).getByLabelText('提前赎回扣费率'), { target: { value: '0.02' } });
+      fireEvent.change(within(dialog).getByLabelText('最小申购'), { target: { value: '10' } });
+      fireEvent.change(within(dialog).getByLabelText('最大申购'), { target: { value: '1000' } });
+      fireEvent.change(within(dialog).getByLabelText('介绍标题'), { target: { value: 'USDT 稳健理财' } });
+      const firstRichTextEditor = within(dialog).getByLabelText('富文本内容');
+      expect(firstRichTextEditor).toHaveAttribute('contenteditable', 'true');
+      expect(firstRichTextEditor.tagName).not.toBe('TEXTAREA');
+      const firstEditorShell = firstRichTextEditor.closest('[data-quill-editor="true"]') as HTMLElement | null;
+      expect(firstEditorShell).toBeInTheDocument();
+      expect(firstEditorShell).toHaveClass('quill-rich-text-editor');
+      expect(getComputedStyle(firstEditorShell as HTMLElement).width).toBe('100%');
+      expect(firstRichTextEditor).toHaveClass('ql-editor');
+      const firstEditorToolbar = within(firstEditorShell as HTMLElement).getByRole('toolbar', { name: '富文本工具栏' });
+      expect(firstEditorToolbar).toHaveClass('ql-toolbar', 'ql-snow');
+      expect(firstEditorToolbar.querySelectorAll('.ql-formats')).toHaveLength(2);
+      expect(firstEditorToolbar.querySelector('.ql-header')).toBeInTheDocument();
+      expect(firstEditorToolbar.querySelector('.ql-blockquote')).toBeInTheDocument();
+      expect(firstEditorToolbar.querySelector('.ql-bold')).toBeInTheDocument();
+      expect(firstEditorToolbar.querySelector('.ql-italic')).toBeInTheDocument();
+      expect(firstEditorToolbar.querySelector('.ql-underline')).toBeInTheDocument();
+      const firstEditorContainer = firstEditorShell?.querySelector('.quill-rich-text-container') as HTMLElement | null;
+      expect(firstEditorContainer).toHaveClass('ql-container', 'ql-snow');
+      expect(getComputedStyle(firstEditorToolbar).display).toBe('block');
+      expect(getComputedStyle(firstEditorToolbar).borderTopWidth).toBe('1px');
+      expect(getComputedStyle(firstEditorToolbar).backgroundImage).toBe('none');
+      expect(getComputedStyle(firstEditorContainer as HTMLElement).borderLeftWidth).toBe('1px');
+      expect(getComputedStyle(firstRichTextEditor).whiteSpace).toBe('pre-wrap');
+      fireEvent.input(firstRichTextEditor, { target: { innerText: '适合稳健型用户。' } });
+      await user.click(within(dialog).getByRole('button', { name: '新增国家介绍' }));
+      await selectSemiOption(user, dialog, '国家', 'United States (US / en-US)', 1);
+      const titleInputs = within(dialog).getAllByLabelText('介绍标题');
+      fireEvent.change(titleInputs[1], { target: { value: 'USDT Earn' } });
+      const contentEditors = within(dialog).getAllByLabelText('富文本内容');
+      expect(contentEditors).toHaveLength(2);
+      expect(contentEditors[1]).toHaveAttribute('contenteditable', 'true');
+      expect(contentEditors[1].tagName).not.toBe('TEXTAREA');
+      fireEvent.input(contentEditors[1], { target: { innerText: 'For stable users.' } });
+      const submitEarnProductButton = within(dialog).getByRole('button', { name: '提交添加理财产品' });
+      await waitFor(() => {
+        expect(submitEarnProductButton).not.toBeDisabled();
+      });
+      await user.click(submitEarnProductButton);
+      fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'add earn product' } });
+      await user.click(await screen.findByRole('button', { name: '确认' }));
+
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products', expect.objectContaining({ method: 'POST' }));
+      });
+      const createRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/earn/products' && init && 'method' in init)?.[1];
+      const createBody = JSON.parse(String(createRequest?.body));
+      expect(createBody).toMatchObject({
+        asset_id: 12,
+        name: 'USDT 稳健理财',
+        category: 'structured',
+        term_days: 30,
+        apr_rate: '0.12',
+        redemption_fee_rate: '0.01',
+        maturity_profit_fee_rate: '0.1',
+        early_redeem_fee_basis: 'principal',
+        early_redeem_fee_rate: '0.02',
+        min_subscribe: '10',
+        max_subscribe: '1000',
+        status: 'active',
+        reason: 'add earn product'
+      });
+      expect(createBody.introduction_json).toMatchObject({
+        version: 1,
+        default_locale: 'zh-CN',
+        items: [
+          { locale: 'zh-CN', country: 'CN', title: 'USDT 稳健理财' },
+          { locale: 'en-US', country: 'US', title: 'USDT Earn' }
+        ]
+      });
+      expect(createBody.introduction_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '适合稳健型用户。' }] }]);
+      expect(createBody.introduction_json.items[1].content).toEqual([{ type: 'p', children: [{ text: 'For stable users.' }] }]);
+      await waitFor(() => {
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows formatted earn product details without refreshing the list', async () => {
+      const user = userEvent.setup();
+      const initialEarnProductLoadCount = await renderEarnProducts();
+
+      await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61');
+      });
+      await expectFormattedDetail('earn-product-detail', /"detail": "earn-product-detail"/);
+
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount);
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('updates earn products with localized introduction and exact fee fields', async () => {
+      const user = userEvent.setup();
+      const initialEarnProductLoadCount = await renderEarnProducts();
+
+      await user.click(screen.getByRole('button', { name: '修改' }));
+      const editDialog = await findActionSheet('修改理财产品');
+      semiSelectByLabel(editDialog, '理财资产');
+      semiSelectByLabel(editDialog, '产品分类');
+      semiSelectByLabel(editDialog, '状态');
+      semiSelectByLabel(editDialog, '提前赎回扣费基准');
+      semiSelectByLabel(editDialog, '国家');
+      expect(within(editDialog).queryByLabelText('语言')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(semiSelectByLabel(editDialog, '国家')).toHaveTextContent('中国 (CN / zh-CN)');
+      });
+      fireEvent.change(within(editDialog).getByLabelText('产品名称'), { target: { value: 'USDT 90D' } });
+      fireEvent.change(within(editDialog).getByLabelText('期限天数'), { target: { value: '90' } });
+      await selectSemiOption(user, editDialog, '提前赎回扣费基准', '按收益比例扣除');
+      fireEvent.change(within(editDialog).getByLabelText('提前赎回扣费率'), { target: { value: '0.03' } });
+      await selectSemiOption(user, editDialog, '国家', 'United States (US / en-US)');
+      fireEvent.change(within(editDialog).getByLabelText('介绍标题'), { target: { value: 'USDT Earn Updated' } });
+      await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
+      fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'update earn product' } });
+      await user.click(await screen.findByRole('button', { name: '确认' }));
+
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61', expect.objectContaining({ method: 'PATCH' }));
+      });
+      const updateRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/earn/products/61' && init && 'method' in init)?.[1];
+      const updateBody = JSON.parse(String(updateRequest?.body));
+      expect(updateBody).toMatchObject({
+        asset_id: 12,
+        name: 'USDT 90D',
+        category: 'fixed_term',
+        term_days: 90,
+        apr_rate: '0.12000000',
+        redemption_fee_rate: '0.01000000',
+        maturity_profit_fee_rate: '0.10000000',
+        early_redeem_fee_basis: 'profit',
+        early_redeem_fee_rate: '0.03',
+        min_subscribe: '10.0000',
+        max_subscribe: '1000.0000',
+        status: 'active',
+        reason: 'update earn product'
+      });
+      expect(updateBody.introduction_json).toMatchObject({
+        version: 1,
+        default_locale: 'en-US',
+        items: [{ locale: 'en-US', country: 'US', title: 'USDT Earn Updated' }]
+      });
+      expect(updateBody.introduction_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '定期理财说明。' }] }]);
+      await waitFor(() => {
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables earn products with a reason and refreshes the list once', async () => {
+      const user = userEvent.setup();
+      const initialEarnProductLoadCount = await renderEarnProducts();
+
+      await user.click(screen.getByRole('button', { name: '禁用' }));
+      fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: 'disable earn product' } });
+      await user.click(await screen.findByRole('button', { name: '确认' }));
+
+      await waitFor(() => {
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61/status', {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'disabled', reason: 'disable earn product' })
+        });
+        expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 1);
+      });
+      expect(apiRequestMock).toHaveBeenCalledTimes(1);
     });
   });
 

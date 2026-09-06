@@ -20,4 +20,10 @@ describe('runtime compatibility shims', () => {
     expect(viteConfigSource).toContain('transform');
     expect(viteConfigSource).not.toContain('esbuildOptions');
   });
+
+  it('bounds heavy jsdom suite concurrency without increasing the test deadline', () => {
+    const testConfig = viteConfigSource.match(/^ {2}test: \{([\s\S]*?)^ {2}\}/m)?.[1];
+    expect(testConfig).toMatch(/\bmaxWorkers:\s*2\b/);
+    expect(testConfig).toMatch(/\btestTimeout:\s*20000\b/);
+  });
 });

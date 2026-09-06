@@ -1,0 +1,32 @@
+{
+  "id": "admin-earn-test-timeout",
+  "name": "admin-earn-test-timeout",
+  "title": "修复后台理财产品回归测试在 CI 超时",
+  "description": "Isolate earn/news operations; remove per-character fixtures only in observed slow resource cases; wait for lazy actions; share CI/local worker limits without extending deadlines.",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "admin",
+  "package": "web",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-09-06",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "web/src/admin/resources/resourceConfigs.test.tsx",
+    "web/src/runtimeCompatibility.test.ts",
+    "web/vite.config.ts",
+    ".trellis/spec/admin/ui-system.md",
+    "docs/superpowers/PROGRESS.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

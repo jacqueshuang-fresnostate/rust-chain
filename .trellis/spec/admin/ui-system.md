@@ -812,6 +812,31 @@ Backend ownership, persistence, and exact-agent authorization remain defined by
   millisecond payloads, recovery detect/preview/execute order, submit lock,
   no-gap/error/live states, and status/progress task history.
 
+### Resource-Action Test Runtime
+
+- Keep independent create, detail, edit, and status operations in separate
+  cases with reset response fixtures and a fresh QueryClient/render. A list
+  mock that always returns the original row is not a persisted lifecycle;
+  serializing all four operations into one test only accumulates runtime.
+- For tests of completed form values and API serialization, set ordinary
+  controlled-input fixtures with `fireEvent.change(input, { target: { value } })`.
+  Retain `userEvent` when keyboard/focus/typing behavior is the assertion.
+  Large Semi forms containing Quill must not rerender once per fixture
+  character merely to populate an unrelated field.
+- Keep real Semi/Quill rendering, StrictMode, selection and confirmation
+  interactions, exact decimal/multilingual payload assertions, and mutation
+  counts. Await the expected list invalidation/refetch instead of sampling
+  asynchronous counters immediately or sleeping for an arbitrary duration.
+- Fix timeout regressions by removing unnecessary work and isolating behavior,
+  not by skipping assertions, mocking away production forms, enabling retries,
+  or raising the existing 20000ms timeout. Compare focused timings, repeat the
+  affected cases, then run `npm --prefix web test` with the default concurrency
+  used by the P0 CI script. `web/vite.config.ts` owns `maxWorkers: 2` for both
+  local and CI runs: defaulting to CPU-count-minus-one oversubscribes these
+  CPU/memory-heavy jsdom suites. A one-off local worker override is not an
+  equivalent shared gate. The runtime-configuration test guards this budget
+  and the unchanged timeout.
+
 ## Browser Assertions
 
 At 1728px:

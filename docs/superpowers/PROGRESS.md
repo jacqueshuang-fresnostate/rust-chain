@@ -1,3 +1,10 @@
+## 2026-09-06 15:54 - 修复后台资源回归测试在 CI 超时
+
+- 完成内容：将理财新增/详情/修改/禁用拆为独立回归，保留真实 Semi、Quill、多语言正文、精确费率与列表刷新断言；完整回归进一步定位国家、充值地址、资产、秒合约和新闻的同类测试开销，仅优化实际超时用例的普通字段填值。新闻五项操作独立执行并移除原 40 秒累计超时覆盖，国家/新闻等待懒加载操作按钮；固定本地与 CI 共用 `maxWorkers: 2`，维持默认 20 秒，不增加重试、跳过或生产组件 mock。未修改业务逻辑；此前秒合约页面修复已在远端 `07602a6`。
+- 修改文件：`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/runtimeCompatibility.test.ts`、`web/vite.config.ts`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-06-admin-earn-test-timeout/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：按 CI 原命令 `npm --prefix web test` 全量 68 文件/510 项全部通过（394.14 秒）；最终相关聚焦复跑 14/14，理财四项分别 2534/225/1440/485ms，新闻五项分别 2603/577/2198/717/544ms。`lint`、`typecheck`、生产策略 15/15、覆盖率门禁 23/23、同源生产 `build`、`budget` 全部通过；`cargo test --test docker_image_contract` 5/5、source integrity 16 个构建输入、Trellis 4+4 context、`git diff --check` 通过。完整文件 AST 断言多重集核对保留原 775 项并增加至 790 项，仅按独立操作规范化刷新次数；并发配置回归先失败后通过。构建保留既有 chunk-size 提示，预算通过。
+- 后续事项：GitHub CI 的远端执行结果需在推送后单独确认，不以本地门禁代替；本轮为测试/配置修复，未运行完整 Rust/PC/Mobile 门禁、浏览器视觉矩阵或部署，未操作实际项目和资金；历史任务保持不变。
+
 ## 2026-09-06 13:43 - 修复秒合约金额输入、周期限额与可用资金展示
 
 - 完成内容：取消加载、切换交易对/周期时按最低投注额自动填入金额（包括 500）；切换周期保留手动草稿并按新限额重新校验，切换交易对清空草稿。限额区显示最小/最大投注并自适应换行，修复 `max_stake: null` 被误判为非法上限的问题，明确显示“最大投注不限”。将隐藏余额改为独立可见的可用资金行，复用当前 stakeAssetId 对应钱包的精确 availableText，区分真实零余额、缺失、加载和未登录，不计入冻结/锁定资金；订单确认、结算和后端接口保持不变。

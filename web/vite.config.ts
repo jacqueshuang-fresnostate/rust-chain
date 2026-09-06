@@ -22,6 +22,8 @@ export default defineConfig({
   },
   plugins: [react()],
   test: {
+    // Semi/Quill jsdom suites are CPU/memory heavy; keep local and CI contention bounded.
+    maxWorkers: 2,
     css: true,
     environment: 'jsdom',
     env: {
