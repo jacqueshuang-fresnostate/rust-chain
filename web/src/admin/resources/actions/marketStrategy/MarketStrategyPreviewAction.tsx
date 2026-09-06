@@ -1,58 +1,14 @@
 import { Button, Card, SideSheet, Typography } from '@douyinfe/semi-ui';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { apiRequest } from '../../../../api/client';
 import { errorMessage, requiredPositiveInteger } from '../shared';
 import { formatPreviewTime, marketStrategyBasePayload } from './model';
+import { MarketStrategyPreviewChart } from './MarketStrategyPreviewChart';
 import type {
   MarketStrategyPreviewResponse,
-  MarketStrategyPreviewSample,
   MarketStrategyValues
 } from './types';
-
-function PreviewSparkline({ samples }: { samples: MarketStrategyPreviewSample[] }) {
-  const points = useMemo(() => {
-    const closes = samples.map((sample) => Number(sample.close)).filter(Number.isFinite);
-    if (closes.length === 0) return '';
-    const minimum = Math.min(...closes);
-    const maximum = Math.max(...closes);
-    const range = maximum - minimum || 1;
-    return closes
-      .map(
-        (close, index) =>
-          `${(index / Math.max(1, closes.length - 1)) * 100},${46 - ((close - minimum) / range) * 40}`
-      )
-      .join(' ');
-  }, [samples]);
-
-  return (
-    <svg
-      aria-label="预览收盘价走势"
-      className="admin-market-preview-chart"
-      preserveAspectRatio="none"
-      role="img"
-      viewBox="0 0 100 52"
-    >
-      <defs>
-        <linearGradient id="market-preview-fill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="currentColor" stopOpacity="0.22" />
-          <stop offset="1" stopColor="currentColor" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {points ? (
-        <polyline
-          fill="none"
-          points={points}
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="1.5"
-          vectorEffect="non-scaling-stroke"
-        />
-      ) : null}
-    </svg>
-  );
-}
 
 export function MarketStrategyPreviewAction({
   disabled,
@@ -127,7 +83,10 @@ export function MarketStrategyPreviewAction({
                   当前选择了重新生成 Seed；本次 Seed 只用于预览，正式提交新版本时会再次生成。
                 </Typography.Text>
               ) : null}
-              <PreviewSparkline samples={preview.samples ?? []} />
+              {preview.sample_count < preview.one_minute_count ? (
+                <Typography.Text type="tertiary">采样 K 线，不代表连续分钟；完整区间共 {preview.one_minute_count} 分钟，当前展示 {preview.sample_count} 根。</Typography.Text>
+              ) : null}
+              <MarketStrategyPreviewChart samples={preview.samples ?? []} />
               <div aria-label="OHLCV 预览样本" className="admin-market-preview-grid" role="table">
                 <div className="admin-market-preview-grid__row admin-market-preview-grid__head" role="row">
                   <span role="columnheader">时间</span><span role="columnheader">开</span><span role="columnheader">高</span><span role="columnheader">低</span><span role="columnheader">收</span><span role="columnheader">成交量</span>

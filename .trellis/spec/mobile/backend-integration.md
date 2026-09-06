@@ -252,6 +252,15 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   that viewport with a timestamp anchor plus its logical right-edge offset;
   retaining raw logical indexes alone shifts the user's window when history is
   prepended or trimmed.
+- Candle and MA5/MA10/MA20 series share an explicit display `priceFormat`.
+  `resolveMarketChartPriceFormat(points)` derives 2..18 fraction digits from
+  finite positive OHLC only (including scientific notation), with
+  `minMove = 10^-precision` and `base = 10^precision`. Never use volume or MA
+  rounding noise to infer it, or treat this display fallback as order tick
+  validation. Apply changed precision before full and incremental rendering;
+  keep volume on its own format and do not refit/reset, fetch, or rewrite OHLC.
+  Tests cover six-place low prices, flat sub-cent candles, 1e-18, empty/invalid
+  input, non-mutation, dataset replacement and finer last-candle values.
 - Each direct depth broadcast is a complete snapshot. Normalize numeric
   strings, reject the whole malformed frame, sort bids descending and asks
   ascending, retain at most 12 levels per side, and coalesce high-frequency

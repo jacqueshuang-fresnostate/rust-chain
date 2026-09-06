@@ -6,11 +6,13 @@ import {
   AdminTextInput
 } from '../../../../shared/SemiFormControls';
 import { MarketStrategyNodeEditor } from '../../../components/MarketStrategyNodeEditor';
+import { MarketStrategyVolatilityField } from '../../../components/MarketStrategyVolatilityField';
 import { MarketPairSelect, useMarketPairOptions } from '../shared';
 import {
   applyPreset,
   eligibleMarketStrategyPairs,
   isMarketStrategySubmittable,
+  marketStrategyShapeWarnings,
   marketStrategyValidationError,
   scenarioOptions,
   seedModeOptions,
@@ -43,6 +45,7 @@ export function MarketStrategyForm({
   const validationError = marketStrategyValidationError(values, true);
   const selectablePairs = eligibleMarketStrategyPairs(pairOptions);
   const selectableStrategyTypes = strategyTypeOptionsWithCurrent(values.strategyType);
+  const shapeWarnings = marketStrategyShapeWarnings(values);
 
   return (
     <div className="admin-market-strategy-form">
@@ -76,7 +79,7 @@ export function MarketStrategyForm({
           <label>目标价<AdminTextInput ariaLabel="目标价" value={values.targetPrice} onChange={(targetPrice) => onChange({ ...values, targetPrice })} /></label>
           <label>开始时间<AdminTextInput ariaLabel="开始时间" type="datetime-local" value={values.startTime} onChange={(startTime) => onChange({ ...values, startTime })} /></label>
           <label>结束时间<AdminTextInput ariaLabel="结束时间" type="datetime-local" value={values.endTime} onChange={(endTime) => onChange({ ...values, endTime })} /></label>
-          <label>波动率<AdminTextInput ariaLabel="波动率" value={values.volatility} onChange={(volatility) => onChange({ ...values, volatility })} /></label>
+          <MarketStrategyVolatilityField value={values.volatility} onChange={(volatility) => onChange({ ...values, volatility })} />
           <label>最小成交量<AdminTextInput ariaLabel="最小成交量" value={values.volumeMin} onChange={(volumeMin) => onChange({ ...values, volumeMin })} /></label>
           <label>最大成交量<AdminTextInput ariaLabel="最大成交量" value={values.volumeMax} onChange={(volumeMax) => onChange({ ...values, volumeMax })} /></label>
           {includePairId ? (
@@ -180,6 +183,12 @@ export function MarketStrategyForm({
       </section>
 
       <MarketStrategyNodeEditor value={values.nodes} onChange={(nodes) => onChange({ ...values, nodes })} />
+      <p className="admin-market-volatility-hint">影线按「实体端点价格 × 当前波动率 × 随机比例 × 影线强度」生成，与收盘价噪声独立；请同时检查高低价，而非只看收盘走势。</p>
+      {shapeWarnings.length ? (
+        <div aria-label="影线参数提示" className="admin-market-shape-warning" role="note">
+          {shapeWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+        </div>
+      ) : null}
       {validationError ? <div aria-live="polite" className="admin-inline-error" role="alert">{validationError}</div> : null}
     </div>
   );

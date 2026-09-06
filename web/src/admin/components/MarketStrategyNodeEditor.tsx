@@ -1,6 +1,7 @@
 import { Button, Card } from '@douyinfe/semi-ui';
 
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
+import { MarketStrategyVolatilityField } from './MarketStrategyVolatilityField';
 
 export type MarketStrategyNodeDraft = {
   clientId: string;
@@ -130,13 +131,10 @@ export function MarketStrategyNodeEditor({ disabled = false, onChange, value }: 
                     />
                   </label>
                   <label>
-                    容差
+                    容差（%）
                     <AdminTextInput ariaLabel={`${rowName}容差`} disabled={disabled} onChange={(tolerance) => updateNode(index, { tolerance })} value={node.tolerance} />
                   </label>
-                  <label>
-                    局部波动率
-                    <AdminTextInput ariaLabel={`${rowName}局部波动率`} disabled={disabled} onChange={(volatility) => updateNode(index, { volatility })} value={node.volatility} />
-                  </label>
+                  <MarketStrategyVolatilityField ariaLabel={`${rowName}局部波动率`} label="局部波动率" disabled={disabled} onChange={(volatility) => updateNode(index, { volatility })} value={node.volatility} />
                   <label>
                     最小成交量（可选）
                     <AdminTextInput ariaLabel={`${rowName}最小成交量`} disabled={disabled} onChange={(volumeMin) => updateNode(index, { volumeMin })} value={node.volumeMin} />

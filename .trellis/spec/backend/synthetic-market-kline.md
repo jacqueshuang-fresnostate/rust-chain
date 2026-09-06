@@ -232,6 +232,15 @@ admin-authenticated.
 - A node either supplies both non-negative `volume_min` and `volume_max` with
   `max >= min`, or supplies neither and inherits the strategy range. Node
   `volatility` and `tolerance` are non-negative.
+- Global and node `volatility` are decimal ratios, **not percent inputs**:
+  `0.06` means 6%; `6` means 600%. The legacy wick extension remains
+  `body endpoint * local volatility * deterministic unit draw * wick_scale`.
+  A ratio of 6 with default wick 0.75 can produce near-450% single-side wicks
+  and minimum-tick lows. This is not a chart rounding defect. Preserve existing
+  snapshot semantics and history; a display/unit repair must never divide old
+  values by 100, cap stored OHLC, or silently recover history. Pure generator
+  regressions cover sub-unit prices, tick-aware bounds/replay, and 6 versus
+  0.06 independently of close-price noise.
 - Every stochastic component is derived independently with SHA-256 from the
   byte sequence `seed`, delimiter, big-endian `version`, delimiter,
   normalized uppercase `symbol`, delimiter, big-endian

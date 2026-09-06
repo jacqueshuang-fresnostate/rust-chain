@@ -6,6 +6,7 @@ import {
   isMarketStrategySubmittable,
   marketStrategyBasePayload,
   marketStrategyFromRecord,
+  marketStrategyShapeWarnings,
   marketStrategyValidationError
 } from './model';
 import type { MarketStrategyPreset } from './types';
@@ -28,6 +29,23 @@ const twoNodePreset: MarketStrategyPreset = {
 };
 
 describe('market strategy model', () => {
+  it('warns about global and local floor-scale wicks while preserving raw ratio payloads', () => {
+    const values = validStrategy();
+    Object.assign(values, { volatility: '1', wickScale: '5' });
+    Object.assign(values.nodes[0], { volatility: '0.2' });
+    const before = structuredClone(values);
+    const warnings = marketStrategyShapeWarnings(values);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('全局波动率 × 影线强度 = 500%');
+    expect(warnings[1]).toContain('节点1局部波动率 × 影线强度 = 100%');
+    expect(values).toEqual(before);
+    expect(marketStrategyBasePayload(values).volatility).toBe('1');
+    expect(marketStrategyBasePayload(values).nodes[0].volatility).toBe('0.2');
+    expect(marketStrategyShapeWarnings({ ...values, wickScale: '0' })).toEqual([]);
+    expect(marketStrategyShapeWarnings({ ...values, wickScale: 'invalid' })).toEqual([]);
+    expect(marketStrategyShapeWarnings({ ...values, volatility: '0.199999999999999999', nodes: [] })).toEqual([]);
+  });
+
   it.each([
     { targetValue: 'not-a-number' },
     { targetValue: '0' },

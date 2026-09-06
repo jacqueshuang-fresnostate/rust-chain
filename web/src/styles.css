@@ -888,6 +888,24 @@ body {
   padding-top: 2px;
 }
 
+.admin-market-volatility-hint {
+  color: var(--admin-color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.admin-market-shape-warning {
+  padding: 12px 16px;
+  border: 1px solid var(--admin-color-warning);
+  border-radius: var(--admin-radius-md);
+  color: var(--admin-color-warning);
+  overflow-wrap: anywhere;
+}
+
+.admin-market-preview-up { color: var(--admin-color-success); }
+.admin-market-preview-down { color: var(--admin-color-danger); }
+
 .admin-market-seed-command {
   padding: 14px 16px;
   border: 1px dashed var(--admin-color-border-strong);
@@ -947,7 +965,7 @@ body {
 
 .admin-market-preview-chart {
   width: 100%;
-  height: 164px;
+  height: 240px;
   padding: 18px;
   border: 1px solid rgba(235, 102, 24, 0.18);
   border-radius: var(--admin-radius-lg);

@@ -611,10 +611,25 @@ const body = {
 - `生成 OHLCV 预览` is enabled only when the complete form is submittable.
   Create preview omits `strategy_id`; edit preview includes the row strategy
   ID so the backend can use the next version and inherited seed. Display total
-  minutes, returned sample count, preview version, actual seed, close-price
-  sparkline, and a scroll-contained OHLCV sample grid. State clearly that the
+  minutes, returned sample count, preview version, actual seed, OHLC candles
+  scaled over the complete high/low range, and a scroll-contained OHLCV sample
+  grid. Do not use a close-only sparkline: it hides abnormal wicks. If sample
+  count is smaller than total minutes, label the samples as non-continuous;
+  preserve exact decimal values in the grid and extrema labels. Flat/tiny
+  candles have finite geometry; invalid rows stay visible in the raw grid with
+  an explicit preview warning rather than invented prices. State clearly that the
   regenerate-seed preview seed is ephemeral. Preview never submits a reason or
   creates/updates a strategy.
+- Global and node volatility inputs use the existing **decimal ratio** contract
+  (`0.01 = 1%`, `1 = 100%`), unlike tolerance/relative targets which use percent
+  values. Reuse `MarketStrategyVolatilityField` for the Chinese ratio label,
+  example and exact live percent interpretation. Never silently divide a saved
+  value by 100 or normalize away a typing draft. `marketStrategyShapeWarnings`
+  checks each global/local ratio times wick strength using exact decimal helpers:
+  at or above 1, warn about price-floor/large-wick risk without changing the
+  payload or disallowing a historically valid configuration. Noise and wick
+  strength control independent parts of OHLC. Tests assert precise drafts,
+  unchanged payloads, local overrides, warning boundaries, and real SVG wicks.
 - Every row exposes `版本历史`. The version SideSheet loads newest first,
   marks the active version in text as well as color, and displays Chinese
   scenario/seed mode plus actual seed, effective time, creation time, and

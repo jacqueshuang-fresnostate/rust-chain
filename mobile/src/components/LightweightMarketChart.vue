@@ -14,7 +14,7 @@ import {
   type LogicalRange,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import type { NormalizedMarketChartPoint } from '@/core/marketChart'
+import { resolveMarketChartPriceFormat, type NormalizedMarketChartPoint } from '@/core/marketChart'
 import {
   captureMarketChartLogicalViewport,
   classifyMarketChartDataUpdate,
@@ -56,6 +56,17 @@ let currentTheme: MarketChartTheme | null = null
 let renderedPoints: readonly NormalizedMarketChartPoint[] = []
 let fitNextDataset = true
 let viewportRestoreFrame = 0
+let renderedPricePrecision: number | null = null
+
+function applyPriceFormat(): void {
+  const priceFormat = resolveMarketChartPriceFormat(props.points)
+  if (renderedPricePrecision === priceFormat.precision) return
+  candles?.applyOptions({ priceFormat })
+  ma5Series?.applyOptions({ priceFormat })
+  ma10Series?.applyOptions({ priceFormat })
+  ma20Series?.applyOptions({ priceFormat })
+  renderedPricePrecision = priceFormat.precision
+}
 
 function captureViewport(
   points: readonly NormalizedMarketChartPoint[] = renderedPoints,
@@ -118,6 +129,7 @@ function renderAllData(
   const theme = currentTheme
   if (!theme) return
   scheduleViewportRestore(null)
+  applyPriceFormat()
   candles?.setData(props.points.map(candleRow))
   volume?.setData(props.points.map((point) => volumeRow(point, theme)))
   ma5Series?.setData(movingAverageRows(props.movingAverages.ma5))
@@ -140,6 +152,7 @@ function updateLatestData(): void {
   const point = props.points.at(-1)
   const theme = currentTheme
   if (!point || !theme) return
+  applyPriceFormat()
   candles?.update(candleRow(point))
   volume?.update(volumeRow(point, theme))
   updateLatestAverage(ma5Series, props.movingAverages.ma5)

@@ -1,3 +1,17 @@
+## 2026-09-06 17:24 - 行情策略 K 线修复提交与推送收口
+
+- 完成内容：用户明确确认提交推送；复核全部未提交路径均属于本轮任务，无混入改动，确认本地 main 与 origin/main 未分叉。按“工作提交 → 本任务归档 → 会话日志”收口，普通推送至 origin/main；保留其它历史任务，不操作线上配置和行情数据。
+- 修改文件：本轮 Web/Mobile 图表、策略表单与回归文件（详见下方实现记录）、`.trellis/tasks/09-06-strategy-kline-shape/**`、`.trellis/workspace/rust-chain/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：提交前再次执行 Web 表单/模型/预览 33/33、Mobile 图表/视口 16/16、Rust synthetic_market/details/worker 29/29 及 cargo fmt 全部通过；保留前一切片 Web 514、Mobile 685 和完整相关门禁的通过证据。git diff --check 通过，fetch 后分叉计数为 0/0；最终远端 SHA 在推送后单独核对，不以本地通过代替远端 CI。
+- 后续事项：关注本次推送触发的 GitHub 构建结果；线上仍保留原策略与历史长影线，波动率“6”是否原意为 6% 尚待确认，本轮提交推送不包含部署或调整线上配置。
+
+## 2026-09-06 17:09 - 查明线上策略长影线并修复配置提示、OHLC 预览与手机端精度
+
+- 完成内容：通过正常登录只读确认 HIPPO-USDT 当前 V1 波动率为 6（600%）、影线强度 0.75，影线倍率接近 450%，并非前端凭空画出；起止价均为 0.1。后台全局/节点波动率共用明确的小数比例标签、精确百分比解释和影线风险提示，节点容差标明 %，保持原草稿/API 值；预览改为完整高低价范围的真实蜡烛并标明非连续采样，保留原始 OHLCV 表和无副作用接口。Mobile 蜡烛与三条均线显式共享 OHLC 推导的 2～18 位显示精度、minMove/base，支持微小价格及科学计数法，不改数据或重置视口。补充低价生成器、单位、预览、精度回归；生产 Rust、历史行情与资金逻辑未变。
+- 修改文件：`mobile/src/{core/marketChart.ts,components/LightweightMarketChart.vue}`、`mobile/tests/market-chart-price-format.test.ts`、`tests/synthetic_market.rs`、`web/src/admin/components/{MarketStrategyNodeEditor.tsx,MarketStrategyVolatilityField.tsx,MarketStrategyVolatilityField.test.tsx}`、`web/src/admin/resources/actions/marketStrategy/{MarketStrategyForm.tsx,MarketStrategyPreviewAction.tsx,MarketStrategyPreviewAction.test.tsx,MarketStrategyPreviewChart.tsx,model.ts,model.test.ts}`、`web/src/styles.css`、`.trellis/spec/{admin/ui-system.md,backend/synthetic-market-kline.md,mobile/backend-integration.md}`、`.trellis/tasks/09-06-strategy-kline-shape/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：红色回归先复现缺失 OHLC 图和价格格式，最终 Web 全量 70 文件/514 项及聚焦 33 项、lint/typecheck、生产策略 15 项、覆盖率 23 项、同源 build/budget 全通过；Mobile 聚焦 16 项、完整 release:gate 685/685（类型、PWA/Tauri、产物、体积、源码及测试质量门禁）通过。Rust 生成器/details/worker 29 项及架构/文档 12 项通过，fmt/check/clippy 全通过；source integrity 16 个输入及其 16 项测试、Trellis 6+6 context、diff 检查通过。Ego 本地 Mobile 连接线上，五周期均有数据、六位价格生效、真实更新保持 20..50 视口；320/390px × 深浅主题 × 中英文共 8 组实际主题 store/DOM/图表格式检查通过，截图目视复核。后台以真实 API 完成 120 根采样对照：原值 6 的样本区间 0.000001～0.850556，仅本地未保存草稿改为 0.06 后为 0.095171～0.105052；两次预览 HTTP 200，最终只读确认线上仍 active/V1/6。1728px 总览、空现货、行情策略、KYC、安全策略及 1280px 预览/现货检查无横向溢出；期间遇到间歇性读取/会话网络错误，未修改重试、超时或权限规则。
+- 后续事项：待用户确认“6”是否原意为 6%，再另行确认版本化线上调整；当前配置和既有长影线历史均未改，未下单、操作资金、回补/删除行情、部署或提交推送。源码已验证，工作提交与任务归档待确认；未运行完整数据库集成或 PC 门禁，因为相关生产代码未改。已关闭浏览器空间 15 并停止本任务 13038/13039 临时服务；账号密码与会话未写入仓库。
+
 ## 2026-09-06 15:54 - 修复后台资源回归测试在 CI 超时
 
 - 完成内容：将理财新增/详情/修改/禁用拆为独立回归，保留真实 Semi、Quill、多语言正文、精确费率与列表刷新断言；完整回归进一步定位国家、充值地址、资产、秒合约和新闻的同类测试开销，仅优化实际超时用例的普通字段填值。新闻五项操作独立执行并移除原 40 秒累计超时覆盖，国家/新闻等待懒加载操作按钮；固定本地与 CI 共用 `maxWorkers: 2`，维持默认 20 秒，不增加重试、跳过或生产组件 mock。未修改业务逻辑；此前秒合约页面修复已在远端 `07602a6`。

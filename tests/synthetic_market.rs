@@ -78,6 +78,65 @@ fn same_slot_is_replay_stable_and_adjacent_candles_are_continuous() {
 }
 
 #[test]
+fn low_price_one_percent_ratio_keeps_wicks_relative_and_replay_stable() {
+    let mut config = config(time(0, 0), time(1, 0));
+    config.start_price = decimal("0.1");
+    config.target_price = decimal("0.12");
+    config.volatility = decimal("0.01");
+    let config = SyntheticMarketConfig::new(config).unwrap();
+    let tick = decimal("0.000001");
+    let wick_ratio = decimal("0.0075");
+    let mut previous_close = None;
+    for minute in 0..60 {
+        let candle = config.generate_1m(time(0, minute)).unwrap();
+        assert_eq!(candle, config.generate_1m(time(0, minute)).unwrap());
+        let values = &candle.values;
+        let body_high = values.open.clone().max(values.close.clone());
+        let body_low = values.open.clone().min(values.close.clone());
+        assert!(values.high >= body_high);
+        assert!(values.low <= body_low);
+        // 开收与影线独立舍入，容许一个最小 tick 的累计误差。
+        assert!(&values.high - &body_high <= &body_high * &wick_ratio + &tick);
+        assert!(&body_low - &values.low <= &body_low * &wick_ratio + &tick);
+        assert!(values.low >= tick);
+        if let Some(previous) = previous_close {
+            assert_eq!(previous, values.open);
+        }
+        previous_close = Some(values.close.clone());
+    }
+    assert_eq!(previous_close.unwrap(), decimal("0.12"));
+}
+
+#[test]
+fn six_is_six_hundred_percent_not_six_percent_in_legacy_generator() {
+    let mut config = config(time(0, 0), time(1, 0));
+    config.start_price = decimal("0.1");
+    config.target_price = decimal("0.1");
+    config.volatility = decimal("6");
+    // 与线上相同的 6 × 0.75 影线配置；隔离收盘噪声来检查影线单位。
+    config.generator.noise_scale = decimal("0");
+    let extreme = SyntheticMarketConfig::new(config.clone()).unwrap();
+    config.volatility = decimal("0.06");
+    let six_percent = SyntheticMarketConfig::new(config).unwrap();
+    let mut long_wicks = 0;
+    let mut floor_lows = 0;
+    for minute in 0..60 {
+        let slot = time(0, minute);
+        let candle = extreme.generate_1m(slot).unwrap();
+        assert_eq!(candle, extreme.generate_1m(slot).unwrap());
+        long_wicks += usize::from(candle.values.high > decimal("0.3"));
+        floor_lows += usize::from(candle.values.low == decimal("0.000001"));
+        let normal = six_percent.generate_1m(slot).unwrap();
+        assert_eq!(normal.values.open, decimal("0.1"));
+        assert_eq!(normal.values.close, decimal("0.1"));
+        assert!(normal.values.high <= decimal("0.104501"));
+        assert!(normal.values.low >= decimal("0.095499"));
+    }
+    assert!(long_wicks > 0);
+    assert!(floor_lows > 0);
+}
+
+#[test]
 fn hard_nodes_hit_close_exactly_and_percent_targets_use_correct_bases() {
     let mut config = config(time(0, 0), time(0, 30));
     config.nodes = vec![

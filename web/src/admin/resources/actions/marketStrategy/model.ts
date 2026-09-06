@@ -2,7 +2,7 @@ import type { ApiRecord } from '../../../../api/types';
 import type { SemiSelectOption } from '../../../../shared/SemiFormControls';
 import type { MarketStrategyNodeDraft } from '../../../components/MarketStrategyNodeEditor';
 import type { MarketPairOption } from '../shared';
-import { applyPercentDecimalText, compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../../shared/decimal';
+import { applyPercentDecimalText, compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText, multiplyDecimalText } from '../../../../shared/decimal';
 import { optionalString, recordString, requiredString } from '../shared';
 import type {
   MarketStrategyGeneratorRecord,
@@ -38,6 +38,21 @@ const strategyTypeOptions: SemiSelectOption[] = [
 ];
 
 const marketStrategyPairTypes = new Set(['internal', 'strategy']);
+
+/** 与生成器的相对影线公式一致；只提示风险，不改变历史版本或合法输入。 */
+export function marketStrategyShapeWarnings(values: MarketStrategyValues): string[] {
+  if (!isNonNegativeDecimalText(values.wickScale)) return [];
+  return [
+    { label: '全局波动率', value: values.volatility },
+    ...values.nodes.map((node, index) => ({ label: `节点${index + 1}局部波动率`, value: node.volatility }))
+  ].flatMap(({ label, value }) => {
+    if (!isNonNegativeDecimalText(value)) return [];
+    const scale = multiplyDecimalText(value, values.wickScale);
+    if (scale === null || (compareDecimalText(scale, '1') ?? -1) < 0) return [];
+    const percent = multiplyDecimalText(scale, '100');
+    return [`${label} × 影线强度 = ${percent}%，单侧影线可能接近或超过实体价格，最低价可能触及最小价格单位。请检查小数比例，并查看 OHLCV 预览。`];
+  });
+}
 
 export const initialMarketStrategy: MarketStrategyValues = {
   pairId: '',
