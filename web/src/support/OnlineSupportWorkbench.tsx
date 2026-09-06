@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../shared/adminErrorMessage';
 import {
   IconLockStroked,
   IconRefresh,
@@ -560,7 +561,7 @@ export function OnlineSupportWorkbench({
       void loadQueue({ silent: true });
       void loadConversation(selectedConversation.id, { silent: true });
     } catch (error) {
-      Toast.error(`标记已读失败：${asError(error).message}`);
+      Toast.error(`标记已读失败：${adminErrorMessage(error)}`);
     } finally {
       if (mountedRef.current) {
         setConversationAction(null);
@@ -582,7 +583,7 @@ export function OnlineSupportWorkbench({
       void loadQueue({ silent: true });
       void loadConversation(selectedConversation.id, { silent: true });
     } catch (error) {
-      Toast.error(`${nextStatus === 'closed' ? '关闭' : '重新打开'}会话失败：${asError(error).message}`);
+      Toast.error(`${nextStatus === 'closed' ? '关闭' : '重新打开'}会话失败：${adminErrorMessage(error)}`);
     } finally {
       if (mountedRef.current) {
         setConversationAction(null);
@@ -751,7 +752,7 @@ export function OnlineSupportWorkbench({
           <Banner
             description={
               <Space>
-                <span>自动同步失败：{queueError.message}</span>
+                <span>自动同步失败：{adminErrorMessage(queueError)}</span>
                 <Button onClick={() => void loadQueue()} size="small">重新加载</Button>
               </Space>
             }
@@ -839,7 +840,7 @@ export function OnlineSupportWorkbench({
                 <div aria-live="polite" className="support-history-pagination">
                   {olderMessagesError ? (
                     <Text role="alert" type="danger">
-                      更早消息加载失败：{olderMessagesError.message}
+                      更早消息加载失败：{adminErrorMessage(olderMessagesError)}
                     </Text>
                   ) : null}
                   <Button
@@ -858,7 +859,7 @@ export function OnlineSupportWorkbench({
                 </div>
               ) : detailError && sortedMessages.length === 0 ? (
                 <div className="support-detail-state" role="alert">
-                  <Text type="danger">消息加载失败：{detailError.message}</Text>
+                  <Text type="danger">消息加载失败：{adminErrorMessage(detailError)}</Text>
                   <Button onClick={() => void loadConversation(selectedConversation.id)}>重新加载消息</Button>
                 </div>
               ) : sortedMessages.length === 0 ? (
@@ -887,7 +888,7 @@ export function OnlineSupportWorkbench({
                 <Banner
                   description={
                     <Space>
-                      <span>消息同步失败：{detailError.message}</span>
+                      <span>消息同步失败：{adminErrorMessage(detailError)}</span>
                       <Button onClick={() => void loadConversation(selectedConversation.id)} size="small">重试同步</Button>
                     </Space>
                   }
@@ -900,7 +901,7 @@ export function OnlineSupportWorkbench({
               <Banner
                 description={
                   <div className="support-reply-error">
-                    <span>回复发送失败：{failedReply.error.message}</span>
+                    <span>回复发送失败：{adminErrorMessage(failedReply.error)}</span>
                     <Text type="tertiary">原回复：{failedReply.body}</Text>
                     <Button
                       disabled={replySending}

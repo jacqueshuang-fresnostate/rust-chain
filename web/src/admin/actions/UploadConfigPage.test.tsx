@@ -117,10 +117,10 @@ describe('UploadConfigPage', () => {
 
     await selectSemiOption(user, '上传方式', 'S3 兼容存储');
 
-    expect(screen.getByLabelText('Bucket')).toBeInTheDocument();
-    expect(screen.getByLabelText('Region')).toBeInTheDocument();
-    expect(screen.getByLabelText('Access Key')).toBeInTheDocument();
-    expect(screen.getByLabelText('Secret Key')).toBeInTheDocument();
+    expect(screen.getByLabelText('存储桶（Bucket）')).toBeInTheDocument();
+    expect(screen.getByLabelText('区域（Region）')).toBeInTheDocument();
+    expect(screen.getByLabelText('访问密钥（Access Key）')).toBeInTheDocument();
+    expect(screen.getByLabelText('私有密钥（Secret Key）')).toBeInTheDocument();
   });
 
   it('saves image-bed config with reason and omits blank secrets', async () => {

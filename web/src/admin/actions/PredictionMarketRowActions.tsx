@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, SideSheet, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -95,7 +96,7 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
         if (!active) return;
         setAssetOptions(response.configs.map((asset) => ({ label: asset.asset_symbol, value: String(asset.asset_id) })));
       })
-      .catch((error) => Toast.error(error instanceof Error ? error.message : '加载下注资产失败'));
+      .catch((error) => Toast.error(adminErrorMessage(error, '加载下注资产失败')));
     return () => {
       active = false;
     };
@@ -121,7 +122,7 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
       setSheetVisible(false);
       helpers.reload();
     } catch (error) {
-      Toast.error(error instanceof Error ? error.message : '保存竞猜市场失败');
+      Toast.error(adminErrorMessage(error, '保存竞猜市场失败'));
     } finally {
       setSaving(false);
     }
@@ -198,8 +199,8 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
         </SideSheet>
       </AdminRequestActionBoundary>
       <AdminRequestActionBoundary endpoint={`/admin/api/v1/prediction/markets/${marketId}/settle`} method="POST">
-        <ConfirmAction actionText="YES" disabled={!canSettle} title="确认按 YES 结算" onConfirm={() => settle('yes')} />
-        <ConfirmAction actionText="NO" disabled={!canSettle} title="确认按 NO 结算" onConfirm={() => settle('no')} />
+        <ConfirmAction actionText="是（YES）" disabled={!canSettle} title="确认按是（YES）结算" onConfirm={() => settle('yes')} />
+        <ConfirmAction actionText="否（NO）" disabled={!canSettle} title="确认按否（NO）结算" onConfirm={() => settle('no')} />
         <ConfirmAction actionText="无效退全额" disabled={!canSettle} title="确认按无效市场退本金和手续费" onConfirm={() => settle('invalid', 'refund_stake_and_fee')} />
         <ConfirmAction actionText="无效退本金" disabled={!canSettle} title="确认按无效市场只退本金" onConfirm={() => settle('invalid', 'refund_stake_only')} />
       </AdminRequestActionBoundary>

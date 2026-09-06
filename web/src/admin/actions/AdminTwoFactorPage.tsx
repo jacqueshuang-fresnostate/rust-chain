@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Banner, Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 
@@ -14,7 +15,7 @@ import { AdminTextInput } from '../../shared/SemiFormControls';
 const { Text, Title } = Typography;
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 export function AdminTwoFactorPage() {

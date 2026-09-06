@@ -1,3 +1,4 @@
+import { adminFieldLabel, adminEnumLabel } from '../../shared/adminPresentation';
 import { redactSensitiveText } from '../../shared/sensitiveText';
 
 export const REDACTED_AUDIT_VALUE = '敏感内容已遮罩';
@@ -404,13 +405,14 @@ function auditFieldSegmentLabel(segment: AuditPathSegment): string {
     return `第 ${segment + 1} 项`;
   }
 
-  const exact = AUDIT_FIELD_LABELS[segment];
-  if (exact) {
+  const sharedLabel = adminFieldLabel(segment);
+  const exact = AUDIT_FIELD_LABELS[segment] ?? (sharedLabel !== segment ? sharedLabel : undefined);
+  if (typeof exact === 'string') {
     return exact;
   }
 
   const parts = normalizedKeyParts(segment);
-  if (parts.length > 0 && parts.every((part) => AUDIT_FIELD_WORDS[part])) {
+  if (parts.length > 0 && parts.every((part) => typeof AUDIT_FIELD_WORDS[part] === 'string')) {
     return parts.map((part) => AUDIT_FIELD_WORDS[part]).join('');
   }
   return `字段「${redactAuditFreeText(segment)}」`;
@@ -488,8 +490,9 @@ function formatAuditValue(value: unknown | MissingValue, path: AuditPathSegment[
     if (value.length === 0) {
       return '空字符串';
     }
-    const mapped = AUDIT_VALUE_LABELS[value.toLowerCase()];
-    if (mapped) {
+    const key = String(path.filter((segment) => typeof segment === 'string').at(-1) ?? '');
+    const mapped = adminEnumLabel(key, value) ?? (['environment', 'env', 'runtime_status', 'config_status'].includes(key) ? AUDIT_VALUE_LABELS[value.toLowerCase()] : undefined);
+    if (typeof mapped === 'string') {
       return mapped;
     }
     const singleLine = redactAuditFreeText(value).replace(/\s+/gu, ' ').trim();

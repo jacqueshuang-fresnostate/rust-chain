@@ -118,10 +118,10 @@ describe('MarketFeedConfigPage', () => {
     expect(screen.getByRole('tab', { name: '运行状态' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Provider 凭证' })).toBeInTheDocument();
     expect(screen.getByRole('tabpanel', { name: '订阅配置' })).toBeInTheDocument();
-    expect(screen.queryByText('配置第三方行情 symbols、intervals、providers 和 API Key；保存后需手动重载才会生效。')).not.toBeInTheDocument();
+    expect(screen.queryByText('配置第三方行情 symbols、intervals、providers 和 接口密钥（API Key）；保存后需手动重载才会生效。')).not.toBeInTheDocument();
     expect(screen.queryByText('交易对支持逗号分隔输入；K 线周期和行情源可多选，保存后需手动重载。')).not.toBeInTheDocument();
     expect(screen.queryByText('保存配置不会立即影响 worker，只有手动重载会更新运行态。')).not.toBeInTheDocument();
-    expect(screen.queryByText('API Key、Secret、Passphrase 只会加密提交；页面和接口仅展示 Key 掩码。')).not.toBeInTheDocument();
+    expect(screen.queryByText('接口密钥（API Key）、Secret、鉴权口令（Passphrase） 只会加密提交；页面和接口仅展示 Key 掩码。')).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: '1m' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: '5m' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: '15m' })).not.toBeChecked();
@@ -144,10 +144,10 @@ describe('MarketFeedConfigPage', () => {
 
     expect(screen.getByRole('tabpanel', { name: 'Provider 凭证' })).toBeInTheDocument();
     expect(semiSelectByLabel('行情源')).toHaveTextContent('Bitget 行情');
-    expect(semiSelectByLabel('鉴权方式')).toHaveTextContent('API Key 鉴权');
-    expect(screen.getByLabelText('API Key').closest('.semi-input-wrapper')).toBeInTheDocument();
-    expect(screen.getByLabelText('API Secret').closest('.semi-input-wrapper')).toBeInTheDocument();
-    expect(screen.getByLabelText('Passphrase').closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(semiSelectByLabel('鉴权方式')).toHaveTextContent('接口密钥鉴权');
+    expect(screen.getByLabelText('接口密钥（API Key）').closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(screen.getByLabelText('接口私钥（API Secret）').closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(screen.getByLabelText('鉴权口令（Passphrase）').closest('.semi-input-wrapper')).toBeInTheDocument();
     semiSelectByLabel('凭证状态');
     const credentialList = screen.getByRole('grid', { name: '行情源凭证列表' });
     expect(within(credentialList).getByRole('separator', { name: '调整行情源列宽' })).toBeInTheDocument();
@@ -262,8 +262,8 @@ describe('MarketFeedConfigPage', () => {
 
     render(<MarketFeedConfigPage />);
     await user.click(await screen.findByRole('tab', { name: 'Provider 凭证' }));
-    await user.type(await screen.findByLabelText('API Key'), 'abcd1234wxyz');
-    await user.type(screen.getByLabelText('API Secret'), 'secret-value');
+    await user.type(await screen.findByLabelText('接口密钥（API Key）'), 'abcd1234wxyz');
+    await user.type(screen.getByLabelText('接口私钥（API Secret）'), 'secret-value');
     await user.click(screen.getByRole('button', { name: '保存凭证' }));
     await user.type(await screen.findByLabelText('操作原因'), 'store credential');
     await user.click(await screen.findByRole('button', { name: '确认' }));

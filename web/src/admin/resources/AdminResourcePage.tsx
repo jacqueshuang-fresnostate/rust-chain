@@ -1,3 +1,6 @@
+import { adminErrorFieldValue } from '../../shared/adminErrorMessage';
+import { adminEnumLabel } from '../../shared/adminPresentation';
+import { displayDetailValue } from '../../shared/DetailDrawer';
 import { IconDownload, IconEyeOpened, IconList, IconRefresh } from '@douyinfe/semi-icons';
 import { Button, Card, Space, Switch, Tooltip, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
@@ -140,7 +143,7 @@ function renderCell<T extends ApiRecord>(
   record: T
 ) {
   const mappedValue = value === null || value === undefined ? undefined : column.valueMap?.[String(value)];
-  if (mappedValue) {
+  if (typeof mappedValue === 'string') {
     return <span>{mappedValue}</span>;
   }
 
@@ -165,14 +168,14 @@ function renderCell<T extends ApiRecord>(
   }
 
   if (column.type === 'json') {
-    return <Text code>{JSON.stringify(value)}</Text>;
+    return <Text>{displayDetailValue(value, column.key)}</Text>;
   }
 
   if (value === null || value === undefined || value === '') {
     return <span>-</span>;
   }
 
-  return <span>{formatAdminDisplayValue(column.key, value) ?? String(value)}</span>;
+  return <span>{adminErrorFieldValue(column.key, value) ?? adminEnumLabel(column.key, value) ?? formatAdminDisplayValue(column.key, value) ?? String(value)}</span>;
 }
 
 function csvCell(value: unknown): string {
@@ -190,7 +193,7 @@ export function toCsv<T extends ApiRecord>(columns: Array<AdminResourceColumn<T>
       .map((column) => {
         const value = row[column.key];
         const mapped = value === null || value === undefined ? undefined : column.valueMap?.[String(value)];
-        return csvCell(mapped ?? value);
+        return csvCell(typeof mapped === 'string' ? mapped : value);
       })
       .join(',')
   );
@@ -341,14 +344,15 @@ export function AdminResourcePage<T extends ApiRecord>({
 
           const rawLabel = field.optionLabelKey ? row[field.optionLabelKey] : rawValue;
           const label = typeof rawLabel === 'string' || typeof rawLabel === 'number' ? String(rawLabel) : value;
-          options.set(value, label.trim().length > 0 ? label : value);
+          const mappedLabel = !field.optionLabelKey ? columns.find((column) => column.key === field.key)?.valueMap?.[value] ?? adminEnumLabel(field.key, rawValue) : null;
+          options.set(value, typeof mappedLabel === 'string' ? mappedLabel : (label.trim().length > 0 ? label : value));
           return options;
         }, new Map<string, string>());
         const options = [...optionLabels].map(([value, label]) => ({ label, value }));
 
         return { ...field, options };
       }),
-    [filterOptionRows, filters, serverPaged]
+    [columns, filterOptionRows, filters, serverPaged]
   );
 
   const renderedActions = typeof actions === 'function' ? actions({ reload }) : actions;

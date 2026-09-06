@@ -59,7 +59,7 @@ export function toAuditLogsCsv(logs: AdminAuditLog[]): string {
     '对象页面',
     '操作原因',
     '来源 IP',
-    'Request ID',
+    '请求标识',
     '字段差异'
   ];
   const rows = logs.map((log) => [

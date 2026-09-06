@@ -2,7 +2,7 @@ import type { ApiRecord } from '../../../../api/types';
 import type { SemiSelectOption } from '../../../../shared/SemiFormControls';
 import type { MarketStrategyNodeDraft } from '../../../components/MarketStrategyNodeEditor';
 import type { MarketPairOption } from '../shared';
-import { applyPercentDecimalText, compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText, multiplyDecimalText } from '../../../../shared/decimal';
+import { compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText, multiplyDecimalText } from '../../../../shared/decimal';
 import { optionalString, recordString, requiredString } from '../shared';
 import type {
   MarketStrategyGeneratorRecord,
@@ -22,8 +22,8 @@ export const scenarioOptions: SemiSelectOption[] = [
 ];
 
 export const seedModeOptions: SemiSelectOption[] = [
-  { value: 'auto', label: '自动 Seed' },
-  { value: 'fixed', label: '固定 Seed' }
+  { value: 'auto', label: '自动随机种子' },
+  { value: 'fixed', label: '固定随机种子' }
 ];
 
 export const volumeShapeOptions: SemiSelectOption[] = [
@@ -234,8 +234,8 @@ export function marketStrategyValidationError(values: MarketStrategyValues, incl
   }
 
   if (!scenarioOptions.some((option) => option.value === values.scenario)) return '请选择有效的行情场景';
-  if (!seedModeOptions.some((option) => option.value === values.seedMode)) return '请选择有效的 Seed 模式';
-  if (values.seedMode === 'fixed' && (!values.seed.trim() || [...values.seed.trim()].length > 128)) return '固定 Seed 须为 1～128 个字符';
+  if (!seedModeOptions.some((option) => option.value === values.seedMode)) return '请选择有效的随机种子模式';
+  if (values.seedMode === 'fixed' && (!values.seed.trim() || [...values.seed.trim()].length > 128)) return '固定随机种子须为 1～128 个字符';
   if (!isDecimalInRange(values.meanReversionStrength, '0', '2')) return '均值回归强度须在 0～2 之间';
   if (!isDecimalInRange(values.noiseScale, '0', '5')) return '噪声强度须在 0～5 之间';
   if (!isDecimalInRange(values.wickScale, '0', '5')) return '影线强度须在 0～5 之间';
@@ -264,8 +264,8 @@ function marketStrategyNodePayload(node: MarketStrategyNodeDraft, index: number)
 function marketStrategyGeneratorPayload(values: MarketStrategyValues) {
   return {
     scenario: requiredString(values.scenario, '行情场景'),
-    seed_mode: requiredString(values.seedMode, 'Seed 模式'),
-    seed: values.seedMode === 'fixed' ? requiredString(values.seed, '固定 Seed') : null,
+    seed_mode: requiredString(values.seedMode, '随机种子模式'),
+    seed: values.seedMode === 'fixed' ? requiredString(values.seed, '固定随机种子') : null,
     regenerate_seed: values.seedMode === 'auto' && values.regenerateSeed,
     mean_reversion_strength: requiredString(values.meanReversionStrength, '均值回归强度'),
     noise_scale: requiredString(values.noiseScale, '噪声强度'),
@@ -289,11 +289,6 @@ export function marketStrategyBasePayload(values: MarketStrategyValues) {
     nodes: values.nodes.map(marketStrategyNodePayload),
     generator: marketStrategyGeneratorPayload(values)
   };
-}
-
-function targetPriceFromPreset(startPrice: string, changePercent: string): string | null {
-  if (!isPositiveDecimalText(startPrice)) return null;
-  return applyPercentDecimalText(startPrice, changePercent);
 }
 
 function presetNodes(
@@ -336,20 +331,15 @@ export function applyPreset(
   values: MarketStrategyValues,
   preset: MarketStrategyPreset
 ): MarketStrategyValues | null {
-  const targetPrice = targetPriceFromPreset(values.startPrice, String(preset.target_price_change_percent));
   const nodes = presetNodes(values, preset);
-  if (targetPrice === null || nodes === null) return null;
+  if (!isPositiveDecimalText(values.startPrice) || nodes === null) return null;
   return {
     ...values,
     scenario: String(preset.generator.scenario ?? preset.code),
-    seedMode: String(preset.generator.seed_mode ?? 'auto'),
-    seed: '',
-    regenerateSeed: false,
     meanReversionStrength: String(preset.generator.mean_reversion_strength ?? '0.55'),
     noiseScale: String(preset.generator.noise_scale ?? '1'),
     wickScale: String(preset.generator.wick_scale ?? '0.75'),
     volumeShape: String(preset.generator.volume_shape ?? 'uniform'),
-    targetPrice,
     nodes
   };
 }

@@ -199,7 +199,7 @@ describe('AuditLogsPage', () => {
     renderPage();
 
     expect(await screen.findByText('审计日志加载失败')).toBeInTheDocument();
-    expect(screen.getByText('network down')).toBeInTheDocument();
+    expect(screen.getByText('审计日志加载失败（诊断：network down）')).toBeInTheDocument();
     expect(screen.queryByText(/private backend stack/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '重新加载' }));
     expect(await screen.findByText('没有符合条件的审计日志')).toBeInTheDocument();

@@ -1,7 +1,8 @@
+import { adminErrorMessage } from '../../../shared/adminErrorMessage';
 import { Toast } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../../api/client';
+import { apiRequest } from '../../../api/client';
 import {
   createDefaultConfigForm,
   createNewConfigForm,
@@ -19,7 +20,7 @@ import type {
 } from './types';
 
 function errorMessage(error: unknown): string {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 export async function submitSmtpAction(label: string, request: () => Promise<unknown>): Promise<void> {

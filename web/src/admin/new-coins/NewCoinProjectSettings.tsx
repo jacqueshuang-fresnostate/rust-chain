@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, Card, Space, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 import { apiRequest, ApiError } from '../../api/client';
@@ -108,7 +109,7 @@ export function NewCoinProjectSettings({ data, onSaved, onDirty }: { data: Proje
               }
               await apiRequest(endpoint,{method:'PATCH',body:JSON.stringify({...body,expected_config:version,reason})});
               setBaseline(form); onDirty(false); await onSaved();
-            } catch(cause) { setConflict(cause instanceof ApiError && cause.status===409); setError(cause instanceof ApiError && cause.status===409 ? '配置已变化，请加载最新配置后重试。' : cause instanceof Error ? cause.message : '保存失败'); throw cause; }
+            } catch(cause) { setConflict(cause instanceof ApiError && cause.status===409); setError(cause instanceof ApiError && cause.status===409 ? '配置已变化，请加载最新配置后重试。' : adminErrorMessage(cause, '保存失败')); throw cause; }
             finally { setBusy(false); }
           }} />
       </Space>

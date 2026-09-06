@@ -52,6 +52,8 @@ describe('audit CSV export', () => {
     expect(downloadedFileName).toBe(AUDIT_LOGS_EXPORT_FILENAME);
     expect(downloadedFileName).toBe('HIPPO-审计日志-当前结果.csv');
     expect(csv).toContain('中文动作');
+    expect(csv).toContain('请求标识');
+    expect(csv).not.toContain('Request ID');
     expect(csv).toContain('更新资产');
     expect(csv).toContain('启用状态：否 → 是');
     expect(csv).toContain('敏感内容已遮罩');

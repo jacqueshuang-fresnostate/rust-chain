@@ -32,7 +32,7 @@ export function SmtpConfigTable({
         </Space>
       )
     },
-    { dataIndex: 'host', key: 'host', title: 'SMTP host' },
+    { dataIndex: 'host', key: 'host', title: 'SMTP 服务器' },
     { dataIndex: 'from_email', key: 'from_email', title: '发件邮箱' },
     { dataIndex: 'priority', key: 'priority', title: '优先级' },
     {

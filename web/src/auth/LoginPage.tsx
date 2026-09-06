@@ -1,3 +1,5 @@
+import { usePasswordVisibility } from '../shared/usePasswordVisibility';
+import { adminErrorMessage } from '../shared/adminErrorMessage';
 import { IconLock, IconShield } from '@douyinfe/semi-icons';
 import { Button, Card, Form, Radio, RadioGroup, Toast, Typography } from '@douyinfe/semi-ui';
 import { useMutation } from '@tanstack/react-query';
@@ -44,6 +46,7 @@ function isTurnstileTokenMissingError(error: unknown): boolean {
 }
 
 export function LoginPage() {
+  const passwordVisibility = usePasswordVisibility();
   const navigate = useNavigate();
   const location = useLocation();
   const [loginScope, setLoginScope] = useState<LoginScope>('admin');
@@ -155,7 +158,7 @@ export function LoginPage() {
       return;
     }
 
-    Toast.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试');
+    Toast.error(adminErrorMessage(error, '登录失败，请稍后重试'));
     resetTurnstileWidget();
   };
 
@@ -330,7 +333,7 @@ export function LoginPage() {
                 <Form.Input
                   field="password"
                   label="密码"
-                  mode="password"
+                  {...passwordVisibility}
                   prefix={<IconLock />}
                   placeholder="请输入密码"
                   rules={[{ required: true, message: '请输入密码' }]}

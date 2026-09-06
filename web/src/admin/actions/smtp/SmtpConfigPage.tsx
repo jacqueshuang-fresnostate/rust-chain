@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../../shared/adminErrorMessage';
 import { Banner, Button, Card, SideSheet, Space, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
 
 import { PageHeader } from '../../../layouts/PageHeader';
@@ -56,7 +57,7 @@ export function SmtpConfigPage() {
               loading={workspace.loading}
               onClick={() =>
                 void workspace.loadConfig().catch((error: unknown) =>
-                  Toast.error(error instanceof Error ? error.message : '加载 SMTP 配置失败')
+                  Toast.error(adminErrorMessage(error, '加载 SMTP 配置失败'))
                 )
               }
               theme="borderless"

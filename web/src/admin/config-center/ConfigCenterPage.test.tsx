@@ -124,7 +124,7 @@ describe('ConfigCenterPage', () => {
     apiRequestMock.mockRejectedValueOnce(error).mockResolvedValueOnce(response());
     renderPage();
 
-    expect(await screen.findByText('network down secret=***')).toBeInTheDocument();
+    expect(await screen.findByText('配置中心加载失败（诊断：network down secret=***）')).toBeInTheDocument();
     expect(screen.queryByText(/dont-leak/)).not.toBeInTheDocument();
     expect(screen.queryByText(/private stack/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '重新加载' }));

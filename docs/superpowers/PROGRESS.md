@@ -540,7 +540,7 @@
 
 ## 2026-07-31 04:13 - 初始化默认管理员账号
 
-- 完成内容：在内置 SQLx migrations 成功后增加首个后台管理员引导，未配置覆盖变量时使用用户指定的 `admin / Qaz123456@` 和 `super_admin` 角色；使用数据库命名锁和单事务实现任意管理员存在即整体跳过、角色创建/复用及 active 管理员写入，并复用现有账号规范化与 Argon2 helper，数据库只保存密码哈希且日志不暴露明文；保留三个 `BOOTSTRAP_ADMIN_*` 变量用于生产覆盖，同步完整 Compose、公开与本地 1Panel Compose、env 示例、部署文档和容器交付规范，并确保这些变量只传给 `migrate`。
+- 完成内容：在内置 SQLx migrations 成功后增加首个后台管理员引导，未配置覆盖变量时使用用户指定的 `admin / [已脱敏]` 和 `super_admin` 角色；使用数据库命名锁和单事务实现任意管理员存在即整体跳过、角色创建/复用及 active 管理员写入，并复用现有账号规范化与 Argon2 helper，数据库只保存密码哈希且日志不暴露明文；保留三个 `BOOTSTRAP_ADMIN_*` 变量用于生产覆盖，同步完整 Compose、公开与本地 1Panel Compose、env 示例、部署文档和容器交付规范，并确保这些变量只传给 `migrate`。
 - 修改文件：`src/bootstrap.rs`、`src/bin/exchange-migrate.rs`、`src/lib.rs`、`tests/bootstrap_admin.rs`、`docker-compose.example.yml`、`docker-compose.env.example`、`docker-compose.1panel.example.yml`、`docker-compose.1panel.env.example`、ignored 的本地 `docker-compose.1panel.yml`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo test --manifest-path Cargo.toml --test bootstrap_admin -- --nocapture` 在隔离 MySQL 8.4 上 3/3 通过，覆盖空表创建、active 状态、Argon2 校验、重复运行不覆盖、已有其他管理员整体跳过及角色复用，临时数据库和 `--rm` 容器均已清理；`cargo check --manifest-path Cargo.toml --all-targets`、`cargo fmt --manifest-path Cargo.toml -- --check`、无数据库聚焦测试 3/3、完整/公开 1Panel/本地 1Panel 三份 Compose JSON 展开及 migrate-only 秘密边界断言、部署文档全部 Bash 代码块语法检查、migration 不变断言、日志秘密扫描和 `git diff --check` 均通过。
 - 后续事项：无。
@@ -8545,3 +8545,19 @@
 - 修改文件：`migrations/0123_new_coin_actual_listing.sql`、`src/modules/admin/{application,infrastructure,presentation,service}/new_coin.rs`、`src/modules/admin/repository.rs`、`src/modules/new_coin/{domain,infrastructure,repository,service}.rs`、`src/modules/new_coin/infrastructure/{unlock,unlock_eligibility,unlock_scan}.rs`、`src/workers/unlock_scanner.rs`、`tests/{admin_routes,unlock_scanner,new_coin_listing_migration}.rs`、`tests/unit_src/src_modules_new_coin_mod_tests.rs`、`web/src/admin/new-coins/{projectModel,NewCoinProjectPage,NewCoinProjectSettings}.*` 及项目页测试/fixtures、`web/src/admin/resources/{resourceConfigs.tsx,resourceConfigs.test.tsx,actions/newCoins.tsx}`、`.trellis/spec/{admin/ui-system,backend/new-coin-project-center,backend/new-coin-manual-distribution}.md`、`.trellis/tasks/09-05-admin-new-coin-lifecycle-rework/**`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：一次性本地 MySQL 实际执行 Admin 新币 16/16、用户新币 11/11、共享手动/扫描器 10/10、精确迁移与历史合同演练 1/1；最终上市流程聚焦复跑 1/1，覆盖部分退款、合并锁仓、计划/规则变化、上市审计失败回滚、固定仓位保留、手动/扫描器并发及计划仍在未来时的上市后购买。Rust library 332/332、架构 11/11、最终 fmt、all-target/all-feature check、Clippy `-D warnings` 通过。Web 最终 typecheck/lint、67 文件 478 项全量、生产策略 15 项、覆盖率门禁 23 项、production build 与 budget 通过；首次高并发运行的 3 个无关界面测试超时，以原超时配置和 `--maxWorkers=2` 复跑全量通过。Ego 真实本地 API 聚焦检查 1728px 毫秒计划回填/无实际时间编辑器/原因确认取消，1280px 待实际上市仓位、空成熟时间详情、表内横向滚动及计划/实际双时间概览；文档横向溢出为 0，未提交浏览器变更。Trellis 15+15、当前切片新增源码/迁移空白检查和 `git diff --check` 通过。本轮未改变公共 DTO，Mobile/PC 沿用前序切片验证记录，未宣称重新执行其发布门禁。
 - 后续事项：按已记录清单进行代码提交和联合发布前准备，禁止旧 API/扫描器与新上市条件仓位混跑；未 commit/push、部署或操作实际项目资金。测试浏览器空间 7 已关闭、两个 loopback 服务停止、临时源文件/会话及一次性数据库 `codex_newcoin_unlock_20260906_0015` 已删除并核对剩余 schema 数为 0。保留所有前序切片及用户 Mobile 布局改动；任务维持 in_progress 等待提交/发布交接，未触发自动归档或 journal commit。
+
+
+## 2026-09-06 19:34 - 优化行情策略编辑操作并补齐后台中文展示
+
+- 完成内容：场景选择只改场景标记，应用预设增加节点/生成参数替换确认并保留手动起止价、时间、全局量价边界和随机种子；补充编辑草稿关闭/重置确认、权威详情重载与提交锁，说明创建草稿保留范围；版本历史按后端状态限制恢复，明确复制配置不自动启用；过期启用创建和过期补偿执行在前端拦截，忽略关闭窗口后的过时响应。按全部后台菜单、通用资源和独立页面盘点中文缺口，集中管理字段、枚举、状态及错误展示，覆盖用户/代理、钱包、贷款、竞猜、现货、新币、秒合约、杠杆、理财、资讯、风控、系统配置、审计、客服和登录；补齐初始扫描的 186 个 DTO 字段标签，修复普通名称被误译为状态，保留原始请求值、技术标识、未知代码和审计脱敏。密码显隐按钮改为中文可访问名称；CSV 保留原有显式 valueMap 合同，通用翻译不改写原始导出值。
+- 修改文件：`web/src/admin/resources/actions/marketStrategy/{model,actions,MarketStrategyForm,MarketStrategyPreviewAction,runtime,useMarketStrategyEditor,MarketStrategyDraftDialog}.*`、`web/src/admin/components/MarketStrategy{Version,Recovery}Sheet.*`、`web/src/shared/{adminFieldLabels,adminResponseFieldLabels,adminEnumLabels,adminStatus,adminPresentation,adminErrorMessage,usePasswordVisibility,StatusTag,DetailDrawer,SemiFormControls,ConfirmAction,DataTable,AdminImageUpload,QuillRichTextEditor}.*`、`web/src/admin/{resources,actions,audit,config-center,dashboard,new-coins,settings}` 中的展示调用与测试、`web/src/admin/navigation.tsx`、`web/src/layouts/AdminLayout.*`、`web/src/auth/LoginPage.tsx`、`web/src/support/OnlineSupportWorkbench.tsx`、`.trellis/spec/admin/{index,ui-system,chinese-presentation}.md`、`.trellis/tasks/09-06-admin-strategy-operations-localization/**`、`docs/superpowers/PROGRESS.md`；精确清单见任务 `review.md`。
+- 验证结果：Web 串行全量 74 文件/547 项通过；最终错误/操作相关聚焦复验 45/45、展示/资源/审计补充复验 128/128 通过；typecheck、lint、生产策略 15/15、覆盖率门禁 23/23（行 92.87%、分支 81.78%）、生产 build（3789 modules）与 bundle budget 全部通过。Trellis context 7+7 及 `git diff --check` 通过，改动文件无本次密码/JWT。Ego 1728px 成功核对中文登录控件、线上策略列表、精确价格/比例回填及启用态禁用保存，列表横向溢出为 0；线上接口与 Turnstile 间歇性连接异常，完整多页面/1280px 浏览器矩阵尚未完成，未宣称通过。任务浏览器已关闭，本地 13038 服务已停止。
+- 后续事项：线上接口及验证服务稳定后补齐剩余浏览器页面与弹窗矩阵；按提交清单等待用户确认后提交，本轮未 commit/push、部署或修改线上策略、K 线历史及资金数据；未修改 Rust/Mobile。
+
+
+## 2026-09-06 19:57 - 确认后台优化提交并完成推送前检查
+
+- 完成内容：用户已确认按既定清单提交并推送，核对本轮 77 个工作文件与提交清单一致，远端 main 仍为本轮基线 6fba4a8，未发现无关暂存改动。提交前凭据检查发现早期已跟踪的历史进度条目含明文口令，已在当前文档脱敏；不重写 Git 历史。
+- 修改文件：`docs/superpowers/PROGRESS.md`、`.trellis/tasks/09-06-admin-strategy-operations-localization/{prd.md,review.md,research/verification.md,task.json}`；本轮代码文件清单保持不变。
+- 验证结果：`git diff --check`、Trellis context 7+7 校验、提交清单匹配与脱敏后凭据扫描通过；本步骤不改动生产代码，沿用上一条全量 547 项及最终聚焦 128 项等验证记录。
+- 后续事项：按用户授权完成工作提交、任务归档/会话记录及 main 推送，随后核对远端 SHA；部署与完整线上浏览器矩阵仍待后续验证。历史提交仍可能含旧口令，需轮换后台登录凭据。

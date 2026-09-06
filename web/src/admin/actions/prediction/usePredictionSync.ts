@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../../shared/adminErrorMessage';
 import { Toast } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -20,7 +21,7 @@ export function usePredictionSync() {
       setSettings(settingsResponse);
       setSyncLogs(Array.isArray(logsResponse.logs) ? logsResponse.logs : []);
     } catch (error) {
-      Toast.error(error instanceof Error ? error.message : '加载竞猜同步运行信息失败');
+      Toast.error(adminErrorMessage(error, '加载竞猜同步运行信息失败'));
     } finally {
       setLoading(false);
     }
@@ -37,7 +38,7 @@ export function usePredictionSync() {
       Toast.success('已触发 Polymarket 同步');
       await loadSync();
     } catch (error) {
-      Toast.error(error instanceof Error ? error.message : '同步失败');
+      Toast.error(adminErrorMessage(error, '同步失败'));
     } finally {
       setSyncing(false);
     }

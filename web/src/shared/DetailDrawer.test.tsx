@@ -4,6 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { DetailDrawer, DetailFieldTable } from './DetailDrawer';
 
 describe('DetailDrawer tables', () => {
+  it('localizes nested strategy fields without interpreting user content as status codes', () => {
+    render(<DetailFieldTable record={{ username: 'active', title: 'pending', status: 'paused', generator: { scenario: 'trend_up', seed_mode: 'fixed', seed: 'active', volume_shape: 'end_spike' }, unknown_field: 'unknown_code' }} />);
+    expect(screen.getByText('用户名')).toBeInTheDocument();
+    expect(screen.getByText('active', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('pending', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('暂停')).toBeInTheDocument();
+    expect(screen.getByText('生成模型')).toBeInTheDocument();
+    expect(screen.getByText(/行情场景: 稳步上涨.*随机种子模式: 固定.*随机种子: active.*成交量形态: 尾段放量/)).toBeInTheDocument();
+    expect(screen.getByText('unknown_code')).toBeInTheDocument();
+  });
   it('makes both field-table leaves resizable', () => {
     render(<DetailFieldTable record={{ id: 7, status: 'active' }} />);
 

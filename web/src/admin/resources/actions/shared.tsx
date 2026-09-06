@@ -1,8 +1,9 @@
+import { adminErrorMessage } from '../../../shared/adminErrorMessage';
 import { SideSheet, Toast } from '@douyinfe/semi-ui';
 import { type ReactNode, useState } from 'react';
 
 import { listAdminResource } from '../../../api/adminResources';
-import { ApiError, apiRequest } from '../../../api/client';
+import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import type { DetailDrawerData } from '../../../shared/DetailDrawer';
 import type { RichTextValue } from '../../../shared/QuillRichTextEditor';
@@ -69,7 +70,7 @@ export const activeStatusOptions: SemiSelectOption[] = [
 ];
 
 export function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 export function requiredPositiveInteger(value: string, label: string): number {

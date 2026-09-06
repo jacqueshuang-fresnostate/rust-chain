@@ -27,12 +27,12 @@ export function SmtpConfigFields({
         <AdminTextInput ariaLabel="优先级" type="number" value={form.priority} onChange={(priority) => onChange({ ...form, priority })} />
       </label>
       <label>
-        SMTP host
-        <AdminTextInput ariaLabel="SMTP host" value={form.host} onChange={(host) => onChange({ ...form, host })} />
+        SMTP 服务器
+        <AdminTextInput ariaLabel="SMTP 服务器" value={form.host} onChange={(host) => onChange({ ...form, host })} />
       </label>
       <label>
-        SMTP port
-        <AdminTextInput ariaLabel="SMTP port" type="number" value={form.port} onChange={(port) => onChange({ ...form, port })} />
+        SMTP 端口
+        <AdminTextInput ariaLabel="SMTP 端口" type="number" value={form.port} onChange={(port) => onChange({ ...form, port })} />
       </label>
       <label>
         加密方式

@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, Modal, Space, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -49,14 +50,14 @@ export function NewCoinManualDistribution({ order, onSettled }: { order: ApiReco
           void queryClient.invalidateQueries({ queryKey: projectQueryKey(projectId) });
           void queryClient.invalidateQueries({ predicate: q => q.queryKey[0] === ADMIN_OPTION_QUERY_KEY && q.queryKey[2] === 'reference:newCoinProject:100' });
           onSettled();
-        } catch (cause) { setError(cause instanceof Error ? cause.message : '结算失败'); }
+        } catch (cause) { setError(adminErrorMessage(cause, '结算失败')); }
         finally { setBusy(false); }
       }}>
       <Space vertical align="start" spacing={16} style={{ width: '100%' }}>
         <Typography.Text>项目 {projectId} · 用户 {String(order.user_id)} · 申购数量 {requested}</Typography.Text>
         <Typography.Text>一次确认最终派发量；填 0 全额退款，部分派发后的剩余数量不再重复派发。</Typography.Text>
         {project.isFetching ? <Typography.Text>正在核对项目阶段…</Typography.Text> : null}
-        {project.error ? <><Typography.Text type="danger">{project.error.message}</Typography.Text><Button onClick={() => void project.refetch()}>重新核对项目</Button></> : null}
+        {project.error ? <><Typography.Text type="danger">{adminErrorMessage(project.error)}</Typography.Text><Button onClick={() => void project.refetch()}>重新核对项目</Button></> : null}
         {project.data && project.data.project.lifecycle_status !== 'distribution' ? <Typography.Text type="warning">请先在项目中心结束申购，进入派发阶段。</Typography.Text> : null}
         <label>最终派发数量<AdminTextInput ariaLabel="最终派发数量" disabled={busy} value={quantity} onChange={v => { setQuantity(v); setKey(crypto.randomUUID()); }} /></label>
         <Typography.Text>冻结：{frozen}；实际扣款：{payment ?? '—'}；退回差额：{refund ?? '—'}（资产 ID：{String(order.quote_asset)}）</Typography.Text>

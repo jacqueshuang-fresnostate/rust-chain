@@ -1,3 +1,4 @@
+import { adminErrorMessage } from './adminErrorMessage';
 import { IconCamera, IconDelete, IconUpload } from '@douyinfe/semi-icons';
 import { Avatar, Button, Image, Space, Toast, Typography, Upload } from '@douyinfe/semi-ui';
 import type { FileItem, customRequestArgs } from '@douyinfe/semi-ui/lib/es/upload';
@@ -27,7 +28,7 @@ type AdminImageUploadProps = {
 };
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '上传失败';
+  return adminErrorMessage(error, '上传失败');
 }
 
 export async function uploadAdminImageFile(file: File): Promise<AdminUploadedImage> {

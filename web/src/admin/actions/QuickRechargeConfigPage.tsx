@@ -1,8 +1,9 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { IconExternalOpen, IconRefresh } from '@douyinfe/semi-icons';
 import { Button, Card, Col, Divider, Row, Space, Switch, Toast, Typography } from '@douyinfe/semi-ui';
 import { type ReactNode, useEffect, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
@@ -169,7 +170,7 @@ const fieldColumnProps: Record<FieldColumnSize, { lg?: number; md?: number; xl?:
 };
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 function formFromConfig(config: QuickRechargeConfig | null): QuickRechargeForm {

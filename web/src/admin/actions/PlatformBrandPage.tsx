@@ -76,7 +76,7 @@ const brandFieldDefinitions: ReadonlyArray<SettingsFieldDefinition<BrandForm>> =
       ? null
       : '请选择受支持的 K 线图引擎。'
   },
-  { key: 'logoUrl', field: 'PC Logo', impact: brandImpactSummary, read: (form) => form.logoUrl.trim() }
+  { key: 'logoUrl', field: '电脑端标志（Logo）', impact: brandImpactSummary, read: (form) => form.logoUrl.trim() }
 ];
 
 function normalizedBrandForm(form: BrandForm): BrandForm {
@@ -159,7 +159,7 @@ export function PlatformBrandPage() {
                 />
               </label>
               <AdminImageUpload
-                label="PC Logo"
+                label="电脑端标志（Logo）"
                 value={form.logoUrl}
                 variant="avatar"
                 onChange={(logoUrl) => editor.setDraft((current) => ({ ...current, logoUrl }))}

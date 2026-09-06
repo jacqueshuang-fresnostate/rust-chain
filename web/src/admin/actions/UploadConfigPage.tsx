@@ -1,7 +1,8 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
@@ -87,7 +88,7 @@ type UploadImageResponse = {
 type ConfigForm = typeof defaultConfigForm;
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 function formFromConfig(config: UploadConfig | null): ConfigForm {
@@ -246,17 +247,17 @@ export function UploadConfigPage() {
               {configForm.provider === 's3' || configForm.provider === 'oss' ? (
                 <>
                   <label>
-                    Endpoint
-                    <AdminTextInput ariaLabel="Endpoint" value={configForm.endpoint} onChange={(endpoint) => setConfigForm({ ...configForm, endpoint })} />
+                    服务端点（Endpoint）
+                    <AdminTextInput ariaLabel="服务端点（Endpoint）" value={configForm.endpoint} onChange={(endpoint) => setConfigForm({ ...configForm, endpoint })} />
                   </label>
                   <label>
-                    Bucket
-                    <AdminTextInput ariaLabel="Bucket" value={configForm.bucket} onChange={(bucket) => setConfigForm({ ...configForm, bucket })} />
+                    存储桶（Bucket）
+                    <AdminTextInput ariaLabel="存储桶（Bucket）" value={configForm.bucket} onChange={(bucket) => setConfigForm({ ...configForm, bucket })} />
                   </label>
                   {configForm.provider === 's3' ? (
                     <label>
-                      Region
-                      <AdminTextInput ariaLabel="Region" value={configForm.region} onChange={(region) => setConfigForm({ ...configForm, region })} />
+                      区域（Region）
+                      <AdminTextInput ariaLabel="区域（Region）" value={configForm.region} onChange={(region) => setConfigForm({ ...configForm, region })} />
                     </label>
                   ) : null}
                   <label>
@@ -268,12 +269,12 @@ export function UploadConfigPage() {
                     <AdminTextInput ariaLabel="Key 前缀" value={configForm.keyPrefix} onChange={(keyPrefix) => setConfigForm({ ...configForm, keyPrefix })} />
                   </label>
                   <label>
-                    Access Key
-                    <AdminPasswordInput ariaLabel="Access Key" value={configForm.accessKey} onChange={(accessKey) => setConfigForm({ ...configForm, accessKey })} />
+                    访问密钥（Access Key）
+                    <AdminPasswordInput ariaLabel="访问密钥（Access Key）" value={configForm.accessKey} onChange={(accessKey) => setConfigForm({ ...configForm, accessKey })} />
                   </label>
                   <label>
-                    Secret Key
-                    <AdminPasswordInput ariaLabel="Secret Key" value={configForm.secretKey} onChange={(secretKey) => setConfigForm({ ...configForm, secretKey })} />
+                    私有密钥（Secret Key）
+                    <AdminPasswordInput ariaLabel="私有密钥（Secret Key）" value={configForm.secretKey} onChange={(secretKey) => setConfigForm({ ...configForm, secretKey })} />
                   </label>
                 </>
               ) : null}

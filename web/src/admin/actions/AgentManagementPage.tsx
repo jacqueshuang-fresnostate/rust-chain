@@ -1,9 +1,10 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { IconList, IconPlus, IconRefresh } from '@douyinfe/semi-icons';
 import { Button, Card, Collapse, Descriptions, Popconfirm, SideSheet, Space, Tabs, Typography, Toast } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import type { ApiRecord } from '../../api/types';
 import { AdminRequestActionBoundary, useCanAdminRequest } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
@@ -74,7 +75,7 @@ function optionalParentAgentId(value: string): number | undefined {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 async function submitAction(label: string, request: () => Promise<unknown>) {

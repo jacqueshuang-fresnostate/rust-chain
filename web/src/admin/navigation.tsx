@@ -133,7 +133,7 @@ export const adminNavItems: AdminNavItem[] = [
     ]
   },
   {
-    label: '理财 Earn',
+    label: '理财管理',
     icon: <IconBookOpenStroked aria-hidden="true" />,
     children: [
       { path: '/admin/earn/categories', label: '理财分类' },

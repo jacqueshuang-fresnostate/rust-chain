@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Space, Typography } from '@douyinfe/semi-ui';
 import { useState } from 'react';
 import { apiRequest } from '../../api/client';
@@ -27,7 +28,7 @@ export function NewCoinGrant({ project, onSaved }: { project: NewCoinProject; on
     {error ? <Typography.Text type="danger">{error}</Typography.Text> : null}
     <ConfirmAction key="grant-action" actionText="确认额外赠币" disabled={!valid} title={`确认向用户 ${userId} 额外赠币 ${quantity}（不结算申购）`} onConfirm={async reason=>{
       try { await apiRequest(`/admin/api/v1/new-coins/${project.id}/distribute`,{method:'POST',body:JSON.stringify({user_id:Number(userId),quantity:quantity.trim(),idempotency_key:key,reason})}); setQuantity('');setError('');await onSaved(); }
-      catch(cause){setError(cause instanceof Error ? cause.message : '赠币失败');throw cause;}
+      catch(cause){setError(adminErrorMessage(cause, '赠币失败'));throw cause;}
     }} />
   </Space>;
 }

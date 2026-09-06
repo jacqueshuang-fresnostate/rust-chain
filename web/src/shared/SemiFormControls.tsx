@@ -1,3 +1,4 @@
+import { usePasswordVisibility } from './usePasswordVisibility';
 import { Button, Checkbox, Input, Select, Switch, TextArea } from '@douyinfe/semi-ui';
 import type { ReactNode } from 'react';
 
@@ -33,11 +34,12 @@ export function AdminTextInput({ ariaLabel, disabled, onChange, placeholder, rea
 }
 
 export function AdminPasswordInput({ ariaLabel, disabled, onChange, placeholder, readOnly, value }: TextInputProps) {
+  const visibility = usePasswordVisibility(disabled);
   return (
     <Input
       aria-label={ariaLabel}
       disabled={disabled}
-      mode="password"
+      {...visibility}
       onChange={(nextValue) => onChange(String(nextValue))}
       placeholder={placeholder}
       readOnly={readOnly}

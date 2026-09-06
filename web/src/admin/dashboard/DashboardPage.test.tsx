@@ -185,7 +185,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(await screen.findByText(/加载失败：network down/)).toBeInTheDocument();
+    expect(await screen.findByText(/加载失败：加载失败（诊断：network down）/)).toBeInTheDocument();
     expect(screen.queryByText(/private_backend_path/)).not.toBeInTheDocument();
     expect(screen.queryByText(/SENSITIVE_BACKEND_STACK/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '刷新总览' }));

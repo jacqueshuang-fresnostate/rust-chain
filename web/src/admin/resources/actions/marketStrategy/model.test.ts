@@ -118,8 +118,19 @@ describe('market strategy model', () => {
       { targetTime: '2026-08-12T10:15', targetType: 'percent_from_previous', targetValue: '10' },
       { targetTime: '2026-08-12T10:45', targetType: 'percent_from_previous', targetValue: '10' }
     ]);
-    expect(result?.targetPrice).toBe('1.1');
+    expect(result?.targetPrice).toBe(values.targetPrice);
     expect(values.nodes).toHaveLength(1);
+  });
+
+  it.each(['auto', 'fixed'])('preserves exact manual endpoints and %s seed controls when applying a preset', (seedMode) => {
+    const values = { ...validStrategy(), startPrice: '0.100000000000000001', targetPrice: '0.200000000000000019', seedMode, seed: 'manual-seed', regenerateSeed: true };
+    const before = structuredClone(values);
+    const result = applyPreset(values, twoNodePreset);
+    for (const key of ['startPrice', 'targetPrice', 'startTime', 'endTime', 'seedMode', 'seed', 'regenerateSeed', 'volatility', 'volumeMin', 'volumeMax', 'status'] as const) {
+      expect(result?.[key]).toBe(values[key]);
+    }
+    expect(result?.scenario).toBe('crash_recovery');
+    expect(values).toEqual(before);
   });
   it('hydrates sorted detail nodes and serializes the existing API contract in milliseconds', () => {
     const startTime = new Date('2026-08-12T10:00').getTime();

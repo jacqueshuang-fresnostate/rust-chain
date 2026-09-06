@@ -1,3 +1,4 @@
+import { adminEnumLabel } from '../shared/adminPresentation';
 import { IconExit } from '@douyinfe/semi-icons';
 import { Avatar, Button, Layout, Nav, Tag, Typography } from '@douyinfe/semi-ui';
 import type { NavItems, OnSelectedData } from '@douyinfe/semi-ui/lib/es/navigation';
@@ -182,7 +183,7 @@ export function AdminLayout() {
             <div className="admin-header-identity">
               <Avatar className="admin-header-avatar" size="small">{subject.slice(0, 1).toUpperCase()}</Avatar>
               <span>
-                <Text className="admin-header-role">{access.role_name}</Text>
+                <Text className="admin-header-role">{adminEnumLabel('role_name', access.role_name) ?? access.role_name}</Text>
                 <Text className="admin-header-subject" strong>{subject}</Text>
               </span>
             </div>

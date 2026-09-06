@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { IconRefresh, IconSearch } from '@douyinfe/semi-icons';
 import { Button, Card, Empty, Space, Spin, Tag, Typography } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -6,7 +7,6 @@ import { Link } from 'react-router-dom';
 import { apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
-import { safeSingleLineText } from '../../shared/sensitiveText';
 
 import './ConfigCenterPage.css';
 
@@ -84,10 +84,7 @@ function buildConfigCenterPath(filters: ConfigCenterFilters): string {
 }
 
 function safeErrorMessage(error: unknown): string {
-  return safeSingleLineText(
-    error instanceof Error ? error.message : '',
-    '配置中心加载失败'
-  );
+  return adminErrorMessage(error, '配置中心加载失败');
 }
 
 function formatTime(value: number | null): string {
@@ -282,7 +279,7 @@ export function ConfigCenterPage() {
                     <Text type="tertiary">最后应用：{formatTime(item.last_applied_at)}</Text>
                     <Text type="tertiary">最近测试：{formatTime(item.last_tested_at)}</Text>
                   </div>
-                  {item.last_error_summary ? <Text className="config-center-item__error" type="danger">{item.last_error_summary}</Text> : null}
+                  {item.last_error_summary ? <Text className="config-center-item__error" type="danger">{adminErrorMessage(item.last_error_summary, '配置运行异常')}</Text> : null}
                   <Space className="config-center-item__actions">
                     <Link className="semi-button semi-button-primary semi-button-light" to={item.config_path}>进入配置</Link>
                     {item.operation_path ? <Link className="semi-button semi-button-tertiary semi-button-borderless" to={item.operation_path}>运行与处置</Link> : null}

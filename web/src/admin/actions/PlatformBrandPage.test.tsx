@@ -123,7 +123,7 @@ describe('PlatformBrandPage', () => {
     renderPlatformBrandPage();
 
     expect(await screen.findByDisplayValue('Hippo Exchange')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('https://cdn.example.test/logo.png')).toHaveAccessibleName('PC Logo');
+    expect(screen.getByDisplayValue('https://cdn.example.test/logo.png')).toHaveAccessibleName('电脑端标志（Logo）');
     expect(semiSelectByLabel('K线图引擎')).toHaveTextContent('系统 K 线');
     expect(screen.getByRole('img', { name: 'Hippo Exchange' })).toHaveAttribute('src', 'https://cdn.example.test/logo.png');
     expect(screen.getByText('PC 端预览')).toBeInTheDocument();
@@ -135,8 +135,8 @@ describe('PlatformBrandPage', () => {
 
     await user.clear(await screen.findByLabelText('平台名称'));
     await user.type(screen.getByLabelText('平台名称'), 'Rust Chain');
-    await user.clear(screen.getByLabelText('PC Logo'));
-    await user.type(screen.getByLabelText('PC Logo'), 'https://cdn.example.test/new-logo.png');
+    await user.clear(screen.getByLabelText('电脑端标志（Logo）'));
+    await user.type(screen.getByLabelText('电脑端标志（Logo）'), 'https://cdn.example.test/new-logo.png');
     await selectSemiOption(user, 'K线图引擎', 'TradingView Lightweight Charts');
     expect(screen.getByRole('status')).toHaveTextContent('有未保存的变更');
     await user.click(screen.getByRole('button', { name: '保存品牌配置' }));
@@ -145,7 +145,7 @@ describe('PlatformBrandPage', () => {
     expect(screen.getByText('保存后将立即影响 PC 端平台名称、Logo 与 K 线图展示。')).toBeInTheDocument();
     expect(screen.getAllByText('平台名称').length).toBeGreaterThan(0);
     expect(screen.getAllByText('K线图引擎').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('PC Logo').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('电脑端标志（Logo）').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: '确认保存' })).toBeDisabled();
     await user.type(await screen.findByLabelText('操作原因'), 'update pc brand');
     await user.click(await screen.findByRole('button', { name: '确认保存' }));

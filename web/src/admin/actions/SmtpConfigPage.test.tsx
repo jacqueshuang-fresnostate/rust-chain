@@ -125,7 +125,7 @@ describe('SmtpConfigPage', () => {
     expect(within(configTable).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
     expect(within(configTable).getByRole('button', { name: '编辑' }).closest('td')).toHaveClass('admin-table-action-column');
     expect(configTable.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'SMTP host' }).closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'SMTP 服务器' }).closest('.semi-input-wrapper')).toBeInTheDocument();
     semiSelectByLabel('加密方式');
     expect(screen.getByLabelText('SMTP 用户名').closest('.semi-input-wrapper')).toBeInTheDocument();
     expect(screen.getByLabelText('SMTP 用户名')).toHaveValue('');
@@ -221,9 +221,9 @@ describe('SmtpConfigPage', () => {
     render(<SmtpConfigPage />);
     await user.click(await screen.findByRole('button', { name: '新增配置' }));
     const sheet = await findSideSheet('新增发信配置');
-    await user.type(within(sheet).getByLabelText('SMTP host'), 'smtp.new.test');
-    await user.clear(within(sheet).getByLabelText('SMTP port'));
-    await user.type(within(sheet).getByLabelText('SMTP port'), '465');
+    await user.type(within(sheet).getByLabelText('SMTP 服务器'), 'smtp.new.test');
+    await user.clear(within(sheet).getByLabelText('SMTP 端口'));
+    await user.type(within(sheet).getByLabelText('SMTP 端口'), '465');
     await selectSemiOption(user, '加密方式', 'TLS/SSL 加密', sheet);
     await user.type(within(sheet).getByLabelText('发件邮箱'), 'noreply@example.test');
     await user.click(within(sheet).getByRole('checkbox', { name: '启用 SMTP' }));

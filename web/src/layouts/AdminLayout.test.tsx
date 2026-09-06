@@ -83,7 +83,7 @@ describe('AdminLayout', () => {
       { group: '闪兑管理', children: ['闪兑交易对', '闪兑订单'] },
       { group: '秒合约', children: ['秒合约产品', '秒合约订单'] },
       { group: '杠杆交易', children: ['杠杆产品', '杠杆仓位', '强平记录', '利息汇总'] },
-      { group: '理财 Earn', children: ['理财分类', '理财产品', '理财申购'] },
+      { group: '理财管理', children: ['理财分类', '理财产品', '理财申购'] },
       { group: '内容运营', children: ['新闻中心'] },
       { group: '风控中心', children: ['风控规则', '风控事件'] },
       { group: '系统配置', children: ['国家配置', '安全策略', 'PC 品牌配置', 'SMTP 邮件配置', '上传配置'] },

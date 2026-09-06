@@ -76,11 +76,11 @@ export function MarketStrategyPreviewAction({
                 <Card bordered><span>完整分钟数</span><strong>{preview.one_minute_count}</strong></Card>
                 <Card bordered><span>返回采样数</span><strong>{preview.sample_count}</strong></Card>
                 <Card bordered><span>预览版本</span><strong>V{preview.preview_version}</strong></Card>
-                <Card bordered className="admin-market-preview-seed"><span>本次预览 Seed</span><strong>{preview.preview_seed}</strong></Card>
+                <Card bordered className="admin-market-preview-seed"><span>本次预览随机种子</span><strong>{preview.preview_seed}</strong></Card>
               </div>
               {values.seedMode === 'auto' && values.regenerateSeed ? (
                 <Typography.Text type="tertiary">
-                  当前选择了重新生成 Seed；本次 Seed 只用于预览，正式提交新版本时会再次生成。
+                  当前选择了重新生成随机种子；本次随机种子只用于预览，正式提交新版本时会再次生成。
                 </Typography.Text>
               ) : null}
               {preview.sample_count < preview.one_minute_count ? (

@@ -1,4 +1,6 @@
-import { Button, Toast } from '@douyinfe/semi-ui';
+import { Button, Modal, Toast } from '@douyinfe/semi-ui';
+import { useState } from 'react';
+import { adminEnumLabel } from '../../../../shared/adminPresentation';
 
 import {
   AdminCheckbox,
@@ -38,6 +40,7 @@ export function MarketStrategyForm({
   strategyId?: string;
   values: MarketStrategyValues;
 }) {
+  const [pendingPreset, setPendingPreset] = useState<{ name: string; values: MarketStrategyValues } | null>(null);
   const presets = useMarketStrategyPresets(active);
   const { pairLoading, pairOptions } = useMarketPairOptions(active && includePairId);
   const selectedPreset = presets.presets.find((preset) => preset.code === values.scenario);
@@ -98,7 +101,7 @@ export function MarketStrategyForm({
               />
             </label>
           ) : (
-            <label>当前状态<AdminTextInput ariaLabel="当前状态" readOnly value={values.status} onChange={() => undefined} /></label>
+            <label>当前状态<AdminTextInput ariaLabel="当前状态" readOnly value={adminEnumLabel('status', values.status) ?? values.status} onChange={() => undefined} /></label>
           )}
         </div>
       </section>
@@ -107,7 +110,7 @@ export function MarketStrategyForm({
 
       <section className="admin-market-strategy-section admin-market-generator-section">
         <div className="admin-market-strategy-section__heading">
-          <div><h3>生成模型与场景</h3><p>场景只填充显式节点和参数；最终版本不依赖隐藏规则，可审计、可重放。</p></div>
+          <div><h3>生成模型与场景</h3><p>切换场景只改变场景标记。应用预设需另行确认，只替换生成参数和路径节点，保留起止价格、时间、随机种子及全局量价边界；节点可能与手动目标方向不同，请预览确认。</p></div>
           <MarketStrategyPreviewAction disabled={!canPreview} strategyId={strategyId} values={values} />
         </div>
         <div className="admin-market-preset-bar">
@@ -130,8 +133,7 @@ export function MarketStrategyForm({
                 Toast.warning('请填写有效起始价和整分钟起止时间，并扩大时间范围以容纳全部预设节点；当前配置未更改');
                 return;
               }
-              onChange(next);
-              Toast.success(`已应用“${selectedPreset.name}”预设，所有参数仍可继续修改`);
+              setPendingPreset({ name: selectedPreset.name, values: next });
             }}
             theme="solid"
             type="primary"
@@ -147,22 +149,42 @@ export function MarketStrategyForm({
             ) : selectedPreset?.description ?? '选择场景后可一键生成显式参数与时间节点。'}
           </div>
         </div>
+        <Modal
+          visible={pendingPreset !== null}
+          title="确认应用场景预设"
+          maskClosable={false}
+          motion={false}
+          cancelText="保留当前配置"
+          okText="替换节点与生成参数"
+          cancelButtonProps={{ 'aria-label': '保留当前配置' }}
+          okButtonProps={{ 'aria-label': '替换节点与生成参数' }}
+          onCancel={() => setPendingPreset(null)}
+          onOk={() => {
+            if (!pendingPreset) return;
+            onChange(pendingPreset.values);
+            Toast.success(`已应用“${pendingPreset.name}”预设，手动价格和随机种子保持不变`);
+            setPendingPreset(null);
+          }}
+        >
+          <p>将现有 {values.nodes.length} 个节点替换为“{pendingPreset?.name}”的 {pendingPreset?.values.nodes.length ?? 0} 个节点，并替换均值回归、噪声、影线和成交量形态。</p>
+          <p>起始价 {values.startPrice || '未填写'}、目标价 {values.targetPrice || '未填写'}、起止时间、随机种子和全局波动率/成交量范围均保持不变。本操作只修改草稿，不保存或启用策略。</p>
+        </Modal>
         <div className="admin-action-form admin-market-generator-fields">
           <label>
-            Seed 模式
+            随机种子模式
             <AdminSelect
-              ariaLabel="Seed 模式"
+              ariaLabel="随机种子模式"
               onChange={(seedMode) => onChange({ ...values, seedMode, regenerateSeed: false })}
               optionList={seedModeOptions}
               value={values.seedMode}
             />
           </label>
           {values.seedMode === 'fixed' ? (
-            <label>固定 Seed<AdminTextInput ariaLabel="固定 Seed" placeholder="1～128 个字符" value={values.seed} onChange={(seed) => onChange({ ...values, seed })} /></label>
+            <label>固定随机种子<AdminTextInput ariaLabel="固定随机种子" placeholder="1～128 个字符" value={values.seed} onChange={(seed) => onChange({ ...values, seed })} /></label>
           ) : (
             <label>
-              当前实际 Seed
-              <AdminTextInput ariaLabel="当前实际 Seed" placeholder={isEditing ? '读取当前激活版本' : '创建时由后端生成'} readOnly value={values.seed} onChange={() => undefined} />
+              当前实际随机种子
+              <AdminTextInput ariaLabel="当前实际随机种子" placeholder={isEditing ? '读取当前配置版本' : '创建时由后端生成'} readOnly value={values.seed} onChange={() => undefined} />
             </label>
           )}
           <label>均值回归强度（0～2）<AdminTextInput ariaLabel="均值回归强度" value={values.meanReversionStrength} onChange={(meanReversionStrength) => onChange({ ...values, meanReversionStrength })} /></label>
@@ -176,7 +198,7 @@ export function MarketStrategyForm({
         {isEditing && values.seedMode === 'auto' ? (
           <div className="admin-market-seed-command">
             <AdminCheckbox checked={values.regenerateSeed} onChange={(regenerateSeed) => onChange({ ...values, regenerateSeed })}>
-              为本次新版本重新生成 Seed；未选中时继承当前激活版本，保持随机纹理连续
+              为本次新版本重新生成随机种子；未选中时继承当前配置版本，保持随机纹理连续
             </AdminCheckbox>
           </div>
         ) : null}

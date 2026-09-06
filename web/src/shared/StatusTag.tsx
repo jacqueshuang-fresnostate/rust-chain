@@ -1,67 +1,9 @@
 import { Tag } from '@douyinfe/semi-ui';
-import type { ComponentProps } from 'react';
-
-type TagColor = NonNullable<ComponentProps<typeof Tag>['color']>;
+import { ADMIN_STATUS_META } from './adminStatus';
 
 type StatusTagProps = {
   label?: string;
   value?: boolean | number | string | null;
-};
-
-type StatusMeta = {
-  label: string;
-  color: TagColor;
-};
-
-const STATUS_MAP: Record<string, StatusMeta> = {
-  active: { label: '启用', color: 'green' },
-  allocated: { label: '已获配', color: 'green' },
-  partial_allocated: { label: '已部分派发', color: 'light-blue' },
-  refunded: { label: '已退款', color: 'grey' },
-  allow: { label: '放行', color: 'green' },
-  approved: { label: '已通过', color: 'green' },
-  archived: { label: '已归档', color: 'grey' },
-  cancelled: { label: '已取消', color: 'grey' },
-  canceled: { label: '已取消', color: 'grey' },
-  closed: { label: '已平仓', color: 'green' },
-  completed: { label: '已完成', color: 'green' },
-  deny: { label: '拒绝', color: 'red' },
-  disabled: { label: '禁用', color: 'grey' },
-  distribution: { label: '派发中', color: 'light-blue' },
-  draft: { label: '草稿', color: 'grey' },
-  down: { label: '看跌', color: 'red' },
-  enabled: { label: '启用', color: 'green' },
-  failed: { label: '失败', color: 'red' },
-  inactive: { label: '禁用', color: 'grey' },
-  liquidated: { label: '已强平', color: 'red' },
-  listed: { label: '已上市', color: 'green' },
-  locked: { label: '锁定', color: 'orange' },
-  long: { label: '做多', color: 'green' },
-  loss: { label: '亏损', color: 'red' },
-  manual_review: { label: '人工复核', color: 'orange' },
-  not_required: { label: '无需支付', color: 'grey' },
-  opened: { label: '持仓中', color: 'light-blue' },
-  paid: { label: '已支付', color: 'green' },
-  partially_filled: { label: '部分成交', color: 'light-blue' },
-  pending: { label: '待处理', color: 'orange' },
-  preheat: { label: '预热中', color: 'orange' },
-  published: { label: '已发布', color: 'green' },
-  needs_reload: { label: '待重载', color: 'orange' },
-  redeemed: { label: '已赎回', color: 'green' },
-  rejected: { label: '已拒绝', color: 'red' },
-  review: { label: '人工复核', color: 'orange' },
-  settled: { label: '已结算', color: 'green' },
-  short: { label: '做空', color: 'red' },
-  skipped: { label: '已跳过', color: 'grey' },
-  subscribed: { label: '已申购', color: 'light-blue' },
-  subscription: { label: '申购中', color: 'light-blue' },
-  success: { label: '成功', color: 'green' },
-  suspended: { label: '暂停', color: 'orange' },
-  unpaid: { label: '未支付', color: 'orange' },
-  up: { label: '看涨', color: 'green' },
-  win: { label: '盈利', color: 'green' },
-  true: { label: '启用', color: 'green' },
-  false: { label: '禁用', color: 'grey' }
 };
 
 function normalizeStatus(value: StatusTagProps['value']) {
@@ -83,7 +25,7 @@ export function StatusTag({ label, value }: StatusTagProps) {
     return <span>-</span>;
   }
 
-  const meta = STATUS_MAP[normalized] ?? { label: String(value), color: 'light-blue' as TagColor };
+  const meta = (Object.hasOwn(ADMIN_STATUS_META, normalized) ? ADMIN_STATUS_META[normalized] : null) ?? { label: String(value), color: 'light-blue' as const };
 
   return <Tag color={meta.color}>{label?.trim() || meta.label}</Tag>;
 }

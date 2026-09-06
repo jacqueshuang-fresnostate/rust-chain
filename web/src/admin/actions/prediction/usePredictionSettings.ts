@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../../shared/adminErrorMessage';
 import { Toast } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -42,7 +43,7 @@ export function usePredictionSettings() {
       setAssetDrafts(assetDraftsFromConfigs(configs));
       setConflict(null);
     } catch (error) {
-      Toast.error(error instanceof Error ? error.message : '加载竞猜配置失败');
+      Toast.error(adminErrorMessage(error, '加载竞猜配置失败'));
     } finally {
       setLoading(false);
     }
@@ -86,7 +87,7 @@ export function usePredictionSettings() {
         Toast.error(message);
         return;
       }
-      Toast.error(error instanceof Error ? error.message : '保存竞猜配置失败');
+      Toast.error(adminErrorMessage(error, '保存竞猜配置失败'));
     }
   }
 
@@ -117,7 +118,7 @@ export function usePredictionSettings() {
         Toast.error(message);
         return;
       }
-      Toast.error(error instanceof Error ? error.message : '保存资产配置失败');
+      Toast.error(adminErrorMessage(error, '保存资产配置失败'));
     }
   }
 

@@ -1,3 +1,4 @@
+import { ADMIN_FIELD_VALUE_LABELS } from '../../shared/adminEnumLabels';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 
 import { MarketStrategyRuntimeStatus } from './actions/marketStrategy/runtime';
@@ -146,14 +147,7 @@ const quickRechargeStatusLabels = {
   failed: '失败',
   expired: '已过期'
 };
-const quickRechargeReturnTargetLabels = {
-  pc_app: 'PC 应用端',
-  mac_app: 'Mac 应用端',
-  ios_app: 'iOS 端',
-  android_app: 'Android 端',
-  mobile_web: '手机网页端',
-  desktop_web: '电脑网页端'
-};
+const quickRechargeReturnTargetLabels = ADMIN_FIELD_VALUE_LABELS.return_target;
 const spotOrderSideLabels = {
   buy: '买入',
   sell: '卖出'
@@ -180,14 +174,8 @@ const earnEarlyRedeemFeeBasisLabels = {
   principal: '按本金比例扣除',
   profit: '按收益比例扣除'
 };
-const loanTypeLabels = {
-  credit: '信用贷',
-  collateralized: '抵押贷'
-};
-const loanInterestModeLabels = {
-  full_term: '完整周期计息',
-  actual_days: '按实际天数计息'
-};
+const loanTypeLabels = ADMIN_FIELD_VALUE_LABELS.loan_type;
+const loanInterestModeLabels = ADMIN_FIELD_VALUE_LABELS.interest_calculation_mode;
 const loanOrderStatusLabels = {
   pending: '待审核',
   disbursed: '已放款',
@@ -196,69 +184,13 @@ const loanOrderStatusLabels = {
   repaid: '已还款',
   overdue: '已逾期'
 };
-const walletLedgerChangeTypeLabels = {
-  deposit: '充值',
-  admin_recharge: '后台充值',
-  quick_recharge: '快速充值',
-  convert_settlement: '闪兑结算',
-  spot_freeze: '现货委托冻结',
-  spot_unfreeze: '现货委托解冻',
-  spot_fill: '现货成交',
-  spot_trade_settlement: '现货成交结算',
-  spot_price_improvement_release: '现货差价释放',
-  seconds_contract_open: '秒合约开仓',
-  seconds_contract_settle_win: '秒合约盈利结算',
-  margin_position_open: '杠杆开仓',
-  margin_position_close: '杠杆平仓',
-  margin_position_liquidate: '杠杆强平',
-  earn_subscribe: '理财申购',
-  earn_redeem: '理财赎回',
-  loan_collateral_freeze: '贷款抵押冻结',
-  loan_collateral_release: '贷款抵押释放',
-  loan_disbursement: '贷款放款',
-  loan_repayment: '贷款还款',
-  prediction_stake_freeze: '竞猜下注冻结',
-  prediction_fee: '竞猜手续费',
-  prediction_settle_win: '竞猜盈利结算',
-  prediction_settle_loss: '竞猜亏损结算',
-  prediction_payout: '竞猜派彩',
-  prediction_stake_refund: '竞猜本金退款',
-  prediction_fee_refund: '竞猜手续费退款',
-  new_coin_subscription_payment: '新币申购支付',
-  new_coin_subscription_freeze: '新币申购冻结',
-  new_coin_subscription_refund: '新币申购退款',
-  new_coin_subscription_lock: '新币申购锁仓',
-  new_coin_purchase_payment: '新币购买支付',
-  new_coin_purchase_lock: '新币购买锁仓',
-  new_coin_distribution_lock: '新币派发锁仓',
-  new_coin_unlock_release: '新币解禁释放',
-  asset_lock: '资产锁定',
-  agent_commission_payout: '代理佣金发放'
-};
+const walletLedgerChangeTypeLabels = ADMIN_FIELD_VALUE_LABELS.change_type;
 const walletLedgerBalanceTypeLabels = {
   available: '可用余额',
   frozen: '冻结余额',
   locked: '锁定余额'
 };
-const walletLedgerRefTypeLabels = {
-  manual: '人工记录',
-  deposit_record: '充值记录',
-  admin_recharge: '后台充值',
-  quick_recharge: '快速充值',
-  convert_order: '闪兑订单',
-  spot_order: '现货委托',
-  spot_trade: '现货成交',
-  seconds_contract_order: '秒合约订单',
-  margin_position: '杠杆仓位',
-  earn_subscription: '理财订单',
-  loan_order: '贷款订单',
-  prediction_order: '竞猜订单',
-  new_coin_subscription: '新币申购',
-  new_coin_purchase: '新币购买',
-  new_coin_distribution: '新币派发',
-  new_coin_unlock: '新币解禁',
-  agent_commission: '代理佣金'
-};
+const walletLedgerRefTypeLabels = ADMIN_FIELD_VALUE_LABELS.ref_type;
 const depositNetworkFilter: FilterField = {
   key: 'network',
   label: '网络',
@@ -323,19 +255,11 @@ const loanOrderStatusFilter: FilterField = {
   type: 'select',
   options: Object.entries(loanOrderStatusLabels).map(([value, label]) => ({ label, value }))
 };
-const predictionDisplayStatusLabels = {
-  active: '显示',
-  hidden: '隐藏'
-};
-const predictionSettlementStatusLabels = {
-  open: '开放下注',
-  pending_confirmation: '待确认',
-  settled: '已结算',
-  refunded: '已退款'
-};
+const predictionDisplayStatusLabels = ADMIN_FIELD_VALUE_LABELS.display_status;
+const predictionSettlementStatusLabels = ADMIN_FIELD_VALUE_LABELS.settlement_status;
 const predictionOutcomeLabels = {
-  yes: 'YES',
-  no: 'NO',
+  yes: '是（YES）',
+  no: '否（NO）',
   invalid: '无效'
 };
 const predictionOrderStatusLabels = {
@@ -343,10 +267,7 @@ const predictionOrderStatusLabels = {
   settled: '已结算',
   refunded: '已退款'
 };
-const predictionSettlementModeLabels = {
-  manual_confirm: '人工确认',
-  auto: '自动结算'
-};
+const predictionSettlementModeLabels = ADMIN_FIELD_VALUE_LABELS.settlement_mode_override;
 const predictionMarketDisplayStatusFilter: FilterField = {
   key: 'display_status',
   label: '显示状态',
@@ -833,8 +754,8 @@ export const resourceConfigs = {
     columns: [
       { key: 'title', title: '市场标题' },
       { key: 'category', title: '分类' },
-      { key: 'yes_price', title: 'YES 概率', type: 'amount' },
-      { key: 'no_price', title: 'NO 概率', type: 'amount' },
+      { key: 'yes_price', title: '是（YES）概率', type: 'amount' },
+      { key: 'no_price', title: '否（NO）概率', type: 'amount' },
       { key: 'volume', title: '成交量', type: 'amount' },
       { key: 'display_status', title: '显示状态', valueMap: predictionDisplayStatusLabels },
       { key: 'settlement_status', title: '结算状态', valueMap: predictionSettlementStatusLabels },

@@ -596,8 +596,8 @@ const body = {
   item or a second `marketStrategyActions` resource config. The legacy
   `/admin/market/strategies/actions` URL may only redirect to the canonical
   route.
-- The generator section uses Chinese controls for `行情场景`, `Seed 模式`,
-  `固定 Seed`/`当前实际 Seed`, `均值回归强度（0～2）`, `噪声强度（0～5）`,
+- The generator section uses Chinese controls for `行情场景`, `随机种子模式`,
+  `固定随机种子`/`当前实际随机种子`, `均值回归强度（0～2）`, `噪声强度（0～5）`,
   `影线强度（0～5）`, and `成交量形态`. Create defaults must match backend
   legacy defaults. Edit initializes every value from detail `generator`, never
   from the list row.
@@ -605,9 +605,12 @@ const body = {
   `GET /admin/api/v1/market-strategies/presets`. An empty or failed response
   must not create a retry render loop; failure stays inline with an explicit
   reload action. Selecting a scenario alone does not mutate price/nodes. The
-  administrator must click `应用场景预设`; applying requires valid start price
-  and time range, then writes all returned generator fields, target price, and
-  relative nodes into ordinary editable form state.
+  administrator must click `应用场景预设` and confirm the replacement summary.
+  Applying requires a valid start price and time range; only shape parameters
+  (mean reversion/noise/wicks/volume shape) and relative nodes are replaced.
+  Preserve exact start/target prices, time range, global ratio/volume boundaries,
+  seed mode/value and regenerate command. Cancellation leaves the draft intact;
+  preset reference target percentage is not an implicit price command.
 - `生成 OHLCV 预览` is enabled only when the complete form is submittable.
   Create preview omits `strategy_id`; edit preview includes the row strategy
   ID so the backend can use the next version and inherited seed. Display total
@@ -637,6 +640,21 @@ const body = {
   call the copy-restore endpoint. Never relabel this as direct activation or
   remove/overwrite the old card after success; reload history and the resource
   list instead.
+- Distinguish **current configuration** from **running status**. Version restore
+  is disabled for active/unknown status with an explanation. Restore confirmation
+  and success say it copies a new configuration without automatically enabling;
+  backend locks remain authoritative if status changes concurrently.
+- Editing tracks an authoritative baseline: reset/dirty close require explicit
+  discard confirmation, cancellation keeps the draft, and reopening reads fresh
+  detail. Block close during an in-flight save and protect refresh while dirty.
+  Creation retains its draft on same-page close and offers explicit clearing.
+- Expired active creation is blocked with an actionable Chinese explanation;
+  historical draft creation and preview remain allowed. Recheck expiry on final
+  submission, not just when rendering the button.
+- Recovery invalidates prior previews when loading a new range, ignores responses
+  arriving after close/unmount and checks preview expiry both on screen and at
+  execution. No expired token or in-flight range can be submitted. None of these
+  UI guards weakens backend verification or authorizes automatic history writes.
 - The strategy list response does not contain nodes. Opening edit must first
   load `GET /admin/api/v1/market-strategies/:id`, sort by `sequence_no`, and
   populate the shared form. Never submit the list row's implicit empty array,

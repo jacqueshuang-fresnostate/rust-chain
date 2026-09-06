@@ -7,6 +7,7 @@ import type { ReactElement } from 'react';
 import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
 import { MarketStrategyActions } from './MarketStrategyActions';
+import { MarketStrategyVersionSheet } from '../components/MarketStrategyVersionSheet';
 
 vi.mock('../../api/adminResources', () => ({
   listAdminResource: vi.fn()
@@ -122,6 +123,63 @@ describe('MarketStrategyActions', () => {
     });
   });
 
+  it('confirms resetting or closing a dirty editor without saving or losing a cancelled draft', async () => {
+    const user = userEvent.setup();
+    let latestDetail = editableStrategy();
+    apiRequestMock.mockImplementation(async (path) => path.endsWith('/91') ? latestDetail : { presets: [] });
+    render(<MarketStrategyActions />);
+    await user.click(await screen.findByRole('button', { name: '修改' }));
+    const sheet = (await screen.findByText('修改行情策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
+    const target = within(sheet).getByLabelText('目标价');
+    fireEvent.change(target, { target: { value: '3.000000000000000001' } });
+    await user.click(within(sheet).getByRole('button', { name: '重置未保存修改' }));
+    await user.click(await screen.findByRole('button', { name: '继续编辑' }));
+    expect(target).toHaveValue('3.000000000000000001');
+    await user.click(within(sheet).getByRole('button', { name: '重置未保存修改' }));
+    await user.click(await screen.findByRole('button', { name: '放弃未保存修改' }));
+    expect(target).toHaveValue('2');
+    fireEvent.change(target, { target: { value: '4' } });
+    await user.click(sheet.querySelector('.semi-sidesheet-close') as HTMLElement);
+    await user.click(await screen.findByRole('button', { name: '继续编辑' }));
+    expect(target).toHaveValue('4');
+    await user.click(sheet.querySelector('.semi-sidesheet-close') as HTMLElement);
+    await user.click(await screen.findByRole('button', { name: '放弃未保存修改' }));
+    expect(sheet.className).toContain('animation-content_hide');
+    latestDetail = { ...latestDetail, target_price: '9.000000000000000001' };
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '目标价' })).toHaveValue('9.000000000000000001'));
+    expect(apiRequestMock.mock.calls.filter(([path]) => path.endsWith('/91'))).toHaveLength(2);
+    expect(apiRequestMock.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
+  it('blocks copying historical versions for an active strategy while leaving history readable', async () => {
+    const user = userEvent.setup();
+    apiRequestMock.mockResolvedValue({ total: 1, versions: [{ version: 1, active: false, seed: 'active', effective_time: 1, created_at: 1, created_by: 1, generator: { scenario: 'trend_up', seed_mode: 'future-mode' } }] });
+    render(<MarketStrategyVersionSheet strategyId="91" strategyStatus="active" />);
+    await user.click(screen.getByRole('button', { name: '版本历史' }));
+    expect(await screen.findByText('版本 1')).toBeInTheDocument();
+    expect(screen.getByText(/请先在列表暂停或禁用策略/)).toBeInTheDocument();
+    expect(screen.getByText('future-mode')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制为新版本' })).toBeDisabled();
+    expect(apiRequestMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+  });
+
+  it('allows a historical draft and preview but explains why it cannot be created active', async () => {
+    const user = userEvent.setup();
+    render(<MarketStrategyActions />);
+    await user.click(screen.getByRole('button', { name: '创建策略' }));
+    const sheet = (await screen.findByText('创建策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
+    await selectSemiOption(user, sheet, '交易对ID', 'NEW-USDT（ID: 22）');
+    for (const [label, value] of Object.entries({ 起始价: '1', 目标价: '2', 开始时间: '2000-01-01T10:00', 结束时间: '2000-01-01T11:00' })) fireEvent.change(within(sheet).getByLabelText(label), { target: { value } });
+    expect(within(sheet).getByRole('button', { name: '提交创建策略' })).toBeEnabled();
+    await selectSemiOption(user, sheet, '初始状态', '启用');
+    expect(within(sheet).getByRole('button', { name: '提交创建策略' })).toBeDisabled();
+    expect(within(sheet).getByText(/策略已结束.*或将初始状态改为草稿/)).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: '生成 OHLCV 预览' })).toBeEnabled();
+    await selectSemiOption(user, sheet, '初始状态', '草稿');
+    expect(within(sheet).getByRole('button', { name: '提交创建策略' })).toBeEnabled();
+  });
+
   it('renders strategy actions as a resource table page', async () => {
     render(<MarketStrategyActions />);
 
@@ -181,7 +239,7 @@ describe('MarketStrategyActions', () => {
     expect(await screen.findByRole('button', { name: '启用' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: '修改' }));
     expect(await screen.findByRole('button', { name: '提交修改' })).toBeEnabled();
-    expect(screen.getByLabelText('固定 Seed')).toHaveValue('unchanged-seed');
+    expect(screen.getByLabelText('固定随机种子')).toHaveValue('unchanged-seed');
     expect(screen.getByLabelText('节点1目标值')).toHaveValue('1.5');
   });
 
@@ -286,7 +344,7 @@ describe('MarketStrategyActions', () => {
     expect(await screen.findByText('节点1')).toBeInTheDocument();
     expect(screen.getByDisplayValue('1.5')).toBeInTheDocument();
     expect(semiSelectByLabel(document.body, '行情场景')).toHaveTextContent('高波动');
-    expect(semiSelectByLabel(document.body, 'Seed 模式')).toHaveTextContent('固定 Seed');
+    expect(semiSelectByLabel(document.body, '随机种子模式')).toHaveTextContent('固定随机种子');
     expect(screen.getByDisplayValue('stable-seed')).toBeInTheDocument();
     expect(screen.getByDisplayValue('2.4')).toBeInTheDocument();
 
@@ -389,7 +447,13 @@ describe('MarketStrategyActions', () => {
     await selectSemiOption(user, sheet, '行情场景', '稳步上涨');
     await user.click(within(sheet).getByRole('button', { name: '应用场景预设' }));
 
-    expect(within(sheet).getByLabelText('目标价')).toHaveValue('125');
+    expect(within(sheet).getByLabelText('目标价')).toHaveValue('100');
+    await user.click(await screen.findByRole('button', { name: '保留当前配置' }));
+    expect(within(sheet).getByLabelText('目标价')).toHaveValue('100');
+    expect(within(sheet).queryByText('节点1')).not.toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: '应用场景预设' }));
+    await user.click(await screen.findByRole('button', { name: '替换节点与生成参数' }));
+    expect(within(sheet).getByLabelText('目标价')).toHaveValue('100');
     expect(within(sheet).getByLabelText('均值回归强度')).toHaveValue('0.45');
     expect(within(sheet).getByLabelText('噪声强度')).toHaveValue('0.8');
     expect(within(sheet).getByLabelText('影线强度')).toHaveValue('0.6');
@@ -405,7 +469,7 @@ describe('MarketStrategyActions', () => {
     expect(JSON.parse(String(previewCall?.[1]?.body))).toMatchObject({
       pair_id: 21,
       strategy_type: 'price_path',
-      target_price: '125',
+      target_price: '100',
       sample_count: 120,
       generator: {
         scenario: 'trend_up',
@@ -456,7 +520,7 @@ describe('MarketStrategyActions', () => {
     await user.click(await screen.findByRole('button', { name: '版本历史' }));
     expect(await screen.findByText('不可变配置版本')).toBeInTheDocument();
     expect(screen.getByText('版本 2')).toBeInTheDocument();
-    expect(screen.getByText('当前激活')).toBeInTheDocument();
+    expect(screen.getByText('当前配置')).toBeInTheDocument();
     expect(screen.getByText('版本 1')).toBeInTheDocument();
     expect(screen.getByText('稳步上涨')).toBeInTheDocument();
 

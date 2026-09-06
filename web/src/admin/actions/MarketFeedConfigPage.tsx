@@ -1,9 +1,10 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { IconKey, IconList, IconPulse, IconRefresh } from '@douyinfe/semi-icons';
 import { Banner, Button, Card, Descriptions, Space, Tabs, Tag, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ComponentPropsWithoutRef, useEffect, useMemo, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
@@ -28,7 +29,7 @@ const enabledOptions = [
   { value: 'disabled', label: '禁用' }
 ];
 const authTypeOptions = [
-  { value: 'api_key', label: 'API Key 鉴权' },
+  { value: 'api_key', label: '接口密钥鉴权' },
   { value: 'none', label: '无需鉴权' }
 ];
 
@@ -195,7 +196,7 @@ function subscriptionRows(configForm: ConfigForm, config: MarketFeedConfig | nul
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 function configStatus(config: MarketFeedConfig | null) {
@@ -488,7 +489,7 @@ export function MarketFeedConfigPage() {
                   {runtime?.providers.length ? runtime.providers.map((provider) => <Tag key={provider}>{providerLabel(provider)}</Tag>) : <Text type="secondary">-</Text>}
                 </Space>
               </div>
-              {config?.last_reload_error ? <Banner fullMode={false} type="danger" description={config.last_reload_error} /> : null}
+              {config?.last_reload_error ? <Banner fullMode={false} type="danger" description={adminErrorMessage(config.last_reload_error, '行情重载失败')} /> : null}
             </section>
           ) : null}
 
@@ -516,16 +517,16 @@ export function MarketFeedConfigPage() {
                     <AdminSelect ariaLabel="凭证启用状态" onChange={(enabled) => setCredentialForm({ ...credentialForm, enabled: enabled === 'enabled' })} optionList={enabledOptions} value={credentialForm.enabled ? 'enabled' : 'disabled'} />
                   </label>
                   <label>
-                    API Key
-                    <AdminTextInput ariaLabel="API Key" value={credentialForm.apiKey} onChange={(apiKey) => setCredentialForm({ ...credentialForm, apiKey })} />
+                    接口密钥（API Key）
+                    <AdminTextInput ariaLabel="接口密钥（API Key）" value={credentialForm.apiKey} onChange={(apiKey) => setCredentialForm({ ...credentialForm, apiKey })} />
                   </label>
                   <label>
-                    API Secret
-                    <AdminPasswordInput ariaLabel="API Secret" value={credentialForm.apiSecret} onChange={(apiSecret) => setCredentialForm({ ...credentialForm, apiSecret })} />
+                    接口私钥（API Secret）
+                    <AdminPasswordInput ariaLabel="接口私钥（API Secret）" value={credentialForm.apiSecret} onChange={(apiSecret) => setCredentialForm({ ...credentialForm, apiSecret })} />
                   </label>
                   <label>
-                    Passphrase
-                    <AdminPasswordInput ariaLabel="Passphrase" value={credentialForm.passphrase} onChange={(passphrase) => setCredentialForm({ ...credentialForm, passphrase })} />
+                    鉴权口令（Passphrase）
+                    <AdminPasswordInput ariaLabel="鉴权口令（Passphrase）" value={credentialForm.passphrase} onChange={(passphrase) => setCredentialForm({ ...credentialForm, passphrase })} />
                   </label>
                 </div>
                 <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-feed/credentials/${credentialForm.provider}`} method="PATCH">

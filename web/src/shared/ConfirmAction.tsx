@@ -1,3 +1,4 @@
+import { adminErrorMessage } from './adminErrorMessage';
 import { Button, Modal, TextArea, Typography } from '@douyinfe/semi-ui';
 import { useState } from 'react';
 
@@ -43,7 +44,7 @@ export function ConfirmAction({ actionAriaLabel, actionText = '执行', confirmT
       setReason('');
     } catch (cause) {
       // Keep the reason and dialog on a rejected action; do not leak an unhandled Modal promise.
-      setError(cause instanceof Error ? cause.message : '操作失败，请核对状态后重试');
+      setError(adminErrorMessage(cause, '操作失败，请核对状态后重试'));
     } finally {
       setSubmitting(false);
     }

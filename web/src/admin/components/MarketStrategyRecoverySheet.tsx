@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, Card, Descriptions, SideSheet, Space, Spin, Tag, TextArea, Toast } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -76,6 +77,10 @@ function statusColor(status: string): 'blue' | 'green' | 'red' | 'grey' {
   return 'grey';
 }
 
+export function recoveryPreviewExpired(expiresAt: number, now = Date.now()): boolean {
+  return !Number.isFinite(expiresAt) || expiresAt <= now;
+}
+
 export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string }) {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -86,6 +91,8 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
   const [jobsLoaded, setJobsLoaded] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   const jobsRequestIdRef = useRef(0);
+  const previewRequestIdRef = useRef(0);
+  const [previewExpired, setPreviewExpired] = useState(false);
   const [reason, setReason] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -99,7 +106,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
       setJobsLoaded(true);
     } catch (error) {
       if (jobsRequestIdRef.current !== requestId) return;
-      const message = error instanceof Error ? error.message : '加载补偿任务失败';
+      const message = adminErrorMessage(error, '加载补偿任务失败');
       setJobsLoaded(false);
       setErrorMessage(message);
       Toast.error(message);
@@ -111,24 +118,28 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
   }, [strategyId]);
 
   async function detectGaps() {
+    const requestId = ++previewRequestIdRef.current;
     setLoading(true);
     setPreview(null);
     setErrorMessage('');
     try {
       const result = await apiRequest<GapsResponse>(`/admin/api/v1/market-strategies/${strategyId}/kline-gaps`);
+      if (requestId !== previewRequestIdRef.current) return;
       setGaps({ ...result, gaps: Array.isArray(result.gaps) ? result.gaps : [] });
       await loadJobs();
     } catch (error) {
-      const message = error instanceof Error ? error.message : '检测缺口失败';
+      if (requestId !== previewRequestIdRef.current) return;
+      const message = adminErrorMessage(error, '检测缺口失败');
       setGaps(null);
       setErrorMessage(message);
       Toast.error(message);
     } finally {
-      setLoading(false);
+      if (requestId === previewRequestIdRef.current) setLoading(false);
     }
   }
 
   async function previewGap(gap: GapRange) {
+    const requestId = ++previewRequestIdRef.current;
     setLoading(true);
     setPreview(null);
     setErrorMessage('');
@@ -137,18 +148,25 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
         method: 'POST',
         body: JSON.stringify({ range_start: gap.range_start, range_end: gap.range_end })
       });
+      if (requestId !== previewRequestIdRef.current) return;
       setPreview({ ...result, samples: Array.isArray(result.samples) ? result.samples : [] });
     } catch (error) {
-      const message = error instanceof Error ? error.message : '生成补偿预览失败';
+      if (requestId !== previewRequestIdRef.current) return;
+      const message = adminErrorMessage(error, '生成补偿预览失败');
       setErrorMessage(message);
       Toast.error(message);
     } finally {
-      setLoading(false);
+      if (requestId === previewRequestIdRef.current) setLoading(false);
     }
   }
 
   async function executeRecovery() {
-    if (!preview || !reason.trim()) return;
+    if (!preview || !reason.trim() || loading || submitting) return;
+    if (recoveryPreviewExpired(preview.expires_at)) {
+      setPreviewExpired(true);
+      setErrorMessage('补偿预览已过期，请重新预览后再确认执行');
+      return;
+    }
     setSubmitting(true);
     setErrorMessage('');
     try {
@@ -161,7 +179,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
       setReason('');
       await detectGaps();
     } catch (error) {
-      const message = error instanceof Error ? error.message : '提交补偿任务失败';
+      const message = adminErrorMessage(error, '提交补偿任务失败');
       setErrorMessage(message);
       Toast.error(message);
     } finally {
@@ -172,7 +190,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
   useEffect(() => {
     if (visible) {
       void loadJobs();
-      return;
+      return () => { previewRequestIdRef.current += 1; jobsRequestIdRef.current += 1; };
     }
     jobsRequestIdRef.current += 1;
     setGaps(null);
@@ -182,7 +200,16 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
     setJobsLoading(false);
     setReason('');
     setErrorMessage('');
+    setLoading(false);
   }, [loadJobs, visible]);
+
+  useEffect(() => {
+    if (!visible || !preview) return;
+    const updateExpiry = () => setPreviewExpired(recoveryPreviewExpired(preview.expires_at));
+    updateExpiry();
+    const timer = window.setInterval(updateExpiry, 1000);
+    return () => window.clearInterval(timer);
+  }, [preview, visible]);
 
   return (
     <>
@@ -204,7 +231,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
               <h3>策略 #{strategyId}</h3>
               <p>先检测缺失的已闭合 1 分钟 K 线，再选择范围预览；执行前必须填写审计原因。</p>
             </div>
-            <Button aria-label="重新检测K线缺口" disabled={submitting} loading={loading} onClick={detectGaps} theme="solid" type="primary">检测缺口</Button>
+            <Button aria-label="重新检测K线缺口" disabled={submitting || loading} loading={loading} onClick={detectGaps} theme="solid" type="primary">检测缺口</Button>
           </div>
 
           {errorMessage ? <div aria-live="assertive" className="admin-market-recovery-state admin-market-recovery-error" role="alert">{errorMessage}</div> : null}
@@ -272,7 +299,8 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
                   <TextArea aria-label="补偿原因" autosize disabled={submitting} onChange={setReason} placeholder="请输入本次手动补偿的审计原因" value={reason} />
                 </label>
                 <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-strategies/${strategyId}/kline-recovery/execute`} method="POST">
-                  <Button aria-label="确认执行K线补偿" disabled={submitting || !reason.trim()} loading={submitting} onClick={executeRecovery} theme="solid" type="primary">
+                  {previewExpired ? <p role="alert">补偿预览已过期，请重新预览后再确认执行</p> : null}
+                  <Button aria-label="确认执行K线补偿" disabled={loading || submitting || previewExpired || !reason.trim()} loading={submitting} onClick={executeRecovery} theme="solid" type="primary">
                     确认执行补偿
                   </Button>
                 </AdminRequestActionBoundary>
@@ -293,7 +321,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
                   { title: '范围 [开始, 结束)', key: 'range', render: (_, job) => `${formatTime(job.range_start)} 至 ${formatTime(job.range_end)}` },
                   { title: '1m 进度', key: 'progress', render: (_, job) => `${job.actual_1m_count}/${job.expected_1m_count}` },
                   { title: '聚合根数', dataIndex: 'actual_aggregate_count' },
-                  { title: '原因/错误', key: 'message', render: (_, job) => job.error_message || job.reason },
+                  { title: '原因/错误', key: 'message', render: (_, job) => job.error_message ? adminErrorMessage(job.error_message, '补偿任务失败') : job.reason },
                   { title: '创建时间', dataIndex: 'created_at', render: (value) => formatTime(Number(value)) }
                 ]}
                 dataSource={jobs}

@@ -1,8 +1,9 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import { AdminRequestActionBoundary } from '../access';
 import { PageHeader } from '../../layouts/PageHeader';
 import { WorkflowPageActions } from '../components/WorkflowPageActions';
@@ -129,7 +130,7 @@ const submissionTypeLabelMap = {
 } as const;
 
 function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
+  return adminErrorMessage(error, '操作失败');
 }
 
 function splitCsv(value: string) {

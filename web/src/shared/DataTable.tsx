@@ -1,3 +1,4 @@
+import { adminErrorMessage } from './adminErrorMessage';
 import { Empty, Spin, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
@@ -109,7 +110,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
   if (error) {
     return (
       <div className="admin-table-state admin-table-error" role="alert">
-        <Text type="danger">加载失败：{error.message}</Text>
+        <Text type="danger">加载失败：{adminErrorMessage(error)}</Text>
         <Text type="tertiary">请检查网络连接后刷新当前资源。</Text>
       </div>
     );

@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../../shared/adminErrorMessage';
 import { IconSync } from '@douyinfe/semi-icons';
 import { Banner, Button, Card, Col, Descriptions, Row, Space, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
@@ -42,7 +43,7 @@ export function PredictionSyncWorkspace() {
         dataIndex: 'error_message',
         title: '错误信息',
         ellipsis: true,
-        render: (value) => <span>{typeof value === 'string' && value ? value : '-'}</span>
+        render: (value) => <span>{typeof value === 'string' && value ? adminErrorMessage(value, '竞猜同步失败') : '-'}</span>
       },
       {
         dataIndex: 'started_at',

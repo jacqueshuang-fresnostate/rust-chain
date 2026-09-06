@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { ApiError } from '../../api/client';
 import { safeSingleLineText } from '../../shared/sensitiveText';
 
@@ -30,7 +31,7 @@ export function settingsErrorMessage(error: unknown, fallback = '配置操作失
   }
 
   if (error instanceof ApiError || error instanceof Error) {
-    return safeSingleLineText(error.message, fallback);
+    return safeSingleLineText(adminErrorMessage(error, fallback), fallback);
   }
 
   return fallback;

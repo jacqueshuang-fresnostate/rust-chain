@@ -1,3 +1,4 @@
+import { adminErrorMessage } from './adminErrorMessage';
 import 'quill/dist/quill.snow.css';
 
 import { IconUpload } from '@douyinfe/semi-icons';
@@ -200,7 +201,7 @@ function isEmptyTextValue(value: RichTextValue): boolean {
 }
 
 function uploadErrorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '图片上传失败';
+  return adminErrorMessage(error, '图片上传失败');
 }
 
 export function QuillRichTextEditor({ ariaLabel = '富文本内容', enableImageUpload = false, onChange, placeholder = '请输入理财介绍', value }: QuillRichTextEditorProps) {

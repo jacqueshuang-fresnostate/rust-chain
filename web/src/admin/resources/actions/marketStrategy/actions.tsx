@@ -18,13 +18,14 @@ import {
   toggleActionText
 } from '../shared';
 import { MarketStrategyForm } from './MarketStrategyForm';
+import { MarketStrategyDraftDialog } from './MarketStrategyDraftDialog';
 import {
   initialMarketStrategy,
   isMarketStrategySubmittable,
   marketStrategyBasePayload,
   nextMarketStrategyStatus
 } from './model';
-import { marketStrategyActivationError } from './runtime';
+import { marketStrategyActivationError, marketStrategyCreateActivationError } from './runtime';
 import { useMarketStrategyEditor } from './useMarketStrategyEditor';
 
 export function MarketStrategyRowActions({
@@ -39,6 +40,12 @@ export function MarketStrategyRowActions({
   const actionText = toggleActionText(nextStatus);
   const activationError = nextStatus === 'active' ? marketStrategyActivationError(record) : null;
   const editor = useMarketStrategyEditor(record, strategyId);
+  const [draftAction, setDraftAction] = useState<'close' | 'reset' | null>(null);
+
+  function closeEditor() {
+    editor.setVisible(false);
+    if (editor.config.status !== recordString(record, 'status')) helpers.reload();
+  }
 
   return (
     <div className="admin-market-strategy-row-actions">
@@ -51,7 +58,7 @@ export function MarketStrategyRowActions({
         查看详情
       </Button>
       <MarketStrategyRecoverySheet strategyId={strategyId} />
-      <MarketStrategyVersionSheet onRestored={helpers.reload} strategyId={strategyId} />
+      <MarketStrategyVersionSheet onRestored={helpers.reload} strategyId={strategyId} strategyStatus={recordString(record, 'status')} />
       <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-strategies/${strategyId}`} method="PATCH">
         <Button
           disabled={!strategyId}
@@ -64,12 +71,14 @@ export function MarketStrategyRowActions({
         </Button>
         <SideSheet
           onCancel={() => {
-            editor.setVisible(false);
-            if (editor.config.status !== recordString(record, 'status')) helpers.reload();
+            if (editor.submitting) return;
+            if (editor.dirty) setDraftAction('close');
+            else closeEditor();
           }}
           title="修改行情策略"
           visible={editor.visible}
           {...createModalProps('wide')}
+          closeOnEsc={!editor.submitting}
         >
           <Card bordered={false}>
             <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
@@ -78,7 +87,7 @@ export function MarketStrategyRowActions({
               ) : (
                 <div key="inactive-notice">修改会生成新配置版本，不会自动启用策略；保存后请回到列表按需启用。</div>
               )}
-              <MarketStrategyForm
+              <div key="configuration" inert={editor.submitting} style={{ width: '100%' }}><MarketStrategyForm
                 key="configuration"
                 active={editor.visible}
                 includePairId={false}
@@ -86,27 +95,36 @@ export function MarketStrategyRowActions({
                 strategyId={strategyId}
                 values={editor.config}
                 onChange={editor.setConfig}
-              />
+              /></div>
+              <Button key="reset" disabled={!editor.dirty || editor.submitting} onClick={() => setDraftAction('reset')}>重置未保存修改</Button>
               <ConfirmAction
                 key="save"
                 actionText="提交修改"
-                disabled={editor.config.status === 'active' || !isMarketStrategySubmittable(editor.config, false)}
+                disabled={editor.submitting || editor.config.status === 'active' || !isMarketStrategySubmittable(editor.config, false)}
                 title="确认修改行情策略"
                 onConfirm={async (reason) => {
                   if (editor.config.status === 'active') throw new Error('请先暂停或禁用策略后再修改配置');
-                  await submitAction('修改行情策略', () =>
-                    apiRequest(`/admin/api/v1/market-strategies/${strategyId}`, {
-                      method: 'PATCH',
-                      body: JSON.stringify({ ...marketStrategyBasePayload(editor.config), reason })
-                    })
-                  );
-                  editor.setVisible(false);
-                  helpers.reload();
+                  editor.setSubmitting(true);
+                  try {
+                    await submitAction('修改行情策略', () =>
+                      apiRequest(`/admin/api/v1/market-strategies/${strategyId}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ ...marketStrategyBasePayload(editor.config), reason })
+                      })
+                    );
+                    editor.setVisible(false);
+                    helpers.reload();
+                  } finally { editor.setSubmitting(false); }
                 }}
               />
             </Space>
           </Card>
         </SideSheet>
+        <MarketStrategyDraftDialog action={draftAction} onCancel={() => setDraftAction(null)} onConfirm={() => {
+          editor.reset();
+          if (draftAction === 'close') closeEditor();
+          setDraftAction(null);
+        }} />
         {recordString(record, 'status') === 'active' ? (
           <ConfirmAction
             key="pause"
@@ -146,49 +164,63 @@ export function MarketStrategyRowActions({
 export function CreateMarketStrategyAction({ onCreated }: { onCreated?: () => void }) {
   const [strategy, setStrategy] = useState(initialMarketStrategy);
   const [visible, setVisible] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [resetVisible, setResetVisible] = useState(false);
+  const activationError = marketStrategyCreateActivationError(strategy);
 
   return (
     <>
       <AdminModalTriggerButton onClick={() => setVisible(true)}>创建策略</AdminModalTriggerButton>
       <SideSheet
-        onCancel={() => setVisible(false)}
+        onCancel={() => !submitting && setVisible(false)}
         title="创建策略"
         visible={visible}
         {...createModalProps('wide')}
+        closeOnEsc={!submitting}
       >
         <Card bordered={false}>
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <MarketStrategyForm
+            <p key="draft-notice">关闭窗口会在当前页面保留创建草稿；离开页面后不保留。新建默认保存为草稿，不会自动开始推送。</p>
+            <div key="form" inert={submitting} style={{ width: '100%' }}><MarketStrategyForm
               active={visible}
               includePairId
               isEditing={false}
               values={strategy}
               onChange={setStrategy}
-            />
+            /></div>
+            {activationError ? <div key="activation-error" role="alert">{activationError}，或将初始状态改为草稿后保存。</div> : null}
+            <Button key="reset" disabled={submitting || JSON.stringify(strategy) === JSON.stringify(initialMarketStrategy)} onClick={() => setResetVisible(true)}>清空创建草稿</Button>
             <ConfirmAction
+              key="create"
               actionText="提交创建策略"
-              disabled={!isMarketStrategySubmittable(strategy, true)}
+              disabled={submitting || Boolean(activationError) || !isMarketStrategySubmittable(strategy, true)}
               title="确认创建行情策略"
               onConfirm={async (reason) => {
-                await submitAction('创建行情策略', () =>
-                  apiRequest('/admin/api/v1/market-strategies', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      pair_id: requiredPositiveInteger(strategy.pairId, '交易对ID'),
-                      ...marketStrategyBasePayload(strategy),
-                      status: strategy.status,
-                      reason
+                const expired = marketStrategyCreateActivationError(strategy);
+                if (expired) throw new Error(expired);
+                setSubmitting(true);
+                try {
+                  await submitAction('创建行情策略', () =>
+                    apiRequest('/admin/api/v1/market-strategies', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        pair_id: requiredPositiveInteger(strategy.pairId, '交易对ID'),
+                        ...marketStrategyBasePayload(strategy),
+                        status: strategy.status,
+                        reason
+                      })
                     })
-                  })
-                );
-                setVisible(false);
-                setStrategy(initialMarketStrategy);
-                onCreated?.();
+                  );
+                  setVisible(false);
+                  setStrategy(initialMarketStrategy);
+                  onCreated?.();
+                } finally { setSubmitting(false); }
               }}
             />
           </Space>
         </Card>
       </SideSheet>
+      <MarketStrategyDraftDialog action={resetVisible ? 'reset' : null} onCancel={() => setResetVisible(false)} onConfirm={() => { setStrategy(initialMarketStrategy); setResetVisible(false); }} />
     </>
   );
 }

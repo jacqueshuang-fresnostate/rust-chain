@@ -1,13 +1,12 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { IconDownload, IconRefresh, IconSearch } from '@douyinfe/semi-icons';
 import { Button, Card, Empty, Pagination, Space, Spin, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
 import { useQuery } from '@tanstack/react-query';
 import { type FormEvent, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-import { ApiError } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { AdminTextInput } from '../../shared/SemiFormControls';
-import { safeSingleLineText } from '../../shared/sensitiveText';
 import { TimestampText } from '../../shared/TimestampText';
 import {
   type AdminAuditLog,
@@ -85,8 +84,7 @@ function normalizeAuditFilters(draft: AuditFilterDraft): { error: string | null;
 }
 
 function safeErrorMessage(error: unknown): string {
-  const message = error instanceof ApiError || error instanceof Error ? error.message : '审计日志加载失败';
-  return safeSingleLineText(message, '审计日志加载失败');
+  return adminErrorMessage(error, '审计日志加载失败');
 }
 
 function AuditFieldChanges({ log }: { log: AdminAuditLog }) {
@@ -184,7 +182,7 @@ function AuditLogCard({ log }: { log: AdminAuditLog }) {
         <dl className="audit-log-trace" aria-label={`日志 ${log.id} 请求追踪`}>
           <div><dt>管理员</dt><dd>管理员 #{log.admin_id}</dd></div>
           <div><dt>来源 IP</dt><dd>{ip}</dd></div>
-          <div><dt>Request ID</dt><dd><code>{requestId}</code></dd></div>
+          <div><dt>请求标识（Request ID）</dt><dd><code>{requestId}</code></dd></div>
           <div><dt>日志 ID</dt><dd>#{log.id}</dd></div>
         </dl>
       </article>

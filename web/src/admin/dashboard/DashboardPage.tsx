@@ -1,7 +1,8 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Banner, Button, Card, Space, Tag, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
@@ -149,7 +150,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
 };
 
 function errorMessage(error: unknown) {
-  const message = error instanceof ApiError || error instanceof Error ? error.message : '加载失败';
+  const message = adminErrorMessage(error, '加载失败');
   return message.split(/\r?\n/, 1)[0]?.trim() || '加载失败';
 }
 

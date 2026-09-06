@@ -3991,7 +3991,7 @@ describe('resourceConfigs create actions', () => {
 
       expect(await screen.findByText('USDT 30D')).toBeInTheDocument();
       await waitForLazyResourceActions();
-      expect(screen.getByText('定期', { selector: 'span' })).toBeInTheDocument();
+      expect(screen.getAllByText('定期', { selector: 'span' })).toHaveLength(2);
       expect(screen.getByRole('button', { name: '添加理财产品' })).toBeInTheDocument();
       return listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products').length;
     }
@@ -4658,7 +4658,7 @@ describe('resourceConfigs create actions', () => {
           last_price: '1.2',
           samples: [{ open_time: 1_775_029_400_000, open: '1.1', high: '1.3', low: '1', close: '1.2', volume: '12' }],
           preview_token: 'preview-token',
-          expires_at: 1_775_030_000_000
+          expires_at: Date.now() + 60_000
         };
       }
       return {};

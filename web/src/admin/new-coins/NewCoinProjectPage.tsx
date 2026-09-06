@@ -1,3 +1,4 @@
+import { adminErrorMessage } from '../../shared/adminErrorMessage';
 import { Button, Card, Space, Tabs, TabPane, Typography } from '@douyinfe/semi-ui';
 import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -54,7 +55,7 @@ export function NewCoinProjectPage() {
             title={`确认 ${p.symbol} ${stage?.action}；${p.lifecycle_status==='subscription'?'结束后停止接受新申购，不自动派发':p.lifecycle_status==='distribution'?'以本次操作时间记录上市，不自动启用现货交易对':'开放用户申购并冻结资金'}`}
             onConfirm={async reason=>{
               try { await apiRequest(`/admin/api/v1/new-coins/${p.id}/lifecycle`,{method:'PATCH',body:JSON.stringify({lifecycle_status:data.next_lifecycle_status,expected_config:data.configuration_version,reason})});setError('');await reload(); }
-              catch(cause){setError(cause instanceof ApiError&&cause.status===409?'项目已变化或存在待处理申购，请刷新后重试。':cause instanceof Error?cause.message:'操作失败');throw cause;}
+              catch(cause){setError(cause instanceof ApiError&&cause.status===409?'项目已变化或存在待处理申购，请刷新后重试。':adminErrorMessage(cause, '操作失败'));throw cause;}
             }} />
         </AdminRequestActionBoundary> : null}
       </Space>
