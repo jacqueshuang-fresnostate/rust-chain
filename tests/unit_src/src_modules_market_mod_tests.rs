@@ -276,3 +276,57 @@ fn bitget_ticker_from_ws_accepts_snapshot_payload_shape() {
     assert_eq!(ticker.price_change_percent_24h(), &decimal("-0.18800"));
     assert_eq!(ticker.observed_at().timestamp_millis(), 1780163523579);
 }
+
+#[test]
+fn forming_read_model_merges_only_current_in_range_slot_and_keeps_latest_limit() {
+    use super::presentation::KlineResponse;
+    let open = Utc.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+    let candle = |time, close: &str| KlineResponse {
+        symbol: "SIMUSDT".into(),
+        interval: "5m".into(),
+        open_time: time,
+        open: "10".into(),
+        high: "20".into(),
+        low: "5".into(),
+        close: close.into(),
+        volume: "60".into(),
+    };
+    let query = KlineQuery::new("5m", None, None, Some(2)).unwrap();
+    let now = open + chrono::TimeDelta::minutes(2);
+    let mut rows = vec![
+        candle(open - chrono::TimeDelta::minutes(10), "11"),
+        candle(open - chrono::TimeDelta::minutes(5), "12"),
+    ];
+    service::merge_current_kline(&mut rows, candle(open, "13"), &query, now);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].close, "12");
+    assert_eq!(rows[1].close, "13");
+    service::merge_current_kline(&mut rows, candle(open, "99"), &query, now);
+    assert_eq!(
+        rows[1].close, "13",
+        "existing root is not duplicated or overwritten"
+    );
+    let mut empty = vec![];
+    service::merge_current_kline(
+        &mut empty,
+        candle(open - chrono::TimeDelta::minutes(5), "10"),
+        &query,
+        now,
+    );
+    service::merge_current_kline(
+        &mut empty,
+        candle(open + chrono::TimeDelta::minutes(5), "10"),
+        &query,
+        now,
+    );
+    assert!(empty.is_empty(), "expired or future cache is not history");
+    let bounded = KlineQuery::new(
+        "5m",
+        Some(open + chrono::TimeDelta::minutes(1)),
+        None,
+        Some(2),
+    )
+    .unwrap();
+    service::merge_current_kline(&mut empty, candle(open, "10"), &bounded, now);
+    assert!(empty.is_empty());
+}

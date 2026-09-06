@@ -22,7 +22,7 @@ use crate::{
         margin::application::execute_triggered_margin_limit_orders_with_hub as execute_triggered_margin_limit_orders,
         market::{
             KlineUpsertKey, MarketDataProvider, MarketDepthSnapshot, MarketKlineSnapshot,
-            MarketTickerSnapshot, ValidatedMarketSymbol,
+            MarketTickerSnapshot, MarketTradeTick, ValidatedMarketSymbol,
             infrastructure::{
                 MarketCacheError, MarketCacheWriteOutcome, MarketDepthCacheEntry,
                 MarketKlineCacheEntry, MarketTickerCacheEntry, RedisMarketCache,
@@ -283,6 +283,67 @@ impl MarketIngestionService {
             .await
     }
 
+    /// 在 ticker 归档与租约检查成功后发布策略模拟盘口/逐笔；原子缓存再次核对该 ticker 未被取代。
+    /// 这条路径不调用普通 depth 摄取的卖一触发器，不创建真实成交；重复成交只更新盘口，不重复广播逐笔。
+    pub async fn ingest_and_publish_synthetic_details(
+        &self,
+        ticker: &MarketTickerSnapshot,
+        depth: &MarketDepthSnapshot,
+        trade: Option<&MarketTradeTick>,
+    ) -> AppResult<SyntheticIngestionOutcome> {
+        if ticker.provider() != crate::modules::market::MarketDataProvider::Strategy
+            || depth.provider() != ticker.provider()
+            || depth.symbol() != ticker.symbol()
+            || depth.observed_at() != ticker.observed_at()
+            || trade.is_some_and(|tick| {
+                tick.provider() != ticker.provider()
+                    || tick.symbol() != ticker.symbol()
+                    || tick.price() != ticker.last_price()
+                    || tick.quantity() <= &BigDecimal::from(0)
+                    || tick.traded_at().timestamp() != ticker.observed_at().timestamp()
+            })
+        {
+            return Err(AppError::Validation(
+                "inconsistent synthetic detail snapshot".into(),
+            ));
+        }
+        let ticker_entry = MarketTickerCacheEntry::from_snapshot(ticker)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
+        let depth_entry = MarketDepthCacheEntry::from_snapshot(depth)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
+        let (outcome, new_trade) = self
+            .cache
+            .save_synthetic_details(ticker_entry, depth_entry, trade)
+            .await
+            .map_err(market_cache_error)?;
+        if outcome == MarketCacheWriteOutcome::Accepted {
+            self.publish(MarketFeedEvent::from_depth_snapshot(depth)?)?;
+            if new_trade && let Some(tick) = trade {
+                self.publish(MarketFeedEvent::from_trade_tick(tick)?)?;
+            }
+        }
+        Ok(outcome.into())
+    }
+
+    /// 当前高周期形成中蜡烛只写 Redis 并广播；不得把缺根窗口当作完整历史写入 Mongo。
+    /// 完整闭合由独立严格聚合入口落库，缓存仍使用同槽时序 CAS，旧版本不得倒退当前窗口。
+    pub async fn ingest_and_publish_forming_aggregate(
+        &self,
+        snapshot: &MarketKlineSnapshot,
+    ) -> AppResult<SyntheticIngestionOutcome> {
+        let entry = MarketKlineCacheEntry::from_snapshot(snapshot)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
+        let outcome = self
+            .cache
+            .save_kline_if_fresh(entry)
+            .await
+            .map_err(market_cache_error)?;
+        if outcome == MarketCacheWriteOutcome::Accepted {
+            self.publish(MarketFeedEvent::from_kline_snapshot(snapshot)?)?;
+        }
+        Ok(outcome.into())
+    }
+
     /// 写入深度快照，并在存在卖一价时把它作为现货触发价候选；深度解析或缓存失败时不触发订单。
     /// 撮合是缓存成功后的独立副作用，失败只告警，不回滚已持久化的市场深度。
     pub async fn ingest_depth(&self, snapshot: &MarketDepthSnapshot) -> AppResult<()> {
@@ -309,7 +370,7 @@ impl MarketIngestionService {
             .save_kline_if_fresh(entry)
             .await
             .map_err(market_cache_error)?;
-        if outcome.is_accepted() {
+        if outcome.is_accepted() || outcome.is_identical_replay() {
             self.upsert_kline_mongo(snapshot).await?;
         }
         Ok(())
@@ -331,7 +392,7 @@ impl MarketIngestionService {
             .save_kline_if_fresh(entry)
             .await
             .map_err(market_cache_error)?;
-        if !outcome.is_accepted() {
+        if outcome == MarketCacheWriteOutcome::RejectedStale {
             return Ok(SyntheticIngestionOutcome::RejectedStale);
         }
         self.upsert_kline_mongo(snapshot).await?;

@@ -715,3 +715,16 @@ fn validate_trading_pair_config(
     }
     Ok(())
 }
+
+/// 只在实际启用时校验有效期；历史草稿与预览仍合法，结束边界采用与实时 worker 相同的半开区间。
+pub(crate) fn validate_market_strategy_activation(
+    end: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> AppResult<()> {
+    if end <= now {
+        return Err(AppError::Validation(
+            "策略已结束，请先修改结束时间再启用".into(),
+        ));
+    }
+    Ok(())
+}

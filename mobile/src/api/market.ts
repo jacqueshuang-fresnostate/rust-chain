@@ -5,6 +5,7 @@ import {
   type ReferenceRequestOptions,
 } from './requestCache'
 import {
+  DEFAULT_MARKET_KLINE_INTERVAL,
   DEFAULT_MARKET_KLINE_LIMIT,
   mapMarketDepthSnapshot,
   mapMarketKlines,
@@ -91,7 +92,7 @@ export async function fetchMarketTickers(): Promise<MarketTicker[]> {
 
 export async function fetchKlines(
   symbol: string,
-  interval = '15m',
+  interval: string = DEFAULT_MARKET_KLINE_INTERVAL,
   limit = DEFAULT_MARKET_KLINE_LIMIT,
 ): Promise<KlinePoint[]> {
   const end = Date.now()

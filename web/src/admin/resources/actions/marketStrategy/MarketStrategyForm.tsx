@@ -48,7 +48,7 @@ export function MarketStrategyForm({
     <div className="admin-market-strategy-form">
       <section className="admin-market-strategy-section">
         <div className="admin-market-strategy-section__heading">
-          <div><h3>策略基础配置</h3><p>定义权威 1m 行情的交易对、时间范围、起止价格和全局量价边界。</p></div>
+          <div><h3>策略基础配置</h3><p>定义权威 1m 行情的交易对、时间范围、起止价格和全局量价边界。订单簿、逐笔成交和高周期由同一行情自动派生。</p></div>
         </div>
         <div className="admin-action-form">
           {includePairId ? (
@@ -99,6 +99,8 @@ export function MarketStrategyForm({
           )}
         </div>
       </section>
+
+      <p>成交量范围按每分钟累计数量配置，模拟逐笔按秒分摊；成交量为 0 时不生成虚假成交。模拟盘口与逐笔仅用于行情展示，不是用户真实成交。</p>
 
       <section className="admin-market-strategy-section admin-market-generator-section">
         <div className="admin-market-strategy-section__heading">

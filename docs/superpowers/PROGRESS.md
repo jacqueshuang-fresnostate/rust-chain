@@ -1,3 +1,17 @@
+## 2026-09-06 05:37 - 修复行情策略实时链路与后台运营规则
+
+- 完成内容：从同一权威 1m 派生稳定的最多 20 档模拟盘口和按秒分摊的逐笔，独立 Redis 最近 100 条队列与成交号去重，保留 strategy 来源且不写真实成交/账本；补齐 5m/15m/1h/4h/1d 当前形成中缓存与推送，严格完整闭合规则保留；历史 API 改取最新 N 根并升序返回，合并当前高周期但不把残缺窗口写入正式历史；修复毫秒/微秒检查点重放冲突、Redis 成功/Mongo 失败的同事件修复，以及相同盘口掩盖冲突成交的重放判断顺序。后台创建/启用增加过期、交易对有效性和同交易对重叠时段并发互斥，允许相邻排期；列表提供基于真实错误/最后 tick 的加载时运行诊断，前置诊断列并禁用过期启用按钮，补充分钟成交量与模拟数据说明。手机端切片验证见下方记录。
+- 修改文件：src/modules/market/{application.rs,service.rs,presentation.rs,routes.rs,synthetic_realtime.rs,mod.rs,infrastructure.rs,infrastructure/**}；src/workers/synthetic_market.rs；src/modules/admin/{application,infrastructure,presentation,service}/market.rs；tests/{market_routes,market_redis_cache,synthetic_market_details,admin_routes}.rs；tests/unit_src/src_modules_market_mod_tests.rs；web/src/admin/resources/{resourceConfigs.tsx,resourceConfigs.test.tsx,actions/marketStrategy/{runtime.tsx,runtime.test.tsx,actions.tsx,MarketStrategyForm.tsx}}；web/src/styles.css；.trellis/spec/{backend/synthetic-market-kline.md,admin/ui-system.md,mobile/backend-integration.md}；.trellis/tasks/09-06-strategy-market-feed-repair/**。
+- 验证结果：后端 92 项不同的相关测试全部通过（市场 lib 10、架构/中文文档 12、WebSocket 15、ingestion 4、Redis 5、market routes 14、生成器 11、details 3、worker 13、admin strategy 5）；使用独立 MySQL/Mongo/Redis 真实执行非跳过，覆盖并发启用互斥、实际 worker→广播/REST 六周期、最新历史、删除 Mongo 当前根后同事件修复且不重复逐笔、spot_trades 未造假。最终发现的同盘口/异成交回归先失败，再修复后重跑 ingestion/cache/routes/架构/文档 36 项通过。cargo fmt --all -- --check、cargo check --all-targets、最终 cargo clippy --all-targets -- -D warnings 通过。Web 全量 68 文件/502 项（--maxWorkers=2，无延长超时），最后聚焦 12/12、生产策略 15/15、覆盖率 23 项、typecheck/lint/build/budget 全通过；Mobile release:gate 676/676 通过。Ego 真实 API 复核 1728/1280px 按钮边界与中心命中、过期启用禁用、诊断列可见、编辑 SideSheet，及登录/总览/空现货/资产/KYC/安全策略基线，无文档横向溢出。Source integrity 与其 16 个测试、Trellis context、git diff --check 通过。
+- 后续事项：待提交并重新发布后端、后台 Web 和 Mobile 后在线上复验；未 commit/push 或部署，不自动补历史缺口。已关闭浏览器空间 12、停止临时 13036/18086 服务、删除临时示例与会话、移除本轮 Mongo/Redis 容器及 codex_strategy_feed_0906 数据库（确认剩余 0）；用户原有 MySQL/容器运行环境保留。当前任务保留为未提交交付状态。
+
+## 2026-09-06 04:57 - 移动端策略 K 线默认周期与推送合并修复
+
+- 完成内容：交易页、行情详情与 K 线 API 共用 1m 默认周期；逐帧按蜡烛槽合并，保留跨分钟收尾和开盘；拒绝旧观察；新的 REST 可修复旧 REST 历史且不覆盖真实实时槽。
+- 修改文件：mobile/src/api/{market.ts,marketDetailStream.ts,marketSocketProtocol.ts}；mobile/src/views/{TradeView.vue,MarketDetailView.vue}；mobile/tests/market-detail-stream.test.ts；.trellis/spec/mobile/backend-integration.md。
+- 验证结果：新增 3 个回归先失败后通过；针对性测试 13/13；npm --prefix mobile run release:gate 全部通过（676/676 行为测试、生产/测试类型检查、PWA/Tauri 构建、产物/体积/源码与测试质量门禁）。
+- 后续事项：同任务后端模拟盘口/成交及多周期缓存/接口链路已实现，正在执行独立 MySQL/Mongo/Redis 集成验证；未部署生产。
+
 # 项目进度记录
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。

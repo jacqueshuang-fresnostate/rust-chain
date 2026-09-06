@@ -21,6 +21,7 @@ export class MarketDepthContractError extends TypeError {
   }
 }
 
+export const DEFAULT_MARKET_KLINE_INTERVAL = '1m'
 export const DEFAULT_MARKET_KLINE_LIMIT = 160
 export const MARKET_KLINE_INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const
 

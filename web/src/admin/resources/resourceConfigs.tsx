@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 
+import { MarketStrategyRuntimeStatus } from './actions/marketStrategy/runtime';
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
 import { normalizeTickerSymbol, subscribeMarketTicker, type MarketTickerSnapshot } from '../../api/marketTickerSocket';
 import type { FilterValues, FilterField } from '../../shared/FilterBar';
@@ -34,6 +35,7 @@ const CreateSpotPairAction = lazy(async () => ({ default: (await import('./actio
 const MarketPairRowActions = lazy(async () => ({ default: (await import('./actions/market')).MarketPairRowActions }));
 const SpotOrderRowActions = lazy(async () => ({ default: (await import('./actions/market')).SpotOrderRowActions }));
 const CreateMarketStrategyAction = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).CreateMarketStrategyAction }));
+
 const MarketStrategyRowActions = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).MarketStrategyRowActions }));
 const CreateNewCoinProjectAction = lazy(async () => ({ default: (await import('./actions/newCoins')).CreateNewCoinProjectAction }));
 const NewCoinSubscriptionRowActions = lazy(async () => ({ default: (await import('../actions/NewCoinManualDistribution')).NewCoinSubscriptionRowActions }));
@@ -1256,11 +1258,11 @@ export const resourceConfigs = {
       { key: 'id', title: '策略ID' },
       { key: 'pair_id', title: '交易对ID' },
       { key: 'symbol', title: '交易对' },
-      { key: 'strategy_type', title: '策略类型' },
+      { key: 'runtime_health', source: 'derived', title: '运行诊断', render: (record) => <MarketStrategyRuntimeStatus record={record} /> },
+      { key: 'status', title: '状态', type: 'status' },
       { key: 'start_price', title: '起始价', type: 'amount' },
       { key: 'target_price', title: '目标价', type: 'amount' },
-      { key: 'status', title: '状态', type: 'status' },
-      { key: 'run_status', title: '运行状态', type: 'status' },
+      { key: 'strategy_type', title: '策略类型' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' }
     ]
   },

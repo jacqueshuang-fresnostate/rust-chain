@@ -25,6 +25,7 @@ import {
 } from '@/api/marketDetailStream'
 import {
   MARKET_KLINE_INTERVALS,
+  DEFAULT_MARKET_KLINE_INTERVAL,
   mergeMarketTradeHistory,
   mergeMarketTrades,
   normalizeMarketKlineInterval,
@@ -51,7 +52,7 @@ const marketStore = useMarketStore()
 const marketFavorites = useMarketFavoritesStore()
 const session = useSessionStore()
 const { t } = useI18n()
-const interval = ref<MarketKlineInterval>('15m')
+const interval = ref<MarketKlineInterval>(DEFAULT_MARKET_KLINE_INTERVAL)
 const loading = ref(true)
 const chartLoading = ref(true)
 const klineError = ref(false)

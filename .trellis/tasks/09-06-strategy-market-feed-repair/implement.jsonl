@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/synthetic-market-kline.md", "reason": "Synthetic details, all-interval live candles, retry and persistence contracts"}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "Reuse public market topics and source isolation"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Activation and runtime diagnostic operations"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "Derived diagnostic columns versus API fields"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Shared default interval and live versus REST merge semantics"}
+{"file": ".trellis/tasks/09-06-strategy-market-feed-repair/research.md", "reason": "Confirmed root causes and review findings"}

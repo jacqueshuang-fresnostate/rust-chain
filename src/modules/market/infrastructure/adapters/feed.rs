@@ -880,6 +880,16 @@ impl MarketFeedEvent {
         Self::from_parsed(&ParsedMarketFeed::Ticker(snapshot.clone()))
     }
 
+    /// 从策略盘口构造现有公开 depth 事件；只映射，不写缓存或触发撮合。
+    pub fn from_depth_snapshot(snapshot: &MarketDepthSnapshot) -> AppResult<Self> {
+        Self::from_parsed(&ParsedMarketFeed::Depth(snapshot.clone()))
+    }
+
+    /// 从已校验的模拟逐笔构造公开 trade 事件；来源保持 strategy，不创建真实平台成交。
+    pub fn from_trade_tick(tick: &MarketTradeTick) -> AppResult<Self> {
+        Self::from_parsed(&ParsedMarketFeed::Trade(tick.clone()))
+    }
+
     /// 从已通过领域构造器校验的 K 线快照创建统一行情事件，幂等键继续包含槽位和 OHLCV 载荷摘要。
     /// 本函数无存储或网络副作用；调用方必须在 ingestion 成功后再发布，避免客户端看到未落地数据。
     pub fn from_kline_snapshot(snapshot: &MarketKlineSnapshot) -> AppResult<Self> {

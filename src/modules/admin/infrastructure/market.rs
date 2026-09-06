@@ -1021,6 +1021,8 @@ fn admin_market_strategy_query() -> QueryBuilder<'static, MySql> {
                   runs.last_generated_at,
                   runs.last_kline_open_time,
                   runs.recovery_status,
+                  runs.error_message,
+                  runs.last_tick_at,
                   strategies.created_at
            FROM market_strategies strategies
            INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id
@@ -1055,4 +1057,32 @@ fn map_duplicate_trading_pair_error(error: sqlx::Error) -> AppError {
     } else {
         AppError::Database(error)
     }
+}
+
+/// 启用已有策略前先锁交易对，再由调用方锁策略；与创建入口保持一致的串行化顺序。
+/// pair_id 为不可修改字段，预读仅定位锁，不作为状态校验证据；交易对停用或改为外部源时立即失败。
+pub(crate) async fn lock_strategy_activation_pair_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    strategy_id: u64,
+) -> AppResult<()> {
+    let pair_id: u64 = sqlx::query_scalar("SELECT pair_id FROM market_strategies WHERE id = ?")
+        .bind(strategy_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    ensure_market_strategy_pair_in_tx(tx, pair_id).await?;
+    Ok(())
+}
+
+/// 在已持有交易对行锁的事务中当前读重叠的 active 策略，排除本策略；FOR UPDATE 避免旧事务快照漏掉刚提交的启用。
+/// 半开区间允许前一策略结束即开始下一策略；只检查尚未结束的交叠部分，不让历史配置阻止新的排期。
+pub(crate) async fn load_strategy_activation_conflict_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+    exclude_id: u64,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> AppResult<Option<u64>> {
+    sqlx::query_scalar("SELECT id FROM market_strategies WHERE pair_id = ? AND id <> ? AND status = 'active' AND start_time < ? AND end_time > ? ORDER BY id LIMIT 1 FOR UPDATE")
+        .bind(pair_id).bind(exclude_id).bind(end.naive_utc()).bind(start.naive_utc()).fetch_optional(&mut **tx).await.map_err(AppError::from)
 }

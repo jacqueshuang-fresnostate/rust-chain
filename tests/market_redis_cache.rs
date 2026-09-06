@@ -296,8 +296,12 @@ async fn redis_kline_compare_and_set_rejects_older_slot_and_older_forming_snapsh
         MarketCacheWriteOutcome::Accepted
     );
     assert_eq!(
-        cache.save_kline_if_fresh(newer).await?,
+        cache.save_kline_if_fresh(newer.clone()).await?,
         MarketCacheWriteOutcome::Accepted
+    );
+    assert_eq!(
+        cache.save_kline_if_fresh(newer).await?,
+        MarketCacheWriteOutcome::ReplayedIdentical
     );
     assert_eq!(
         cache.save_kline_if_fresh(equal).await?,
@@ -319,5 +323,91 @@ async fn redis_kline_compare_and_set_rejects_older_slot_and_older_forming_snapsh
     assert_eq!(payload["close"], "15");
     assert!(payload.get("observed_at").is_none());
     let _: usize = connection.del(&[key, sequence_key]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn synthetic_details_are_ticker_fenced_deduplicated_and_bounded() -> Result<(), Box<dyn Error>>
+{
+    use exchange_api::modules::market::{MarketDataProvider, MarketTradeSide, MarketTradeTick};
+    let Some(url) = env_or_skip("REDIS_URL") else {
+        return Ok(());
+    };
+    let manager = redis::aio::ConnectionManager::new(redis::Client::open(url)?).await?;
+    let cache = RedisMarketCache::new(manager.clone());
+    let symbol = format!("SIM{}USDT", &Uuid::now_v7().simple().to_string()[16..24]).to_uppercase();
+    let base = Utc::now();
+    let mut first = None;
+    for second in 0..105 {
+        let now = base + chrono::Duration::seconds(second);
+        let ticker = MarketTickerCacheEntry::new(&symbol, decimal("10"), decimal("60"), now)?;
+        let depth = MarketDepthCacheEntry::new(
+            &symbol,
+            vec![MarketDepthLevel::new(decimal("9.99"), decimal("1"))],
+            vec![MarketDepthLevel::new(decimal("10.01"), decimal("2"))],
+            now,
+        )?;
+        let tick = MarketTradeTick::new(
+            MarketDataProvider::Strategy,
+            &symbol,
+            format!("strategy:v1:{second}"),
+            MarketTradeSide::Sell,
+            decimal("10"),
+            decimal("1"),
+            now,
+        )?;
+        cache.save_ticker_if_fresh(ticker.clone()).await?;
+        assert_eq!(
+            cache
+                .save_synthetic_details(ticker.clone(), depth.clone(), Some(&tick))
+                .await?,
+            (MarketCacheWriteOutcome::Accepted, true)
+        );
+        assert_eq!(
+            cache
+                .save_synthetic_details(ticker.clone(), depth.clone(), Some(&tick))
+                .await?,
+            (MarketCacheWriteOutcome::ReplayedIdentical, false)
+        );
+        let conflicting = MarketTradeTick::new(
+            MarketDataProvider::Strategy,
+            &symbol,
+            tick.trade_id(),
+            MarketTradeSide::Sell,
+            decimal("10"),
+            decimal("2"),
+            now,
+        )?;
+        assert_eq!(
+            cache
+                .save_synthetic_details(ticker.clone(), depth.clone(), Some(&conflicting))
+                .await?,
+            (MarketCacheWriteOutcome::RejectedStale, false),
+            "identical depth must not hide a conflicting trade payload"
+        );
+        if second == 0 {
+            first = Some((ticker, depth, tick));
+        }
+    }
+    let (ticker, depth, tick) = first.unwrap();
+    assert_eq!(
+        cache
+            .save_synthetic_details(ticker, depth, Some(&tick))
+            .await?,
+        (MarketCacheWriteOutcome::RejectedStale, false)
+    );
+    let trades = cache.load_synthetic_trades(&symbol, 100).await?;
+    assert_eq!(trades.len(), 100);
+    assert_eq!(trades[0].trade_id(), "strategy:v1:104");
+    assert_eq!(trades[99].trade_id(), "strategy:v1:5");
+    assert_eq!(cache.load_synthetic_trades(&symbol, 5).await?.len(), 5);
+    let keys = vec![
+        format!("market:ticker:{symbol}"),
+        format!("market:depth:{symbol}"),
+        format!("market:synthetic-trades:{symbol}"),
+        format!("market:synthetic-details:{symbol}"),
+    ];
+    let mut connection = manager;
+    let _: usize = connection.del(keys).await?;
     Ok(())
 }

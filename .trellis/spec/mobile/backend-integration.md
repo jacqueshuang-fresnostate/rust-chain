@@ -2187,3 +2187,20 @@ if (directory.state === 'loaded') {
 - Public project/detail and market reads use the explicit public-request marker, which strips even a stale stored Bearer token and never expires or redirects the session on a public 401. The Zone starts the market cold load only when Trading Opportunities is opened; wallet and four record-directory reads stay behind an authenticated-session guard, so a guest can always remain on the public Zone/Opportunity routes.
 - Records merge subscriptions, distributions, purchases, and unlocks by normalized millisecond `createdAt`, descending with deterministic tie-breakers. Status and type filters are presentation-only; fee payment and release retain the authoritative unlock identifiers, configured fee asset, exact amount, balance validation, and modal focus lifecycle.
 - Source/runtime tests must assert the New Coin card passes `project.logoUrl` to `AssetMark`, keeps the issue-price unit in a non-shrinking slot at 320/390/448px, and preserves zero horizontal overflow. Backend integration tests must prove list/detail return the same project/quote asset metadata from the configured asset rows.
+
+
+## Strategy Chart Reconciliation Addendum
+
+- Interactive Trade and Market Detail chart initialization and `fetchKlines`
+  default use shared `DEFAULT_MARKET_KLINE_INTERVAL = '1m'`. Explicit Markets
+  list 15m sparkline queries are not chart selection defaults and stay unchanged.
+- Per-frame K-line buffering is keyed by normalized open_time, capped at the
+  history limit and flushed ascending. A minute-close and next-minute-open
+  burst must deliver both; same-slot old observed_at is ignored even after a
+  previous render. Socket/interval replacement retains existing session guards.
+- Track actual WS points separately from combined history. Fresh REST may
+  repair old REST-only rows; late REST must never overwrite actual live points.
+- Backend higher forming candles are cache/WS read models, aggregated from
+  existing 1m roots; do not independently fill gaps or generate prices in Vue.
+- Required regression: boundary burst, same-slot out-of-order observation,
+  refreshed historical OHLC, all interactive default controls, release:gate.

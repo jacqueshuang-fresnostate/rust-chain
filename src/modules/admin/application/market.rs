@@ -10,12 +10,13 @@
 use super::*;
 use crate::modules::admin::{
     infrastructure::{
-        load_active_market_strategy_version_from_store, lock_active_market_strategy_version_in_tx,
+        load_active_market_strategy_version_from_store, load_strategy_activation_conflict_in_tx,
+        lock_active_market_strategy_version_in_tx, lock_strategy_activation_pair_in_tx,
     },
     service::{
         market_strategy_generator_response, market_strategy_generator_response_from_snapshot,
         resolve_new_market_strategy_seed, resolve_updated_market_strategy_seed,
-        validate_market_strategy_generator,
+        validate_market_strategy_activation, validate_market_strategy_generator,
     },
 };
 
@@ -901,6 +902,16 @@ pub(crate) async fn create_admin_market_strategy(
         .map(validate_market_strategy_status)
         .transpose()?
         .unwrap_or_else(|| "draft".to_owned());
+    if status == "active" {
+        ensure_strategy_activation_in_tx(
+            &mut tx,
+            request.pair_id,
+            0,
+            request.start_time,
+            request.end_time,
+        )
+        .await?;
+    }
     let strategy_type = optional_string(request.strategy_type.clone()).unwrap();
     let strategy_id = insert_admin_market_strategy_in_tx(
         &mut tx,
@@ -1057,7 +1068,7 @@ pub(crate) async fn update_admin_market_strategy(
 
 /// 同步切换行情策略业务状态和运行状态，并返回更新后的策略快照。
 /// 目标状态仅限 draft/active/paused/disabled；本用例不校验显式审计原因，也不执行额外状态迁移图约束。
-/// 事务先锁策略，再更新主状态、映射后的运行状态、回读并写策略事件及后台审计；运行行缺失或 SQL 失败整体回滚。
+/// 启用先锁交易对再锁策略并校验有效期/重叠；其他状态锁策略。随后同步状态、回读与审计，失败整体回滚。
 /// 相同状态重放仍写事件和审计，提交后由其他运行组件观察数据库变化。
 pub(crate) async fn update_admin_market_strategy_status(
     pool: Option<Pool<MySql>>,
@@ -1070,7 +1081,20 @@ pub(crate) async fn update_admin_market_strategy_status(
 
     // 状态和运行状态一起更新；如果运行检查点缺失，整个状态变更回滚。
     let mut tx = pool.begin().await?;
+    if status == "active" {
+        lock_strategy_activation_pair_in_tx(&mut tx, strategy_id).await?;
+    }
     let before = lock_admin_market_strategy_in_tx(&mut tx, strategy_id).await?;
+    if status == "active" {
+        ensure_strategy_activation_in_tx(
+            &mut tx,
+            before.pair_id,
+            strategy_id,
+            before.start_time,
+            before.end_time,
+        )
+        .await?;
+    }
     update_market_strategy_status_in_tx(&mut tx, strategy_id, &status).await?;
     update_market_strategy_run_status_in_tx(
         &mut tx,
@@ -1091,6 +1115,27 @@ pub(crate) async fn update_admin_market_strategy_status(
     .await?;
     tx.commit().await?;
     Ok(after)
+}
+
+/// 激活使用已持有的交易对锁检查未来有效区间；冲突时尚未修改策略、运行记录、事件或审计。
+async fn ensure_strategy_activation_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+    strategy_id: u64,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> AppResult<()> {
+    let now = Utc::now();
+    validate_market_strategy_activation(end, now)?;
+    if let Some(other_id) =
+        load_strategy_activation_conflict_in_tx(tx, pair_id, strategy_id, start.max(now), end)
+            .await?
+    {
+        return Err(AppError::Conflict(format!(
+            "该交易对在此时段已有启用策略 #{other_id}，请先暂停该策略或调整时间范围"
+        )));
+    }
+    Ok(())
 }
 
 /// 在调用方事务内把一次策略变更同时写进策略事件流和后台审计日志，两处使用同一份前后值快照。

@@ -11,11 +11,11 @@ pub mod adapters;
 pub use cache::{
     MarketCacheError, MarketCacheWriteOutcome, MarketDepthCacheEntry, MarketKlineCacheEntry,
     MarketTickerCacheEntry, RedisMarketCache, market_depth_redis_key, market_kline_redis_key,
-    market_ticker_redis_key,
+    market_synthetic_trades_redis_key, market_ticker_redis_key,
 };
 pub use persistence::kline_collection_name;
 pub(crate) use persistence::{
     add_user_market_favorite, list_active_markets, list_klines, list_recent_trades,
-    list_user_market_favorites, load_cached_depth, load_cached_ticker, market_symbol_is_listed,
-    remove_user_market_favorite,
+    list_user_market_favorites, load_cached_depth, load_cached_kline, load_cached_ticker,
+    market_symbol_is_listed, market_symbol_is_synthetic, remove_user_market_favorite,
 };

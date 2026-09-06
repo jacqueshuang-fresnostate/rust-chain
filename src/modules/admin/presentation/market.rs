@@ -225,6 +225,9 @@ pub(crate) struct AdminMarketStrategyResponse {
     #[serde(default, with = "option_unix_millis")]
     pub(crate) last_kline_open_time: Option<DateTime<Utc>>,
     pub(crate) recovery_status: Option<String>,
+    pub(crate) error_message: Option<String>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) last_tick_at: Option<DateTime<Utc>>,
     #[serde(with = "unix_millis")]
     pub(crate) created_at: DateTime<Utc>,
 }

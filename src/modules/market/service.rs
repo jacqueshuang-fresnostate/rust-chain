@@ -40,3 +40,35 @@ pub(crate) fn fallback_markets() -> Vec<MarketResponse> {
 pub(crate) fn fallback_market_symbol_is_listed(symbol: &str) -> bool {
     matches!(symbol, "BTCUSDT" | "NEWUSDT")
 }
+
+/// 把 Redis 中当前 UTC 高周期的形成中快照合并到升序历史；过期槽、错周期、越界时间一律忽略。
+/// 只影响本次读模型，不写 Mongo；同槽已有正式历史优先保留，结果按时间排序并保留最新 limit 根。
+pub(crate) fn merge_current_kline(
+    rows: &mut Vec<super::presentation::KlineResponse>,
+    current: super::presentation::KlineResponse,
+    query: &super::KlineQuery,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    let minutes = match query.interval.as_str() {
+        "5m" => 5,
+        "15m" => 15,
+        "1h" => 60,
+        "4h" => 240,
+        "1d" => 1440,
+        _ => return,
+    };
+    if current.interval != query.interval
+        || current.open_time.timestamp().rem_euclid(minutes * 60) != 0
+        || current.open_time > now
+        || current.open_time + chrono::TimeDelta::minutes(minutes) <= now
+        || query.start.is_some_and(|start| current.open_time < start)
+        || query.end.is_some_and(|end| current.open_time > end)
+        || rows.iter().any(|row| row.open_time == current.open_time)
+    {
+        return;
+    }
+    rows.push(current);
+    rows.sort_by_key(|row| row.open_time);
+    let excess = rows.len().saturating_sub(query.limit as usize);
+    rows.drain(..excess);
+}

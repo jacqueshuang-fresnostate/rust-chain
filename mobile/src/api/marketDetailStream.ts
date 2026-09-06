@@ -164,7 +164,8 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
   let pendingDepth: { bids: OrderBookLevel[]; asks: OrderBookLevel[] } | null = null
   let klineFrame: unknown = null
   let klineFrameToken: object | null = null
-  let pendingKline: KlinePoint | null = null
+  const pendingKlines = new Map<number, KlinePoint>()
+  const klineObservations = new Map<number, number>()
 
   const clearHeartbeat = (): void => {
     if (heartbeatTimer === null) return
@@ -187,7 +188,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
   }
 
   const clearPendingKline = (): void => {
-    pendingKline = null
+    pendingKlines.clear()
     klineFrameToken = null
     if (klineFrame === null) return
     scheduler.cancelFrame(klineFrame)
@@ -299,7 +300,15 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       } else if (frame.type === 'trade' && channels.has('trade')) {
         options.onTrade(frame.trade)
       } else if (frame.type === 'kline' && channels.has('kline') && frame.interval === interval) {
-        pendingKline = frame.point
+        const previousObservation = klineObservations.get(frame.point.time)
+        if (previousObservation !== undefined && frame.observedAt < previousObservation) return
+        klineObservations.set(frame.point.time, frame.observedAt)
+        pendingKlines.set(frame.point.time, frame.point)
+        // 按槽合并而非按帧丢弃：收上一根和开下一根经常在同一帧抵达。
+        for (const time of [...klineObservations.keys()].sort((a, b) => b - a).slice(DEFAULT_MARKET_KLINE_LIMIT)) {
+          klineObservations.delete(time)
+          pendingKlines.delete(time)
+        }
         if (klineFrameToken !== null) return
         const frameToken = {}
         klineFrameToken = frameToken
@@ -307,10 +316,12 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
           if (klineFrameToken !== frameToken) return
           klineFrameToken = null
           klineFrame = null
-          const point = pendingKline
-          pendingKline = null
-          if (!point || !active || socket !== next || disconnected) return
-          options.onKline(point)
+          const batch = [...pendingKlines.values()].sort((a, b) => a.time - b.time)
+          pendingKlines.clear()
+          for (const point of batch) {
+            if (!active || socket !== next || disconnected) return
+            options.onKline(point)
+          }
         })
         if (klineFrameToken === frameToken) klineFrame = scheduledFrame
       }
@@ -351,6 +362,7 @@ export function createMarketDetailStreamSession(
   let currentContext: MarketDetailStreamContext | null = null
   let stopStream: (() => void) | null = null
   let points: KlinePoint[] = []
+  let livePoints: KlinePoint[] = []
 
   const isCurrent = (
     context: MarketDetailStreamContext,
@@ -402,6 +414,7 @@ export function createMarketDetailStreamSession(
     klineRequestGeneration += 1
     currentContext = context
     points = []
+    livePoints = []
 
     if (!context.symbol || !context.interval) return context
     try {
@@ -423,6 +436,7 @@ export function createMarketDetailStreamSession(
         onKline: (point) => {
           if (!isCurrent(context)) return
           context.klineReceived = true
+          livePoints = mergeMarketKlines([point], livePoints, klineLimit)
           points = mergeMarketKlines([point], points, klineLimit)
           options.onKlines(context, [...points])
         },
@@ -452,7 +466,7 @@ export function createMarketDetailStreamSession(
     restPoints: readonly KlinePoint[],
   ): KlinePoint[] | null => {
     if (!isCurrentKlineRequest(request)) return null
-    points = mergeMarketKlines(points, restPoints, klineLimit)
+    points = mergeMarketKlines(livePoints, mergeMarketKlines(restPoints, points, klineLimit), klineLimit)
     return [...points]
   }
 

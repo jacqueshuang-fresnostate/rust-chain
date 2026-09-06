@@ -2738,3 +2738,16 @@ body.admin-table-column-resizing * {
     transition: none;
   }
 }
+
+
+.admin-market-strategy-runtime {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 240px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.admin-market-strategy-runtime small {
+  color: var(--semi-color-text-2);
+}

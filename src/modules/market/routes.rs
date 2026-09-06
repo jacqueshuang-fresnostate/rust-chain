@@ -109,15 +109,15 @@ async fn get_depth(
     ))
 }
 
-/// 按成交时间倒序返回该交易对的平台现货成交，条数由 `limit` 收敛到 1 至 100，缺省 50。
-/// 数据取自 MySQL 成交表而非外部逐笔流，因此只反映本平台撮合结果，不含供应商行情中的第三方成交。
+/// 按来源返回策略展示逐笔或外部交易对的平台现货成交，条数由 limit 收敛到 1～100，缺省 50。
+/// 来源选择交给应用层；模拟成交带 strategy 标记，不写入或冒充平台现货成交表。
 async fn list_trades(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
     Query(query): Query<TradesQueryParams>,
 ) -> AppResult<Json<TradesResponse>> {
     Ok(Json(
-        list_market_trades(state.mysql.clone(), &symbol, query).await?,
+        list_market_trades(state.mysql.clone(), state.redis.clone(), &symbol, query).await?,
     ))
 }
 
@@ -129,6 +129,13 @@ async fn list_klines(
     Query(query): Query<KlineQueryParams>,
 ) -> AppResult<Json<Vec<KlineResponse>>> {
     Ok(Json(
-        list_market_klines(state.mysql.clone(), state.mongo.clone(), &symbol, query).await?,
+        list_market_klines(
+            state.mysql.clone(),
+            state.mongo.clone(),
+            state.redis.clone(),
+            &symbol,
+            query,
+        )
+        .await?,
     ))
 }

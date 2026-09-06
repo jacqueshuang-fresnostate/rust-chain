@@ -900,3 +900,227 @@ async fn market_klines_route_returns_clear_error_without_mongo() {
             .contains("mongo database is not configured")
     );
 }
+
+#[tokio::test]
+async fn strategy_worker_pushes_book_trades_all_intervals_and_rest_returns_latest_roots()
+-> Result<(), Box<dyn Error>> {
+    use chrono::Duration;
+    use exchange_api::{
+        modules::{
+            events::{EventBroadcastHub, WebSocketChannel},
+            market::{
+                MarketKlineValues, RedisMarketCache, SyntheticMarketConfig, ValidatedMarketSymbol,
+                adapters::MarketIngestionService,
+            },
+        },
+        workers::synthetic_market::run_once_with_dependencies,
+    };
+    use mongodb::{
+        Client,
+        bson::{DateTime as BsonDateTime, Document, doc},
+    };
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    let (Some(redis_url), Some(mongo_uri)) = (env_or_skip("REDIS_URL"), env_or_skip("MONGODB_URI"))
+    else {
+        return Ok(());
+    };
+    let manager = redis::aio::ConnectionManager::new(redis::Client::open(redis_url)?).await?;
+    let database = Client::with_uri_str(mongo_uri)
+        .await?
+        .database(&std::env::var("MONGODB_DATABASE")?);
+    let symbol = unique_symbol("SYN");
+    let base = create_market_asset(&pool, &unique_symbol("B")).await?;
+    let quote = create_market_asset(&pool, &unique_symbol("Q")).await?;
+    let pair = sqlx::query("INSERT INTO trading_pairs (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type) VALUES (?, ?, ?, 8, 8, 1, 'active', 'strategy')")
+        .bind(base).bind(quote).bind(&symbol).execute(&pool).await?.last_insert_id();
+    let now = Utc::now();
+    let open = Utc
+        .timestamp_opt(now.timestamp().div_euclid(60) * 60, 0)
+        .unwrap();
+    let start = open - Duration::minutes(160);
+    let end = open + Duration::hours(25);
+    let config = SyntheticMarketConfig::new(SyntheticMarketConfig {
+        symbol: symbol.clone(),
+        seed: "integration-seed".into(),
+        version: 1,
+        price_precision: 8,
+        start_time: start,
+        end_time: end,
+        start_price: decimal("10"),
+        target_price: decimal("20"),
+        volatility: decimal("0.01"),
+        volume_min: decimal("60"),
+        volume_max: decimal("120"),
+        generator: Default::default(),
+        nodes: vec![],
+    })?;
+    let strategy = sqlx::query("INSERT INTO market_strategies (pair_id, strategy_type, start_price, target_price, start_time, end_time, volatility, volume_min, volume_max, status) VALUES (?, 'price_path', 10, 20, ?, ?, 0.01, 60, 120, 'active')")
+        .bind(pair).bind(start.naive_utc()).bind(end.naive_utc()).execute(&pool).await?.last_insert_id();
+    sqlx::query("INSERT INTO strategy_versions (strategy_id, version, effective_time, config_json, seed) VALUES (?, 1, ?, JSON_OBJECT(), 'integration-seed')")
+        .bind(strategy).bind(start.naive_utc()).execute(&pool).await?;
+    sqlx::query("INSERT INTO strategy_runs (strategy_id, active_version, run_status, recovery_status) VALUES (?, 1, 'running', 'live')")
+        .bind(strategy).execute(&pool).await?;
+    let normalized = ValidatedMarketSymbol::from_raw(&symbol)?;
+    exchange_api::infra::mongo::ensure_kline_indexes(&database, &normalized).await?;
+    let collection = database.collection::<Document>(
+        &exchange_api::infra::mongo::kline_collection_name(&normalized),
+    );
+    let mut documents = Vec::new();
+    for minute in 0..160 {
+        let candle = config.generate_1m(start + Duration::minutes(minute))?;
+        let MarketKlineValues {
+            open,
+            high,
+            low,
+            close,
+            volume,
+        } = candle.values;
+        documents.push(doc! { "interval": "1m", "open_time": BsonDateTime::from_millis(candle.open_time.timestamp_millis()),
+            "open": open.to_string(), "high": high.to_string(), "low": low.to_string(), "close": close.to_string(), "volume": volume.to_string(), "source": "strategy" });
+    }
+    collection.insert_many(documents).await?;
+    let hub = EventBroadcastHub::new(32);
+    let mut receivers = Vec::new();
+    for channel in ["ticker", "depth", "trade"] {
+        receivers.push((
+            channel.to_owned(),
+            hub.subscribe(&WebSocketChannel::public(channel, &symbol)?),
+        ));
+    }
+    for interval in ["1m", "5m", "15m", "1h", "4h", "1d"] {
+        receivers.push((
+            interval.to_owned(),
+            hub.subscribe(&WebSocketChannel::public(
+                "kline",
+                format!("{symbol}_{interval}"),
+            )?),
+        ));
+    }
+    let ingestion =
+        MarketIngestionService::new(RedisMarketCache::new(manager.clone()), database.clone())
+            .with_mysql(Some(pool.clone()))
+            .with_broadcast_hub(Some(hub));
+    let owner = format!("fixture-{symbol}");
+    let observed = Utc::now();
+    let summary =
+        run_once_with_dependencies(&pool, &database, &ingestion, observed, 100, &owner).await?;
+    let run_error: Option<String> =
+        sqlx::query_scalar("SELECT error_message FROM strategy_runs WHERE strategy_id = ?")
+            .bind(strategy)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(run_error, None, "owned strategy failed: {summary:?}");
+    assert!(summary.published >= 1);
+    let checkpoint: chrono::DateTime<Utc> =
+        sqlx::query_scalar("SELECT last_tick_at FROM strategy_runs WHERE strategy_id = ?")
+            .bind(strategy)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        checkpoint.timestamp_subsec_micros() % 1000,
+        0,
+        "checkpoint and archive share millisecond precision"
+    );
+    let mut frames = std::collections::HashMap::new();
+    for (channel, receiver) in &mut receivers {
+        let message =
+            tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv()).await??;
+        let payload: serde_json::Value = serde_json::from_str(message.payload())?;
+        assert_eq!(payload["provider"], "strategy");
+        frames.insert(channel.clone(), payload);
+    }
+    let price = frames["ticker"]["last_price"].clone();
+    assert_eq!(frames["trade"]["price"], price);
+    for interval in ["1m", "5m", "15m", "1h", "4h", "1d"] {
+        assert_eq!(frames[interval]["close"], price);
+    }
+    assert_eq!(frames["depth"]["bids"].as_array().unwrap().len(), 20);
+    assert_eq!(
+        collection
+            .count_documents(doc! { "interval": { "$ne": "1m" } })
+            .await?,
+        0,
+        "forming aggregates are not closed history"
+    );
+    let state = AppState::new(test_settings())
+        .with_mysql(pool.clone())
+        .with_redis(manager.clone())
+        .with_mongo(database.clone());
+    let app = routes::routes().with_state(state);
+    for endpoint in [
+        "depth",
+        "trades?limit=16",
+        "klines?interval=1m&limit=160",
+        "klines?interval=5m",
+        "klines?interval=15m",
+        "klines?interval=1h",
+        "klines?interval=4h",
+        "klines?interval=1d",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/markets/{symbol}/{endpoint}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK, "{endpoint}");
+        let body: serde_json::Value =
+            serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1_000_000).await?)?;
+        if endpoint.starts_with("klines") {
+            let rows = body.as_array().unwrap();
+            assert_eq!(rows.last().unwrap()["close"], price);
+            if endpoint.contains("interval=1m") {
+                assert_eq!(rows.len(), 100);
+                assert_eq!(rows.last().unwrap()["open_time"], frames["1m"]["open_time"]);
+                assert!(
+                    rows.windows(2)
+                        .all(|rows| rows[0]["open_time"].as_i64() < rows[1]["open_time"].as_i64())
+                );
+            } else {
+                assert_eq!(rows.len(), 1);
+            }
+        } else if endpoint.starts_with("trades") {
+            assert_eq!(body["trades"][0]["provider"], "strategy");
+            assert_eq!(body["trades"][0]["id"], frames["trade"]["trade_id"]);
+        } else {
+            assert_eq!(body["bids"].as_array().unwrap().len(), 20);
+        }
+    }
+    // Redis 已写、Mongo 丢失的同时间重放须修复当前根，但模拟逐笔不重复追加。
+    collection.delete_one(doc! { "interval": "1m", "open_time": BsonDateTime::from_millis(frames["1m"]["open_time"].as_i64().unwrap()) }).await?;
+    let replay =
+        run_once_with_dependencies(&pool, &database, &ingestion, observed, 100, &owner).await?;
+    assert!(replay.published >= 1);
+    assert_eq!(
+        RedisMarketCache::new(manager.clone())
+            .load_synthetic_trades(&symbol, 100)
+            .await?
+            .len(),
+        1
+    );
+    assert_eq!(
+        collection
+            .count_documents(doc! { "interval": "1m" })
+            .await?,
+        161
+    );
+    let actual_trades: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM spot_trades WHERE pair_id = ?")
+            .bind(pair)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        actual_trades, 0,
+        "simulation must never manufacture real fills"
+    );
+    sqlx::query("UPDATE market_strategies SET status = 'paused' WHERE id = ?")
+        .bind(strategy)
+        .execute(&pool)
+        .await?;
+    collection.drop().await?;
+    Ok(())
+}

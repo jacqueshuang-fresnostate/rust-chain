@@ -24,6 +24,7 @@ import {
   marketStrategyBasePayload,
   nextMarketStrategyStatus
 } from './model';
+import { marketStrategyActivationError } from './runtime';
 import { useMarketStrategyEditor } from './useMarketStrategyEditor';
 
 export function MarketStrategyRowActions({
@@ -36,6 +37,7 @@ export function MarketStrategyRowActions({
   const strategyId = recordString(record, 'id');
   const nextStatus = nextMarketStrategyStatus(recordString(record, 'status'));
   const actionText = toggleActionText(nextStatus);
+  const activationError = nextStatus === 'active' ? marketStrategyActivationError(record) : null;
   const editor = useMarketStrategyEditor(record, strategyId);
 
   return (
@@ -124,8 +126,8 @@ export function MarketStrategyRowActions({
         <ConfirmAction
           key="toggle"
           actionText={actionText}
-          disabled={!strategyId}
-          title={`${actionText}行情策略`}
+          disabled={!strategyId || Boolean(activationError)}
+          title={activationError ?? `${actionText}行情策略`}
           onConfirm={async (reason) => {
             await submitAction(`${actionText}行情策略`, () =>
               apiRequest(`/admin/api/v1/market-strategies/${strategyId}/status`, {

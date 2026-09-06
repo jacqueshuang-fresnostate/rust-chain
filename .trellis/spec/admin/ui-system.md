@@ -931,3 +931,82 @@ await runRecoverableFinancialCommand({
   request: (key) => recharge({ amount, idempotency_key: key }),
 })
 ```
+
+
+## Strategy Activation and Runtime Diagnostics (2026-09-06)
+
+### 1. Scope / Trigger
+
+Apply when changing strategy activation, strategy list/detail DTOs or operational
+health UI. Configuration `active` is intent, not proof of a successful market round.
+
+### 2. Signatures
+
+- Create `/admin/api/v1/market-strategies` with `status=active` and
+  PATCH `/admin/api/v1/market-strategies/:id/status` share activation guards.
+- List and detail expose nullable `error_message` and Unix-millisecond `last_tick_at`
+  alongside `run_status`, `recovery_status` and start/end timestamps.
+- `marketStrategyRuntime(record, now)` derives health; `runtime_health` is a
+  `source: derived` column, never a mandatory API key.
+
+### 3. Contracts
+
+- Activating an ended interval (`end_time <= now`) fails before mutation. Historical
+  drafts, configuration editing, preview and manual recovery remain supported.
+- Serialize activation by locking the eligible active strategy/internal trading pair
+  before the strategy. Creation follows the same order. The immutable pair ID may be
+  pre-read for locating the lock, but current reads own all validation evidence.
+- Reject another active strategy whose half-open interval overlaps the new future
+  effective interval `[max(start_time, now), end_time)`. Use a locking/current read
+  after acquiring the pair lock; a repeatable-read snapshot must not miss a concurrently
+  committed activation. Adjacent schedules and reactivation of the same row are allowed.
+- Activation revalidates the trading pair's enabled/source state. Failure leaves
+  strategy/run status, events and audit unchanged.
+- UI exposes pending start, ended, missing run, actual worker error, inconsistent run,
+  pending first successful round, delayed (>15 seconds) and successful health. Never
+  use initialized `last_generated_at` or `active` alone to claim a live feed.
+- Health is explicitly labelled `加载时`: it describes the loaded API row, not an
+  ongoing poll. Refresh replaces the row; do not age an unrefreshed healthy snapshot
+  into a false outage. Put diagnostics before secondary price/type columns.
+- Expired inactive rows show why activation is disabled and keep editing available.
+  A stale browser clock/row cannot bypass the authoritative backend guard.
+- Explain that configured volume is per-minute cumulative volume; zero creates no
+  synthetic print. Synthetic book/trades are display data, not user fills.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Expired active create/status request | Chinese validation error; no partial writes |
+| Concurrent overlapping activation | Exactly one success, other conflict |
+| Adjacent half-open schedules | Both accepted |
+| Disabled/external pair at activation | Reject even if the old draft exists |
+| Active without last_tick_at | Pending first market round, never healthy |
+| Real worker error | Show backend error and last real push time |
+| Unrefreshed page | Retain explicitly labelled loaded-snapshot diagnosis |
+| Lazy action module still loading | Tests await the actual action, not just page title |
+
+### 5. Good / Base / Bad Cases
+
+Good: a draft can preserve last month's configuration but must extend its interval
+before activation. Two concurrent operators cannot turn on conflicting strategies.
+Base: a future active strategy shows `待开始` until its configured time.
+Bad: list says `启用` therefore claims normal market delivery, hides run errors,
+or obtains overlap evidence before waiting for the pair lock.
+
+### 6. Tests Required
+
+- `admin_market_strategy_activation_guards_expiry_overlap_and_exposes_runtime_errors`
+  uses real MySQL to verify expiry, concurrent overlap, adjacency, disabled pair,
+  error/tick DTO fields and rollback.
+- `runtime.test.tsx` covers all diagnostic branches, exact expiry/15-second boundaries,
+  activation guards and rendered error/time evidence.
+- Resource/action tests await lazy-loaded controls. Run the full Admin quality gate
+  and inspect 1728/1280px actual hit targets, expired controls and the edit SideSheet.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: SELECT overlap before lock; active => healthy; hide expired action without explanation.
+Correct: pair lock + current read; error/last_tick evidence; actionable expiry message.
+```

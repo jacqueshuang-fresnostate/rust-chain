@@ -2,7 +2,7 @@
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
 //! 行情用例遵循同一条链路：先规范化交易对，再确认已上架，最后按数据种类分派到 MySQL、Redis 或 Mongo。
-//! 最新价与盘口只读行情摄取写入的 Redis 快照，历史 K 线只读 Mongo，成交与用户自选只读写 MySQL。
+//! 最新价、盘口与策略逐笔读 Redis；K 线合并 Mongo 历史与当前形成中高周期缓存；外部市场平台成交读 MySQL。
 //! 本层不发布 WebSocket 事件，也不做跨存储事务；依赖缺失时按内部错误失败，绝不伪造价格。
 
 use crate::{
@@ -104,11 +104,12 @@ pub(crate) async fn get_market_depth(
     infrastructure::load_cached_depth(redis, symbol.as_str()).await
 }
 
-/// 校验交易对已上架后从 MySQL 读取现货成交，按成交时间与主键倒序返回 1～100 条。
+/// 校验交易对后按来源读取最近 1～100 条成交：策略市场读独立模拟队列，外部市场保持 MySQL 平台现货成交。
 /// 上架校验优先查 `trading_pairs`，MySQL 缺席时退回内置兜底目录，但真正取成交仍要求连接池存在，否则返回内部错误。
-/// 条数缺省 50 并夹紧到 1 至 100；返回的是本平台撮合成交，不含供应商逐笔流，也不读取行情缓存。
+/// 条数缺省 50 并夹紧到 1 至 100；策略结果带 provider 标记，不混合或制造真实 spot_trades。
 pub(crate) async fn list_market_trades(
     mysql: Option<Pool<MySql>>,
+    redis: Option<ConnectionManager>,
     raw_symbol: &str,
     query: TradesQueryParams,
 ) -> AppResult<TradesResponse> {
@@ -117,6 +118,23 @@ pub(crate) async fn list_market_trades(
     let pool = mysql.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for market trade routes".to_owned())
     })?;
+    if infrastructure::market_symbol_is_synthetic(&pool, symbol.as_str()).await? {
+        let redis = redis.ok_or_else(|| {
+            AppError::Internal("redis is required for synthetic market trades".into())
+        })?;
+        let ticks = infrastructure::RedisMarketCache::new(redis)
+            .load_synthetic_trades(symbol.as_str(), route_limit(query.limit))
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!("synthetic trades cache failed: {error}"))
+            })?;
+        return Ok(TradesResponse {
+            trades: ticks
+                .into_iter()
+                .map(super::presentation::TradeResponse::from_synthetic_tick)
+                .collect(),
+        });
+    }
     let trades =
         infrastructure::list_recent_trades(&pool, symbol.as_str(), route_limit(query.limit))
             .await?;
@@ -124,12 +142,13 @@ pub(crate) async fn list_market_trades(
     Ok(TradesResponse { trades })
 }
 
-/// 校验交易对及周期后，从该交易对的 Mongo 集合按开盘时间升序读取最多 100 根 K 线。
-/// `start`/`end` 使用闭区间过滤；Mongo 未配置、查询或反序列化失败时返回错误，不合成蜡烛。
+/// 校验交易对及周期后从 Mongo 选取最新最多 100 根并升序返回；策略高周期另外合并当前 Redis 形成中槽。
+/// `start`/`end` 使用闭区间过滤；缓存过期槽不当作历史，存储失败返回错误，不合成缺失分钟。
 /// 条数缺省 100 并夹紧到 1 至 100；周期不在支持白名单内返回校验错误，起止时间可同时省略表示不限范围。
 pub(crate) async fn list_market_klines(
     mysql: Option<Pool<MySql>>,
     mongo: Option<Database>,
+    redis: Option<ConnectionManager>,
     raw_symbol: &str,
     query: KlineQueryParams,
 ) -> AppResult<Vec<KlineResponse>> {
@@ -141,7 +160,16 @@ pub(crate) async fn list_market_klines(
         AppError::Internal("mongo database is not configured for market kline routes".to_owned())
     })?;
 
-    infrastructure::list_klines(database, &symbol, query).await
+    let mut rows = infrastructure::list_klines(database, &symbol, query.clone()).await?;
+    if let (Some(pool), Some(redis)) = (mysql.as_ref(), redis)
+        && query.interval != "1m"
+        && infrastructure::market_symbol_is_synthetic(pool, symbol.as_str()).await?
+        && let Some(current) =
+            infrastructure::load_cached_kline(redis, symbol.as_str(), &query.interval).await?
+    {
+        super::service::merge_current_kline(&mut rows, current, &query, chrono::Utc::now());
+    }
+    Ok(rows)
 }
 
 /// 在读取任何行情之前确认交易对已上架：有 MySQL 时查 active 交易对，否则退回内置兜底目录判断。

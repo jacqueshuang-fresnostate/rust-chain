@@ -78,7 +78,7 @@ pub(crate) struct KlineQueryParams {
     pub(crate) limit: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct KlineResponse {
     pub(crate) symbol: String,
     pub(crate) interval: String,
@@ -133,6 +133,8 @@ pub(crate) struct TradesResponse {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct TradeResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) provider: Option<String>,
     pub(crate) id: String,
     pub(crate) symbol: String,
     pub(crate) price: String,
@@ -220,11 +222,29 @@ impl KlineResponse {
 }
 
 impl TradeResponse {
+    /// 映射策略展示逐笔为公共成交响应，保留来源、稳定编号及真实模拟方向；不冒充 spot_trades 的记录。
+    pub(crate) fn from_synthetic_tick(tick: crate::modules::market::MarketTradeTick) -> Self {
+        Self {
+            provider: Some("strategy".into()),
+            id: tick.trade_id().into(),
+            symbol: tick.symbol().into(),
+            price: tick.price().to_string(),
+            amount: tick.quantity().to_string(),
+            direction: match tick.side() {
+                crate::modules::market::MarketTradeSide::Buy => "BUY",
+                crate::modules::market::MarketTradeSide::Sell => "SELL",
+            }
+            .into(),
+            time: tick.traded_at(),
+        }
+    }
+
     /// 把一条平台现货成交记录映射为公开成交项，成交 ID 转为字符串，价格与数量按十进制原样输出。
     /// 交易对先尝试规范化为大写无分隔符形式，规范化失败时退回数据库原值，不让单条脏数据拖垮整个响应。
     /// 方向字段恒为 BUY，说明该来源尚未区分主动买卖方向，前端不能据此展示真实的成交方向。
     pub(crate) fn from_record(row: crate::modules::market::repository::SpotTradeRecord) -> Self {
         Self {
+            provider: None,
             id: row.id.to_string(),
             symbol: ValidatedMarketSymbol::from_raw(&row.symbol)
                 .map(|symbol| symbol.as_str().to_owned())

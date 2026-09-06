@@ -9,8 +9,8 @@
   generator or realtime worker, market ingestion, K-line aggregation, admin
   strategy APIs, or manual K-line recovery.
 - This feature owns synthetic ticker/K-line production for active strategy
-  pairs. It does not create L2 depth or synthetic trades, and it does not
-  change the spot-order reservation and settlement contracts.
+  pairs, including display-only synthetic depth and recent trade prints. It does
+  not change the spot-order reservation and settlement contracts or create real fills.
 - Realtime publication and historical recovery are deliberately asymmetric:
   realtime uses the existing Redis/Mongo/WebSocket ingestion path, while
   manual recovery is an administrator-confirmed Mongo history operation.
@@ -252,7 +252,7 @@ admin-authenticated.
 - Deterministic closed `1m` candles are the sole history authority.
   `5m`, `15m`, `1h`, `4h`, and `1d` must never run independent random
   generation.
-- A higher interval consumes exactly one complete UTC-aligned, ascending,
+- A **closed historical** higher interval consumes exactly one complete UTC-aligned, ascending,
   continuous 1m window. Aggregate values are first open, maximum high, minimum
   low, last close, and sum of volume. A missing, unaligned, invalid, or
   open/close-discontinuous window is rejected rather than partially published.
@@ -273,7 +273,8 @@ admin-authenticated.
   when the lease is absent/expired or already owned by the caller and the
   expected `active_version` is still current. At most one owner publishes a
   strategy at a time.
-- The worker generates only `floor_utc_minute(now)`. It never loops from
+- The worker generates only the root at `floor_utc_minute(now)` and derives live
+  higher-interval snapshots from existing roots plus that root. It never loops from
   `last_kline_open_time` or `last_generated_at` toward the present. On restart
   it publishes the current forming minute and leaves every stopped minute as a
   detectable gap.
@@ -285,8 +286,9 @@ admin-authenticated.
   then writes any online minute close/aggregate and the current forming K-line,
   and advances the checkpoint last. Ticker ingestion locks and validates the
   MySQL lease/version fence and commits the append-only event-time archive
-  before Redis CAS, financial triggers, or broadcast. K-line ingestion writes
-  Redis then Mongo and publishes only after storage succeeds. There is no new
+  before Redis CAS, financial triggers, or broadcast. Root/closed K-line ingestion writes
+  Redis then Mongo and publishes only after storage succeeds; forming higher
+  intervals are Redis/WS-only until a complete window can close. There is no new
   cache or WebSocket protocol.
 - Ticker `last_price` equals the forming 1m close from the same plan. The 24h
   open/high/low/volume/change values combine the current forming candle with
@@ -403,7 +405,7 @@ admin-authenticated.
 - Bad: let manual recovery call `MarketIngestionService`; this can overwrite
   live Redis data, emit historical WebSocket updates, trigger spot orders, and
   move the checkpoint backward.
-- Bad: independently generate a 15m candle or aggregate a partial 1m window;
+- Bad: independently generate a 15m candle or persist a partial 1m window as closed history;
   higher intervals would disagree with public 1m history.
 - Bad: decode a Redis Lua `return 0/1` as an optional/string response; Redis
   returns an integer and a mismatched response type can fail the first normal
@@ -750,3 +752,99 @@ event_key = SHA-256(source + symbol + observed_at + normalized price + generatio
 - Cover normal archive, exact duplicate replay, same-time conflict, expired lease, old version, and deterministic event identity.
 - Inject post-archive Redis failure and prove exact retry keeps one archive row and repairs Redis; expired/old/future provenance must leave no Redis ticker.
 - Assert spot/margin triggers and WebSocket broadcast are not called before a successful archive.
+
+
+## Scenario: Live Strategy Book, Prints and All-Timeframe Charts
+
+### 1. Scope / Trigger
+
+Applies to strategy/internal realtime feeds, public chart history and mobile
+chart sessions. Historical recovery remains explicitly admin-only.
+
+### 2. Signatures
+
+- `synthetic_realtime::build_synthetic_market_details(strategy_id, config, qty_precision, current_1m)`
+  returns a strategy depth snapshot and an optional trade tick.
+- `build_forming_aggregate(current_1m, interval, historical_roots)` produces
+  `5m/15m/1h/4h/1d` using actual roots in the current UTC bucket.
+- Existing `/markets/:symbol/{depth,trades,klines}` and WS topics remain stable.
+- Redis `market:synthetic-trades:{SYMBOL}` is a newest-first list capped at 100;
+  `market:synthetic-details:{SYMBOL}` is the exact replay marker.
+- Synthetic trade REST rows add `provider: "strategy"`; their ID matches WS
+  `trade_id = strategy:{strategy_id}:v{version}:{utc_second}`.
+
+### 3. Contracts
+
+- Depth has at most 20 levels per side, strictly ordered, positive, distinct,
+  and separated around the authoritative ticker price. Near the minimum price
+  unit the bid side may contain fewer levels or be empty. Quantities respect
+  the pair quantity precision. Seed/version/symbol/second deterministically
+  vary resting sizes; no frontend randomness is used.
+- Trade price equals ticker and current 1m close. Quantity is the difference
+  of adjacent deterministic per-second cumulative volumes, not the full minute
+  volume; all 60 observations sum to final volume exactly. Zero volume emits
+  no trade. Restart does not synthesize missed seconds into the trade queue.
+- Details publish only after ticker archive/lease validation and current 1m
+  persistence. Redis Lua requires the exact already-accepted ticker payload,
+  atomically writes depth/history, deduplicates trade IDs and rejects stale
+  payloads. Only a newly appended trade is broadcast; this path never uses
+  ordinary depth's financial trigger and never writes spot_trades or ledgers.
+- REST selects the synthetic queue only for explicit strategy/internal pairs;
+  external pairs retain the existing real spot-trade query.
+- Forming higher intervals aggregate available stored roots plus current 1m,
+  deduplicate by open_time, ignore future/out-of-bucket roots and never
+  fabricate missing roots. Redis/WS publication is immediate, even during the
+  first minute. These partial windows are **not Mongo closed history**.
+- Strict completed-window aggregation remains unchanged. REST merges only a
+  current, aligned, in-range cached higher candle; an expired cache never
+  becomes history. Mongo queries select newest N descending then return them
+  ascending, preventing request limits from truncating the latest candles.
+- Worker observations, ticker archive, Redis/WS and checkpoints all use
+  millisecond precision; a microsecond checkpoint must not reject an identical
+  millisecond event retry.
+- Equal-time byte-identical K-line Redis writes return ReplayedIdentical so
+  a Redis-success/Mongo-failure retry repairs the same Mongo slot. Equal-time
+  different data and older observations remain rejected.
+- Mobile interactive chart defaults share `DEFAULT_MARKET_KLINE_INTERVAL=1m`.
+  RAF coalesces per open_time, not across all candle slots; older observed_at
+  cannot undo a final update. Only actual WS candles override later REST;
+  previous REST-only candles remain repairable by a fresh history response.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| No current ticker / ticker superseded | Reject details; no queue or depth write |
+| Duplicate trade ID, same payload | No extra print or trade broadcast |
+| Duplicate ID, conflicting payload | Reject |
+| Zero minute volume | No synthetic print; positive resting depth remains possible |
+| Missing historical roots | Live chart only uses existing roots; no closed higher record |
+| Cache outside current bucket/query | Exclude from REST history |
+| Close-previous/open-next in one frame | Deliver both slots in time order |
+| Late REST overlaps WS | WS wins only on actual live slots |
+
+### 5. Good / Base / Bad Cases
+
+Good: a new strategy immediately updates all intervals and book/trades; the
+15m candle forms from its one current root while no false 15m history is stored.
+Base: a restarted worker resumes only now; historical gaps stay detectable.
+Bad: insert display trades into spot_trades, multiply whole-minute volume by
+60, retain only one pending candle, or query oldest 100 of a 160-minute range.
+
+### 6. Tests Required
+
+- `tests/synthetic_market_details.rs`: deterministic replay, exact minute volume,
+  positive non-crossed depth, minimum price, zero volume, sparse forming roots.
+- `tests/market_redis_cache.rs`: ticker fence, identical/conflicting replay,
+  bounded deduplicated synthetic queue and K-line repair replay.
+- `tests/market_routes.rs`: real worker/store/broadcast/REST integration, all
+  six periods, newest history, no false closed windows or real fills.
+- Mobile `market-detail-stream.test.ts` covers boundary bursts, stale updates,
+  REST-only historical repair and shared defaults; run mobile release:gate.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: pendingKline = lastMessage; Mongo sort ascending + limit; fake spot fill.
+Correct: pendingByOpenTime; Mongo newest limit then reverse; separate strategy queue.
+```

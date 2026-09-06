@@ -11,7 +11,10 @@
 //! ticker 在时间相同且序列化载荷逐字节相同时返回 `ReplayedIdentical`，
 //! 仅用于修复先写 Redis 后写 MySQL 失败的归档；同时间不同载荷和更旧载荷仍返回 `RejectedStale`。
 //! 被判定为陈旧的写入不是错误，调用方必须据此中止广播、撮合和检查点推进等派生副作用。
-//! depth 没有防倒退保护，采用直接覆盖，因为盘口本身就是可丢弃的瞬时数据。
+//! 普通 depth 直接覆盖；策略 depth/逐笔通过独立 Lua 核对本轮已接受 ticker 后原子更新。
+
+mod synthetic;
+pub use synthetic::market_synthetic_trades_redis_key;
 
 use crate::{
     modules::market::{
@@ -261,7 +264,7 @@ impl MarketKlineCacheEntry {
     /// 构造携带内部观察时序的最新 K 线缓存 DTO；`observed_at` 只用于 Redis 原子防倒退，不进入既有消费者 JSON。
     /// 该字段标注了 `#[serde(skip)]`，因此对外 JSON 合同保持不变，时序改由伴随 key 单独保存。
     /// 交易对先规范化，周期再经 [`KlineUpsertKey`] 校验，两者共同决定 `market:kline:<SYMBOL>:<INTERVAL>` 这个 key。
-    /// 该时间必须取领域快照的真实观察时间；同槽相等或更旧时间都会拒绝，避免重复广播与 forming 值倒退。
+    /// 该时间必须取领域快照的真实观察时间；同槽更旧或同时间异载荷拒绝，同时间同载荷允许存储修复。
     /// 传入本机时间会让每次推送都显得更新，防倒退随之失效，同分钟内的旧 owner 就能覆盖新数据。
     pub fn with_observed_at(
         symbol: &str,
@@ -405,7 +408,7 @@ impl MarketCacheWriteOutcome {
     }
 
     /// 返回 ticker 是否命中同时间、同载荷回放；该分支不重写 Redis，只可用来补齐尚未成功的持久化。
-    /// K 线脚本不返回此状态，因此它不会改变既有的 K 线严格递增契约。
+    /// ticker 和 K 线都支持同载荷回放；调用方可修复存储，但不得重复触发资金操作。
     pub fn is_identical_replay(self) -> bool {
         matches!(self, Self::ReplayedIdentical)
     }
@@ -462,7 +465,11 @@ local incoming_open = tonumber(ARGV[1])
 local incoming_observed = tonumber(ARGV[2])
 if current_open and
    (current_open > incoming_open or
-    (current_open == incoming_open and current_observed and current_observed >= incoming_observed)) then
+    (current_open == incoming_open and current_observed and current_observed > incoming_observed)) then
+    return 0
+end
+if current_open == incoming_open and current_observed == incoming_observed then
+    if current == ARGV[3] then return 2 end
     return 0
 end
 redis.call('SET', KEYS[1], ARGV[3])
@@ -522,8 +529,8 @@ impl RedisMarketCache {
         self.save_json(&key, &entry).await
     }
 
-    /// 以 `(open_time, observed_at)` 严格递增顺序原子更新最新 K 线 JSON；跨分钟与同分钟形成中快照都不会倒退或重复广播。
-    /// 脚本按两级顺序判定：开盘时间更早直接拒绝；开盘时间相同再比观察时间，相等或更早同样拒绝。
+    /// 以 `(open_time, observed_at)` 原子更新最新 K 线 JSON；同时间同载荷标记为回放，供后续 Mongo 修复。
+    /// 开盘时间更早直接拒绝；同槽观察时间更早或同时间不同载荷也拒绝，回放不是新的市场变动。
     /// 首次写入时伴随 key 尚不存在，观察时间无从比较，此时只要开盘时间不倒退就予以接受。
     /// 接受后会在同一次脚本执行里同时更新行情 JSON 与 `<开盘毫秒>:<观察毫秒>` 时序串，两者不会出现半写状态。
     /// 外部 JSON 字段保持不变，内部时序保存在伴随 Redis hash；拒写者必须停止 Mongo、广播及检查点副作用。

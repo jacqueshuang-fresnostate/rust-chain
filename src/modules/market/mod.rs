@@ -5,6 +5,7 @@ pub mod presentation;
 pub mod repository;
 pub mod service;
 pub mod synthetic;
+pub mod synthetic_realtime;
 pub mod synthetic_snapshot;
 
 pub mod routes;

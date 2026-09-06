@@ -34,6 +34,7 @@ import {
   type MarketDetailStreamContext,
 } from '@/api/marketDetailStream'
 import {
+  DEFAULT_MARKET_KLINE_INTERVAL,
   mergeMarketTradeHistory,
   mergeMarketTrades,
   normalizeMarketKlineInterval,
@@ -167,7 +168,7 @@ const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
 const points = ref<KlinePoint[]>([])
 const trades = ref<TradePrint[]>([])
-const interval = ref<MarketKlineInterval>('15m')
+const interval = ref<MarketKlineInterval>(DEFAULT_MARKET_KLINE_INTERVAL)
 const marketDataPanel = ref<'orderBook' | 'trades'>('orderBook')
 const spotChartOpen = ref(false)
 const liveDetailActive = ref(false)

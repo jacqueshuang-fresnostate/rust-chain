@@ -4462,7 +4462,7 @@ describe('resourceConfigs create actions', () => {
     const createPage = render(<ResourcePage config={resourceConfigs.marketStrategies} />);
 
     expect(await screen.findByText('行情策略')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '创建策略' }));
+    await user.click(await screen.findByRole('button', { name: '创建策略' }));
     const createDialog = await findActionSheet('创建策略');
     expectCreateModalSize(createDialog, 'wide');
     createPage.unmount();
@@ -4475,7 +4475,7 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
     expect(screen.queryByText('更新策略状态')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '查看详情' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '修改' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '启用' })).toBeInTheDocument();
 
@@ -4608,7 +4608,7 @@ describe('resourceConfigs create actions', () => {
 
     render(<ResourcePage config={resourceConfigs.marketStrategies} />);
     expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '检测缺口/补偿K线（策略91）' }));
+    await user.click(await screen.findByRole('button', { name: '检测缺口/补偿K线（策略91）' }));
     const sheet = await findActionSheet('检测缺口与补偿K线');
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91/kline-recovery/jobs?limit=20&offset=0');

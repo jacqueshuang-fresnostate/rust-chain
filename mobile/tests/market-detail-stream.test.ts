@@ -537,7 +537,7 @@ test('detail stream commits only the latest valid kline per frame and clears pen
   assert.equal(scheduler.frames.size, 0)
   assert.deepEqual(klines, [{ time: 1_720_000_000_000, close: 107 }])
 
-  sockets[1]?.emit('message', JSON.stringify(candle({ close: '108' })))
+  sockets[1]?.emit('message', JSON.stringify(candle({ close: '108', observed_at: 1_720_000_002_000 })))
   assert.equal(scheduler.frames.size, 1)
   stop()
   assert.equal(scheduler.frames.size, 0)
@@ -801,4 +801,60 @@ test('MarketDetailView wires the shared interval source and executable detail se
   assert.doesNotMatch(chooseInterval, /bids\.value|asks\.value|trades\.value/)
   assert.doesNotMatch(chooseInterval, /void load\(/)
   assert.match(source, /onUnmounted\(\(\) => \{[\s\S]*stopLiveDetail\(\)/)
+})
+
+test('minute-boundary burst preserves both final previous candle and forming next candle', () => {
+  const socket = new FakeSocket()
+  const scheduler = new FakeScheduler()
+  const points: KlinePoint[] = []
+  const stop = startMarketDetailStream({
+    symbol: 'BTCUSDT', interval: '1m', url: 'wss://example.test/ws',
+    createSocket: () => socket, scheduler,
+    onDepth: () => undefined, onTrade: () => undefined, onKline: (point) => points.push(point),
+  })
+  socket.emit('open')
+  const send = (openTime: number, close: number, observedAt: number) => socket.emit('message', JSON.stringify({
+    symbol: 'BTCUSDT', interval: '1m', open_time: openTime,
+    open: '100', high: '110', low: '90', close: String(close), volume: '60',
+    observed_at: observedAt, provider: 'strategy',
+  }))
+  const start = 1_720_000_020_000
+  send(start, 104, start + 59_000)
+  send(start, 105, start + 60_000)
+  send(start + 60_000, 106, start + 60_000)
+  scheduler.runFrames()
+  assert.deepEqual(points.map(({ time, close }) => [time, close]), [[start, 105], [start + 60_000, 106]])
+  send(start, 101, start + 50_000)
+  scheduler.runFrames()
+  assert.equal(points.length, 2, 'late old observation cannot undo final candle')
+  stop()
+})
+
+test('fresh REST repairs REST-only historical candles without overwriting actual live candles', () => {
+  const streams: MarketDetailStreamOptions[] = []
+  const session = createMarketDetailStreamSession({
+    getUrl: () => 'wss://example.test/ws', startStream: (options) => { streams.push(options); return () => undefined },
+    onDepth: () => undefined, onTrade: () => undefined, onKlines: () => undefined,
+  })
+  const context = session.replace('BTCUSDT', '1m', 1)
+  const point = (time: number, close: number): KlinePoint => ({ time, open: 100, high: 110, low: 90, close, volume: 1 })
+  const time = 1_720_000_020_000
+  const first = session.beginKlineRequest(context)!
+  session.resolveKlineRequest(first, [point(time, 101)])
+  streams[0]!.onKline(point(time + 60_000, 107))
+  const second = session.beginKlineRequest(context)!
+  const result = session.resolveKlineRequest(second, [point(time, 105), point(time + 60_000, 102)])
+  assert.deepEqual(result?.map((row) => row.close), [105, 107])
+  session.stop()
+})
+
+test('interactive mobile chart pages and API share the 1m default', async () => {
+  const { DEFAULT_MARKET_KLINE_INTERVAL } = await import('../src/api/marketSocketProtocol.ts')
+  assert.equal(DEFAULT_MARKET_KLINE_INTERVAL, '1m')
+  for (const file of ['TradeView.vue', 'MarketDetailView.vue']) {
+    const source = readFileSync(new URL(`../src/views/${file}`, import.meta.url), 'utf8')
+    assert.match(source, /ref<MarketKlineInterval>\(DEFAULT_MARKET_KLINE_INTERVAL\)/)
+  }
+  const api = readFileSync(new URL('../src/api/market.ts', import.meta.url), 'utf8')
+  assert.match(api, /interval(?:: string)? = DEFAULT_MARKET_KLINE_INTERVAL/)
 })

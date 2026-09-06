@@ -9168,8 +9168,10 @@ async fn admin_market_strategy_create_list_update_and_audit() -> Result<(), Box<
     .await?
     .last_insert_id();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
-    let start_time = chrono::Utc.with_ymd_and_hms(2026, 2, 1, 8, 0, 0).unwrap();
-    let end_time = chrono::Utc.with_ymd_and_hms(2026, 2, 1, 9, 0, 0).unwrap();
+    let start_time = chrono::Utc
+        .timestamp_opt(chrono::Utc::now().timestamp().div_euclid(60) * 60, 0)
+        .unwrap();
+    let end_time = start_time + chrono::Duration::hours(1);
 
     let user = app
         .clone()
@@ -9471,8 +9473,10 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
     .await?
     .last_insert_id();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
-    let start_time = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 8, 0, 0).unwrap();
-    let end_time = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 9, 0, 0).unwrap();
+    let start_time = chrono::Utc
+        .timestamp_opt(chrono::Utc::now().timestamp().div_euclid(60) * 60, 0)
+        .unwrap();
+    let end_time = start_time + chrono::Duration::hours(1);
     let update_start = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 10, 0, 0).unwrap();
     let update_end = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 11, 0, 0).unwrap();
 
@@ -17924,6 +17928,160 @@ async fn admin_new_coin_actual_listing_gates_new_locks_without_rewriting_history
     delete_new_coin_distribution_fixture(&pool, project, asset, user, admin, role).await?;
     sqlx::query("DELETE FROM assets WHERE id=?")
         .bind(quote)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_market_strategy_activation_guards_expiry_overlap_and_exposes_runtime_errors()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (_, admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let base = create_asset(&pool, "AGB").await;
+    let quote = create_asset(&pool, "AGQ").await;
+    let symbol = format!("AG{}", &Uuid::now_v7().simple().to_string()[16..32]).to_uppercase();
+    let pair = sqlx::query("INSERT INTO trading_pairs (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type) VALUES (?, ?, ?, 8, 8, 1, 'active', 'strategy')")
+        .bind(base).bind(quote).bind(&symbol).execute(&pool).await?.last_insert_id();
+    let start = chrono::Utc
+        .timestamp_opt(chrono::Utc::now().timestamp().div_euclid(60) * 60, 0)
+        .unwrap();
+    let end = start + chrono::Duration::hours(1);
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let create = |start: chrono::DateTime<chrono::Utc>,
+                  end: chrono::DateTime<chrono::Utc>,
+                  status: &str| {
+        Request::builder().method("POST").uri("/admin/api/v1/market-strategies")
+        .header(AUTHORIZATION, format!("Bearer {token}")).header("content-type", "application/json")
+        .body(Body::from(json!({"pair_id": pair, "strategy_type": "price_path", "start_price": "1", "target_price": "2", "start_time": start.timestamp_millis(), "end_time": end.timestamp_millis(), "volatility": "0.01", "volume_min": "60", "volume_max": "120", "status": status, "reason": "activation regression"}).to_string())).unwrap()
+    };
+    let activate = |id: u64| {
+        Request::builder()
+            .method("PATCH")
+            .uri(format!("/admin/api/v1/market-strategies/{id}/status"))
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"status":"active", "reason":"activation regression"}).to_string(),
+            ))
+            .unwrap()
+    };
+    let expired = app
+        .clone()
+        .oneshot(create(
+            start - chrono::Duration::hours(2),
+            start - chrono::Duration::hours(1),
+            "active",
+        ))
+        .await?;
+    assert_eq!(expired.status(), StatusCode::BAD_REQUEST);
+    let past_draft = body_json(
+        app.clone()
+            .oneshot(create(
+                start - chrono::Duration::hours(2),
+                start - chrono::Duration::hours(1),
+                "draft",
+            ))
+            .await?,
+    )
+    .await?;
+    let past_id = past_draft["id"].as_u64().unwrap();
+    assert_eq!(
+        app.clone().oneshot(activate(past_id)).await?.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let first = body_json(app.clone().oneshot(create(start, end, "draft")).await?).await?;
+    let second = body_json(app.clone().oneshot(create(start, end, "draft")).await?).await?;
+    let first_id = first["id"].as_u64().unwrap();
+    let second_id = second["id"].as_u64().unwrap();
+    let (a, b) = tokio::join!(
+        app.clone().oneshot(activate(first_id)),
+        app.clone().oneshot(activate(second_id))
+    );
+    let statuses = [a?.status(), b?.status()];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::CONFLICT)
+            .count(),
+        1
+    );
+    let active_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM market_strategies WHERE pair_id = ? AND status = 'active'",
+    )
+    .bind(pair)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(active_count, 1);
+    assert_eq!(
+        app.clone()
+            .oneshot(create(start, end, "active"))
+            .await?
+            .status(),
+        StatusCode::CONFLICT
+    );
+    let future = app
+        .clone()
+        .oneshot(create(end, end + chrono::Duration::hours(1), "active"))
+        .await?;
+    assert_eq!(
+        future.status(),
+        StatusCode::OK,
+        "adjacent half-open schedules are valid"
+    );
+    let failed_id: u64 = sqlx::query_scalar("SELECT id FROM market_strategies WHERE pair_id = ? AND status = 'active' ORDER BY id LIMIT 1").bind(pair).fetch_one(&pool).await?;
+    sqlx::query("UPDATE strategy_runs SET error_message = 'test Mongo write failure', last_tick_at = ? WHERE strategy_id = ?").bind(start.naive_utc()).bind(failed_id).execute(&pool).await?;
+    let listed = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/admin/api/v1/market-strategies?pair_id={pair}"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())?,
+            )
+            .await?,
+    )
+    .await?;
+    let failed = listed["strategies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == failed_id)
+        .unwrap();
+    assert_eq!(failed["error_message"], "test Mongo write failure");
+    assert_eq!(failed["last_tick_at"], start.timestamp_millis());
+    let stored_draft: String =
+        sqlx::query_scalar("SELECT status FROM market_strategies WHERE id = ?")
+            .bind(past_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored_draft, "draft", "failed activation rolls back state");
+    sqlx::query("UPDATE trading_pairs SET status = 'disabled' WHERE id = ?")
+        .bind(pair)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        app.oneshot(activate(failed_id)).await?.status(),
+        StatusCode::NOT_FOUND
+    );
+    sqlx::query("UPDATE market_strategies SET status = 'paused' WHERE pair_id = ?")
+        .bind(pair)
         .execute(&pool)
         .await?;
     Ok(())

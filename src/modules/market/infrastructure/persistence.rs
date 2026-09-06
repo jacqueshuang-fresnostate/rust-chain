@@ -184,6 +184,36 @@ pub(crate) async fn market_symbol_is_listed(pool: &Pool<MySql>, symbol: &str) ->
     Ok(listed)
 }
 
+/// 读取已上架交易对是否由内部策略提供行情；只选择显式 strategy/internal，不根据缓存内容猜测来源。
+pub(crate) async fn market_symbol_is_synthetic(
+    pool: &Pool<MySql>,
+    symbol: &str,
+) -> AppResult<bool> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM trading_pairs WHERE status = 'active' AND market_type IN ('strategy', 'internal') AND REPLACE(REPLACE(REPLACE(UPPER(symbol), '-', ''), '/', ''), '_', '') = ?"
+    ).bind(symbol).fetch_one(pool).await?;
+    Ok(count > 0)
+}
+
+/// 读取当前高周期缓存；此入口只读展示数据，缺失即返回空，不制造历史记录。
+pub(crate) async fn load_cached_kline(
+    redis: redis::aio::ConnectionManager,
+    symbol: &str,
+    interval: &str,
+) -> AppResult<Option<KlineResponse>> {
+    let mut connection = redis;
+    let payload: Option<String> = connection
+        .get(super::cache::market_kline_redis_key(symbol, interval))
+        .await?;
+    payload
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| {
+                AppError::Internal(format!("invalid cached kline payload: {error}"))
+            })
+        })
+        .transpose()
+}
+
 /// 从统一 Redis ticker key 读取最新 JSON 快照；key 缺失返回 NotFound，损坏载荷返回内部错误。
 /// 本函数只反序列化，不判断价格正数或 `observed_at` 新鲜度，资金用例必须另行校验。
 pub(crate) async fn load_cached_ticker(
@@ -242,7 +272,7 @@ pub(crate) async fn list_recent_trades(
     Ok(rows.into_iter().map(TradeResponse::from_record).collect())
 }
 
-/// 从交易对独立 Mongo 集合查询指定周期与可选时间窗的历史 K 线，按开盘时间升序返回。
+/// 从交易对独立 Mongo 集合取指定时间窗内最新 N 根，再反转为升序返回；不能先升序截断而漏掉最新根。
 /// `KlineQuery` 已限制周期和条数；Mongo 游标或文档解码失败立即返回，不跳过损坏蜡烛。
 /// 集合名由规范化交易对推导，因此每个市场只查自己的集合；响应中的交易对由调用方补齐而非取自文档。
 pub(crate) async fn list_klines(
@@ -257,7 +287,7 @@ pub(crate) async fn list_klines(
         filter.insert("open_time", time_filter);
     }
     let options = mongodb::options::FindOptions::builder()
-        .sort(doc! { "open_time": 1 })
+        .sort(doc! { "open_time": -1 })
         .limit(i64::from(query.limit))
         .build();
     let mut cursor = collection.find(filter).with_options(options).await?;
@@ -267,6 +297,7 @@ pub(crate) async fn list_klines(
         rows.push(KlineResponse::from_document(symbol.as_str(), document));
     }
 
+    rows.reverse();
     Ok(rows)
 }
 

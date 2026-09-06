@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, str::FromStr, sync::OnceLock};
 
-use bigdecimal::{BigDecimal, RoundingMode};
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, TimeDelta, Utc};
 use mongodb::{
     Database,
@@ -27,6 +27,9 @@ use crate::{
         SyntheticMarketNode, SyntheticStrategySnapshot, ValidatedMarketSymbol,
         adapters::{MarketIngestionService, SyntheticIngestionOutcome, SyntheticTickerProvenance},
         aggregate_1m_candles, synthetic_config_from_snapshot, synthetic_execution_mode_from_code,
+        synthetic_realtime::{
+            build_forming_aggregate, build_synthetic_market_details, forming_1m_values,
+        },
         synthetic_target_type_from_code,
     },
     state::AppState,
@@ -114,6 +117,7 @@ struct SyntheticStrategyRow {
     strategy_id: u64,
     symbol: String,
     price_precision: i32,
+    qty_precision: i32,
     start_price: BigDecimal,
     target_price: BigDecimal,
     start_time: DateTime<Utc>,
@@ -192,7 +196,7 @@ async fn run_once_for_owner(
 }
 
 /// 读取 active strategy/internal 策略的最新版本快照，逐项竞争短租约并仅发布当前分钟 ticker 与 1m K 线。
-/// 每项按“租约→版本/节点解析→历史窗口读取→ticker 归档/Redis/广播→K 线 ingestion/广播→检查点”执行；
+/// 每项按“租约→版本/节点解析→历史窗口→ticker 归档→1m/闭合→盘口/逐笔→形成中高周期→检查点”执行；
 /// 单策略失败会写 `error_message` 后继续，跨 Redis/Mongo/MySQL 不伪造事务，重试依赖槽位 upsert 收敛。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
@@ -225,6 +229,9 @@ async fn run_once_with_runtime(
             "synthetic market lease owner must not be blank".to_owned(),
         ));
     }
+    // 归档、Redis/WS 与检查点统一毫秒，避免微秒检查点把同事件重试误判为时间倒退。
+    let now = DateTime::from_timestamp_millis(now.timestamp_millis())
+        .ok_or_else(|| AppError::Validation("invalid synthetic observation time".into()))?;
     let open_time = current_minute_open_time(now)?;
     let rows = load_active_strategies(pool, now, limit, owner).await?;
     let mut summary = SyntheticMarketSummary {
@@ -293,8 +300,31 @@ async fn process_leased_strategy(
     let config = strategy_config(&row, relation_nodes)?;
 
     // ticker 是整轮提交门：其 CAS 拒写时不会发生订单触发/广播，也不会产生本轮 K 线或检查点副作用。
-    let history = load_ticker_history(mongo, &config.symbol, open_time).await?;
-    let plan = build_realtime_plan(row.strategy_id, &config, observed_at, &history)?;
+    let mut history = load_ticker_history(mongo, &config.symbol, open_time).await?;
+    let close_plan =
+        build_online_minute_close_plan(previous_plan, row.strategy_id, &config, observed_at)?;
+    // 计划内先用本轮确定性收尾替换旧 forming 根，保证 ticker 与高周期使用同一份闭合量。
+    if let Some(close) = &close_plan {
+        let root = SyntheticCandle {
+            open_time: close.kline().open_time(),
+            values: MarketKlineValues {
+                open: close.kline().open().clone(),
+                high: close.kline().high().clone(),
+                low: close.kline().low().clone(),
+                close: close.kline().close().clone(),
+                volume: close.kline().volume().clone(),
+            },
+        };
+        history.retain(|item| item.open_time != root.open_time);
+        history.push(root);
+        history.sort_by_key(|item| item.open_time);
+    }
+    let ticker_history: Vec<_> = history.iter().map(|item| item.values.clone()).collect();
+    let plan = build_realtime_plan(row.strategy_id, &config, observed_at, &ticker_history)?;
+    let qty_precision = u32::try_from(row.qty_precision)
+        .map_err(|_| AppError::Validation("invalid synthetic quantity precision".into()))?;
+    let (depth, trade) =
+        build_synthetic_market_details(row.strategy_id, &config, qty_precision, plan.kline())?;
     ensure_current_lease(pool, &plan, owner, observed_at).await?;
     let ticker_provenance =
         SyntheticTickerProvenance::new(plan.strategy_id(), plan.version(), owner);
@@ -307,9 +337,7 @@ async fn process_leased_strategy(
     }
 
     ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
-    if let Some(close_plan) =
-        build_online_minute_close_plan(previous_plan, row.strategy_id, &config, observed_at)?
-    {
+    if let Some(close_plan) = close_plan {
         publish_minute_close(
             pool,
             mongo,
@@ -329,6 +357,25 @@ async fn process_leased_strategy(
         == SyntheticIngestionOutcome::RejectedStale
     {
         return Err(stale_market_write_conflict("kline"));
+    }
+    ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
+    if ingestion
+        .ingest_and_publish_synthetic_details(plan.ticker(), &depth, trade.as_ref())
+        .await?
+        == SyntheticIngestionOutcome::RejectedStale
+    {
+        return Err(stale_market_write_conflict("market details"));
+    }
+    for interval in AGGREGATE_INTERVALS {
+        let snapshot = build_forming_aggregate(plan.kline(), interval, &history)?;
+        ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
+        if ingestion
+            .ingest_and_publish_forming_aggregate(&snapshot)
+            .await?
+            == SyntheticIngestionOutcome::RejectedStale
+        {
+            return Err(stale_market_write_conflict("forming aggregate"));
+        }
     }
     update_checkpoint(pool, &plan, owner, observed_at, lease_expires_at).await?;
     Ok(plan)
@@ -402,74 +449,6 @@ pub fn build_realtime_plan(
         kline,
         ticker,
     })
-}
-
-/// 把确定性整分钟 OHLCV 映射为当前秒的形成中快照：价格依次经过两个确定性极值并回到最终 close，
-/// 成交量按已观察秒数累计；第 59 秒直接返回整分钟值，避免实时闭合与手动补偿产生尾差。
-/// 观察时刻必须落在该分钟之内，否则返回校验错误；路径分三段各 20 秒，先走首个极值再走另一极值，最后回到收盘价。
-/// 收涨时先探低后探高，收跌时相反；高低价只在对应极值被越过后才纳入，成交量按已观察秒数占比线性摊分。
-fn forming_1m_values(
-    closed: &MarketKlineValues,
-    open_time: DateTime<Utc>,
-    observed_at: DateTime<Utc>,
-    price_precision: u32,
-) -> AppResult<MarketKlineValues> {
-    let elapsed_seconds = (observed_at - open_time).num_seconds();
-    if !(0..60).contains(&elapsed_seconds) {
-        return Err(AppError::Validation(
-            "synthetic realtime observation must be inside current minute".to_owned(),
-        ));
-    }
-    let observed_seconds = elapsed_seconds + 1;
-    if observed_seconds == 60 {
-        return Ok(closed.clone());
-    }
-
-    let (first_extreme, second_extreme) = if closed.close >= closed.open {
-        (&closed.low, &closed.high)
-    } else {
-        (&closed.high, &closed.low)
-    };
-    let current_price = if observed_seconds <= 20 {
-        interpolate_decimal(&closed.open, first_extreme, observed_seconds, 20)
-    } else if observed_seconds <= 40 {
-        interpolate_decimal(first_extreme, second_extreme, observed_seconds - 20, 20)
-    } else {
-        interpolate_decimal(second_extreme, &closed.close, observed_seconds - 40, 20)
-    }
-    .with_scale_round(i64::from(price_precision), RoundingMode::HalfUp);
-
-    let mut high = closed.open.clone().max(current_price.clone());
-    let mut low = closed.open.clone().min(current_price.clone());
-    if observed_seconds >= 20 {
-        high = high.max(first_extreme.clone());
-        low = low.min(first_extreme.clone());
-    }
-    if observed_seconds >= 40 {
-        high = high.max(second_extreme.clone());
-        low = low.min(second_extreme.clone());
-    }
-    let volume = (&closed.volume * BigDecimal::from(observed_seconds) / BigDecimal::from(60))
-        .with_scale_round(18, RoundingMode::HalfUp);
-
-    Ok(MarketKlineValues {
-        open: closed.open.clone(),
-        high,
-        low,
-        close: current_price,
-        volume,
-    })
-}
-
-/// 在起点与终点之间按已过份额做线性插值，用于把整分钟极值拆成逐秒推进的形成中价格。
-/// 计算保持 `BigDecimal` 全精度并不在此取整；`total` 由调用方固定为 20 秒一段，份额不会越界。
-fn interpolate_decimal(
-    start: &BigDecimal,
-    end: &BigDecimal,
-    elapsed: i64,
-    total: i64,
-) -> BigDecimal {
-    start + ((end - start) * BigDecimal::from(elapsed) / BigDecimal::from(total))
 }
 
 /// 根据本次闭合时刻返回需要重建的完整高周期；策略尚未运行满一个窗口时不会声明该聚合。
@@ -661,6 +640,7 @@ async fn load_active_strategies(
         r#"SELECT strategies.id AS strategy_id,
                   pairs.symbol,
                   pairs.price_precision,
+                  pairs.qty_precision,
                   strategies.start_price,
                   strategies.target_price,
                   strategies.start_time,
@@ -805,12 +785,12 @@ fn relation_node(row: SyntheticNodeRow) -> AppResult<SyntheticMarketNode> {
 /// 读取当前分钟之前最多 24 小时的权威 1m，用于折算 ticker 的开盘价、24 小时高低价与成交量。
 /// 查询区间左闭右开且不含当前分钟，按开盘时间升序并限制在 1440 条内，因此首条即窗口起始蜡烛。
 /// 窗口内缺根不会报错，统计只基于已存在的蜡烛；OHLCV 字段无法解析为十进制时返回校验错误。
-/// 本函数只读 Mongo，既不补写缺口，也不改动任何缓存或检查点。
+/// 保留根时间供形成中高周期复用；本函数只读 Mongo，不补写缺口或改动任何缓存、检查点。
 async fn load_ticker_history(
     mongo: &Database,
     symbol: &str,
     current_open_time: DateTime<Utc>,
-) -> AppResult<Vec<MarketKlineValues>> {
+) -> AppResult<Vec<SyntheticCandle>> {
     let symbol = ValidatedMarketSymbol::from_raw(symbol)
         .map_err(|error| AppError::Validation(error.to_string()))?;
     let collection = mongo.collection::<Document>(&kline_collection_name(&symbol));
@@ -833,12 +813,20 @@ async fn load_ticker_history(
     let mut history = Vec::new();
     while cursor.advance().await? {
         let document = cursor.deserialize_current()?;
-        history.push(MarketKlineValues {
-            open: document_decimal(&document, "open")?,
-            high: document_decimal(&document, "high")?,
-            low: document_decimal(&document, "low")?,
-            close: document_decimal(&document, "close")?,
-            volume: document_decimal(&document, "volume")?,
+        let open_time = document
+            .get_datetime("open_time")
+            .ok()
+            .and_then(|value| DateTime::from_timestamp_millis(value.timestamp_millis()))
+            .ok_or_else(|| AppError::Validation("invalid synthetic history open_time".into()))?;
+        history.push(SyntheticCandle {
+            open_time,
+            values: MarketKlineValues {
+                open: document_decimal(&document, "open")?,
+                high: document_decimal(&document, "high")?,
+                low: document_decimal(&document, "low")?,
+                close: document_decimal(&document, "close")?,
+                volume: document_decimal(&document, "volume")?,
+            },
         });
     }
     Ok(history)
