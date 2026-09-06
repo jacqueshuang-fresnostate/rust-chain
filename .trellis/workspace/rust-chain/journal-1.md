@@ -1851,3 +1851,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 55: Admin resource CI timeout stabilization
+
+**Date**: 2026-09-06
+**Task**: Admin resource CI timeout stabilization
+**Branch**: `main`
+
+### Summary
+
+Split independent earn/news regressions, optimize only observed slow form fixtures, wait for lazy actions, and share the CI/local two-worker budget without extending the 20-second default. Full Admin 510/510 and focused repeat 14/14 passed; lint/typecheck, production policy 15, coverage 23, same-origin build/budget, Docker contract 5 and source integrity passed. Archived only this task and repaired its research context links; prior Mobile changes were already on origin/main. Remote CI remains a separate post-push check.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6cba61c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
