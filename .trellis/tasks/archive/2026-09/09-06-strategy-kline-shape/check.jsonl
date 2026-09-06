@@ -3,4 +3,4 @@
 {"file": ".trellis/spec/admin/ui-system.md", "reason": "Exact decimal forms and real preview/confirmation UI"}
 {"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Render-only chart, real values and stable viewport"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace units without mutating financial history"}
-{"file": ".trellis/tasks/09-06-strategy-kline-shape/research/findings.md", "reason": "Public candle evidence and bounded correction"}
+{"file": ".trellis/tasks/archive/2026-09/09-06-strategy-kline-shape/research/findings.md", "reason": "Public candle evidence and bounded correction"}
