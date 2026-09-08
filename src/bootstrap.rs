@@ -163,6 +163,24 @@ pub async fn bootstrap_default_admin(
     pool: &MySqlPool,
     config: &BootstrapAdminConfig,
 ) -> AppResult<BootstrapAdminOutcome> {
+    run_bootstrap_with_lock(pool, Some(config)).await
+}
+
+/// 从环境读取一次性引导配置，但把读取动作放在命名锁和管理员存在性检查之后。
+///
+/// 这样已经初始化过的数据库即使残留 `BOOTSTRAP_MODE=create_admin`，也不会因为未使用的
+/// 空口令、失效用户名或角色名阻断迁移；管理员表为空时仍会走同一套严格配置校验和一次性创建。
+pub async fn bootstrap_default_admin_from_env(
+    pool: &MySqlPool,
+) -> AppResult<BootstrapAdminOutcome> {
+    run_bootstrap_with_lock(pool, None).await
+}
+
+/// 获取并释放引导命名锁；`None` 表示在事务确认管理员表为空后才解析环境配置。
+async fn run_bootstrap_with_lock(
+    pool: &MySqlPool,
+    config: Option<&BootstrapAdminConfig>,
+) -> AppResult<BootstrapAdminOutcome> {
     let mut connection = pool.acquire().await?;
     let lock_acquired = sqlx::query_scalar::<_, Option<i64>>("SELECT GET_LOCK(?, ?)")
         .bind(BOOTSTRAP_ADMIN_LOCK_NAME)
@@ -175,7 +193,10 @@ pub async fn bootstrap_default_admin(
         ));
     }
 
-    let result = bootstrap_default_admin_while_locked(&mut connection, config).await;
+    let result = match config {
+        Some(config) => bootstrap_default_admin_while_locked(&mut connection, config).await,
+        None => bootstrap_default_admin_from_env_while_locked(&mut connection).await,
+    };
     match release_bootstrap_lock(&mut connection).await {
         Ok(()) => result,
         Err(release_error) => {
@@ -189,6 +210,23 @@ pub async fn bootstrap_default_admin(
     }
 }
 
+/// 在持有命名锁的连接上先检查管理员，再按需读取环境配置。
+async fn bootstrap_default_admin_from_env_while_locked(
+    connection: &mut MySqlConnection,
+) -> AppResult<BootstrapAdminOutcome> {
+    let mut transaction = connection.begin().await?;
+    if has_existing_admin(&mut transaction).await? {
+        transaction.commit().await?;
+        return Ok(BootstrapAdminOutcome::SkippedExistingAdmin);
+    }
+
+    // 只有空管理员库才需要解析口令；解析失败会让事务回滚且命名锁仍由外层释放。
+    let config = BootstrapAdminConfig::from_env()?;
+    create_default_admin_in_transaction(&mut transaction, &config).await?;
+    transaction.commit().await?;
+    Ok(BootstrapAdminOutcome::Created)
+}
+
 /// 在已持有命名锁的连接上开启事务，完成一次幂等的首个管理员创建，返回值区分本次新建还是跳过。
 /// 事务内先用 `FOR UPDATE` 读管理员表首行，只要存在任意一个管理员就提交空事务并跳过，不补建也不覆盖既有账号。
 /// 角色按名称加锁查找，缺失时插入显式 `*` 权限，使首个管理员能完成后续角色与业务配置。
@@ -199,28 +237,45 @@ async fn bootstrap_default_admin_while_locked(
 ) -> AppResult<BootstrapAdminOutcome> {
     let mut transaction = connection.begin().await?;
 
-    let existing_admin_id =
-        sqlx::query_scalar::<_, u64>("SELECT id FROM admin_users ORDER BY id LIMIT 1 FOR UPDATE")
-            .fetch_optional(&mut *transaction)
-            .await?;
-    if existing_admin_id.is_some() {
+    if has_existing_admin(&mut transaction).await? {
         transaction.commit().await?;
         return Ok(BootstrapAdminOutcome::SkippedExistingAdmin);
     }
 
+    create_default_admin_in_transaction(&mut transaction, config).await?;
+    transaction.commit().await?;
+    Ok(BootstrapAdminOutcome::Created)
+}
+
+/// 在同一事务内锁定管理员首行并报告是否已经初始化过账号。
+async fn has_existing_admin(
+    transaction: &mut sqlx::Transaction<'_, sqlx::MySql>,
+) -> AppResult<bool> {
+    let existing_admin_id =
+        sqlx::query_scalar::<_, u64>("SELECT id FROM admin_users ORDER BY id LIMIT 1 FOR UPDATE")
+            .fetch_optional(&mut **transaction)
+            .await?;
+    Ok(existing_admin_id.is_some())
+}
+
+/// 在已确认管理员表为空的事务里创建或复用角色并插入首个管理员。
+async fn create_default_admin_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    config: &BootstrapAdminConfig,
+) -> AppResult<()> {
     let password_hash = hash_password(config.password.expose_secret())?;
     let role_id = match sqlx::query_scalar::<_, u64>(
         "SELECT id FROM admin_roles WHERE name = ? LIMIT 1 FOR UPDATE",
     )
     .bind(&config.role_name)
-    .fetch_optional(&mut *transaction)
+    .fetch_optional(&mut **transaction)
     .await?
     {
         Some(role_id) => role_id,
         None => {
             sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
                 .bind(&config.role_name)
-                .execute(&mut *transaction)
+                .execute(&mut **transaction)
                 .await?
                 .last_insert_id()
         }
@@ -233,11 +288,10 @@ async fn bootstrap_default_admin_while_locked(
     .bind(&config.username)
     .bind(password_hash)
     .bind(role_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await?;
 
-    transaction.commit().await?;
-    Ok(BootstrapAdminOutcome::Created)
+    Ok(())
 }
 
 /// 在同一条连接上释放引导命名锁，只有数据库返回 1 才算释放成功。

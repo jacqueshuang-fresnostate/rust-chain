@@ -2,7 +2,9 @@ const DOCKERFILE: &str = include_str!("../Dockerfile");
 const DOCKERIGNORE: &str = include_str!("../.dockerignore");
 const DOCKER_IMAGE_WORKFLOW: &str = include_str!("../.github/workflows/docker-image.yml");
 const STANDARD_COMPOSE: &str = include_str!("../docker-compose.example.yml");
+const STANDARD_COMPOSE_ENV: &str = include_str!("../docker-compose.env.example");
 const ONEPANEL_COMPOSE: &str = include_str!("../docker-compose.1panel.example.yml");
+const ONEPANEL_COMPOSE_ENV: &str = include_str!("../docker-compose.1panel.env.example");
 const LOCAL_COMPOSE: &str = include_str!("../docker-compose.yml");
 
 const SAME_ORIGIN_FLAG: &str = "VITE_API_SAME_ORIGIN";
@@ -105,6 +107,22 @@ fn config_sets_variable(source: &str, variable: &str) -> bool {
             suffix.is_empty() || suffix.starts_with(':') || suffix.starts_with('=')
         })
     })
+}
+
+fn compose_service_section<'a>(source: &'a str, service: &str) -> Option<&'a str> {
+    let marker = format!("\n  {service}:\n");
+    let start = source.find(&marker)? + marker.len();
+    let remainder = &source[start..];
+    let end = remainder
+        .match_indices("\n  ")
+        .find_map(|(index, _)| {
+            let line = remainder[index + 1..]
+                .split_once('\n')
+                .map_or(&remainder[index + 1..], |(line, _)| line);
+            (line.ends_with(':') && !line.starts_with("    ")).then_some(index)
+        })
+        .unwrap_or(remainder.len());
+    Some(&remainder[..end])
 }
 
 fn dockerignore_excludes_admin_env_files(source: &str) -> bool {
@@ -369,4 +387,74 @@ ENV VITE_API_BASE_URL=https://api.example.test
             .any(|error| error.contains("Docker image workflow"))
     );
     assert!(errors.iter().any(|error| error.contains("compose.yml")));
+}
+
+#[test]
+fn migration_retry_settings_are_scoped_to_the_one_shot_service() {
+    const MAX_ATTEMPTS: &str = "MIGRATION_CONNECT_MAX_ATTEMPTS";
+    const RETRY_DELAY: &str = "MIGRATION_CONNECT_RETRY_DELAY_SECONDS";
+
+    for (name, compose) in [
+        ("docker-compose.1panel.example.yml", ONEPANEL_COMPOSE),
+        ("docker-compose.example.yml", STANDARD_COMPOSE),
+    ] {
+        let migrate = compose_service_section(compose, "migrate")
+            .unwrap_or_else(|| panic!("{name} must define a migrate service"));
+        let api = compose_service_section(compose, "api")
+            .unwrap_or_else(|| panic!("{name} must define an api service"));
+
+        for variable in [MAX_ATTEMPTS, RETRY_DELAY] {
+            assert!(
+                migrate.contains(variable),
+                "{name} must pass {variable} to migrate"
+            );
+            assert!(
+                !api.contains(variable),
+                "{name} must not pass {variable} to the long-running api"
+            );
+        }
+
+        assert!(
+            migrate.contains("${MIGRATION_CONNECT_MAX_ATTEMPTS:-30}"),
+            "{name} must keep the bounded attempts default"
+        );
+        assert!(
+            migrate.contains("${MIGRATION_CONNECT_RETRY_DELAY_SECONDS:-2}"),
+            "{name} must keep the retry delay default"
+        );
+        assert!(
+            migrate.contains("service_completed_successfully")
+                || compose.contains("service_completed_successfully"),
+            "{name} must retain the migration completion gate"
+        );
+    }
+}
+
+#[test]
+fn migration_retry_env_examples_document_bounded_values() {
+    for (name, source) in [
+        ("docker-compose.1panel.env.example", ONEPANEL_COMPOSE_ENV),
+        ("docker-compose.env.example", STANDARD_COMPOSE_ENV),
+    ] {
+        assert!(
+            source
+                .lines()
+                .any(|line| line.trim() == "MIGRATION_CONNECT_MAX_ATTEMPTS=30"),
+            "{name} must document the default attempts"
+        );
+        assert!(
+            source
+                .lines()
+                .any(|line| line.trim() == "MIGRATION_CONNECT_RETRY_DELAY_SECONDS=2"),
+            "{name} must document the default delay"
+        );
+        assert!(
+            source.contains("1–30") || source.contains("1-30"),
+            "{name} must document the attempts bound"
+        );
+        assert!(
+            source.contains("0–30") || source.contains("0-30"),
+            "{name} must document the delay bound"
+        );
+    }
 }

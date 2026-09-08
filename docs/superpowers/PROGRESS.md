@@ -8703,3 +8703,17 @@
 - 修改文件：无新增代码；仅补充本进度记录。
 - 验证结果：`DATABASE_URL=mysql://root@127.0.0.1:3306/mysql cargo test --test seconds_contract_net_payout_migration -- --nocapture` 真实 MySQL 2/2 通过；完整迁移链两次均成功，`_sqlx_migrations` 122 条、版本 1–125、失败记录 0，版本 124/125 均成功；隔离库已删除，`seconds_net_payout_*` 无残留，Homebrew MySQL 已停止。
 - 后续事项：部署前仍需在目标环境核对 BTC-USDT/ETH-USDT 的实际产品目录后运行 0125；本轮未操作线上、未提交、未推送、未部署。
+
+## 2026-09-09 00:43 - 修复生产迁移容器退出码 1 的诊断与启动竞态
+
+- 完成内容：针对 1Panel 只显示 `service "migrate" didn't complete successfully: exit 1` 的现象，新增迁移器初始 MySQL 有界重试（次数 `1–30`、间隔 `0–30` 秒、固定总时限 300 秒），仅重试明确的网络/DNS 临时错误及 MySQL 启动/容量错误；手工构造配置也强制校验边界。迁移 SQL 失败时记录单行脱敏错误链、MySQL 版本、`_sqlx_migrations` 存在性/数量/最新版本/dirty 版本，并以脱敏错误返回非零码，继续阻止 API。`BOOTSTRAP_MODE=create_admin` 在命名锁与事务内先检查已有管理员，陈旧空口令环境在已初始化库中直接跳过，空管理员库仍严格校验。补充 1Panel/标准 Compose 变量隔离、部署排查与 dirty/checksum 人工恢复边界文档及合同测试；未修改已发布 migration、实际 1Panel compose、线上数据库或资金数据。
+- 修改文件：`src/migration.rs`、`src/bin/exchange-migrate.rs`、`src/bootstrap.rs`、`src/lib.rs`、`tests/unit_src/src_migration_tests.rs`、`tests/bootstrap_admin.rs`、`tests/docker_image_contract.rs`、`docker-compose.example.yml`、`docker-compose.env.example`、`docker-compose.1panel.example.yml`、`docker-compose.1panel.env.example`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/09-08-09-09-production-migration-exit1/**`。
+- 验证结果：迁移单元 8/8、Docker/Compose 合同 7/7、后端架构 11/11、`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets --all-features -- -D warnings`、`git diff --check` 均通过；使用真实本地 MySQL 验证完整 0001–0125 迁移两次、dirty 版本诊断和 bootstrap 重复运行，临时数据库已清理。当前未执行 Docker 镜像构建或线上重建，因本轮仅有用户提供的 Compose 包装层日志，具体失败 migration 仍以新镜像日志为准。
+- 后续事项：待确认提交范围后提交并推送镜像代码；部署时固定新镜像 tag，先采集 `docker logs --tail=200 TARGET`，确认 `migrate` 退出 0 后再让 API 通过 `service_completed_successfully` 启动。若出现 dirty/checksum/方言错误，按 runbook 备份并人工核验，不自动改写迁移记录。
+
+## 2026-09-09 00:57 - 完成迁移修复质量门禁与真实数据库回归
+
+- 完成内容：完成 Trellis 质量复核并同步容器交付规范、任务研究与部署排查文档；复核错误链脱敏、临时 DNS/连接码分类、300 秒硬总时限、Compose 变量只注入 migrate 及 bootstrap 先查管理员语义。真实 disposable MySQL 验证完整迁移链、dirty 诊断和陈旧引导环境，所有测试数据库已清理并停止本地 MySQL 服务。
+- 修改文件：`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/09-08-09-09-production-migration-exit1/prd.md`、`docs/deployment/docker.md`、`docs/superpowers/PROGRESS.md`（代码与 Compose 文件沿用上一条记录）。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features`（本地权限受限初跑后用本地服务权限重跑全量通过）、迁移单元 8/8、bootstrap 集成 3/3（真实 MySQL）、Docker/Compose 合同 7/7、后端架构 11/11、两份 Compose `config --quiet`、`git diff --check`、Trellis context 校验均通过。完整 0001–0125 迁移两次成功（122 条、最高版本 125），人为 dirty 版本重跑以非零码输出版本/dirty 诊断。Docker daemon 当前未运行，因此未执行镜像构建或线上重建。
+- 后续事项：提交前需要用户确认提交范围；确认后由主会话提交本次迁移器、bootstrap、Compose、文档和测试改动，再按需要推送。部署仍须使用新镜像 tag 并先检查 `TARGET` 的迁移日志。

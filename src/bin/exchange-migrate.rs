@@ -5,15 +5,18 @@
 
 use anyhow::Context;
 use exchange_api::bootstrap::{
-    BootstrapAdminConfig, BootstrapAdminMode, BootstrapAdminOutcome, bootstrap_default_admin,
+    BootstrapAdminMode, BootstrapAdminOutcome, bootstrap_default_admin_from_env,
 };
-use sqlx::mysql::MySqlPoolOptions;
+use exchange_api::migration::{
+    MigrationConnectConfig, collect_migration_diagnostics, connect_with_retry, format_error_chain,
+};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 /// 依次执行数据库结构迁移与默认管理员引导，任一步失败都带中文上下文向上返回并让进程以非零码退出。
 /// 连接串只从 `DATABASE_URL` 读取，先尝试加载 `.env` 但忽略其缺失；连接池限制为单连接，避免迁移期间并发改表。
+/// 初始连接只按迁移专用的有界策略重试，认证、URL 格式和权限错误不会被延迟吞掉。
 /// `BOOTSTRAP_MODE` 缺省为关闭；只有显式 `create_admin` 才读取一次性 Secret 并执行首管理员引导。
 /// 无论引导成功与否都会先关闭连接池再判断结果，确保命名锁所在会话及时释放而不是等到进程退出。
 /// 最终按新建还是跳过打印不同日志，两种情况都算执行成功，只有真正的错误才会中断流水线。
@@ -26,24 +29,47 @@ async fn main() -> anyhow::Result<()> {
 
     dotenvy::dotenv().ok();
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL 未配置")?;
-    let pool = MySqlPoolOptions::new()
-        .max_connections(1)
-        .connect(&database_url)
-        .await
-        .context("连接 MySQL 失败")?;
+    let connect_config = MigrationConnectConfig::from_env().context("解析迁移连接重试配置失败")?;
+    let pool = connect_with_retry(&database_url, connect_config).await?;
 
-    MIGRATOR
-        .run(&pool)
-        .await
-        .context("执行 SQLx migrations 失败")?;
-    tracing::info!("数据库 migrations 已全部应用");
+    if let Err(error) = MIGRATOR.run(&pool).await {
+        let error_chain = format_error_chain(&error);
+        tracing::error!(
+            error_chain = %error_chain,
+            "执行 SQLx migrations 失败（原始错误链）"
+        );
+        let diagnostics = collect_migration_diagnostics(&pool).await;
+        tracing::error!(
+            server_version = diagnostics.server_version.as_deref().unwrap_or("unknown"),
+            migrations_table_exists = ?diagnostics.migrations_table_exists,
+            migration_count = ?diagnostics.migration_count,
+            latest_version = ?diagnostics.latest_version,
+            dirty_versions = ?diagnostics.dirty_versions,
+            "迁移失败诊断摘要"
+        );
+        for query_error in diagnostics.query_errors {
+            tracing::warn!(error = %query_error, "迁移失败诊断查询未完成");
+        }
+        pool.close().await;
+        // 不把原始 `MigrateError` 作为 anyhow source 返回：CLI 终止时 anyhow 会再次
+        // 打印 source 链，可能绕过上面的脱敏日志。完整（已脱敏）链已写入 tracing，
+        // 返回值保留同样的版本/SQLx 错误文本并继续以非零码阻止 API。
+        return Err(anyhow::anyhow!(
+            "执行 SQLx migrations 失败（原始错误链）：{error_chain}"
+        ));
+    }
+
+    let migration_count = MIGRATOR.iter().count();
+    let latest_version = MIGRATOR.iter().map(|migration| migration.version).max();
+    tracing::info!(
+        migration_count,
+        latest_version = ?latest_version,
+        "数据库 migrations 已全部应用"
+    );
 
     let bootstrap_result = match BootstrapAdminMode::from_env() {
         Ok(BootstrapAdminMode::Disabled) => None,
-        Ok(BootstrapAdminMode::CreateAdmin) => Some(match BootstrapAdminConfig::from_env() {
-            Ok(config) => bootstrap_default_admin(&pool, &config).await,
-            Err(error) => Err(error),
-        }),
+        Ok(BootstrapAdminMode::CreateAdmin) => Some(bootstrap_default_admin_from_env(&pool).await),
         Err(error) => Some(Err(error)),
     };
     pool.close().await;

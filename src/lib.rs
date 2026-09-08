@@ -8,6 +8,7 @@ pub mod bootstrap;
 pub mod config;
 pub mod error;
 pub mod infra;
+pub mod migration;
 pub mod modules;
 pub mod openapi;
 pub mod state;

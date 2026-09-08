@@ -44,6 +44,9 @@ services:
     command: ["/usr/local/bin/exchange-migrate"]
     environment:
       <<: *common-environment
+      # 迁移器只对初始 MySQL 建连做有界重试；SQL/权限错误仍会立即失败并阻止 API。
+      MIGRATION_CONNECT_MAX_ATTEMPTS: "${MIGRATION_CONNECT_MAX_ATTEMPTS:-30}"
+      MIGRATION_CONNECT_RETRY_DELAY_SECONDS: "${MIGRATION_CONNECT_RETRY_DELAY_SECONDS:-2}"
       BOOTSTRAP_MODE: "${BOOTSTRAP_MODE:-disabled}"
       BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-admin}"
       BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"

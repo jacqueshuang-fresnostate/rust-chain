@@ -106,6 +106,16 @@ docker compose --env-file docker-compose.env -f docker-compose.example.yml up -d
 2. `migrate` 等待 MySQL 健康，执行全部 migrations，引导首个管理员，并以状态码 0 退出。
 3. `api` 等待四个依赖健康且 `migrate` 成功完成后启动集成的 Nginx 与 Rust 服务。
 
+迁移器对外部 MySQL 的**首次建连**提供有界重试。`MIGRATION_CONNECT_MAX_ATTEMPTS`
+默认 `30`（允许 `1–30`），`MIGRATION_CONNECT_RETRY_DELAY_SECONDS` 默认 `2`
+（允许 `0–30` 秒）。这两个变量只传给一次性的 `migrate` 服务，不会传给 `api`；它们
+只缓冲数据库启动竞态，不会重试或跳过失败的 SQL、权限校验、checksum 或 dirty migration。
+所有尝试（含单次五秒建连超时和退避）还受迁移器固定的 `300` 秒总时限约束，环境变量不能
+把这个上限延长。
+生产环境通常保留默认值，若依赖服务启动更快可将间隔设为 `0`，排障时应优先看迁移容器
+日志而不是无限调大上限。若 1Panel 任务窗口短于五分钟，可在迁移服务上显式设置较小的
+组合（例如 `MIGRATION_CONNECT_MAX_ATTEMPTS=3`、`MIGRATION_CONNECT_RETRY_DELAY_SECONDS=2`）。
+
 Compose 只把容器的 Nginx `8080` 映射到宿主机；`APP_HOST=127.0.0.1` 和
 `APP_PORT=8081` 是 Rust 在容器内部的固定监听边界，不应映射到宿主机。
 
@@ -365,6 +375,73 @@ HTTPS 域名访问页面、`/api/v1`、`/health` 和 WebSocket。
 `authSource` 和 TLS 参数。外部依赖不属于该 Compose，1Panel 不会通过本编排替它们执行
 健康检查或启动排序。
 
+### 1Panel 迁移失败排查与恢复边界
+
+1Panel 页面上的 `service "migrate" didn't complete successfully: exit 1` 只是 Compose
+包装层摘要，不能代替迁移器的 stderr。先固定镜像标签并采集以下信息；不要把完整的
+`docker inspect` 环境变量或包含口令的连接串贴到工单/聊天中：
+
+```bash
+docker logs --tail=200 hippo-exchange-migrate
+docker inspect hippo-exchange-migrate \
+  --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}'
+docker compose \
+  --env-file docker-compose.1panel.env \
+  -f docker-compose.1panel.yml \
+  ps migrate api
+```
+
+日志中的 `迁移数据库连接尝试` 和 `迁移数据库连接已建立` 表示正在使用上述有限重试。
+如果达到上限，先从迁移容器所在的 `1panel-network` 检查 MySQL 容器名/网络别名、端口和
+防火墙，再核对 `DATABASE_URL` 的用户、数据库名及 URL percent-encoding（尤其是密码中
+出现 `@`、`:`、`/`、`#` 或 `%` 时）。连接串格式错误和认证失败会明确退出，不会靠重复重试
+掩盖配置错误。若日志包含 `执行 SQLx migrations 失败` 或 `迁移失败诊断摘要`，保留其中的原始
+错误、版本号和镜像 digest，再进入数据库状态审计。
+
+使用拥有只读审计权限的 MySQL 客户端连接**同一个**数据库；密码通过交互式 `-p` 输入，
+不要写在 shell 历史中：
+
+```bash
+mysql --protocol=tcp -h HOST -P PORT -u USER -p DATABASE
+```
+
+```sql
+SELECT VERSION() AS server_version, @@version_comment AS server_comment;
+SHOW TABLES LIKE '_sqlx_migrations';
+SELECT version, description, success
+FROM _sqlx_migrations
+ORDER BY version DESC
+LIMIT 20;
+SELECT version, description
+FROM _sqlx_migrations
+WHERE success = FALSE
+ORDER BY version;
+```
+
+`_sqlx_migrations` 尚不存在时仍应保留迁移器原始错误；这通常意味着首次建连后在早期
+迁移或权限阶段失败。若存在 `success = FALSE`，先停止 API 和其他写入，完成可验证恢复
+的全库备份，并记录失败版本对应的 schema 变化。不要执行 `UPDATE ... SET success=1`、
+不要把失败 migration 从目录中删除，也不要直接用手写逆向 DDL“回滚”。DDL 可能已经隐式
+提交，是否删除某一条 dirty 记录只能由维护人员在核对备份、部分 DDL 和该 migration 的
+幂等性后决定；确认后也必须使用**同一不可变镜像**重跑完整迁移。checksum 不一致、方言/版本
+不兼容、约束冲突或数据损坏应先在隔离库恢复并修复原因，再新增兼容 migration，不能在生产
+库自动忽略。
+
+确认数据库状态和备份后，1Panel 可只重建一次性迁移服务并让退出码继续作为 API 门禁：
+
+```bash
+docker compose \
+  --env-file docker-compose.1panel.env \
+  -f docker-compose.1panel.yml \
+  up --no-deps --force-recreate --abort-on-container-exit \
+  --exit-code-from migrate migrate
+```
+
+只有 `migrate` 以 `0` 退出后才启动/重建 `api`。若数据库已经有管理员，旧编排中残留的
+`BOOTSTRAP_MODE=create_admin` 不再需要；将其改回 `disabled` 并移除一次性口令。空管理员库
+仍必须提供符合校验规则的一次性 `BOOTSTRAP_ADMIN_PASSWORD` 或
+`BOOTSTRAP_ADMIN_PASSWORD_FILE`，不能用空值“先启动再说”。
+
 ## 单独运行命令
 
 只执行迁移：
@@ -373,6 +450,8 @@ HTTPS 域名访问页面、`/api/v1`、`/health` 和 WebSocket。
 docker run --rm \
   --network your-network \
   --env DATABASE_URL='mysql://user:password@mysql:3306/exchange' \
+  --env MIGRATION_CONNECT_MAX_ATTEMPTS=30 \
+  --env MIGRATION_CONNECT_RETRY_DELAY_SECONDS=2 \
   ghcr.io/jacqueshuang-fresnostate/rust-chain:1.2.3 \
   /usr/local/bin/exchange-migrate
 ```

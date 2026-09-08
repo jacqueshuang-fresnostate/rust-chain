@@ -208,6 +208,24 @@ async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Re
     ensure!(verify_password(&password_hash, initial_password)?);
     ensure_bootstrap_lock_is_free(pool).await?;
 
+    // 已有管理员时，陈旧的 create_admin 环境不应因为未使用的口令、用户名或角色校验失败。
+    // 这模拟 1Panel 编排保留旧变量但数据库已经完成首次初始化的重复部署。
+    let stale_environment_migrate_output = run_migrate(
+        database_url,
+        &[
+            ("BOOTSTRAP_MODE", "create_admin"),
+            ("BOOTSTRAP_ADMIN_USERNAME", "invalid username"),
+            ("BOOTSTRAP_ADMIN_PASSWORD", ""),
+            ("BOOTSTRAP_ADMIN_ROLE_NAME", "invalid role"),
+        ],
+    )?;
+    let stale_environment_logs = combined_output(&stale_environment_migrate_output);
+    ensure!(
+        stale_environment_migrate_output.status.success(),
+        "existing admin must skip stale bootstrap credentials:\n{stale_environment_logs}"
+    );
+    ensure_bootstrap_lock_is_free(pool).await?;
+
     let ignored_password = "different-bootstrap-password";
     let skipped_migrate_output = run_migrate(
         database_url,

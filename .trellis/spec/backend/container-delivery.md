@@ -62,12 +62,15 @@
   must return the same policy.
 - `CREDENTIAL_ENCRYPTION_KEY` must remain exactly 32 bytes and stable after encrypted data exists.
 - The migration service always requires `DATABASE_URL`. It may also receive `BOOTSTRAP_MODE`,
-  `BOOTSTRAP_ADMIN_USERNAME`, exactly one of `BOOTSTRAP_ADMIN_PASSWORD` or
-  `BOOTSTRAP_ADMIN_PASSWORD_FILE`, and `BOOTSTRAP_ADMIN_ROLE_NAME`; bootstrap values must never be
-  passed to the API service.
+  `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_ADMIN_PASSWORD_FILE`, and
+  `BOOTSTRAP_ADMIN_ROLE_NAME`; at most one of the two password sources may be non-blank (Compose
+  may inject the unselected source as an empty placeholder). Bootstrap values must never be passed
+  to the API service.
 - Bootstrap is disabled when `BOOTSTRAP_MODE` is absent or `disabled`. Only the exact
-  `create_admin` value enables it. In that mode a non-blank, non-default one-time password is
-  mandatory; username and role may retain the non-secret `admin` and `super_admin` defaults.
+  `create_admin` value enables it. When the administrator table is empty, a non-blank, non-default
+  one-time password is mandatory; username and role may retain the non-secret `admin` and
+  `super_admin` defaults. When an administrator already exists, the runner checks that fact while
+  holding the bootstrap lock and skips before reading or validating these credentials.
 - Bootstrap normalizes the username with the shared auth helper, validates the password and role
   name, hashes the password with the shared Argon2 helper, and never logs or includes the plaintext
   password in errors.
@@ -94,6 +97,19 @@
   `hippo-exchange-api:8080` network alias or explicitly override the bind address.
 - External dependency readiness is an operator responsibility in the 1Panel variant. The
   migration completion gate remains mandatory, and a migration failure must block API startup.
+- The one-shot migration process uses bounded initial MySQL connection retries. It accepts
+  `MIGRATION_CONNECT_MAX_ATTEMPTS` in the range `1–30` (default `30`) and
+  `MIGRATION_CONNECT_RETRY_DELAY_SECONDS` in the range `0–30` (default `2`). These keys are
+  injected only into `migrate`; the runner also enforces a fixed `300` second hard total retry
+  deadline that the environment cannot extend. Connection refusal/reset, timeout, temporary DNS
+  resolution, selected SQLSTATE `08`, and MySQL startup or
+  capacity errors may retry. URL parsing, authentication, TLS, permission, and migration SQL
+  errors fail fast or remain non-zero; no retry path edits `_sqlx_migrations`.
+- On migration SQL failure, the runner logs a single-line sanitized error chain and a best-effort
+  diagnostic snapshot (`SELECT VERSION()`, `_sqlx_migrations` existence, count, latest version,
+  and recent `success=FALSE` versions). Diagnostic query failures are additive and never replace
+  the original failure. The process returns a sanitized non-zero error so a runtime error printer
+  cannot re-emit a password-bearing driver message.
 - A schema-wide text metadata repair that issues DDL across all business tables must be deployed
   in a planned maintenance window with application writes stopped and a verified database backup.
   `ALTER TABLE` may wait for metadata locks and may rebuild tables or indexes; operators must
@@ -136,7 +152,8 @@
 |-----------|-----------------|
 | `DATABASE_URL` is absent from the migration process | Exit non-zero with a configuration error |
 | `BOOTSTRAP_MODE` is absent or `disabled` | Apply migrations and create no administrator |
-| Bootstrap mode is enabled but password is absent, blank, duplicated across env/file, or known-default | Write no bootstrap rows and exit non-zero |
+| `BOOTSTRAP_MODE=create_admin` and `admin_users` is empty, but password is absent, blank, duplicated across env/file, or known-default | Write no bootstrap rows and exit non-zero |
+| `BOOTSTRAP_MODE=create_admin` and any administrator already exists, even with stale/blank credentials | Skip before credential parsing; write no rows and exit `0` |
 | A bootstrap username, password, or role name is invalid | Write no bootstrap rows, exit non-zero, and keep the API blocked |
 | `admin_users` is empty and bootstrap credentials are valid | Create one active administrator with an Argon2 hash and the requested role |
 | Any administrator already exists | Skip without creating a role or changing any administrator |
@@ -149,6 +166,9 @@
 | Exact pre-repair database state is required | Restore the verified full backup into an isolated target; do not reverse columns in place |
 | Full-stack MongoDB, Redis, or RabbitMQ is unhealthy | API remains blocked |
 | A 1Panel dependency URL or external network is invalid | Migration or API exits diagnostically; do not create a replacement dependency |
+| Initial MySQL connection is transiently unavailable | Retry only within the configured attempts and hard deadline; on recovery continue migrations |
+| Initial MySQL URL/auth/TLS/permission error is non-transient | Fail fast with a sanitized diagnostic; do not keep retrying |
+| Migration SQL fails | Log the sanitized error chain and best-effort server/migration snapshot; return non-zero and keep API blocked |
 | Turnstile Secret or Site Key is blank | Return `cf_turnstile_enabled=false`; do not require a token the client cannot render |
 | Secret and Site Key are present, `CF_TURNSTILE_ENFORCE_TOKEN=true` | Return enabled config and require a valid token on every login |
 | Secret and Site Key are present, enforce is false, no `cf_clearance` exists | Return enabled config and still require a valid token |
@@ -175,6 +195,9 @@
 - Good (1Panel): install dependencies separately, connect them to the selected external network,
   provide full connection URLs through the Compose environment, observe migration exit `0`, and
   proxy only the healthy API through HTTPS.
+- Good (migration recovery): let an external MySQL restart during the bounded connection window,
+  observe retry-attempt logs followed by the embedded migration count/latest version, and start
+  `api` only after the completion gate reports exit `0`.
 - Good (Turnstile): configure matching Site Key and Secret values, recreate the API container,
   confirm the public login-config response is enabled, and render the runtime Site Key in the admin
   login page even when `/admin/*` has a Managed Challenge rule.
@@ -236,6 +259,11 @@
   Docker init. Assert Rust listens only on `127.0.0.1:8081`, Nginx owns `0.0.0.0:8080`, `/health`
   succeeds, and no non-PID-1 Tini warning is logged.
 - Kill one supervised child and assert the complete container restarts and `/health` recovers.
+- Unit-test migration configuration bounds and transient-error classification (including temporary
+  DNS and MySQL 2006/2013), assert retry logging never contains `DATABASE_URL`, and run a real
+  disposable-MySQL migration failure with a dirty row to verify the sanitized error chain plus
+  server/version/dirty diagnostics. Verify a stale `create_admin` environment succeeds without
+  reading credentials when an administrator already exists.
 
 ### 7. Wrong vs Correct
 
@@ -277,6 +305,29 @@ services:
       BOOTSTRAP_MODE: ${BOOTSTRAP_MODE:-disabled}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       BOOTSTRAP_ADMIN_PASSWORD_FILE: ${BOOTSTRAP_ADMIN_PASSWORD_FILE:-}
+```
+
+Migration retries and diagnostics have the same one-shot boundary:
+
+```yaml
+# Wrong: let the API inherit migration controls and hide a failed migration behind a successful
+# service start.
+services:
+  api:
+    environment:
+      MIGRATION_CONNECT_MAX_ATTEMPTS: 999
+    depends_on: []
+
+# Correct: bounded controls belong only to the migration gate, whose non-zero exit blocks the API.
+services:
+  migrate:
+    environment:
+      MIGRATION_CONNECT_MAX_ATTEMPTS: "${MIGRATION_CONNECT_MAX_ATTEMPTS:-30}"
+      MIGRATION_CONNECT_RETRY_DELAY_SECONDS: "${MIGRATION_CONNECT_RETRY_DELAY_SECONDS:-2}"
+  api:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 ```
 
 Turnstile enablement must not be coupled to the clearance override:
