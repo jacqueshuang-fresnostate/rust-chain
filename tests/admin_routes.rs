@@ -15023,17 +15023,28 @@ async fn admin_convert_pair_create_rolls_back_when_audit_cannot_be_written()
         return Ok(());
     };
     let settings = test_settings();
-    let missing_admin_id = 9_999_999_999_u64;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
     let from_asset = create_asset(&pool, "ARF").await;
     let to_asset = create_asset(&pool, "ART").await;
     let token = issue_token(
         &settings,
-        format!("admin:{missing_admin_id}"),
+        format!("admin:{admin_id}"),
         TokenScope::Admin,
         900,
     )
     .unwrap();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    // 保持真实管理员鉴权；只在本测试管理员的目标审计插入处制造事务故障。
+    let trigger = format!("convert_create_audit_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON admin_audit_logs FOR EACH ROW \
+         BEGIN IF NEW.admin_id = {admin_id} AND NEW.action = 'convert_pair.create' \
+         THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test convert create audit failure'; \
+         END IF; END"
+    ))
+    .execute(&pool)
+    .await?;
 
     let response = app
         .oneshot(
@@ -15057,22 +15068,61 @@ async fn admin_convert_pair_create_rolls_back_when_audit_cannot_be_written()
                 ))
                 .unwrap(),
         )
+        .await;
+    // 先移除故障注入，再传播请求错误或执行断言，避免失败用例遗留全局触发器。
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
         .await?;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let response = response?;
+    let status = response.status();
+    let payload = body_json(response).await?;
     let (pair_count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM convert_pairs WHERE from_asset = ? AND to_asset = ?")
             .bind(from_asset)
             .bind(to_asset)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(pair_count, 0);
+    let audit_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ?")
+            .bind(admin_id)
+            .fetch_one(&pool)
+            .await?;
 
+    // 捕获断言值后清理：即使回滚出现回归，也不遗留测试交易对、审计或管理员。
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM convert_pairs WHERE from_asset = ? AND to_asset = ?")
+        .bind(from_asset)
+        .bind(to_asset)
+        .execute(&pool)
+        .await?;
     for asset_id in [from_asset, to_asset] {
         sqlx::query("DELETE FROM assets WHERE id = ?")
             .bind(asset_id)
             .execute(&pool)
             .await?;
     }
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{payload}");
+    assert_eq!(payload["code"], "DATABASE_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("test convert create audit failure")
+    );
+    assert_eq!(pair_count, 0);
+    assert_eq!(audit_count, 0);
     Ok(())
 }
 
@@ -15083,18 +15133,29 @@ async fn admin_convert_pair_update_rolls_back_when_audit_cannot_be_written()
         return Ok(());
     };
     let settings = test_settings();
-    let missing_admin_id = 9_999_999_998_u64;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
     let from_asset = create_asset(&pool, "AUF").await;
     let to_asset = create_asset(&pool, "AUT").await;
     let pair_id = seed_convert_pair(&pool, from_asset, to_asset, true).await;
     let token = issue_token(
         &settings,
-        format!("admin:{missing_admin_id}"),
+        format!("admin:{admin_id}"),
         TokenScope::Admin,
         900,
     )
     .unwrap();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    // 保持真实管理员鉴权；只在本测试管理员的目标审计插入处制造事务故障。
+    let trigger = format!("convert_update_audit_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON admin_audit_logs FOR EACH ROW \
+         BEGIN IF NEW.admin_id = {admin_id} AND NEW.action = 'convert_pair.update_status' \
+         THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test convert update audit failure'; \
+         END IF; END"
+    ))
+    .execute(&pool)
+    .await?;
 
     let response = app
         .oneshot(
@@ -15109,15 +15170,48 @@ async fn admin_convert_pair_update_rolls_back_when_audit_cannot_be_written()
                 ))
                 .unwrap(),
         )
+        .await;
+    // 先移除故障注入，再传播请求错误或执行断言，避免失败用例遗留全局触发器。
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
         .await?;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let response = response?;
+    let status = response.status();
+    let payload = body_json(response).await?;
     let (enabled,): (bool,) = sqlx::query_as("SELECT enabled FROM convert_pairs WHERE id = ?")
         .bind(pair_id)
         .fetch_one(&pool)
         .await?;
-    assert!(enabled);
+    let audit_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ?")
+            .bind(admin_id)
+            .fetch_one(&pool)
+            .await?;
 
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
     delete_pair_and_assets(&pool, pair_id, from_asset, to_asset).await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{payload}");
+    assert_eq!(payload["code"], "DATABASE_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("test convert update audit failure")
+    );
+    assert!(enabled);
+    assert_eq!(audit_count, 0);
     Ok(())
 }
 
@@ -18086,3 +18180,10 @@ async fn admin_market_strategy_activation_guards_expiry_overlap_and_exposes_runt
         .await?;
     Ok(())
 }
+
+#[path = "admin_routes/default_market.rs"]
+mod default_market;
+#[path = "admin_routes/financial_validation.rs"]
+mod financial_validation;
+#[path = "admin_routes/risk_validation.rs"]
+mod risk_validation;

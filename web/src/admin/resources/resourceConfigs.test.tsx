@@ -196,10 +196,10 @@ async function selectSemiOptionForControl(
 }
 
 const assetRows = [
-  { id: 11, symbol: 'BTC', name: 'Bitcoin', status: 'active' },
-  { id: 12, symbol: 'USDT', name: 'Tether', status: 'active' },
-  { id: 22, symbol: 'ETH', name: 'Ethereum', status: 'active' },
-  { id: 32, symbol: 'BNB', name: 'BNB', status: 'active' }
+  { id: 11, symbol: 'BTC', name: 'Bitcoin', status: 'active', precision_scale: 18 },
+  { id: 12, symbol: 'USDT', name: 'Tether', status: 'active', precision_scale: 18 },
+  { id: 22, symbol: 'ETH', name: 'Ethereum', status: 'active', precision_scale: 18 },
+  { id: 32, symbol: 'BNB', name: 'BNB', status: 'active', precision_scale: 18 }
 ];
 
 class ResizeObserverMock {
@@ -766,7 +766,7 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/countries/8');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/countries/8', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('country-detail', /"detail": "country-detail"/);
 
@@ -1067,7 +1067,7 @@ describe('resourceConfigs create actions', () => {
 
       await user.click(screen.getByRole('button', { name: '查看详情' }));
       await waitFor(() => {
-        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7');
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7', { signal: expect.any(AbortSignal) });
       });
       await expectFormattedDetail('news-detail', /"detail": "news-detail"/);
       await waitFor(() => {
@@ -1491,7 +1491,7 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByRole('button', { name: '修改' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/deposit-address-pool/101');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/deposit-address-pool/101', { signal: expect.any(AbortSignal) });
     });
     await user.click(screen.getByRole('button', { name: '回收' }));
     await user.type(await screen.findByLabelText('操作原因'), 'reclaim address');
@@ -1583,7 +1583,7 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getAllByRole('button', { name: '查看详情' })[0]);
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/assets/11');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/assets/11', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('asset-detail', /"detail": "asset-detail"/);
 
@@ -1986,17 +1986,18 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, dialog, '押注资产', 'BNB - BNB（ID: 32）');
     await user.click(within(dialog).getByRole('tab', { name: '交易参数' }));
     semiInputByLabel(dialog, '周期秒数');
-    semiInputByLabel(dialog, '赔率');
+    expect(within(dialog).getByText('按净收益率填写，不含本金；0.4 表示盈利 40%，投入 100 的赢单总入账 140。')).toBeInTheDocument();
+    semiInputByLabel(dialog, '净收益率（不含本金）');
     semiInputByLabel(dialog, '最小押注');
     semiInputByLabel(dialog, '最大押注');
     expect(within(dialog).getByLabelText('最大押注')).toHaveAttribute('placeholder', '留空表示无上限');
     await user.type(within(dialog).getByLabelText('周期秒数'), '60');
-    await user.type(within(dialog).getByLabelText('赔率'), '0.85');
+    await user.type(within(dialog).getByLabelText('净收益率（不含本金）'), '0.85');
     await user.type(within(dialog).getByLabelText('最小押注'), '10');
     await user.click(within(dialog).getByRole('button', { name: '新增周期' }));
     expect(within(dialog).getByRole('button', { name: '提交添加秒合约交易对' })).toBeDisabled();
     const durationInputs = within(dialog).getAllByLabelText('周期秒数');
-    const payoutInputs = within(dialog).getAllByLabelText('赔率');
+    const payoutInputs = within(dialog).getAllByLabelText('净收益率（不含本金）');
     const minStakeInputs = within(dialog).getAllByLabelText('最小押注');
     const maxStakeInputs = within(dialog).getAllByLabelText('最大押注');
     await user.type(durationInputs[1], '120');
@@ -2344,12 +2345,12 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/users/123');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/users/123', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('user-detail', /"detail": "user-detail"/);
     await user.click(screen.getByRole('button', { name: '查看资产' }));
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/accounts?user_id=123&include_empty=true&limit=100');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/accounts?user_id=123&include_empty=true&limit=100', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('USDT', /"asset_symbol": "USDT"/);
     expect(screen.getByText('BTC')).toBeInTheDocument();
@@ -3041,7 +3042,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('market-pair-detail', /"detail": "market-pair-detail"/);
   });
@@ -3201,7 +3202,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/spot/orders/7');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/spot/orders/7', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('spot-order-detail', /"detail": "spot-order-detail"/);
 
@@ -3266,7 +3267,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products/14');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products/14', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('margin-product-detail', /"detail": "margin-product-detail"/);
 
@@ -3384,7 +3385,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/positions/21');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/positions/21', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('margin-position-detail', /"detail": "margin-position-detail"/);
   });
@@ -3490,7 +3491,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getAllByRole('button', { name: '查看详情' })[0]);
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/liquidations/31');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/liquidations/31', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('margin-liquidation-detail', /"detail": "margin-liquidation-detail"/);
   });
@@ -3564,11 +3565,13 @@ describe('resourceConfigs create actions', () => {
     await waitForLazyResourceActions();
     expect(screen.queryByRole('columnheader', { name: '产品ID' })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '交易对ID' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '周期 / 净收益率 / 押注范围' })).toBeInTheDocument();
+    expect(screen.getByText(/60s \/ 净收益率 0\.85/)).toBeInTheDocument();
     expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('seconds-product-detail', /"detail": "seconds-product-detail"/);
 
@@ -3583,11 +3586,12 @@ describe('resourceConfigs create actions', () => {
     semiSelectByLabel(editDialog, '状态');
     await user.click(within(editDialog).getByRole('tab', { name: '交易参数' }));
     semiInputByLabel(editDialog, '周期秒数');
-    semiInputByLabel(editDialog, '赔率');
+    expect(within(editDialog).getByText('按净收益率填写，不含本金；0.4 表示盈利 40%，投入 100 的赢单总入账 140。')).toBeInTheDocument();
+    semiInputByLabel(editDialog, '净收益率（不含本金）');
     semiInputByLabel(editDialog, '最小押注');
     semiInputByLabel(editDialog, '最大押注');
     const editDurationInputs = within(editDialog).getAllByLabelText('周期秒数');
-    const editPayoutInputs = within(editDialog).getAllByLabelText('赔率');
+    const editPayoutInputs = within(editDialog).getAllByLabelText('净收益率（不含本金）');
     const editMinStakeInputs = within(editDialog).getAllByLabelText('最小押注');
     const editMaxStakeInputs = within(editDialog).getAllByLabelText('最大押注');
     expect(editDurationInputs).toHaveLength(2);
@@ -3698,7 +3702,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/orders/51');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/orders/51', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('seconds-order-detail', /"detail": "seconds-order-detail"/);
 
@@ -3853,7 +3857,7 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/categories/501');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/categories/501', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('earn-category-detail', /"detail": "earn-category-detail"/);
 
@@ -4143,7 +4147,7 @@ describe('resourceConfigs create actions', () => {
       await user.click(screen.getByRole('button', { name: '查看详情' }));
 
       await waitFor(() => {
-        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61');
+        expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61', { signal: expect.any(AbortSignal) });
       });
       await expectFormattedDetail('earn-product-detail', /"detail": "earn-product-detail"/);
 
@@ -4266,7 +4270,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/subscriptions/62');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/subscriptions/62', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('earn-subscription-detail', /"detail": "earn-subscription-detail"/);
   });
@@ -4317,7 +4321,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/pairs/71');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/pairs/71', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('convert-pair-detail', /"detail": "convert-pair-detail"/);
 
@@ -4539,7 +4543,7 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('market-strategy-detail', /"detail": "market-strategy-detail"/);
 
@@ -4737,7 +4741,7 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/orders/72');
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/orders/72', { signal: expect.any(AbortSignal) });
     });
     await expectFormattedDetail('convert-order-detail', /"detail": "convert-order-detail"/);
   });

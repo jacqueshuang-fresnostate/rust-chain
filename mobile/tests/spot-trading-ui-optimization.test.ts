@@ -19,7 +19,7 @@ test('现货工作台以 REST 快照启动并由单一 WebSocket 会话持续更
   assert.match(tradeSource, /onDepth: \(_context, snapshot\) => \{[\s\S]*?bids\.value = snapshot\.bids[\s\S]*?asks\.value = snapshot\.asks/)
   assert.match(tradeSource, /onTrade: \(_context, trade\) => \{[\s\S]*?mergeMarketTrades\(trades\.value, trade, 16\)/)
   assert.match(tradeSource, /onKlines: \(_context, nextPoints\) => \{[\s\S]*?points\.value = nextPoints/)
-  assert.match(tradeSource, /Promise\.allSettled\(\[[\s\S]*?fetchKlines\(symbol, selectedInterval\),[\s\S]*?fetchOrderBook\(symbol\),[\s\S]*?fetchRecentTrades\(symbol\),/)
+  assert.match(tradeSource, /loadMarketDetailSnapshot\(\{[\s\S]*?loadKlines: \(\) => fetchKlines\(symbol, selectedInterval\),[\s\S]*?loadDepth: \(\) => fetchOrderBook\(symbol\),[\s\S]*?loadTrades: \(\) => fetchRecentTrades\(symbol\),/)
   assert.match(tradeSource, /detailStreamSession\.resolveKlineRequest\(klineRequest, restPoints\)/)
   assert.match(tradeSource, /mergeMarketTradeHistory\(trades\.value, restTrades, 16\)/)
   assert.match(tradeSource, /detailStreamSession\.stop\(\)/)

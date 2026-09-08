@@ -18,6 +18,11 @@ use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+mod default_market;
+use crate::modules::market::infrastructure::default_runtime::{
+    self, PairGenerationLock, PairGenerationRun,
+};
+
 use crate::{
     error::{AppError, AppResult},
     infra::mongo::kline_collection_name,
@@ -114,6 +119,7 @@ impl SyntheticRealtimePlan {
 
 #[derive(Debug, sqlx::FromRow)]
 struct SyntheticStrategyRow {
+    pair_id: u64,
     strategy_id: u64,
     symbol: String,
     price_precision: i32,
@@ -242,24 +248,80 @@ async fn run_once_with_runtime(
     for row in rows {
         let strategy_id = row.strategy_id;
         let row_version = row.version;
+        let pair_id = row.pair_id;
+        let Some(mut pair_lock) = PairGenerationLock::acquire(pool, pair_id, 0).await? else {
+            summary.skipped += 1;
+            continue;
+        };
+        let mut prior_run = default_runtime::load_pair_run(pool, pair_id).await?;
+        match default_market::must_wait_for_boundary(
+            prior_run.as_ref(),
+            "strategy",
+            Some(strategy_id),
+            Some(row_version),
+            now,
+        ) {
+            Ok(true) => {
+                summary.skipped += 1;
+                continue;
+            }
+            Err(error) => {
+                summary.leased += 1;
+                summary.failed += 1;
+                warn!(pair_id,%error,"人工行情分钟状态无效");
+                default_runtime::mark_pair_error(pool, pair_id, &error.to_string()).await;
+                pair_lock.release().await?;
+                continue;
+            }
+            Ok(false) => {}
+        }
         let lease_expires_at = now + TimeDelta::seconds(LEASE_SECONDS);
         if !acquire_lease(pool, strategy_id, row.version, owner, now, lease_expires_at).await? {
             summary.skipped += 1;
             continue;
         }
         summary.leased += 1;
-
-        let result = process_leased_strategy(
-            pool,
-            mongo,
-            ingestion,
-            row,
-            open_time,
-            now,
-            owner,
-            lease_expires_at,
-            continuity.get(&strategy_id),
-        )
+        let result = async {
+            default_market::reconcile_follow_run(pool, pair_id, prior_run.as_mut(), now).await?;
+            let pair_generation = default_runtime::activate_pair_source(
+                pool,
+                pair_id,
+                "strategy",
+                Some(strategy_id),
+                u32::try_from(row_version)
+                    .map_err(|_| AppError::Validation("invalid synthetic version".into()))?,
+                owner,
+                now,
+                None,
+            )
+            .await?;
+            let plan = process_leased_strategy(
+                pool,
+                mongo,
+                ingestion,
+                row,
+                open_time,
+                now,
+                owner,
+                lease_expires_at,
+                continuity.get(&strategy_id),
+                pair_generation,
+                &mut pair_lock,
+                prior_run.as_ref(),
+            )
+            .await?;
+            pair_lock.ensure_owned().await?;
+            default_runtime::checkpoint_pair(
+                pool,
+                pair_id,
+                pair_generation,
+                owner,
+                plan.ticker().last_price(),
+                now,
+            )
+            .await?;
+            Ok::<_, AppError>(plan)
+        }
         .await;
         match result {
             Ok(plan) => {
@@ -271,9 +333,17 @@ async fn run_once_with_runtime(
                 warn!(strategy_id, %error, "模拟行情策略发布失败");
                 mark_strategy_error(pool, strategy_id, row_version, owner, &error.to_string())
                     .await;
+                default_runtime::mark_pair_error(pool, pair_id, &error.to_string()).await;
             }
         }
+        pair_lock.release().await?;
     }
+    let defaults = default_market::run_defaults(pool, mongo, ingestion, now, limit, owner).await?;
+    summary.scanned += defaults.scanned;
+    summary.leased += defaults.leased;
+    summary.published += defaults.published;
+    summary.skipped += defaults.skipped;
+    summary.failed += defaults.failed;
 
     Ok(summary)
 }
@@ -295,9 +365,13 @@ async fn process_leased_strategy(
     owner: &str,
     lease_expires_at: DateTime<Utc>,
     previous_plan: Option<&SyntheticRealtimePlan>,
+    pair_generation: u64,
+    pair_lock: &mut PairGenerationLock,
+    prior_run: Option<&PairGenerationRun>,
 ) -> AppResult<SyntheticRealtimePlan> {
     let relation_nodes = load_strategy_nodes(pool, row.strategy_id).await?;
     let config = strategy_config(&row, relation_nodes)?;
+    let transition_close = default_market::source_transition_close(prior_run, observed_at, owner)?;
 
     // ticker 是整轮提交门：其 CAS 拒写时不会发生订单触发/广播，也不会产生本轮 K 线或检查点副作用。
     let mut history = load_ticker_history(mongo, &config.symbol, open_time).await?;
@@ -319,15 +393,30 @@ async fn process_leased_strategy(
         history.push(root);
         history.sort_by_key(|item| item.open_time);
     }
+    if let Some(close) = &transition_close {
+        default_market::replace_history_close(&mut history, close);
+    }
     let ticker_history: Vec<_> = history.iter().map(|item| item.values.clone()).collect();
     let plan = build_realtime_plan(row.strategy_id, &config, observed_at, &ticker_history)?;
     let qty_precision = u32::try_from(row.qty_precision)
         .map_err(|_| AppError::Validation("invalid synthetic quantity precision".into()))?;
     let (depth, trade) =
         build_synthetic_market_details(row.strategy_id, &config, qty_precision, plan.kline())?;
+    let fence = default_market::pair_fence(row.pair_id, pair_generation, owner, pair_lock);
+    default_market::store_manual_minute(
+        pool,
+        &fence,
+        &config,
+        qty_precision,
+        open_time,
+        transition_close.as_ref(),
+    )
+    .await?;
+    pair_lock.ensure_owned().await?;
     ensure_current_lease(pool, &plan, owner, observed_at).await?;
     let ticker_provenance =
-        SyntheticTickerProvenance::new(plan.strategy_id(), plan.version(), owner);
+        SyntheticTickerProvenance::new(plan.strategy_id(), plan.version(), owner)
+            .with_pair_fence(fence);
     if ingestion
         .ingest_and_publish_synthetic_ticker(plan.ticker(), &ticker_provenance)
         .await?
@@ -336,8 +425,19 @@ async fn process_leased_strategy(
         return Err(stale_market_write_conflict("ticker"));
     }
 
+    pair_lock.ensure_owned().await?;
     ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
-    if let Some(close_plan) = close_plan {
+    if let Some(close) = transition_close {
+        default_market::publish_cross_source_close(
+            mongo,
+            ingestion,
+            &close,
+            observed_at,
+            pair_lock,
+        )
+        .await?;
+        default_market::clear_pending_close(pool, row.pair_id, pair_generation, owner).await?;
+    } else if let Some(close_plan) = close_plan {
         publish_minute_close(
             pool,
             mongo,
@@ -350,6 +450,7 @@ async fn process_leased_strategy(
         )
         .await?;
     }
+    pair_lock.ensure_owned().await?;
     ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
     if ingestion
         .ingest_and_publish_synthetic_kline(plan.kline())
@@ -358,6 +459,7 @@ async fn process_leased_strategy(
     {
         return Err(stale_market_write_conflict("kline"));
     }
+    pair_lock.ensure_owned().await?;
     ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
     if ingestion
         .ingest_and_publish_synthetic_details(plan.ticker(), &depth, trade.as_ref())
@@ -368,6 +470,7 @@ async fn process_leased_strategy(
     }
     for interval in AGGREGATE_INTERVALS {
         let snapshot = build_forming_aggregate(plan.kline(), interval, &history)?;
+        pair_lock.ensure_owned().await?;
         ensure_current_lease(pool, &plan, owner, Utc::now()).await?;
         if ingestion
             .ingest_and_publish_forming_aggregate(&snapshot)
@@ -401,6 +504,32 @@ pub fn build_realtime_plan(
         observed_at,
         config.price_precision,
     )?;
+    let ticker = build_ticker_snapshot(&config.symbol, values.clone(), observed_at, historical_1m)?;
+    let kline = MarketKlineSnapshot::new(
+        MarketDataProvider::Strategy,
+        &config.symbol,
+        "1m",
+        candle.open_time,
+        values,
+        observed_at,
+    )
+    .map_err(|error| AppError::Validation(error.to_string()))?;
+
+    Ok(SyntheticRealtimePlan {
+        strategy_id,
+        version: config.version,
+        kline,
+        ticker,
+    })
+}
+
+/// 人工与默认来源共用同一份历史折叠，保持 ticker 最新价、24h 指标和当前蜡烛一致。
+fn build_ticker_snapshot(
+    symbol: &str,
+    values: MarketKlineValues,
+    observed_at: DateTime<Utc>,
+    historical_1m: &[MarketKlineValues],
+) -> AppResult<MarketTickerSnapshot> {
     let opening_price = historical_1m
         .first()
         .map_or_else(|| values.open.clone(), |item| item.open.clone());
@@ -419,9 +548,9 @@ pub fn build_realtime_plan(
     }
     let price_change_24h = &values.close - &opening_price;
     let price_change_percent_24h = (&price_change_24h / &opening_price) * BigDecimal::from(100);
-    let ticker = MarketTickerSnapshot::with_24h(
+    MarketTickerSnapshot::with_24h(
         MarketDataProvider::Strategy,
-        &config.symbol,
+        symbol,
         MarketTickerValues::new(
             values.close.clone(),
             high_24h,
@@ -432,23 +561,7 @@ pub fn build_realtime_plan(
         ),
         observed_at,
     )
-    .map_err(|error| AppError::Validation(error.to_string()))?;
-    let kline = MarketKlineSnapshot::new(
-        MarketDataProvider::Strategy,
-        &config.symbol,
-        "1m",
-        candle.open_time,
-        values,
-        observed_at,
-    )
-    .map_err(|error| AppError::Validation(error.to_string()))?;
-
-    Ok(SyntheticRealtimePlan {
-        strategy_id,
-        version: config.version,
-        kline,
-        ticker,
-    })
+    .map_err(|error| AppError::Validation(error.to_string()))
 }
 
 /// 根据本次闭合时刻返回需要重建的完整高周期；策略尚未运行满一个窗口时不会声明该聚合。
@@ -535,7 +648,13 @@ async fn publish_minute_close(
     {
         return Err(stale_market_write_conflict("closed 1m kline"));
     }
-    for interval in close_plan.aggregate_intervals() {
+    let window_end = close_plan.kline().open_time() + TimeDelta::minutes(1);
+    for interval in AGGREGATE_INTERVALS.iter().filter(|interval| {
+        window_end
+            .timestamp()
+            .rem_euclid(interval.minute_count() as i64 * 60)
+            == 0
+    }) {
         ensure_current_lease(pool, realtime_plan, owner, Utc::now()).await?;
         let window_end = close_plan.kline().open_time() + TimeDelta::minutes(1);
         if let Some(candles) = load_aggregate_window(mongo, config, *interval, window_end).await? {
@@ -563,7 +682,17 @@ async fn load_aggregate_window(
     interval: SyntheticKlineInterval,
     window_end: DateTime<Utc>,
 ) -> AppResult<Option<Vec<SyntheticCandle>>> {
-    let symbol = ValidatedMarketSymbol::from_raw(&config.symbol)
+    load_aggregate_window_for_symbol(mongo, &config.symbol, interval, window_end).await
+}
+
+/// 按符号读取实际 1m 窗口，跨来源闭合聚合复用相同的完整根数量校验。
+async fn load_aggregate_window_for_symbol(
+    mongo: &Database,
+    symbol: &str,
+    interval: SyntheticKlineInterval,
+    window_end: DateTime<Utc>,
+) -> AppResult<Option<Vec<SyntheticCandle>>> {
+    let symbol = ValidatedMarketSymbol::from_raw(symbol)
         .map_err(|error| AppError::Validation(error.to_string()))?;
     let collection = mongo.collection::<Document>(&kline_collection_name(&symbol));
     let window_start = window_end - TimeDelta::minutes(interval.minute_count() as i64);
@@ -637,7 +766,7 @@ async fn load_active_strategies(
     owner: &str,
 ) -> AppResult<Vec<SyntheticStrategyRow>> {
     sqlx::query_as::<_, SyntheticStrategyRow>(
-        r#"SELECT strategies.id AS strategy_id,
+        r#"SELECT pairs.id AS pair_id, strategies.id AS strategy_id,
                   pairs.symbol,
                   pairs.price_precision,
                   pairs.qty_precision,
@@ -660,6 +789,7 @@ async fn load_active_strategies(
            WHERE strategies.status = 'active'
              AND pairs.status = 'active'
              AND pairs.market_type IN ('strategy', 'internal')
+             AND NOT EXISTS (SELECT 1 FROM market_default_generators controls WHERE controls.pair_id=pairs.id AND controls.all_market_paused=TRUE)
              AND runs.run_status IN ('running', 'live')
              AND strategies.start_time <= ?
              AND strategies.end_time > ?

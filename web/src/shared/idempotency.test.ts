@@ -8,6 +8,23 @@ import {
 } from './idempotency';
 
 describe('financial idempotency keys', () => {
+  it('finds only existing equivalent scoped intents without allocating a key', () => {
+    sessionStorage.clear();
+    const store = new FinancialCommandIntentStore({ storage: sessionStorage });
+    const scope = { assetId: 12, authScope: 'admin' as const, command: 'recharge', generation: 'session-a', subject: 'admin:7', userId: 42 };
+    const values = { amount: '1.2300', reason: 'manual' };
+    expect(store.hasPending(scope, values)).toBe(false);
+    expect(sessionStorage.length).toBe(0);
+    const lease = store.acquire(scope, values);
+    const before = sessionStorage.getItem('exchange_admin_financial_command_intents_v1');
+    expect(store.hasPending(scope, { amount: '1.23', reason: ' manual ' })).toBe(true);
+    expect(store.hasPending(scope, { ...values, reason: 'different' })).toBe(false);
+    expect(store.hasPending({ ...scope, generation: 'other' }, values)).toBe(false);
+    expect(store.hasPending({ ...scope, assetId: 13 }, values)).toBe(false);
+    expect(sessionStorage.getItem('exchange_admin_financial_command_intents_v1')).toBe(before);
+    store.complete(lease);
+    expect(store.hasPending(scope, values)).toBe(false);
+  });
   it('reuses a key through retries and rotates it after success', () => {
     let sequence = 0;
     const keys = new RetryStableIdempotencyKeys('admin-test', (prefix) => `${prefix}-${++sequence}`);

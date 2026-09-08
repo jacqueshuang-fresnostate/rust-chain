@@ -1,6 +1,7 @@
 use super::{repository, service};
 use bigdecimal::BigDecimal;
 use chrono::{TimeDelta, TimeZone, Utc};
+use std::str::FromStr;
 
 fn snapshot(expires_at: chrono::DateTime<Utc>) -> repository::SecondsContractSettlementPriceRow {
     repository::SecondsContractSettlementPriceRow {
@@ -43,4 +44,24 @@ fn settlement_snapshot_validates_all_provenance_and_window_boundaries() {
     invalid = valid;
     invalid.observed_at = expires_at + TimeDelta::seconds(5);
     assert!(service::validate_settlement_price_snapshot(&invalid, "BTCUSDT", expires_at).is_err());
+}
+
+#[test]
+fn payout_rate_is_net_profit_while_historical_order_snapshots_keep_their_value() {
+    let stake = BigDecimal::from(100);
+    let configured_net_rate = BigDecimal::from_str("0.4").unwrap();
+    let historical_snapshot_rate = BigDecimal::from_str("1.4").unwrap();
+
+    assert_eq!(
+        service::seconds_contract_payout_amount(&stake, &configured_net_rate, "win", 18),
+        BigDecimal::from(140)
+    );
+    assert_eq!(
+        service::seconds_contract_payout_amount(&stake, &historical_snapshot_rate, "win", 18),
+        BigDecimal::from(240)
+    );
+    assert_eq!(
+        service::seconds_contract_payout_amount(&stake, &configured_net_rate, "loss", 18),
+        BigDecimal::from(0)
+    );
 }

@@ -245,3 +245,145 @@ fn risk_policy_rate_limit_precedence_is_order_independent() {
         resolve_risk_policy(&[], SPOT_ORDER, &[]).rate_limit_scope
     );
 }
+
+#[test]
+fn risk_policy_numeric_pair_alias_merges_once_without_rewriting_legacy_counter_scope() {
+    let legacy = StoredRiskRule {
+        target_type: "pair".to_owned(),
+        target_id: Some("BTC-USDT".to_owned()),
+        config: json!({"operations": [SPOT_ORDER], "max_amount": "50", "max_requests": 2, "window_seconds": 120}),
+    };
+    let numeric = StoredRiskRule {
+        target_type: "pair".to_owned(),
+        target_id: Some("42".to_owned()),
+        config: json!({"operations": [SPOT_ORDER], "max_amount": "10", "max_requests": 3, "blocked_operations": [SPOT_ORDER]}),
+    };
+    let scopes = [
+        RiskScope::new("user", "7"),
+        RiskScope::new("pair", "BTC-USDT"),
+        RiskScope::new("pair", "42"),
+    ];
+    let old_policy = resolve_risk_policy(std::slice::from_ref(&legacy), SPOT_ORDER, &scopes[..2]);
+    let aliased_policy = resolve_risk_policy(std::slice::from_ref(&legacy), SPOT_ORDER, &scopes);
+    assert_eq!(old_policy.rules, aliased_policy.rules);
+    assert_eq!(old_policy.rate_limit_scope, "pair:btc-usdt");
+    assert_eq!(aliased_policy.rate_limit_scope, old_policy.rate_limit_scope);
+    let combined = resolve_risk_policy(&[legacy.clone(), numeric.clone()], SPOT_ORDER, &scopes);
+    assert_eq!(combined.rules.max_amount, Some(amount(10)));
+    assert_eq!(combined.rules.max_requests, Some(2));
+    assert_eq!(combined.rate_limit_scope, "pair:btc-usdt");
+    assert_eq!(combined.rate_limit_window_seconds, 120);
+    assert_eq!(
+        combined.rules.blocked_operations,
+        Some(vec![SPOT_ORDER.to_owned()])
+    );
+    let reversed = resolve_risk_policy(&[numeric.clone(), legacy], SPOT_ORDER, &scopes);
+    assert_eq!(combined.rules, reversed.rules);
+    assert_eq!(combined.rate_limit_scope, reversed.rate_limit_scope);
+    assert!(
+        resolve_risk_policy(
+            std::slice::from_ref(&numeric),
+            SPOT_ORDER,
+            &[
+                RiskScope::new("pair", "ETH-USDT"),
+                RiskScope::new("pair", "43")
+            ]
+        )
+        .rules
+        .is_unrestricted()
+    );
+    assert_eq!(
+        resolve_risk_policy(&[numeric], SPOT_ORDER, &scopes).rate_limit_scope,
+        "pair:42"
+    );
+}
+
+#[test]
+fn risk_policy_keeps_numeric_symbol_legacy_namespace_unchanged() {
+    // 既有模型不区分数字符号和数字主键；添加权威主键别名不得静默重写旧规则。
+    let stored = StoredRiskRule {
+        target_type: "pair".to_owned(),
+        target_id: Some("42".to_owned()),
+        config: json!({"max_requests": 0}),
+    };
+    let policy = resolve_risk_policy(
+        &[stored],
+        SPOT_ORDER,
+        &[RiskScope::new("pair", "42"), RiskScope::new("pair", "99")],
+    );
+    assert_eq!(policy.rules.max_requests, Some(0));
+    assert_eq!(policy.rate_limit_scope, "pair:42");
+    assert_eq!(policy.rate_limit_window_seconds, 60);
+}
+
+#[test]
+fn risk_config_validated_values_keep_runtime_policy_and_original_json() {
+    use crate::modules::risk::service::validate_risk_rule_config;
+    use std::str::FromStr;
+    let config = json!({
+        "operations": ["SPOT.ORDER.CREATE"],
+        "blocked_operations": ["future.operation", "future.operation"],
+        "max_amount": " 1.234567890123456789012345678901e20 ",
+        "max_price_deviation_bps": " 0 ",
+        "max_requests": "+0", "window_seconds": " 1 ",
+        "extension": {"future": null}
+    });
+    let original = config.clone();
+    assert_eq!(validate_risk_rule_config(&config), Ok(()));
+    assert_eq!(config, original);
+    let policy = resolve_risk_policy(
+        &[StoredRiskRule {
+            target_type: "global".to_owned(),
+            target_id: None,
+            config,
+        }],
+        SPOT_ORDER,
+        &[],
+    );
+    assert_eq!(
+        policy.rules.max_amount,
+        Some(BigDecimal::from_str("1.234567890123456789012345678901e20").unwrap())
+    );
+    assert_eq!(policy.rules.max_price_deviation_bps, Some(0));
+    assert_eq!(policy.rules.max_requests, Some(0));
+    assert_eq!(policy.rate_limit_window_seconds, 1);
+    assert_eq!(
+        policy.rules.blocked_operations,
+        Some(vec!["future.operation".to_owned()])
+    );
+    for config in [
+        json!({}),
+        json!({"operations": [], "max_amount": "10"}),
+        json!({"operations": [SPOT_ORDER, WITHDRAWAL], "max_amount": "10"}),
+        json!({"operations": ["future.operation"], "max_amount": "10"}),
+    ] {
+        assert_eq!(validate_risk_rule_config(&config), Ok(()));
+        assert_eq!(
+            resolve_risk_policy(
+                &[StoredRiskRule {
+                    target_type: "global".to_owned(),
+                    target_id: None,
+                    config
+                }],
+                SPOT_ORDER,
+                &[]
+            )
+            .rules
+            .max_amount,
+            None
+        );
+    }
+    // 写入校验不被移到历史读取路径：旧非法字段仍按既有运行时规则处理。
+    let legacy = resolve_risk_policy(
+        &[StoredRiskRule {
+            target_type: "global".to_owned(),
+            target_id: None,
+            config: json!({"operations": null, "max_requests": 2, "window_seconds": 0, "max_price_deviation_bps": -1}),
+        }],
+        SPOT_ORDER,
+        &[],
+    );
+    assert_eq!(legacy.rules.max_requests, Some(2));
+    assert_eq!(legacy.rate_limit_window_seconds, 60);
+    assert_eq!(legacy.rules.max_price_deviation_bps, None);
+}

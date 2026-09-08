@@ -5,6 +5,7 @@ import { type ReactNode, useState } from 'react';
 import { listAdminResource } from '../../../api/adminResources';
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import type { ResourceDetailLoader } from '../useResourceDetail';
 import type { DetailDrawerData } from '../../../shared/DetailDrawer';
 import type { RichTextValue } from '../../../shared/QuillRichTextEditor';
 import { AdminModalTriggerButton, AdminSelect, type SemiSelectOption } from '../../../shared/SemiFormControls';
@@ -15,6 +16,7 @@ export type AssetOption = {
   id: string;
   label: string;
   symbol: string;
+  precisionScale?: number;
 };
 
 export type MarketPairOption = {
@@ -30,6 +32,7 @@ export type AdminNewsCountryOption = {
 };
 
 export type RowActionHelpers = {
+  loadDetail: (loader: ResourceDetailLoader) => Promise<void>;
   reload: () => void;
   openDetail: (detail: DetailDrawerData) => void;
 };
@@ -150,7 +153,10 @@ function assetOptionLabel(asset: ApiRecord): string {
 function toAssetOption(asset: ApiRecord): AssetOption | null {
   const id = assetFieldToString(asset, 'id');
   const symbol = assetFieldToString(asset, 'symbol');
-  return id ? { id, label: assetOptionLabel(asset), symbol } : null;
+  const precision = asset.precision_scale;
+  const precisionScale = typeof precision === 'number' && Number.isInteger(precision) && precision >= 0 && precision <= 18
+    ? precision : undefined;
+  return id ? { id, label: assetOptionLabel(asset), symbol, precisionScale } : null;
 }
 
 function marketPairOptionLabel(pair: ApiRecord): string {
@@ -312,12 +318,10 @@ export function recordString(record: ApiRecord, key: string): string {
 }
 
 export async function openRecordDetail(endpoint: string, recordId: string, helpers: RowActionHelpers) {
-  try {
-    helpers.openDetail({ title: '详情', data: await apiRequest<ApiRecord>(`${endpoint}/${recordId}`) });
-  } catch (error) {
-    Toast.error(errorMessage(error));
-    throw error;
-  }
+  await helpers.loadDetail(async (signal) => ({
+    title: '详情',
+    data: await apiRequest<ApiRecord>(`${endpoint}/${recordId}`, { signal })
+  }));
 }
 
 export function nextToggleStatus(status: string): 'active' | 'disabled' {

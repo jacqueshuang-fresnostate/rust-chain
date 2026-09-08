@@ -9,6 +9,7 @@ mod access_control;
 mod config_center;
 mod config_changes;
 mod content;
+mod default_market;
 mod market_trading;
 mod new_coin_convert;
 mod risk_security;
@@ -242,6 +243,7 @@ pub fn routes() -> Router<AppState> {
         .merge(users_agents::routes())
         .merge(wallet_assets::routes())
         .merge(risk_security::routes())
+        .merge(default_market::routes())
         .merge(market_trading::routes())
         .merge(new_coin_convert::routes())
 }

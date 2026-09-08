@@ -9,6 +9,7 @@ mod config_changes;
 mod convert;
 mod countries;
 mod dashboard_audit;
+mod default_market;
 mod deposit_networks;
 mod market;
 mod market_feed;
@@ -21,8 +22,8 @@ mod wallet_assets;
 
 pub(crate) use self::{
     access_control::*, agents::*, config_center::*, config_changes::*, convert::*, countries::*,
-    dashboard_audit::*, deposit_networks::*, market::*, new_coin::*, news::*, risk_security::*,
-    users::*, wallet_assets::*,
+    dashboard_audit::*, default_market::*, deposit_networks::*, market::*, new_coin::*, news::*,
+    risk_security::*, users::*, wallet_assets::*,
 };
 pub use self::{market_feed::*, system_config::*};
 

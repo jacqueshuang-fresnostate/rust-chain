@@ -38,7 +38,7 @@ describe('NewCoinProjectRowActions', () => {
   beforeEach(() => {
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue({});
-    helpers = { openDetail: vi.fn(), reload: vi.fn() };
+    helpers = { loadDetail: vi.fn(), openDetail: vi.fn(), reload: vi.fn() };
   });
 
   it('将启用的预热项目直接推进为申购中并重载列表', async () => {

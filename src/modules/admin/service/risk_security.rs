@@ -1,7 +1,7 @@
 //! 风控规则与全局安全策略的纯业务规则层。
 //!
-//! 风控规则侧只做最外层形状校验，规则配置 JSON 的内部语义交由 risk 上下文在运行时解释，
-//! 因此这里既不解析阈值也不判断规则之间的优先级。安全策略侧通过逐个动作取策略来确认所有资金动作
+//! 风控规则侧校验目标形状，并复用 risk 上下文的已知 JSON 字段校验，不重复解释阈值或规则优先级。
+//! 安全策略侧通过逐个动作取策略来确认所有资金动作
 //! 都能映射到受支持的验证方式。三个审计快照函数分别覆盖风控规则、安全策略和用户双因素设置，
 //! 其中双因素快照刻意不含密钥与恢复材料，安全策略走序列化因而可能返回内部错误。
 
@@ -16,16 +16,15 @@ pub(crate) struct ValidatedRiskRuleTarget {
 /// 校验风控规则类型、目标范围、阈值、时间窗和启停状态等请求形状。
 /// 对象范围只允许运行时真正传入的 global/user/pair/asset 四维；用户与交易对必须是正数 ID，
 /// 资产使用大写符号而不是数据库 ID，以与钱包风控上下文的 scope value 保持一致。资源是否存在且处于 active
-/// 由应用事务在写规则前锁行确认；本函数不读库、不解释 config_json 内部阈值。
+/// 由应用事务在写规则前锁行确认；配置复用 risk 的纯字段校验，本函数不读库、不改变原始 JSON。
 pub(crate) fn validate_create_risk_rule(
     request: &CreateRiskRuleRequest,
 ) -> AppResult<ValidatedRiskRuleTarget> {
     if optional_string(Some(request.rule_type.clone())).is_none() {
         return Err(AppError::Validation("rule_type is required".to_owned()));
     }
-    if request.config_json.is_null() {
-        return Err(AppError::Validation("config_json is required".to_owned()));
-    }
+    crate::modules::risk::service::validate_risk_rule_config(&request.config_json)
+        .map_err(|message| AppError::Validation(message.to_owned()))?;
 
     let target_type = optional_string(Some(request.target_type.clone()))
         .map(|value| value.to_ascii_lowercase())

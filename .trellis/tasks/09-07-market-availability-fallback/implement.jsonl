@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Layer responsibilities"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Architecture and tests"}
+{"file": ".trellis/spec/backend/synthetic-market-kline.md", "reason": "Synthetic runtime and history contracts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Immutable migrations"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Admin form and action contracts"}
+{"file": ".trellis/spec/admin/chinese-presentation.md", "reason": "Chinese UI"}
+{"file": ".trellis/tasks/09-07-market-availability-fallback/research/current-behavior-and-plan.md", "reason": "Verified source audit; proposal superseded by PRD"}
+{"file": ".trellis/spec/backend/default-market-generation.md", "reason": "Implemented single-writer and default generation contract"}

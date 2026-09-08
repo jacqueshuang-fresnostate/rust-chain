@@ -14,7 +14,18 @@ const knownMessages: Record<string, string> = {
   'strategy prices must be positive': '起始价和目标价必须大于零',
   'volatility and volume must be non-negative': '波动率和成交量必须为非负数',
   'unsupported market strategy status': '不支持此行情策略状态',
-  'trading pair precision must be non-negative': '交易对价格和数量精度必须为非负整数'
+  'trading pair precision must be non-negative': '交易对价格和数量精度必须为非负整数',
+  'pricing_mode must be fixed or market': '定价模式请选择固定价格或市场价格',
+  'convert pair assets must be different': '源资产与目标资产必须不同',
+  'asset must be active': '资产已停用，请核对资产状态',
+  'invalid asset precision': '资产精度配置异常，请联系维护人员',
+  'config_json must be an object': '风控配置（config_json）必须为 JSON 对象',
+  'config_json.operations must be an array of nonblank strings without outer whitespace': '生效操作（config_json.operations）必须为字符串数组，每项须为非空字符串且首尾不含空白',
+  'config_json.blocked_operations must be an array of nonblank strings without outer whitespace': '禁止操作（config_json.blocked_operations）必须为字符串数组，每项须为非空字符串且首尾不含空白',
+  'config_json.max_amount must be a nonnegative decimal string or number': '单笔金额上限（config_json.max_amount）必须为大于等于 0 的十进制数字或数字字符串',
+  'config_json.max_price_deviation_bps must be an unsigned 32-bit integer': '价格偏离上限（config_json.max_price_deviation_bps）必须为 0 至 4294967295 的整数或整数字符串（单位：基点）',
+  'config_json.max_requests must be an unsigned 32-bit integer': '请求次数上限（config_json.max_requests）必须为 0 至 4294967295 的整数或整数字符串',
+  'config_json.window_seconds must be a positive unsigned 32-bit integer': '限频窗口（config_json.window_seconds）必须为 1 至 4294967295 的整数或整数字符串（单位：秒）'
 };
 
 const codeMessages: Record<string, string> = {
@@ -42,6 +53,12 @@ export function adminErrorMessage(error: unknown, fallback = '操作失败，请
   if (typeof known === 'string') return known;
   // Preserve already-localized backend business explanations and useful diagnostics.
   if (/[\u3400-\u9fff]/u.test(message)) return message;
+  const assetPrecision = message.match(/^amount exceeds asset precision_scale (\d+)$/i);
+  if (assetPrecision) return `充值金额最多支持 ${assetPrecision[1]} 位小数，不会自动舍入`;
+  const rateBound = message.match(/^(spread_rate|fee_rate) must be greater than or equal to 0 and less than 1$/i);
+  if (rateBound) return `${fieldName(rateBound[1])}必须大于等于 0 且小于 1（0.01 表示 1%）`;
+  const ratePrecision = message.match(/^(spread_rate|fee_rate) supports at most 8 decimal places$/i);
+  if (ratePrecision) return `${fieldName(ratePrecision[1])}最多支持 8 位有效小数，不会自动舍入`;
   const required = message.match(/^([a-z_]+) is required$/i);
   if (required) return `${fieldName(required[1])}不能为空`;
   const bound = message.match(/^([a-z_]+) must be (positive|non-negative|a positive integer|a non-negative integer)$/i);

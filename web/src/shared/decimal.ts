@@ -173,6 +173,13 @@ function validPrecision(value: number | undefined): number | null {
   return Number.isInteger(value) && value >= 0 && value <= MAX_ASSET_PRECISION ? value : null;
 }
 
+/** 校验输入精度，不舍入；尾随零不占精度，支持科学计数法。 */
+export function decimalFitsPrecision(value: string | number, precision: number | undefined): boolean {
+  const scale = validPrecision(precision);
+  const parsed = parseDecimal(value);
+  return scale !== null && parsed !== null && parsed.fraction.length <= scale;
+}
+
 /** 仅在最终展示边界进行十进制四舍五入，不经过 JavaScript Number。 */
 function roundParsedDecimal(parsed: ParsedDecimal, scale: number): ParsedDecimal {
   if (parsed.fraction.length <= scale) return parsed;

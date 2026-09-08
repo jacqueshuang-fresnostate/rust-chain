@@ -37,11 +37,14 @@ const props = withDefaults(defineProps<{
   movingAverages: MarketMovingAverages
   symbol: string
   interval?: string
+  historyLoading?: boolean
   locale: string
   label: string
 }>(), {
   interval: '',
+  historyLoading: false,
 })
+const emit = defineEmits<{ 'load-history': [] }>()
 
 const container = ref<HTMLElement | null>(null)
 let chart: IChartApi | null = null
@@ -52,11 +55,58 @@ let ma10Series: ISeriesApi<'Line'> | null = null
 let ma20Series: ISeriesApi<'Line'> | null = null
 let resizeObserver: ResizeObserver | null = null
 let stopObservingTheme: (() => void) | null = null
+let stopObservingViewportIntent: (() => void) | null = null
 let currentTheme: MarketChartTheme | null = null
 let renderedPoints: readonly NormalizedMarketChartPoint[] = []
 let fitNextDataset = true
+let initialHistoryPending = props.historyLoading || !props.points.length
+let viewportInteracted = false
+let awaitingDatasetPoints = false
 let viewportRestoreFrame = 0
+let pendingViewport: MarketChartLogicalViewport | null = null
+let pendingFollowAdvancingTail = false
 let renderedPricePrecision: number | null = null
+let historyDemandFrame = 0
+let historyGestureRange: LogicalRange | null = null
+const viewportIntentEvents = ['wheel', 'pointermove', 'touchmove', 'dblclick'] as const
+
+function cancelHistoryDemand(): void {
+  if (historyDemandFrame) cancelAnimationFrame(historyDemandFrame)
+  historyDemandFrame = 0
+  historyGestureRange = null
+}
+
+function onVisibleLogicalRangeChange(range: LogicalRange | null): void {
+  const before = historyGestureRange
+  if (!before || !range || props.historyLoading || awaitingDatasetPoints || !renderedPoints.length) return
+  if (!Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return
+  // A viewport notification alone is never demand: native fits, live writes,
+  // prepend restoration and touch inertia can all produce the same event.
+  if (range.from <= 20 && range.from < before.from - .01) {
+    cancelHistoryDemand()
+    emit('load-history')
+  }
+}
+
+function recordViewportIntent(event: Event): void {
+  if (event.type === 'pointermove' && (event as PointerEvent).buttons === 0) return
+  viewportInteracted = true
+  // A gesture wins over delayed history fitting and queued renderer work.
+  // Keep an initial/new-dataset fit armed while there are no new data yet.
+  if (renderedPoints.length && !awaitingDatasetPoints) fitNextDataset = false
+  scheduleViewportRestore(null)
+  if (event.type === 'dblclick') { cancelHistoryDemand(); return }
+  if (!chart || props.historyLoading || awaitingDatasetPoints || !renderedPoints.length) return
+  if (historyDemandFrame) return
+  historyGestureRange = chart.timeScale().getVisibleLogicalRange()
+  // Capture runs before the library's mouse/touch handler. Read on RAF too:
+  // logical range notifications may wait for its next native draw.
+  historyDemandFrame = requestAnimationFrame(() => {
+    historyDemandFrame = 0
+    onVisibleLogicalRangeChange(chart?.timeScale().getVisibleLogicalRange() ?? null)
+    historyGestureRange = null
+  })
+}
 
 function applyPriceFormat(): void {
   const priceFormat = resolveMarketChartPriceFormat(props.points)
@@ -71,23 +121,28 @@ function applyPriceFormat(): void {
 function captureViewport(
   points: readonly NormalizedMarketChartPoint[] = renderedPoints,
 ): MarketChartLogicalViewport | null {
-  const range = chart?.timeScale().getVisibleLogicalRange()
+  const range = pendingViewport
+    ? resolveMarketChartLogicalRange(points, pendingViewport, pendingFollowAdvancingTail)
+    : chart?.timeScale().getVisibleLogicalRange()
   return captureMarketChartLogicalViewport(points, range ?? null)
 }
 
-function restoreViewport(viewport: MarketChartLogicalViewport | null): void {
+function restoreViewport(viewport: MarketChartLogicalViewport | null, followAdvancingTail = false): void {
   if (!chart || !viewport) return
-  const range = resolveMarketChartLogicalRange(props.points, viewport)
+  const range = resolveMarketChartLogicalRange(props.points, viewport, followAdvancingTail)
   if (range) chart.timeScale().setVisibleLogicalRange(range as LogicalRange)
 }
 
-function scheduleViewportRestore(viewport: MarketChartLogicalViewport | null): void {
+function scheduleViewportRestore(viewport: MarketChartLogicalViewport | null, followAdvancingTail = false): void {
   if (viewportRestoreFrame) cancelAnimationFrame(viewportRestoreFrame)
   viewportRestoreFrame = 0
+  pendingViewport = viewport
+  pendingFollowAdvancingTail = followAdvancingTail
   if (!viewport) return
   viewportRestoreFrame = requestAnimationFrame(() => {
     viewportRestoreFrame = 0
-    restoreViewport(viewport)
+    pendingViewport = null
+    restoreViewport(viewport, followAdvancingTail)
   })
 }
 
@@ -145,7 +200,7 @@ function renderAllData(
     fitNextDataset = false
     return
   }
-  scheduleViewportRestore(viewport)
+  scheduleViewportRestore(viewport, allowFit)
 }
 
 function updateLatestData(): void {
@@ -171,6 +226,7 @@ function updateLatestAverage(
 
 function applyTheme(): void {
   if (!chart || !container.value) return
+  cancelHistoryDemand()
   const viewport = captureViewport()
   const theme = readMarketChartTheme(container.value)
   currentTheme = theme
@@ -200,6 +256,7 @@ function applyTheme(): void {
 
 function resize(): void {
   if (!chart || !container.value) return
+  cancelHistoryDemand()
   const width = container.value.clientWidth
   const height = container.value.clientHeight
   if (width <= 0 || height <= 0) return
@@ -212,6 +269,13 @@ function datasetKey(symbol: string, interval: string): string {
 
 onMounted(() => {
   if (!container.value) return
+  const element = container.value
+  for (const event of viewportIntentEvents) {
+    element.addEventListener(event, recordViewportIntent, { capture: true, passive: true })
+  }
+  stopObservingViewportIntent = () => {
+    for (const event of viewportIntentEvents) element.removeEventListener(event, recordViewportIntent, true)
+  }
   const theme = readMarketChartTheme(container.value)
   currentTheme = theme
   chart = createChart(container.value, {
@@ -242,6 +306,7 @@ onMounted(() => {
     upColor: theme.positive,
     downColor: theme.negative,
     borderVisible: false,
+    wickVisible: false,
     wickUpColor: theme.positive,
     wickDownColor: theme.negative,
   })
@@ -273,6 +338,7 @@ onMounted(() => {
     priceLineVisible: false,
   })
   volume.priceScale().applyOptions({ scaleMargins: { top: .76, bottom: 0 } })
+  chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange)
   resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container.value)
   stopObservingTheme = observeMarketChartTheme(
@@ -285,29 +351,39 @@ onMounted(() => {
 })
 
 watch(
-  () => ({ key: datasetKey(props.symbol, props.interval), points: props.points }),
+  () => ({ key: datasetKey(props.symbol, props.interval), points: props.points, historyLoading: props.historyLoading }),
   (next, previous) => {
+    cancelHistoryDemand()
     const fitKeyChanged = next.key !== previous.key
     const pointsChanged = next.points !== previous.points
     if (fitKeyChanged) {
       scheduleViewportRestore(null)
       fitNextDataset = true
+      initialHistoryPending = true
+      viewportInteracted = false
+      awaitingDatasetPoints = !pointsChanged
     }
     if (fitKeyChanged && !pointsChanged) return
+    if (awaitingDatasetPoints && !pointsChanged) return
+    awaitingDatasetPoints = false
 
     const update = classifyMarketChartDataUpdate(renderedPoints, next.points)
-    if (renderedPoints.length <= 1 && next.points.length > renderedPoints.length) {
-      fitNextDataset = true
+    const historySettled = initialHistoryPending && previous.historyLoading && !next.historyLoading
+    if (historySettled) {
+      initialHistoryPending = false
+      if (!viewportInteracted) fitNextDataset = true
     }
+    if (!next.historyLoading && next.points.length) initialHistoryPending = false
     const viewport = !fitNextDataset && !fitKeyChanged && renderedPoints.length > 0
       ? captureViewport(renderedPoints)
       : null
     renderedPoints = next.points
     if (!fitNextDataset && !fitKeyChanged && (update === 'update-last' || update === 'append')) {
       updateLatestData()
+      if (pendingViewport) scheduleViewportRestore(viewport, update === 'append')
       return
     }
-    if (update !== 'none' || fitKeyChanged || (fitNextDataset && pointsChanged)) {
+    if (update !== 'none' || fitKeyChanged || (fitNextDataset && (pointsChanged || historySettled))) {
       renderAllData(true, viewport)
     }
   },
@@ -318,10 +394,14 @@ watch(() => props.locale, (locale) => {
 })
 
 onUnmounted(() => {
+  cancelHistoryDemand()
   scheduleViewportRestore(null)
+  stopObservingViewportIntent?.()
+  stopObservingViewportIntent = null
   resizeObserver?.disconnect()
   stopObservingTheme?.()
   stopObservingTheme = null
+  chart?.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange)
   chart?.remove()
   chart = null
   candles = null

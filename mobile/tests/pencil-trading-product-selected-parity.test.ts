@@ -152,6 +152,23 @@ test('现货 yzOPc/bo8k5 模板仅定向调整订单类型入口与持仓归属�
     normalizedAccountWorkspace,
     'account workspace',
   )
+  // Channel ownership changed; normalize only this approved binding so the
+  // existing geometry/template fingerprint continues to guard every other byte.
+  normalizedSpotTemplate = replaceExactlyOnce(
+    normalizedSpotTemplate,
+    "tradesLoading ? t('common.loading') : t('trade.noRecentTrades')",
+    "depthLoading ? t('common.loading') : t('trade.noRecentTrades')",
+    'independent recent-trades loading',
+  )
+  // Source provenance is the only new chart input; retain the original
+  // fingerprint for every other byte of the approved spot template.
+  assert.match(spotTemplate, /<MobileMarketChart :market-type="ticker\?\.marketType"/)
+  normalizedSpotTemplate = replaceExactlyOnce(
+    normalizedSpotTemplate,
+    '<MobileMarketChart :market-type="ticker?.marketType"',
+    '<MobileMarketChart',
+    'generated market source metadata',
+  )
   const priorSpotDigest = createHash('sha256').update(normalizedSpotTemplate).digest('hex')
 
   assert.equal(priorSpotDigest, '80417caf6742d533159cc2ba09a723c9ea3d2ebcb6a04df7926fd075c65cb828')

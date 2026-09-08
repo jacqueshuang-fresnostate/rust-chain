@@ -29,6 +29,9 @@ the feature contract for the business context being modified.
 | [Seconds Contract Contracts](./seconds-contracts.md) | Seconds product cycle, order duration, and PC/admin payload contracts | Active |
 | [Agent Hierarchy Contracts](./agent-hierarchy.md) | Three-level agent organization, subtree scope, and multi-business differential commission contracts | Active |
 | [Wallet Amount Precision Contract](./wallet-amount-precision.md) | Asset precision rules for calculated wallet balances and ledger snapshots | Active |
+| [Admin Financial Validation](./admin-financial-validation.md) | Manual recharge precision locks/replay and executable convert configuration bounds | Active |
+| [Risk Configuration](./risk-configuration.md) | Known JSON validation, locked enable/legacy disable and exact spot pair scopes | Active |
+| [External Market Fallback](./market-fallback.md) | Request-time Coinbase windows and provider/failure isolation | Active |
 | [Deposit Address Contracts](./deposit-addresses.md) | Configurable deposit network address groups and address-pool allocation contracts | Active |
 | [Order Identifier Display Contract](./order-identifiers.md) | User-visible order numbers and internal ID separation across admin and PC UI | Active |
 | [Auth Session Contract](./auth-sessions.md) | sa-token-rust Redis session, refresh, extractor, and frontend Bearer compatibility contracts | Active |
@@ -38,6 +41,7 @@ the feature contract for the business context being modified.
 | [Realtime WebSocket Contracts](./realtime-websockets.md) | Business-scoped public aliases, exact-user private refresh hints, and REST reconciliation boundaries | Active |
 | [Agent-Routed Online Support Contracts](./online-support.md) | Durable support messages, exact owning-agent isolation, admin fallback, reassignment, unread, pagination, and refresh contracts | Active |
 | [Synthetic Market and K-line Recovery Contracts](./synthetic-market-kline.md) | Deterministic strategy ticker/K-line generation, active-version leases, authoritative 1m aggregation, and admin-only historical recovery | Active |
+| [Default Platform Market Generation](./default-market-generation.md) | Pair-scoped baseline generation, coordinated handoff, immutable parameters, pause-all and default-source capability | Active |
 | [New Coin Mobile Contract](./new-coin-mobile-contract.md) | Public project purchase-pair exposure and authenticated mobile lifecycle actions | Active |
 | [Manual New Coin Distribution](./new-coin-manual-distribution.md) | Subscription freeze, final Admin allocation, partial refunds, replay and listing readiness | Active |
 | [Admin New-Coin Project Center](./new-coin-project-center.md) | Exact-ID read, guarded preheat issuance, config concurrency and stage readiness | Active |

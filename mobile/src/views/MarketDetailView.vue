@@ -19,6 +19,7 @@ import AssetMark from '@/components/AssetMark.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
+import { loadMarketDetailSnapshot } from '@/api/marketDetailSnapshot'
 import {
   createMarketDetailStreamSession,
   type MarketDetailStreamContext,
@@ -53,8 +54,10 @@ const marketFavorites = useMarketFavoritesStore()
 const session = useSessionStore()
 const { t } = useI18n()
 const interval = ref<MarketKlineInterval>(DEFAULT_MARKET_KLINE_INTERVAL)
-const loading = ref(true)
+const depthLoading = ref(true)
+const tradesLoading = ref(true)
 const chartLoading = ref(true)
+const loading = computed(() => chartLoading.value || depthLoading.value || tradesLoading.value)
 const klineError = ref(false)
 const depthError = ref(false)
 const tradesError = ref(false)
@@ -63,6 +66,7 @@ const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
 const trades = ref<TradePrint[]>([])
 const liveDetailActive = ref(false)
+const liveDepthReceived = ref(false)
 const liveDetailUpdatedAt = ref(0)
 type MarketDataPanel = 'orderBook' | 'trades'
 type MarketSection = 'chart' | 'overview'
@@ -113,6 +117,8 @@ const observedAt = computed(() => liveDetailUpdatedAt.value || ticker.value?.obs
 const detailStreamSession = createMarketDetailStreamSession({
   getUrl: publicMarketWebSocketUrl,
   onDepth: (_context, snapshot) => {
+    liveDepthReceived.value = true
+    depthLoading.value = false
     liveDetailActive.value = true
     liveDetailUpdatedAt.value = Date.now()
     bids.value = snapshot.bids
@@ -120,6 +126,7 @@ const detailStreamSession = createMarketDetailStreamSession({
     depthError.value = false
   },
   onTrade: (_context, trade) => {
+    tradesLoading.value = false
     liveDetailActive.value = true
     liveDetailUpdatedAt.value = Date.now()
     trades.value = mergeMarketTrades(trades.value, trade, 16)
@@ -130,7 +137,6 @@ const detailStreamSession = createMarketDetailStreamSession({
     liveDetailUpdatedAt.value = Date.now()
     points.value = nextPoints
     klineError.value = false
-    chartLoading.value = false
   },
 })
 
@@ -163,53 +169,41 @@ async function load(forceMarket = false): Promise<void> {
   const version = ++requestVersion
   const symbol = pairSymbol.value
   const selectedInterval = interval.value
-  loading.value = true
+  depthLoading.value = true
+  tradesLoading.value = true
   chartLoading.value = true
   klineError.value = false
   depthError.value = false
   tradesError.value = false
+  liveDepthReceived.value = false
   bids.value = []
   asks.value = []
   trades.value = []
   const liveState = startLiveDetail(symbol, selectedInterval, version)
-  const klineRequest = detailStreamSession.beginKlineRequest(liveState)
+  const isCurrent = () => viewActive && version === requestVersion && symbol === pairSymbol.value
   void marketStore.refresh(forceMarket)
-  const [klineResult, depthResult, tradesResult] = await Promise.allSettled([
-    fetchKlines(pairSymbol.value, interval.value),
-    fetchOrderBook(pairSymbol.value),
-    fetchRecentTrades(pairSymbol.value),
-  ])
-  if (version !== requestVersion || symbol !== pairSymbol.value) return
-
-  const hasKlines = klineResult.status === 'fulfilled' && klineResult.value.length > 0
-  if (
-    klineRequest
-    && isCurrentLiveDetail(liveState, version)
-    && detailStreamSession.isCurrentKlineRequest(klineRequest)
-  ) {
-    const restPoints = hasKlines ? klineResult.value : []
-    const nextPoints = detailStreamSession.resolveKlineRequest(klineRequest, restPoints)
-    if (nextPoints) points.value = nextPoints
-    klineError.value = klineResult.status === 'rejected'
-      && !liveState.klineReceived
-      && points.value.length === 0
-    chartLoading.value = false
-  }
-  const currentLiveState = detailStreamSession.current()
-  const currentDepthReceived = Boolean(
-    currentLiveState
-    && detailStreamSession.isCurrent(currentLiveState, symbol)
-    && currentLiveState.depthReceived,
-  )
-  if (!liveState.depthReceived && !currentDepthReceived) {
-    bids.value = depthResult.status === 'fulfilled' ? depthResult.value.bids : []
-    asks.value = depthResult.status === 'fulfilled' ? depthResult.value.asks : []
-    depthError.value = depthResult.status === 'rejected'
-  }
-  const restTrades = tradesResult.status === 'fulfilled' ? tradesResult.value : []
-  trades.value = mergeMarketTradeHistory(trades.value, restTrades, 16)
-  tradesError.value = tradesResult.status === 'rejected' && trades.value.length === 0
-  loading.value = false
+  await loadMarketDetailSnapshot({
+    session: detailStreamSession, context: liveState, isCurrent,
+    hasLiveDepth: () => liveDepthReceived.value,
+    loadKlines: () => fetchKlines(symbol, selectedInterval),
+    loadDepth: () => fetchOrderBook(symbol),
+    loadTrades: () => fetchRecentTrades(symbol),
+    onKlines: (nextPoints, failed) => {
+      points.value = nextPoints
+      klineError.value = failed
+      chartLoading.value = false
+    },
+    onDepth: (snapshot, failed) => {
+      if (snapshot) { bids.value = snapshot.bids; asks.value = snapshot.asks }
+      depthError.value = failed
+      depthLoading.value = false
+    },
+    onTrades: (restTrades, failed) => {
+      trades.value = mergeMarketTradeHistory(trades.value, restTrades, 16)
+      tradesLoading.value = false
+      tradesError.value = failed && trades.value.length === 0
+    },
+  })
 }
 
 async function refreshKlines(liveState: MarketDetailStreamContext): Promise<void> {
@@ -629,7 +623,7 @@ onUnmounted(() => {
           <Minimize2 v-if="chartExpanded" :size="18" />
           <Maximize2 v-else :size="18" />
         </button>
-        <MobileMarketChart
+        <MobileMarketChart :market-type="ticker?.marketType"
           :points="points"
           :loading="chartLoading"
           :interval="interval"
@@ -696,7 +690,7 @@ onUnmounted(() => {
           :current-price="latestPrice"
           :base-asset="baseAsset"
           :quote-asset="quoteAsset"
-          :loading="loading"
+          :loading="depthLoading"
         />
       </div>
 
@@ -707,14 +701,14 @@ onUnmounted(() => {
         role="tabpanel"
         aria-labelledby="market-latest-trades-tab"
         tabindex="0"
-        :aria-busy="loading"
+        :aria-busy="tradesLoading"
       >
         <div class="market-detail__trade-head">
           <span>{{ t('marketDetail.price') }} · {{ quoteAsset }}</span>
           <span>{{ t('marketDetail.quantity') }} · {{ baseAsset }}</span>
           <span>{{ t('common.time') }}</span>
         </div>
-        <div v-if="loading && !trades.length" class="market-detail__trade-state">
+        <div v-if="tradesLoading && !trades.length" class="market-detail__trade-state">
           {{ t('common.loading') }}
         </div>
         <div v-else-if="!trades.length" class="market-detail__trade-state">
@@ -1089,12 +1083,9 @@ onUnmounted(() => {
     color-mix(in srgb, var(--detail-surface) 82%, transparent) 0%,
     color-mix(in srgb, var(--detail-background) 58%, transparent) 100%
   );
-  border: 1px solid color-mix(in srgb, var(--detail-line) 72%, var(--detail-ink));
+  border: 0;
   border-radius: 12px;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--detail-surface) 92%, var(--detail-ink)),
-    0 8px 18px color-mix(in srgb, var(--detail-background) 46%, transparent),
-    0 2px 6px color-mix(in srgb, var(--detail-ink) 10%, transparent);
+  box-shadow: none;
   color: var(--detail-ink);
   display: flex;
   height: 44px;
@@ -1103,24 +1094,19 @@ onUnmounted(() => {
   padding: 0;
   position: absolute;
   top: 12px;
-  transition: background 140ms ease, box-shadow 140ms ease, transform 100ms ease;
+  transition: background 140ms ease, transform 100ms ease;
   width: 44px;
   z-index: 4;
 }
 
 .market-detail .market-detail__chart > button.market-detail__chart-toggle:active {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--detail-surface) 88%, var(--detail-ink)),
-    0 3px 9px color-mix(in srgb, var(--detail-background) 42%, transparent),
-    0 1px 3px color-mix(in srgb, var(--detail-ink) 10%, transparent);
+  background: color-mix(in srgb, var(--detail-surface) 94%, transparent);
+  box-shadow: none;
   transform: translateY(1px);
 }
 
 .market-detail .market-detail__chart > button.market-detail__chart-toggle:focus-visible {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--detail-surface) 92%, var(--detail-ink)),
-    0 8px 18px color-mix(in srgb, var(--detail-background) 46%, transparent),
-    0 2px 6px color-mix(in srgb, var(--detail-ink) 10%, transparent);
+  box-shadow: none;
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }

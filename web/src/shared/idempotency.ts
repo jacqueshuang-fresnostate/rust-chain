@@ -159,6 +159,17 @@ export function financialCommandScopeFromSession(
   };
 }
 
+function financialCommandIdentity(scope: FinancialCommandScope): string {
+  return canonicalRequestIntent({
+    asset_id: scope.assetId,
+    auth_scope: scope.authScope,
+    command: scope.command,
+    generation: scope.generation,
+    subject: scope.subject,
+    user_id: scope.userId
+  });
+}
+
 /** 按会话/管理员/用户/资产保存未决资金命令，超时、响应丢失和页面重挂载都复用原键。 */
 export class FinancialCommandIntentStore {
   private readonly keyFactory: KeyFactory;
@@ -185,14 +196,7 @@ export class FinancialCommandIntentStore {
 
   acquire(scope: FinancialCommandScope, values: Record<string, unknown>): FinancialCommandLease {
     const now = this.now();
-    const identity = canonicalRequestIntent({
-      asset_id: scope.assetId,
-      auth_scope: scope.authScope,
-      command: scope.command,
-      generation: scope.generation,
-      subject: scope.subject,
-      user_id: scope.userId
-    });
+    const identity = financialCommandIdentity(scope);
     const intent = canonicalRequestIntent(values);
     const log = readLog(this.storage);
     const existing = log.records.find((record) => record.identity === identity && record.intent === intent);
@@ -206,6 +210,13 @@ export class FinancialCommandIntentStore {
     log.records.push({ command: scope.command, createdAt: now, identity, intent, key, state: 'pending', updatedAt: now });
     writeLog(this.storage, log);
     return { identity, intent, key };
+  }
+
+  /** 只读查询原意图，不创建新键；配置变化不能阻断未决命令的原键核对。 */
+  hasPending(scope: FinancialCommandScope, values: Record<string, unknown>): boolean {
+    const identity = financialCommandIdentity(scope);
+    const intent = canonicalRequestIntent(values);
+    return readLog(this.storage).records.some((record) => record.identity === identity && record.intent === intent);
   }
 
   markUncertain(lease: FinancialCommandLease): void {

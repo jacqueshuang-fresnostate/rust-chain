@@ -11,6 +11,7 @@ export interface MarketChartLogicalViewport {
   rangeWidth: number
   anchorTimestamp: number
   anchorOffset: number
+  liveTail?: { timestamp: number, rightOffset: number }
 }
 
 export function classifyMarketChartDataUpdate(
@@ -69,12 +70,20 @@ export function captureMarketChartLogicalViewport(
     rangeWidth: range.to - range.from,
     anchorTimestamp,
     anchorOffset: range.to - anchorIndex,
+    // Match the chart's visible strict range, including a partial edge bar.
+    ...(Math.floor(range.from) <= rows.length - 1 && Math.ceil(range.to) >= rows.length - 1 ? {
+      liveTail: {
+        timestamp: rows[rows.length - 1].time,
+        rightOffset: range.to - (rows.length - 1),
+      },
+    } : {}),
   }
 }
 
 export function resolveMarketChartLogicalRange(
   rows: readonly { time: number }[],
   viewport: MarketChartLogicalViewport,
+  followAdvancingTail = false,
 ): MarketChartLogicalRange | null {
   if (
     !rows.length
@@ -85,6 +94,17 @@ export function resolveMarketChartLogicalRange(
     || !Number.isFinite(viewport.anchorOffset)
   ) {
     return null
+  }
+
+  // Only data replacements may follow, and only if the prior live bar was
+  // visible and the newest timestamp advances. Theme/prepend/correction work
+  // keeps the timestamp anchor even when it happens near the live edge.
+  const tail = viewport.liveTail
+  if (followAdvancingTail && tail
+    && Number.isFinite(tail.timestamp) && Number.isFinite(tail.rightOffset)
+    && rows[rows.length - 1].time > tail.timestamp) {
+    const to = rows.length - 1 + tail.rightOffset
+    return { from: to - viewport.rangeWidth, to }
   }
 
   const anchorIndex = nearestTimestampIndex(rows, viewport.anchorTimestamp)

@@ -22,6 +22,19 @@ use sqlx::{MySql, Pool, QueryBuilder};
 const SPOT_ORDER_ORDER_BY: &str = " ORDER BY orders.created_at DESC, orders.id DESC";
 const SPOT_TRADE_ORDER_BY: &str = " ORDER BY trades.created_at DESC, trades.id DESC";
 
+/// 按已加载规则的权威符号取得同一交易对主键，供写入前风控同时匹配后台数字目标和旧符号目标。
+/// 符号列唯一；不把纯数字符号再解释为其他行 ID，缺失或读库失败立即终止调用方且不写订单/钱包。
+pub(crate) async fn load_spot_pair_db_id_by_symbol(
+    pool: &Pool<MySql>,
+    pair_symbol: &str,
+) -> AppResult<u64> {
+    sqlx::query_scalar("SELECT id FROM trading_pairs WHERE symbol = ? LIMIT 1")
+        .bind(pair_symbol)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 /// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
 async fn fetch_admin_page<T>(
     pool: &Pool<MySql>,

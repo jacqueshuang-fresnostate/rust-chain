@@ -45,6 +45,12 @@ describe('Admin Chinese presentation coverage', () => {
     expect(adminEnumLabel('margin_modes', 'cross')).toBe('全仓');
   });
 
+  it('labels seconds payout rates as net profit in shared Chinese detail views', () => {
+    expect(adminFieldLabel('payout_rate')).toBe('净收益率（不含本金）');
+    expect(adminFieldLabel('cycles')).toBe('周期 / 净收益率 / 押注范围');
+    expect(displayDetailValue({ duration_seconds: 60, payout_rate: '0.4', min_stake: '10' }, 'cycles')).toContain('净收益率（不含本金）');
+  });
+
   it.each(['paused', 'stopped', 'running', 'live', 'partial_allocated', 'refunded', 'pending_confirmation'])('uses consistent labels for %s across status and details', (value) => {
     render(<StatusTag value={value} />);
     expect(screen.getByText(displayDetailValue(value, 'status'))).toBeInTheDocument();

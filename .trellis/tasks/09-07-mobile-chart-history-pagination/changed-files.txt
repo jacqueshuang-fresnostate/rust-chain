@@ -1,0 +1,34 @@
+# Current slice changed files compared with the recorded pre-task dirty baseline.
+# Shared files include prior uncommitted hunks; this is NOT a safe whole-file staging list.
+.trellis/spec/mobile/backend-integration.md
+.trellis/spec/mobile/pwa-and-shell.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/changed-files.txt
+.trellis/tasks/09-07-mobile-chart-history-pagination/check.jsonl
+.trellis/tasks/09-07-mobile-chart-history-pagination/implement.jsonl
+.trellis/tasks/09-07-mobile-chart-history-pagination/prd.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/research/api-implementation.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/research/baseline-files.json
+.trellis/tasks/09-07-mobile-chart-history-pagination/research/chart-history-runtime.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/research/chart-toggle-implementation.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/research/history-api-audit.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/research/history-browser-verification.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/review.md
+.trellis/tasks/09-07-mobile-chart-history-pagination/task.json
+docs/superpowers/PROGRESS.md
+mobile/src/api/market.ts
+mobile/src/components/LightweightMarketChart.vue
+mobile/src/components/MobileMarketChart.vue
+mobile/src/core/marketChartHistory.ts
+mobile/src/i18n/messages/en.ts
+mobile/src/i18n/messages/zh-CN.ts
+mobile/src/views/MarketDetailView.vue
+mobile/tests/helpers/market-chart-renderer.ts
+mobile/tests/helpers/mobile-market-chart.ts
+mobile/tests/market-chart-history-renderer.test.ts
+mobile/tests/market-chart-history.test.ts
+mobile/tests/market-detail-reference-layout.test.ts
+mobile/tests/market-kline-history-api.test.ts
+mobile/tests/market-news-support-views.test.ts
+mobile/tests/market-socket.test.ts
+mobile/tests/mobile-market-chart-history.test.ts
+mobile/tests/ui-prototype-alignment-trading.test.ts

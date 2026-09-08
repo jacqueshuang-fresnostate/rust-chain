@@ -142,8 +142,8 @@ test('秒合约工作台保持选中稿操作区与订单区顺序、真实接�
     'class="seconds-active-order-list"',
     'class="seconds-active-order"',
   ])
-  assert.equal(zhCN.seconds.estimatedProfit, '预计收益')
-  assert.equal(en.seconds.estimatedProfit, 'Estimated profit')
+  assert.equal(zhCN.seconds.estimatedProfit, '预计净收益')
+  assert.equal(en.seconds.estimatedProfit, 'Estimated net profit')
   assert.match(sources.seconds, /orderReview\.value\?\.estimatedProfit \?\? null/)
   assert.match(sources.seconds, /estimatedProfit: orderProfit/)
   assert.match(sources.seconds, /moneyText\(orderMoney\(order\)\.entryPrice\)/)

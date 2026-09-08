@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::modules::events::{infrastructure::insert_event_in_tx, user_created_outbox_event};
+use crate::modules::wallet::{MAX_ASSET_PRECISION_SCALE, amount_fits_asset_precision};
 use chrono::Utc;
 
 /// 按用户 ID、邮箱和状态筛选后台用户，并返回可选包含内部账号的分页结果与总数。
@@ -149,7 +150,7 @@ pub(crate) async fn update_admin_user_status(
 
 /// 执行后台人工充值，把指定资产计入用户可用余额并返回最新钱包快照。
 /// 调用方须已完成管理员鉴权、提供审计原因，且金额、用户和启用资产必须有效。
-/// 事务内完成收据占位、余额加账、同额钱包流水、账户锁定回读、响应快照和后台审计。
+/// 事务锁定资产状态与精度，人工金额超精度直接拒绝而不舍入；通过后写收据、钱包、流水、响应快照和审计。
 /// 同管理员同键同指纹返回第一次快照，异指纹返回冲突；并发首请求由数据库唯一键裁决。
 /// 任一数据库步骤失败都会回滚，不允许出现有余额变化而无流水或审计的状态。
 pub(crate) async fn recharge_admin_user_wallet(
@@ -180,7 +181,28 @@ pub(crate) async fn recharge_admin_user_wallet(
     // 先占收据唯一键再动账，充值、流水、审计和首次响应快照必须同事务提交。
     let mut tx = pool.begin().await?;
     ensure_admin_user_exists_in_tx(&mut tx, user_id).await?;
-    let asset = load_active_asset_symbol_in_tx(&mut tx, request.asset_id).await?;
+    // 等待用户锁期间首单可能已经提交；先读最新收据，避免资产精度收紧改变重放结果。
+    if let Some(response) =
+        replay_admin_wallet_recharge(&mut *tx, admin_id, &idempotency_key, &request_fingerprint)
+            .await?
+    {
+        tx.rollback().await?;
+        return Ok(response);
+    }
+    // 锁序保持用户 → 资产共享锁 → 收据 → 钱包；精度和状态与入账共用同一资产锁。
+    let asset = lock_admin_recharge_asset_in_tx(&mut tx, request.asset_id).await?;
+    if asset.status != "active" {
+        return Err(AppError::Validation("asset must be active".to_owned()));
+    }
+    if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&asset.precision_scale) {
+        return Err(AppError::Internal("invalid asset precision".to_owned()));
+    }
+    if !amount_fits_asset_precision(&request.amount, asset.precision_scale) {
+        return Err(AppError::Validation(format!(
+            "amount exceeds asset precision_scale {}",
+            asset.precision_scale
+        )));
+    }
     match insert_admin_wallet_recharge_receipt_in_tx(
         &mut tx,
         &recharge_id,
@@ -252,13 +274,17 @@ pub(crate) async fn recharge_admin_user_wallet(
 }
 
 /// 命中收据时只核对稳定指纹并解析首次响应，不重新读钱包或追加流水/审计。
-async fn replay_admin_wallet_recharge(
-    pool: &Pool<MySql>,
+async fn replay_admin_wallet_recharge<'e, E>(
+    executor: E,
     admin_id: u64,
     idempotency_key: &str,
     request_fingerprint: &str,
-) -> AppResult<Option<AdminUserRechargeResponse>> {
-    let Some(receipt) = load_admin_wallet_recharge_receipt(pool, admin_id, idempotency_key).await?
+) -> AppResult<Option<AdminUserRechargeResponse>>
+where
+    E: sqlx::Executor<'e, Database = MySql>,
+{
+    let Some(receipt) =
+        load_admin_wallet_recharge_receipt(executor, admin_id, idempotency_key).await?
     else {
         return Ok(None);
     };

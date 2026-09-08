@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Net payout display and immutable financial contract"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Net payout display and immutable financial contract"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Net payout display and immutable financial contract"}
+{"file": ".trellis/spec/admin/chinese-presentation.md", "reason": "Net payout display and immutable financial contract"}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Net payout display and immutable financial contract"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Immutable guarded SQLx data migration and idempotence requirements"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend financial invariants and focused verification"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend pre-development and quality checklist"}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Admin financial input wording and UI boundaries"}

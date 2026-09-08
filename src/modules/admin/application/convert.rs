@@ -129,7 +129,7 @@ pub(crate) async fn create_admin_convert_pair(
 }
 
 /// 在锁定的旧快照上合并换币交易对的局部更新，并保留准确的前后审计值。
-/// 调用方须已完成管理员鉴权并提供审计原因；合并后的资产、费率和限额整体重新校验。
+/// 调用方须已完成管理员鉴权并提供审计原因；配置修改或启用须整体校验，仅显式纯停用允许保留历史无效配置。
 /// 事务按“锁定交易对、更新、回读、写审计”执行，配置和审计必须同时提交或同时回滚。
 /// 本用例没有幂等键；每次成功调用都会新增审计记录，失败不会留下部分配置。
 pub(crate) async fn update_admin_convert_pair(
@@ -146,7 +146,7 @@ pub(crate) async fn update_admin_convert_pair(
     let before = lock_admin_convert_pair_in_tx(&mut tx, pair_id).await?;
     let from_asset_id = request.from_asset_id.unwrap_or(before.from_asset_id);
     let to_asset_id = request.to_asset_id.unwrap_or(before.to_asset_id);
-    let pricing_mode = request
+    let mut pricing_mode = request
         .pricing_mode
         .as_deref()
         .unwrap_or(&before.pricing_mode)
@@ -187,17 +187,22 @@ pub(crate) async fn update_admin_convert_pair(
         || request.target_min_amount.is_some()
         || request.target_max_amount.is_some();
 
-    validate_convert_pair_values(
-        from_asset_id,
-        to_asset_id,
-        &pricing_mode,
-        &spread_rate,
-        &fee_rate,
-        &min_amount,
-        max_amount.as_ref(),
-        &target_min_amount,
-        target_max_amount.as_ref(),
-    )?;
+    // 历史坏配置必须仍可关闭；该例外只允许显式纯停用，不允许顺便更新或重新启用。
+    if request.enabled == Some(false) && !updates_config {
+        pricing_mode = before.pricing_mode.clone();
+    } else {
+        validate_convert_pair_values(
+            from_asset_id,
+            to_asset_id,
+            &pricing_mode,
+            &spread_rate,
+            &fee_rate,
+            &min_amount,
+            max_amount.as_ref(),
+            &target_min_amount,
+            target_max_amount.as_ref(),
+        )?;
+    }
 
     update_admin_convert_pair_in_tx(
         &mut tx,

@@ -45,6 +45,125 @@ fn admin_recharge_fingerprint_normalizes_decimal_and_reason() {
 }
 
 #[test]
+fn admin_convert_pair_rejects_unsupported_pricing_modes() {
+    for mode in ["", " ", "markte", "FIXED", "Market", "fixed market"] {
+        let result = validate_convert_pair_values(
+            1,
+            2,
+            mode,
+            &decimal("0"),
+            &decimal("0"),
+            &decimal("0"),
+            None,
+            &decimal("0"),
+            None,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "mode: {mode:?}"
+        );
+    }
+}
+
+#[test]
+fn admin_convert_pair_rejects_non_executable_ratios() {
+    for (spread, fee) in [
+        ("-0.00000001", "0"),
+        ("1", "0"),
+        ("1.01", "0"),
+        ("0", "-0.00000001"),
+        ("0", "1"),
+        ("0", "1.01"),
+    ] {
+        let result = validate_convert_pair_values(
+            1,
+            2,
+            "market",
+            &decimal(spread),
+            &decimal(fee),
+            &decimal("0"),
+            None,
+            &decimal("0"),
+            None,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "spread: {spread}, fee: {fee}"
+        );
+    }
+}
+
+#[test]
+fn admin_convert_pair_rejects_ratios_that_would_be_rounded_in_storage() {
+    for (spread, fee, field) in [
+        ("0.999999999", "0", "spread_rate"),
+        ("0.123456789", "0", "spread_rate"),
+        ("0", "0.999999999", "fee_rate"),
+        ("0", "0.123456789", "fee_rate"),
+    ] {
+        let result = validate_convert_pair_values(
+            1,
+            2,
+            "market",
+            &decimal(spread),
+            &decimal(fee),
+            &decimal("0"),
+            None,
+            &decimal("0"),
+            None,
+        );
+        let message = validation_message(result);
+        assert!(message.contains(field), "{message}");
+        assert!(message.contains("8"), "{message}");
+    }
+}
+
+#[test]
+fn admin_convert_pair_accepts_supported_modes_and_exact_ratio_boundaries() {
+    for mode in ["fixed", "market", "  fixed  ", " market "] {
+        for ratio in ["0", "0.00000001", "0.99999999", "0.999999990000"] {
+            validate_convert_pair_values(
+                1,
+                2,
+                mode,
+                &decimal(ratio),
+                &decimal(ratio),
+                &decimal("0"),
+                Some(&decimal("0")),
+                &decimal("0"),
+                Some(&decimal("0")),
+            )
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn admin_convert_pair_rejects_negative_or_reversed_amount_ranges() {
+    for (min, max, target_min, target_max) in [
+        ("-1", None, "0", None),
+        ("2", Some("1"), "0", None),
+        ("0", None, "-1", None),
+        ("0", None, "2", Some("1")),
+        ("0", Some("-1"), "0", None),
+        ("0", None, "0", Some("-1")),
+    ] {
+        let result = validate_convert_pair_values(
+            1,
+            2,
+            "fixed",
+            &decimal("0"),
+            &decimal("0"),
+            &decimal(min),
+            max.map(decimal).as_ref(),
+            &decimal(target_min),
+            target_max.map(decimal).as_ref(),
+        );
+        assert!(matches!(result, Err(AppError::Validation(_))));
+    }
+}
+
+#[test]
 fn new_coin_unlock_fee_rate_must_fit_persisted_precision() {
     let request = UpdateNewCoinUnlockFeeRuleRequest {
         expected_config: None,
@@ -360,4 +479,121 @@ fn admin_permission_mapping_is_fail_closed_and_action_aware() {
             .as_deref(),
         Some("support.conversations.write")
     );
+}
+
+#[test]
+fn risk_rule_config_rejects_malformed_known_fields_for_both_creation_states() {
+    use serde_json::{Value, json};
+    let mut configs = vec![Value::Null, json!([]), json!(true), json!("rule"), json!(1)];
+    for key in ["operations", "blocked_operations"] {
+        for value in [
+            Value::Null,
+            json!(true),
+            json!({}),
+            json!("spot.order.create"),
+            json!([1]),
+            json!(["spot.order.create", null]),
+            json!([""]),
+            json!([" \t"]),
+            json!([" spot.order.create"]),
+            json!(["spot.order.create "]),
+        ] {
+            configs.push(json!({key: value}));
+        }
+    }
+    for key in [
+        "max_amount",
+        "max_price_deviation_bps",
+        "max_requests",
+        "window_seconds",
+    ] {
+        for value in [
+            Value::Null,
+            json!(true),
+            json!({}),
+            json!([]),
+            json!(""),
+            json!("no-number"),
+            json!(-1),
+            json!("-0.01"),
+        ] {
+            configs.push(json!({key: value}));
+        }
+    }
+    for key in ["max_price_deviation_bps", "max_requests", "window_seconds"] {
+        for raw in [
+            "1.5",
+            "1.0",
+            "1e2",
+            "4294967296",
+            "\"1.0\"",
+            "\"1e2\"",
+            "\"18446744073709551616\"",
+        ] {
+            configs.push(json!({key: serde_json::from_str::<Value>(raw).unwrap()}));
+        }
+    }
+    configs.push(json!({"window_seconds": 0}));
+    configs.push(json!({"window_seconds": "0"}));
+    let mut accepted = Vec::new();
+    for config_json in configs {
+        for enabled in [false, true] {
+            let request = CreateRiskRuleRequest {
+                rule_type: "custom".to_owned(),
+                target_type: "global".to_owned(),
+                target_id: None,
+                config_json: config_json.clone(),
+                enabled: Some(enabled),
+                reason: None,
+            };
+            if !matches!(
+                validate_create_risk_rule(&request),
+                Err(AppError::Validation(_))
+            ) {
+                accepted.push((enabled, config_json.clone()));
+            }
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "malformed configurations accepted: {accepted:?}"
+    );
+}
+
+#[test]
+fn risk_rule_config_preserves_valid_runtime_representations_and_extensions() {
+    use serde_json::{Value, json};
+    let configs = vec![
+        json!({}),
+        json!({"future": {"nested": null}, "daily_limit": "1"}),
+        json!({"operations": [], "blocked_operations": []}),
+        json!({"operations": ["SPOT.ORDER.CREATE", "future.operation"]}),
+        json!({"max_amount": " 1.234567890123456789012345678901e20 "}),
+        json!({"max_amount": "-0"}),
+        json!({"max_amount": 0}),
+        serde_json::from_str::<Value>(r#"{"max_amount":1.234567890123456789012345678901e20}"#)
+            .unwrap(),
+        json!({"max_requests": 0, "max_price_deviation_bps": 0}),
+        json!({"max_requests": " +0 ", "window_seconds": " 1 ", "max_price_deviation_bps": "4294967295"}),
+        json!({"window_seconds": 4294967295_u64, "max_requests": 4294967295_u64}),
+        json!({"max_amount": "10", "operations": ["spot.order.create", "wallet.withdrawal.create"]}),
+    ];
+    for config_json in configs {
+        let request = CreateRiskRuleRequest {
+            rule_type: "custom".to_owned(),
+            target_type: "global".to_owned(),
+            target_id: None,
+            config_json: config_json.clone(),
+            enabled: Some(true),
+            reason: None,
+        };
+        assert!(
+            validate_create_risk_rule(&request).is_ok(),
+            "valid configuration: {config_json}"
+        );
+        assert_eq!(
+            request.config_json, config_json,
+            "validation must not normalize persisted JSON"
+        );
+    }
 }

@@ -212,7 +212,7 @@ impl MarketFeedProvider {
     /// Bitget 用 `granularity` 参数并接受 `1min` 一类粒度；HTX 用 `period` 参数且交易对必须小写。
     /// Coinbase 的接口要求显式时间窗口，这里以当前时刻为终点、按周期秒数乘 300 回推起点，
     /// 也就是一次最多请求 300 根蜡烛，起点用饱和减法防止在极端时钟下溢出为负。
-    /// 因为终点取的是调用时刻，同一配置每次拼出的 Coinbase 地址都不同，该 URL 不可缓存复用。
+    /// 配置地址中的时间仅供预览；实际 Coinbase 请求在发送前重新生成时间窗，重连可复用配置。
     fn kline_fallback_url(&self, settings: &Settings, symbol: &str, interval: &str) -> String {
         match self {
             Self::Bitget => format!(
@@ -376,6 +376,33 @@ fn coinbase_rest_granularity(interval: &str) -> (&'static str, i64) {
         "1d" => ("ONE_DAY", 86_400),
         _ => ("ONE_MINUTE", 60),
     }
+}
+
+/// 按实际请求时刻刷新 Coinbase 蜡烛的滚动时间窗，不改配置端点、粒度或其他查询值。
+/// 窗口仍为既有周期映射的 300 根，时间使用秒并保持饱和减法；4h 等历史映射本次不调整。
+/// 仅替换全部 start/end 为各一个新值，保留代理路径、重复的其他参数与片段；非法 URL 返回错误且不发请求。
+pub(super) fn coinbase_rest_kline_url_at(
+    configured_url: &str,
+    interval: &str,
+    now: DateTime<Utc>,
+) -> AppResult<String> {
+    let mut url = url::Url::parse(configured_url).map_err(|error| {
+        AppError::Validation(format!("invalid Coinbase kline fallback URL: {error}"))
+    })?;
+    let retained: Vec<_> = url
+        .query_pairs()
+        .filter(|(key, _)| key != "start" && key != "end")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    let (_, seconds) = coinbase_rest_granularity(interval);
+    let end = now.timestamp();
+    let start = end.saturating_sub(seconds * 300);
+    url.query_pairs_mut()
+        .clear()
+        .extend_pairs(retained)
+        .append_pair("start", &start.to_string())
+        .append_pair("end", &end.to_string());
+    Ok(url.into())
 }
 
 impl BitgetMarketAdapter {

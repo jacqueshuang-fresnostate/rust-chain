@@ -8,7 +8,7 @@ use crate::{
     modules::admin::presentation::AdminUserRechargeResponse,
 };
 use serde_json::{Value, json};
-use sqlx::{MySql, Pool, Transaction, types::Json as SqlxJson};
+use sqlx::{Executor, MySql, Transaction, types::Json as SqlxJson};
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct AdminWalletRechargeReceipt {
@@ -16,12 +16,16 @@ pub(crate) struct AdminWalletRechargeReceipt {
     pub(crate) response_snapshot_json: SqlxJson<Value>,
 }
 
-/// 按管理员作用域读取首次充值收据；未命中时由新事务去竞争唯一键。
-pub(crate) async fn load_admin_wallet_recharge_receipt(
-    pool: &Pool<MySql>,
+/// 按管理员作用域读取首次充值收据；兼容连接池快路径与已锁用户事务内的重放复查。
+/// 查询不追加收据锁，事务内调用须在取得用户锁后且建立快照前执行，未命中由唯一键裁决首单。
+pub(crate) async fn load_admin_wallet_recharge_receipt<'e, E>(
+    executor: E,
     admin_id: u64,
     idempotency_key: &str,
-) -> AppResult<Option<AdminWalletRechargeReceipt>> {
+) -> AppResult<Option<AdminWalletRechargeReceipt>>
+where
+    E: Executor<'e, Database = MySql>,
+{
     sqlx::query_as::<_, AdminWalletRechargeReceipt>(
         r#"SELECT request_fingerprint, response_snapshot_json
            FROM admin_wallet_recharges
@@ -30,7 +34,7 @@ pub(crate) async fn load_admin_wallet_recharge_receipt(
     )
     .bind(admin_id)
     .bind(idempotency_key)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
     .map_err(AppError::from)
 }

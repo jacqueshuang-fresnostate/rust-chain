@@ -29,7 +29,9 @@ import {
   useMarketPairOptions
 } from './shared';
 
-const { Title } = Typography;
+const { Text, Title } = Typography;
+
+export const SECONDS_NET_PAYOUT_RATE_HINT = '按净收益率填写，不含本金；0.4 表示盈利 40%，投入 100 的赢单总入账 140。';
 
 type SecondsProductValues = {
   logoUrl: string;
@@ -209,7 +211,7 @@ function secondsProductRequestBody(values: SecondsProductValues, reason: string)
     logo_url: optionalString(values.logoUrl),
     cycles: values.periods.map((period) => ({
       duration_seconds: requiredPositiveInteger(period.durationSeconds, '周期秒数'),
-      payout_rate: requiredString(period.payoutRate, '赔率'),
+      payout_rate: requiredString(period.payoutRate, '净收益率'),
       min_stake: requiredString(period.minStake, '最小押注'),
       max_stake: optionalString(period.maxStake)
     })),
@@ -297,6 +299,7 @@ function SecondsProductPeriodsEditor({
           新增周期
         </Button>
       </div>
+      <Text type="tertiary">{SECONDS_NET_PAYOUT_RATE_HINT}</Text>
       {periods.map((period, index) => (
         <div
           aria-label={`周期 ${index + 1}：${period.durationSeconds.trim() ? `${period.durationSeconds.trim()} 秒` : '未填写秒数'}`}
@@ -306,7 +309,7 @@ function SecondsProductPeriodsEditor({
           role="group"
         >
           <label>周期秒数<AdminTextInput ariaLabel="周期秒数" value={period.durationSeconds} onChange={(durationSeconds) => onUpdate(period.rowId, { durationSeconds })} /></label>
-          <label>赔率<AdminTextInput ariaLabel="赔率" value={period.payoutRate} onChange={(payoutRate) => onUpdate(period.rowId, { payoutRate })} /></label>
+          <label>净收益率（不含本金）<AdminTextInput ariaLabel="净收益率（不含本金）" value={period.payoutRate} onChange={(payoutRate) => onUpdate(period.rowId, { payoutRate })} /></label>
           <label>最小押注<AdminTextInput ariaLabel="最小押注" value={period.minStake} onChange={(minStake) => onUpdate(period.rowId, { minStake })} /></label>
           <label>
             最大押注

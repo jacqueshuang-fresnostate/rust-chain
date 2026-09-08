@@ -95,15 +95,31 @@ export async function fetchKlines(
   interval: string = DEFAULT_MARKET_KLINE_INTERVAL,
   limit = DEFAULT_MARKET_KLINE_LIMIT,
 ): Promise<KlinePoint[]> {
-  const end = Date.now()
-  const start = end - intervalDuration(interval) * limit
+  return fetchKlinePage(symbol, interval, Date.now(), limit)
+}
+
+/** Fetch real bars strictly before a Unix-millisecond cursor, across sparse gaps. */
+export async function fetchOlderKlines(
+  symbol: string,
+  interval: string,
+  before: number,
+  limit = 100,
+): Promise<KlinePoint[]> {
+  if (!Number.isSafeInteger(before) || before <= 1) return []
+  return fetchKlinePage(symbol, interval, before - 1, limit)
+}
+
+async function fetchKlinePage(symbol: string, interval: string, end: number, limit: number): Promise<KlinePoint[]> {
+  // The backend returns the latest <=100 bars ending at an inclusive millisecond
+  // bound. A calculated start would hide available history across trading gaps.
+  limit = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 100
   const response = await client.get<BackendKline[] | { klines?: BackendKline[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/klines`),
-    publicApiRequestConfig({ params: { interval, start, end, limit } }),
+    publicApiRequestConfig({ params: { interval, end, limit } }),
   )
   const rawRows = Array.isArray(response.data) ? response.data : response.data.klines || []
 
-  return mapMarketKlines(rawRows, limit)
+  return mapMarketKlines(rawRows, limit).filter((point) => point.time <= end)
 }
 
 export async function fetchOrderBook(symbol: string): Promise<{ bids: OrderBookLevel[]; asks: OrderBookLevel[] }> {
@@ -121,11 +137,4 @@ export async function fetchRecentTrades(symbol: string, limit = 16): Promise<Tra
   )
   const rows = Array.isArray(response.data.trades) ? response.data.trades : []
   return mapMarketTrades(rows, limit)
-}
-
-function intervalDuration(interval: string): number {
-  const normalized = interval.toLowerCase()
-  if (normalized.endsWith('h')) return asNumber(normalized.slice(0, -1), 1) * 60 * 60 * 1000
-  if (normalized.endsWith('d')) return asNumber(normalized.slice(0, -1), 1) * 24 * 60 * 60 * 1000
-  return asNumber(normalized.replace('m', ''), 15) * 60 * 1000
 }

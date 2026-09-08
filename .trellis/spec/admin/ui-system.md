@@ -1,5 +1,36 @@
 # Admin UI System Contract
 
+## Platform Pair Default Market
+
+- `strategy/internal` pair rows expose a separate 默认行情 SideSheet. Load only
+  when opened; no per-row N+1. Display configuration and read-time runtime
+  separately, including source/version, last price/time and error. Never imply
+  the read snapshot proves the worker is currently healthy.
+- Keep decimal inputs as strings, show ratio units and precision, invalidate
+  preview on edits, and discard late responses from an old pair/editor request.
+  No implicit enablement or automatic clearing of all-market pause.
+- Save and independent pause-all need exact write permission, expected_version
+  and reason. A 409 preserves draft/reason and requires explicit reload;
+  discard/close, navigation and browser exit protect dirty state.
+- Manual pause/disable returns to enabled defaults at a minute boundary, not a
+  whole-market stop. Activation confirmation explains the saved start price,
+  discontinuity and price-consumer effect. All-pause stops generators, not
+  orders, positions or old cache. Source labels identify simulated activity.
+- Optional `ConfirmAction.description` renders inside the reason confirmation
+  and does not change existing callers, submission, errors or destructive style.
+
+- Default mode controls distinguish independent motion from relative following.
+  Follow reference options are fully paginated active external pairs; never pick
+  the first result or guess BTC's ID. Incomplete/failed/stale directory refresh
+  blocks follow writes but not independent-mode edits. Use local Semi Select
+  `aria-labelledby` and visible unique labels: its `aria-label` can be overridden.
+- Group always-applied enable/initial price/bounds/volume/depth separately from
+  independent volatility/mean-reversion/wick fallback parameters. Distinguish
+  saved configuration, latest runtime following/fallback reason/time and preview.
+  Follow preview is historical-reference model replay, not a future prediction;
+  display reference/range/sample count and degraded/overflow warnings. Preserve
+  exact decimal, permission, dirty, reason and 409 guards for both modes.
+
 ## New-Coin Project Center and Work Queues
 
 - The five navigation entries are project management, subscriptions/allocation,
@@ -136,6 +167,10 @@ DetailDrawer
 - API Decimal fields, mutation payloads, comparisons, and CSV exports retain
   their original decimal strings. Visible formatting is terminal and must
   never overwrite the record or become a request value.
+- The seconds-product cycle editor names `payout_rate` as net profit excluding
+  principal and explains that `0.4` means 40% profit and 140 total return for a
+  100-unit winning stake. It submits the exact decimal string; the list may show
+  the same raw multiplier but must not relabel it as principal-inclusive payout.
 - Generic Admin financial values render with two required fraction digits and
   at most six. Stablecoins and common fiat-like assets render at most two;
   other named assets render at most eight, tightened by a lower valid asset
@@ -820,6 +855,10 @@ Backend ownership, persistence, and exact-agent authorization remain defined by
 
 - Resource action tests prove one key per confirmation, reuse after an uncertain response, a new key after intent editing, and 409 conflict presentation.
 - The UI tests assert amount is transmitted as a decimal string and reason trimming matches the backend fingerprint contract.
+
+For precision metadata, new-intent validation and replay after configuration
+changes, follow [Admin Financial Validation](../backend/admin-financial-validation.md).
+This also defines convert ratio/storage bounds and the legacy pure-disable path.
 
 ## Required Tests
 

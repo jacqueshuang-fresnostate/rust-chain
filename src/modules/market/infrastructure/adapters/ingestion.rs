@@ -39,6 +39,9 @@ use mongodb::bson::{DateTime as BsonDateTime, Document, doc};
 use sha2::Digest;
 use sqlx::{MySql, Pool, Transaction};
 
+mod default_generator;
+pub use default_generator::{DefaultTickerProvenance, PairTickerFence};
+
 #[async_trait]
 pub trait MarketIngestionSink: Clone + Send + Sync + 'static {
     /// 持久化标准 ticker 快照；实现成功返回后，该价格才可供下单、结算和强平消费者读取。
@@ -86,6 +89,7 @@ pub struct SyntheticTickerProvenance {
     strategy_id: u64,
     active_version: u32,
     lease_owner: String,
+    pair_fence: Option<PairTickerFence>,
 }
 
 impl SyntheticTickerProvenance {
@@ -95,6 +99,7 @@ impl SyntheticTickerProvenance {
             strategy_id,
             active_version,
             lease_owner: lease_owner.into(),
+            pair_fence: None,
         }
     }
 
@@ -116,6 +121,12 @@ impl SyntheticTickerProvenance {
     /// 以策略与版本生成稳定来源版本文本，重启和回放得到相同值。
     pub fn source_version(&self) -> String {
         format!("strategy:{}:v{}", self.strategy_id, self.active_version)
+    }
+
+    /// 新版 worker 同时提供交易对级所有者证据；旧版本不持有共同互斥时不允许覆盖已接管交易对。
+    pub fn with_pair_fence(mut self, fence: PairTickerFence) -> Self {
+        self.pair_fence = Some(fence);
+        self
     }
 }
 
@@ -578,6 +589,7 @@ async fn archive_synthetic_ticker(
     };
 
     let mut tx = pool.begin().await?;
+    default_generator::verify_manual_pair_fence(&mut tx, provenance, observed_at).await?;
     let lease = sqlx::query_as::<_, SyntheticTickerLeaseRow>(
         r#"SELECT pairs.symbol,
                   pairs.status AS pair_status,
@@ -634,6 +646,16 @@ async fn archive_synthetic_ticker(
             "synthetic ticker event time is outside current strategy bounds or regressed checkpoint"
                 .to_owned(),
         ));
+    }
+
+    if let Some(latest)=sqlx::query_as::<_,SyntheticTickerArchiveRow>("SELECT event_key,symbol,price,source,observed_at,generation,source_version,strategy_id,strategy_version FROM market_price_ticks WHERE symbol=? ORDER BY observed_at DESC,id DESC LIMIT 1 FOR UPDATE")
+        .bind(&symbol).fetch_optional(&mut *tx).await? {
+        if latest.observed_at > observed_at {
+            return Err(AppError::Conflict("synthetic ticker event time regressed behind archived history".into()));
+        }
+        if latest.observed_at == observed_at && !synthetic_ticker_archive_matches(&latest, &expected_archive) {
+            return Err(AppError::Conflict("synthetic ticker archive conflicts with an existing event payload".into()));
+        }
     }
 
     if let Some(existing) =

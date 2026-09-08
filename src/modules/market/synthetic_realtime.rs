@@ -20,9 +20,76 @@ pub fn build_synthetic_market_details(
     qty_precision: u32,
     current: &MarketKlineSnapshot,
 ) -> AppResult<(MarketDepthSnapshot, Option<MarketTradeTick>)> {
-    if qty_precision > 18
+    let closed = config
+        .generate_1m(current.open_time())
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    build_market_details_from_candle(
+        &format!("strategy:{strategy_id}:v{}", config.version),
+        &config.seed,
+        config.version,
+        config.price_precision,
+        qty_precision,
+        20,
+        &closed,
+        current,
+        false,
+    )
+}
+
+/// 从已经固定的完整分钟蜡烛派生展示盘口和逐笔，不依赖人工排期配置，也不生成或保存新的根蜡烛。
+/// identifier 是来源特有的逐笔 ID 前缀；沿用原 seed/version/symbol/秒摘要，旧策略输出保持一致。
+/// 输入须是该分钟该秒的确定性形成中值，累计量与逐笔差量均遵守数量精度；拒绝错槽、错来源及非一致快照。
+#[allow(clippy::too_many_arguments)]
+pub fn build_synthetic_market_details_from_candle(
+    identifier: &str,
+    seed: &str,
+    version: u32,
+    price_precision: u32,
+    qty_precision: u32,
+    depth_levels: u32,
+    closed: &SyntheticCandle,
+    current: &MarketKlineSnapshot,
+) -> AppResult<(MarketDepthSnapshot, Option<MarketTradeTick>)> {
+    build_market_details_from_candle(
+        identifier,
+        seed,
+        version,
+        price_precision,
+        qty_precision,
+        depth_levels,
+        closed,
+        current,
+        true,
+    )
+}
+
+/// 默认路径先量化前后累计量再求差，旧人工策略路径保持十八位累计量以兼容既有逐笔身份和结果。
+#[allow(clippy::too_many_arguments)]
+fn build_market_details_from_candle(
+    identifier: &str,
+    seed: &str,
+    version: u32,
+    price_precision: u32,
+    qty_precision: u32,
+    depth_levels: u32,
+    closed: &SyntheticCandle,
+    current: &MarketKlineSnapshot,
+    quantize_volume: bool,
+) -> AppResult<(MarketDepthSnapshot, Option<MarketTradeTick>)> {
+    if price_precision > 18
+        || qty_precision > 18
+        || !(1..=20).contains(&depth_levels)
+        || identifier.trim().is_empty()
+        || seed.trim().is_empty()
         || current.interval() != "1m"
         || current.provider() != MarketDataProvider::Strategy
+        || closed.open_time != current.open_time()
+        || closed.values.open <= 0
+        || closed.values.close <= 0
+        || closed.values.low <= 0
+        || closed.values.volume < 0
+        || closed.values.low > closed.values.open.clone().min(closed.values.close.clone())
+        || closed.values.high < closed.values.open.clone().max(closed.values.close.clone())
     {
         return Err(AppError::Validation(
             "invalid synthetic market detail input".into(),
@@ -30,9 +97,26 @@ pub fn build_synthetic_market_details(
     }
     let second = DateTime::from_timestamp(current.observed_at().timestamp(), 0)
         .ok_or_else(|| AppError::Validation("invalid synthetic trade time".into()))?;
-    let closed = config
-        .generate_1m(current.open_time())
-        .map_err(|error| AppError::Validation(error.to_string()))?;
+    let forming_values = |at| {
+        let mut values = forming_1m_values(&closed.values, closed.open_time, at, price_precision)?;
+        if quantize_volume {
+            values.volume = values
+                .volume
+                .with_scale_round(i64::from(qty_precision), RoundingMode::HalfUp);
+        }
+        Ok::<_, AppError>(values)
+    };
+    let expected = forming_values(second)?;
+    if current.open() != &expected.open
+        || current.high() != &expected.high
+        || current.low() != &expected.low
+        || current.close() != &expected.close
+        || current.volume() != &expected.volume
+    {
+        return Err(AppError::Validation(
+            "synthetic market details require the matching forming candle".into(),
+        ));
+    }
     let elapsed = (second - current.open_time()).num_seconds();
     let previous = if elapsed == 0 {
         MarketKlineValues {
@@ -43,30 +127,78 @@ pub fn build_synthetic_market_details(
             volume: BigDecimal::from(0),
         }
     } else {
-        forming_1m_values(
-            &closed.values,
-            current.open_time(),
-            second - TimeDelta::seconds(1),
-            config.price_precision,
-        )?
+        forming_values(second - TimeDelta::seconds(1))?
     };
     let quantity = current.volume() - &previous.volume;
-    let price_unit = BigDecimal::new(1.into(), i64::from(config.price_precision));
+    build_observed_market_details(
+        identifier,
+        seed,
+        version,
+        price_precision,
+        qty_precision,
+        depth_levels,
+        &closed.values.volume,
+        current,
+        &previous.close,
+        quantity,
+    )
+}
+
+/// 从已持久化实际观察帧派生模拟盘口与本秒逐笔；跟随模式只换价格路径，不复制参考量、不创建真实订单。
+/// 调用方传入分钟总模拟量、已量化差量与上一价；验证 OHLC 包络、数量和精度后复用旧摘要及盘口算法。
+#[allow(clippy::too_many_arguments)]
+pub fn build_observed_market_details(
+    identifier: &str,
+    seed: &str,
+    version: u32,
+    price_precision: u32,
+    qty_precision: u32,
+    depth_levels: u32,
+    minute_volume: &BigDecimal,
+    current: &MarketKlineSnapshot,
+    previous_price: &BigDecimal,
+    quantity: BigDecimal,
+) -> AppResult<(MarketDepthSnapshot, Option<MarketTradeTick>)> {
+    if price_precision > 18
+        || qty_precision > 18
+        || !(1..=20).contains(&depth_levels)
+        || identifier.trim().is_empty()
+        || seed.trim().is_empty()
+        || version == 0
+        || current.provider() != MarketDataProvider::Strategy
+        || current.interval() != "1m"
+        || current.open() <= &BigDecimal::from(0)
+        || current.low() <= &BigDecimal::from(0)
+        || current.low() > &current.open().clone().min(current.close().clone())
+        || current.high() < &current.open().clone().max(current.close().clone())
+        || quantity < 0
+        || minute_volume < &BigDecimal::from(0)
+        || &quantity > minute_volume
+        || current.volume() > minute_volume
+        || previous_price <= &BigDecimal::from(0)
+    {
+        return Err(AppError::Validation(
+            "invalid observed synthetic market detail input".into(),
+        ));
+    }
+    let second = DateTime::from_timestamp(current.observed_at().timestamp(), 0)
+        .ok_or_else(|| AppError::Validation("invalid synthetic trade time".into()))?;
+    let price_unit = BigDecimal::new(1.into(), i64::from(price_precision));
     let quantity_unit = BigDecimal::new(1.into(), i64::from(qty_precision));
     let step = (current.close() / BigDecimal::from(10_000))
-        .with_scale_round(i64::from(config.price_precision), RoundingMode::HalfUp)
+        .with_scale_round(i64::from(price_precision), RoundingMode::HalfUp)
         .max(price_unit);
-    let base_quantity = (&closed.values.volume / BigDecimal::from(60)).max(quantity_unit.clone());
-    let mut bids = Vec::with_capacity(20);
-    let mut asks = Vec::with_capacity(20);
+    let base_quantity = (minute_volume / BigDecimal::from(60)).max(quantity_unit.clone());
+    let mut bids = Vec::with_capacity(depth_levels as usize);
+    let mut asks = Vec::with_capacity(depth_levels as usize);
     let digest = Sha256::digest(format!(
         "{}:{}:{}:{}",
-        config.seed,
-        config.version,
+        seed,
+        version,
         current.symbol(),
         second.timestamp()
     ));
-    for level in 1..=20 {
+    for level in 1..=depth_levels {
         let offset = &step * BigDecimal::from(level);
         let amount = |salt: usize| {
             (&base_quantity
@@ -89,8 +221,8 @@ pub fn build_synthetic_market_details(
     )
     .map_err(|error| AppError::Validation(error.to_string()))?;
     let trade = if quantity > 0 {
-        let side = if current.close() > &previous.close
-            || (current.close() == &previous.close && digest[0] % 2 == 0)
+        let side = if current.close() > previous_price
+            || (current.close() == previous_price && digest[0] % 2 == 0)
         {
             MarketTradeSide::Buy
         } else {
@@ -100,11 +232,7 @@ pub fn build_synthetic_market_details(
             MarketTradeTick::new(
                 MarketDataProvider::Strategy,
                 current.symbol(),
-                format!(
-                    "strategy:{strategy_id}:v{}:{}",
-                    config.version,
-                    second.timestamp()
-                ),
+                format!("{identifier}:{}", second.timestamp()),
                 side,
                 current.close().clone(),
                 quantity,

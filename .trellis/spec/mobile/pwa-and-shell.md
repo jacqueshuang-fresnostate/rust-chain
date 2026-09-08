@@ -233,7 +233,11 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Locale changes must update an already-mounted imperative chart in place and
   must not remount it or reset its viewport. Full-history refreshes preserve a
   timestamp-anchored window rather than raw logical indexes so prepended or
-  trimmed rows keep the same visible candles.
+  trimmed rows keep the same visible candles when browsing history. An advancing
+  tail replacement follows only if the previously newest candle was visible,
+  preserving width and signed right padding; same-tail corrections never jump.
+  Coalesced replacements preserve the intended pending viewport, not transient
+  raw chart indexes; user gestures cancel queued viewport restoration.
 - Market charts use one npm/Vite-bundled renderer: `lightweight-charts@5.2.0`.
   PWA, Tauri, and Android artifacts contain that local package and must not load
   chart scripts, frames, widgets, Pro modules, or market data from a remote
@@ -245,8 +249,28 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   next dataset for fitting but waits for a new `points` value before rendering
   or fitting, so changing symbol at the same interval cannot reuse the old
   viewport or fit stale candles.
+- `MobileMarketChart.loading` passes through as `historyLoading`. Initial REST
+  history settlement (success or failure) may fit once per dataset only while
+  the user has not dragged, pinched, wheeled or double-clicked the chart. Live
+  callbacks do not settle history; visible live candles remain visible. Do not
+  infer hydration from receiving at most one candle. Ordinary same-dataset
+  background loading does not rearm a fit. Preserve initial all-history density,
+  resize policy and theme/locale viewport behavior. Executable SFC renderer tests
+  cover growing live history, gestures, bounded tail replacement and RAF races.
 - The chart container is an accessible `region` or `group`, not an image. The
   built-in attribution link must retain its own interactive semantics.
+- The market-detail chart-toggle is frameless in normal, pressed, expanded and
+  dark states: `border: 0` and no inset/outer box shadow. Keep the existing 44px
+  hit area, centered icon, theme contrast and visible keyboard-only focus outline.
+  Its scoped selector must still outrank legacy dark-theme shadow rules. Press
+  feedback may change the surface fill; reduced motion must not reintroduce a
+  frame. History loading/error/end notices reserve the left-side toggle area and
+  never block chart gestures or the attribution link; only retry is interactive.
+- Mobile candles hide upper/lower wicks with `wickVisible: false` on the shared
+  `CandlestickSeries`. This is rendering-only: keep the original open/high/low/
+  close data, candle bodies, MA curves, volume, current-price line, autoscale and
+  viewport behavior. Never clamp high/low to the body to hide a visual element.
+  Theme, price-format and dataset updates must not re-enable the wicks.
 - Shared text uses stable pixel sizes and `letter-spacing: 0`; do not scale
   font size with viewport width.
 - The selected visual bottom navigation has exactly five entries in this order:

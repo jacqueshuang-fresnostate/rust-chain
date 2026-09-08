@@ -26,7 +26,7 @@ pub use read_models::MySqlSpotRepository;
 pub(crate) use read_models::{
     SpotOrderListFilter, SpotTradeListFilter, list_admin_spot_orders_page,
     list_admin_spot_trades_page, list_spot_orders, list_spot_trades,
-    list_user_cancellable_spot_order_ids, load_spot_order_by_id,
+    list_user_cancellable_spot_order_ids, load_spot_order_by_id, load_spot_pair_db_id_by_symbol,
 };
 pub(crate) use trade_settlement::{
     insert_spot_trade, load_existing_spot_trade_by_idempotency_key, load_spot_pair_db_id,

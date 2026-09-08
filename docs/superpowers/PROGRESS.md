@@ -1,3 +1,10 @@
+## 2026-09-08 04:34 - 秒合约净收益率显示与迁移守卫修正
+
+- 完成内容：为 `migrations/0125_seconds_contract_net_payout_rates.sql` 增加 `duration_seconds + gross_rate` 配对守卫映射表，更新产品与周期的净收益率时都必须命中显式时长/原始值组合，避免目标快照后并发编辑触发错误 CASE 映射；同时将管理端共享字段标签里的秒合约 `payout_rate/cycles` 从“赔率”改为“净收益率（不含本金）/周期 / 净收益率 / 押注范围”，并补了最小展示测试。
+- 修改文件：`migrations/0125_seconds_contract_net_payout_rates.sql`、`web/src/shared/adminFieldLabels.ts`、`web/src/shared/adminPresentation.test.tsx`、`tests/seconds_contract_net_payout_migration.rs`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo test --test seconds_contract_net_payout_migration -- --nocapture` 通过（未配置 `DATABASE_URL` 时数据库回归自动跳过）；`npm --prefix web run test -- src/shared/adminPresentation.test.tsx` 通过；`cargo fmt --all -- --check` 通过。
+- 后续事项：无
+
 ## 2026-09-06 17:24 - 行情策略 K 线修复提交与推送收口
 
 - 完成内容：用户明确确认提交推送；复核全部未提交路径均属于本轮任务，无混入改动，确认本地 main 与 origin/main 未分叉。按“工作提交 → 本任务归档 → 会话日志”收口，普通推送至 origin/main；保留其它历史任务，不操作线上配置和行情数据。
@@ -8561,3 +8568,138 @@
 - 修改文件：`docs/superpowers/PROGRESS.md`、`.trellis/tasks/09-06-admin-strategy-operations-localization/{prd.md,review.md,research/verification.md,task.json}`；本轮代码文件清单保持不变。
 - 验证结果：`git diff --check`、Trellis context 7+7 校验、提交清单匹配与脱敏后凭据扫描通过；本步骤不改动生产代码，沿用上一条全量 547 项及最终聚焦 128 项等验证记录。
 - 后续事项：按用户授权完成工作提交、任务归档/会话记录及 main 推送，随后核对远端 SHA；部署与完整线上浏览器矩阵仍待后续验证。历史提交仍可能含旧口令，需轮换后台登录凭据。
+
+
+## 2026-09-06 20:48 - 修复后台资金配置边界和资源操作时序
+
+- 完成内容：巡检前后端后修复四个确定缺陷：人工充值在事务中共享锁定资产状态/精度，超精度拒绝且不舍入，保留资产配置变化后的原收据幂等重放；闪兑创建与合并更新统一校验已实现的定价模式、[0,1) 费率及 DECIMAL(18,8) 有效精度，保留历史坏配置的严格纯停用入口；通用详情统一最新请求归属，关闭/换页/换资源/卸载抑制迟到结果和错误；列表切换立即清空可操作旧勾选，批量确认固定目标并失效锁定、防重复提交，加载期间禁用旧 CSV。前端增加权威资产精度说明、精确费率/限额校验和中文错误；确认时只对新充值意图执行当前精度校验，原金额和原因匹配的未决命令仍复用原键。修正两项旧闪兑审计回滚测试的失效鉴权夹具，改为有效管理员及精确作用域触发器。
+- 修改文件：`src/modules/admin/application{.rs,/users.rs,/convert.rs}`、`src/modules/admin/infrastructure/{financial_idempotency,wallet_assets}.rs`、`src/modules/admin/service/convert.rs`、`tests/admin_routes.rs`、`tests/admin_routes/financial_validation.rs`、`tests/unit_src/src_modules_admin_service_tests.rs`、`web/src/admin/resources/{AdminResourcePage.tsx,AdminResourcePage.lifecycle.test.tsx,useResourceDetail.ts,resourceConfigs.test.tsx,actions/{agents,convert,shared,users}.tsx,actions/{agents,financialConfigValidation,loan,newCoins}.test.tsx}`、`web/src/shared/{DataTable.tsx,decimal.ts,decimal.test.ts,idempotency.ts,idempotency.test.ts,adminErrorMessage.ts,adminErrorMessage.test.ts}`、`web/src/styles.css`、`.trellis/spec/{admin/{resource-response-contract,ui-system},backend/{index,admin-financial-validation}}.md`、`.trellis/tasks/09-06-admin-cross-layer-design-hardening/**`、`docs/superpowers/PROGRESS.md`；精确清单见任务 `commit-files.txt`。
+- 验证结果：新增闪兑和资源时序先红后绿；Web 最终全量 78 文件/607 项（单 worker，未增超时）、typecheck/lint、生产策略 15/15、覆盖率门禁 23/23（行 92.87%、分支 81.78%）、production build（3790 modules）和 budget 全通过。Rust library 338/338、架构 11/11、最终 fmt/all-target-all-feature check/Clippy -D warnings 通过；初次无网络沙箱下 5 项本地 mock HTTP 测试被端口权限阻断，获准绑定 loopback 后全量通过。真实一次性 MySQL 执行新增资金路由 5/5、原充值并发幂等 1/1（20 并发）、原闪兑 CRUD/审计回滚 5/5；两项旧回滚夹具初次 401，修正后实际命中审计写入失败并断言完整回滚。Trellis 8+8 与 diff 检查通过。未执行完整真实浏览器矩阵，未宣称线上验收通过。
+- 后续事项：本轮未提交/推送、部署或操作线上配置与资金；临时库 `codex_admin_hardening_20260906_2037` 已删除，触发器和同名库剩余数均核对为 0。配置审批实际执行器、系统配置并发版本、风控 JSON 规则校验缺口已记录，后续独立处理。用户补充手机端图中细条隐藏需求，已问清要隐藏均线/影线/现价虚线；当前待答复，Mobile 仅只读定位，未修改 K 线显示或数据。
+
+
+## 2026-09-07 00:20 - 按确认隐藏手机端 K 线影线
+
+- 完成内容：用户明确选择“影线”后，只在手机端共用 CandlestickSeries 上设置 `wickVisible: false`，隐藏蜡烛上下细竖线；行情详情和交易页沿用共用组件。保留蜡烛实体、原始开高低收数据、均线、成交量、现价线/标签及原有缩放、主题与实时更新行为，不通过改写高低价隐藏影线。补充限定系列选项的回归测试及移动端显示合同。
+- 修改文件：`mobile/src/components/LightweightMarketChart.vue`、`mobile/tests/market-detail-reference-layout.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/09-06-admin-cross-layer-design-hardening/{prd.md,review.md,commit-files.txt,commit-plan.md,research/mobile-wick-visibility.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增回归先红后绿；价格精度/主题/参考布局聚焦测试 18/18 通过；Mobile 完整 `npm run release:gate` 通过，包括生产/测试类型检查、686/686 测试、PWA/Tauri web 构建、产物校验、Bundle 和源码体积预算、关键测试质量门禁。独立只读复核无具体问题，新用例额外 1/1 通过；`git diff --check` 通过。未执行真实浏览器截图或原生 Android/iOS 二进制构建（未改启动和依赖），未宣称线上已生效。
+- 后续事项：本轮未提交、推送或部署；保留上一轮后台资金校验与资源时序全部改动及其验证记录，待确认按提交清单处理。无线上行情数据、资金或配置改写。
+
+
+## 2026-09-07 01:25 - 优化后端风控与行情兜底并修复手机端行情图时序
+
+- 完成内容：审查后选择可复现的缺陷进行修复：风控创建与锁定启用统一校验已知 JSON 字段类型/范围，保留未知扩展、可选原因和历史坏配置停用；现货按权威符号精确补齐后台数字交易对作用域，保留旧符号匹配、成功订单重放与资金/审计事务。Coinbase 每条 REST 兜底请求发送前刷新滚动时间窗，保留其他 provider、代理参数、粒度和失败隔离。手机端 K 线、订单簿、成交快照独立完成与显示加载状态，周期切换不再丢弃有效盘口/成交，不显示上一周期蜡烛；实时数据不再提前结束历史加载，首批历史适配尊重手动拖动/缩放，达到条数上限和批量更新时仅对可见最新蜡烛继续跟随，历史浏览保留时间锚点。保留 1m 默认、隐藏影线、原始 OHLCV、均线、成交量、现价线及既有密度/resize 策略；新增 7 条后台风控错误中文映射。
+- 修改文件：`src/modules/admin/{application,service}/risk_security.rs`、`src/modules/risk/service.rs`、`src/modules/spot/{application/order_creation,infrastructure,infrastructure/read_models}.rs`、`src/modules/market/infrastructure/adapters/{provider,feed}.rs`、`tests/admin_routes.rs`、`tests/admin_routes/risk_validation.rs`、`tests/market_feed_worker.rs`、`tests/unit_src/{src_modules_admin_service_tests,src_modules_risk_mod_tests,src_modules_market_infrastructure_adapters_feed_tests}.rs`；`mobile/src/api/marketDetailSnapshot.ts`、`mobile/src/components/{LightweightMarketChart,MobileMarketChart}.vue`、`mobile/src/core/marketChartRuntime.ts`、`mobile/src/views/{MarketDetailView,TradeView}.vue` 及行情图/加载行为/既有模板合同测试；`web/src/shared/adminErrorMessage{,.test}.ts`；`.trellis/spec/backend/{index,risk-configuration,market-fallback}.md`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/09-07-backend-market-chart-hardening/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：风险 JSON、数字交易对、Coinbase 实际发送窗口、渲染器/加载时序及周期清空新增回归先红后绿。Rust library 348/348、架构 11/11、文档 1/1、fmt、all-target/all-feature check、Clippy `-D warnings` 通过；行情聚焦 5+33+5 通过；一次性 MySQL 新风险路由 5/5，原后台风险 CRUD 1/1、原现货价格偏离/不冻结测试 1/1（独立 Redis），非跳过结果。审计回滚夹具初次 MySQL 1295，经仅改 raw DDL 后真实执行通过。Mobile 最终完整 `release:gate` 730/730、生产/测试类型、PWA/Tauri web、产物与所有预算门禁通过；原源码匹配/模板指纹与新增测试类型收窄失败均修正后完整复跑，未降低预算。Ego 本地实际图表组件 320/390/448px 无横向溢出，核对隐藏影线/保留真实高低价、历史适配、实时尾部、历史锚点与真实滚轮/拖动保留；仅为确定性本地图表夹具，不代表完整页面或线上数据验收。Web 错误映射 22/22、typecheck/lint 通过，未重跑前序 Web 全量门禁。Trellis 10+10 和 diff 检查通过。
+- 后续事项：外部 REST 历史补齐与过时帧发布需按存储/推送统一结果合同独立修复，provider 粒度能力、提现限频上下文与旧数字符号命名空间歧义等已记录，未宣称本轮解决。测试库 `codex_backend_chart_20260907_0040` 已删除，触发器/同名库余量均为 0；专用 Redis 已无保存关闭，本地图表浏览器及服务已停止。未 commit/push、部署或修改线上配置、历史与资金，未构建原生二进制；保留全部前序未提交工作，后续提交需根据重叠文件重新审阅清单，任务保留 in_progress 交接。
+
+## 2026-09-07 02:03 - 修复手机端历史 K 线拖动分页与无边框展开按钮
+
+- 完成内容：为共享手机端行情图补充真实手势触达历史左边缘时的向前分页，使用既有公开接口的毫秒独占游标和每页最多 100 条，移除人为时间回看窗口以跨越稀疏存储区间；保留已加载历史、实时同槽权威值与当前时间锚点/缩放，增加单请求、旧交易对/周期/重载响应隔离、显式失败重试和无更早数据提示。移除 `market-detail__chart-toggle` 的边框与内外阴影，覆盖明暗主题、展开及按下状态，保留 44×44 点击区域、图标居中和键盘焦点轮廓。保持默认 1m、隐藏影线、真实 OHLCV、MA/成交量/价格线及归属标识；本切片不修改后端、TradeView 或两个行情页面脚本。
+- 修改文件：`mobile/src/api/market.ts`、`mobile/src/components/{MobileMarketChart,LightweightMarketChart}.vue`、`mobile/src/core/marketChartHistory.ts`、`mobile/src/views/MarketDetailView.vue`（按钮样式）、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{market-kline-history-api,market-chart-history,market-chart-history-renderer,mobile-market-chart-history,market-detail-reference-layout,market-socket,market-news-support-views,ui-prototype-alignment-trading}.test.ts`、`mobile/tests/helpers/{market-chart-renderer,mobile-market-chart}.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/09-07-mobile-chart-history-pagination/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：API 稀疏窗口/上限及按钮样式回归先红后绿；API 聚焦 19/19、共享图表聚焦 60/60。最终 `cd mobile && npm run release:gate` 全量 755/755、生产/测试类型检查、PWA/Tauri web 构建、产物/Bundle/源码/测试质量门禁通过，未降低预算或延长超时；首轮两处旧源码匹配断言按共享会话结构更新后完整复跑通过。Ego 实际图表组件与本地确定性 Axios 夹具以原生拖动连续加载三页，验证真实滚轮缩放、频繁实时同槽更新、后续新蜡烛、失败按钮重试、短页继续、空页终止和周期切换陈旧响应隔离，累计 402 个唯一时间点保持历史与视口。320/390/448px × 明暗 × 普通/展开共 12 组合无边框阴影和横向溢出，焦点轮廓/居中/44×44 保留，320px 重试提示与展开按钮无重叠；减少动态效果下按压反馈正常。Trellis 4+4、`git diff --check` 和前序后端/Web/PC/任务文件哈希保留检查通过。
+- 后续事项：分页读取后端已有历史，不补造尚未入库的数据；本地组件夹具验证不代表完整页面、线上接口或物理触屏/原生端验收。浏览器任务空间已结束，13049 服务停止且无监听，专用夹具/缓存/截图已删除。未提交、推送、部署或操作线上配置/资金；保留前序全部未提交改动，重叠文件提交需重新审阅，任务维持 in_progress 交接。
+
+## 2026-09-07 02:47 - 核对 HIPPO-USDT 震荡参数并准备预览草稿
+
+- 完成内容：登录用户指定后台，确认唯一 HIPPO-USDT 策略为策略 1、交易对 3，原起止价均为 0.1，运行范围 9 月 6 日至 9 月 30 日，三个节点各相隔 6 天；全局波动率 50% 而节点局部为 1.15%。仅在编辑草稿将全局/三个节点波动率改为 2%、噪声改为 1.5、影线改为 0.1，均值回归 0.9、价格/时间/节点目标/成交量与种子保持原值。未暂停、保存、启用或执行历史补偿。
+- 修改文件：`.trellis/tasks/09-07-hippo-range-strategy-config/{task.json,prd.md,implement.jsonl,check.jsonl,research/online-preflight.md}`、`docs/superpowers/PROGRESS.md`；无生产源码改动，线上仅有未保存的表单草稿。
+- 验证结果：实际后台无副作用预览成功，预览版本 V3、完整 34560 分钟、120 根非连续采样，样本最高 0.105978、最低 0.095984；仅代表返回采样，不是完整分钟范围保证。通过源码确认启用后 ticker 会触发现货/杠杆限价单并影响秒合约取价，新版本存在现价非连续风险，因此最终启用交由用户操作。宽预览在窄浏览器截图内未完整呈现，参数/预览数值已按实际界面文本核验；本轮未修改代码或重跑发布门禁。
+- 后续事项：等待用户确认缩短为 1 小时/4 小时还是保留原运行期限；时间和节点日期暂未改变，原策略继续运行。浏览器标签 1 保留未保存草稿及预览，后续先核对页面新状态再继续；未提交、推送、部署、交易或改写历史数据，保留全部前序未提交工作。
+
+## 2026-09-07 03:28 - 保存 HIPPO-USDT 一小时震荡配置并交接手动启用
+
+- 完成内容：用户“直接确认”后按已说明的默认一小时方案执行；在后台暂停策略 1，保存北京时间 2026-09-07 03:30–04:30 的单次区间震荡配置，起止价均保留 0.1，03:45/04:00/04:15 节点分别为相对起始价 +6%/-4%/+5%、软命中、1% 容差；全局和节点波动率均为 0.02，均值回归 0.9、噪声 1.5、影线 0.1，原成交量与随机种子设置保留。保存后重新打开权威详情逐项读回一致，策略保持暂停；未执行“启用”。
+- 修改文件：`.trellis/tasks/09-07-hippo-range-strategy-config/{task.json,prd.md,research/saved-configuration.md}`、`docs/superpowers/PROGRESS.md`；另通过正常后台确认流程修改线上策略 1 的状态和配置，无生产源码变更。
+- 验证结果：实际无副作用预览返回 60/60 根分钟蜡烛（预览 V3），最高 0.106404、最低 0.095591，29 根上涨/31 根下跌；逐行检查高低价包络、正价格、200–60000 成交量边界及相邻开收连续通过，首开与末收均为 0.1。保存成功提示、权威参数读回与暂停状态核验通过。途中浏览器超时的部分草稿经新状态核对后重填；预览两次 HTTP403 在正常重新登录后恢复，最终仅保存一次新配置，未修改安全设置或提取会话令牌。Trellis context 1+1 与 `git diff --check` 通过；无代码改动，未重跑发布门禁。
+- 后续事项：用户需在策略 1 行点击“启用”并完成确认，才运行该固定时段；不是每小时自动循环，晚于开始时刻启用也不会重新获得完整一小时。原历史及极端高低价未重算，新行情实际推送尚未验证。标签 1 保留在已暂停列表供接手，右侧打开请求已排队，临时诊断标签已关闭；无交易/钱包/历史补偿操作，无提交、推送或部署，保留前序未提交工作。
+
+## 2026-09-07 04:12 - 准备 HIPPO-USDT 启用确认窗口
+
+- 完成内容：用户请求启用后，通过正常重新登录恢复 HTTP403 后的后台读取，权威列表确认策略 1 仍为暂停；打开“启用行情策略”并填写操作原因，明确原固定时段为北京时间 03:30–04:30，按当前进度运行而非重新计时一小时。确认按钮已可用，未点击最终确认，启用由用户完成。
+- 修改文件：`.trellis/tasks/09-07-hippo-range-strategy-config/{task.json,research/saved-configuration.md}`、`docs/superpowers/PROGRESS.md`；无代码或策略状态/配置写入。
+- 验证结果：实际列表暂停状态、启用弹窗及填写后可用的确认按钮均已核验；原浏览器标签 1 保留接手，右侧打开请求返回 queued，未宣称已在用户窗口显示。`git diff --check` 通过；无代码改动，未运行发布测试。
+- 后续事项：用户在窗口点击最终确认后才会启用；原时段 04:30 结束，未自动延期、重排节点或重写历史。实际启用和推送尚未验证，未执行订单/钱包操作或提交、推送、部署。
+
+## 2026-09-07 04:45 - 顺延 HIPPO-USDT 一小时策略至 05:00–06:00
+
+- 完成内容：按用户时间顺延要求，取消旧启用确认窗口，将策略 1 的开始/结束时间改为北京时间 2026-09-07 05:00–06:00，三个节点同步改为 05:15、05:30、05:45；仅改五个业务时间字段，原 0.1 起止价、节点目标、波动参数、成交量和随机种子设置保持。保存后从权威详情读回全部字段一致，状态仍为暂停；新时段启用确认窗口和原因已准备，未点击最终确认。
+- 修改文件：`.trellis/tasks/09-07-hippo-range-strategy-config/{task.json,prd.md,research/postponed-configuration.md}`、`docs/superpowers/PROGRESS.md`；线上仅成功保存一次该时间顺延配置，无源码改动。
+- 验证结果：实际无副作用预览 V4、60/60 根，最高 0.105877、最低 0.095670，33 根上涨/27 根下跌，首开/末收 0.1；逐行 OHLCV 包络、正价格、成交量上下界及相邻开收连续通过。第一次保存返回 UI HTTP403，正常重新登录并读回旧时间确认未改后才重填重试；最终权威读回新时间与保留参数均正确。源码只读复核确认 Web 仅对 401 自动刷新，本轮未读取线上原始错误响应或令牌，403 来源及生产 TTL 尚未确认。Trellis context 1+1 与 `git diff --check` 通过；无代码改动，未重跑发布测试。
+- 后续事项：用户需完成新的最终启用确认，才运行05:00–06:00固定单次时段；未启用、自动循环、改写历史或执行订单/钱包操作。标签 1 保留供手动接手，未提交、推送或部署，保留全部前序未提交工作。
+
+
+## 2026-09-07 05:20 - 规划行情缺失与策略到期兜底方案
+
+- 完成内容：只读核对生成器、公开缓存、现货、杠杆、秒合约与手机端：缺少可运行策略时停止生成但保留无 TTL 旧快照，过期不自动切换外部源；客户端缺少单交易对停更状态，部分取价失败会让交易对从列表消失。确认现货/杠杆与秒合约的生命周期门禁不同、秒合约开仓未覆盖未来结算窗口，缺少结算证据会重试后转人工审核而非自动退款。形成“可用性状态与交易保护优先、明确映射备用源后续接入、模拟展示独立隔离”的方案，覆盖来源竞争、手动暂停优先、过期/恢复、历史保留、中文提示、撤单、确认时复验及分阶段测试。参考 Coinbase/Kraken 官方产品与状态模型，明确这是规划而非当前已实现行为。
+- 修改文件：`.trellis/tasks/09-07-market-availability-fallback/{task.json,prd.md,research/current-behavior-and-plan.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：27 组源码路径/行号范围及方案文档空白校验通过，任务 JSON 解析和 `git diff --check` 通过；本轮仅文档与静态审计，未运行代码测试或进行线上验证。
+- 后续事项：待确认先落地可用性状态、停更提示与交易保护，再独立接入合格备用源；任务保留 planning，未切换或关闭现有线上配置交接任务。未更改生产代码、线上策略、资金、历史、提交、推送或部署；保留全部前序未提交工作。
+
+
+## 2026-09-07 05:30 - 明确平台交易对常驻默认行情生成需求
+
+- 完成内容：按用户澄清修正上一轮方案：HIPPO-USDT 这类 strategy/internal 交易对在没有有效人工策略时由常驻默认生成器产出基础行情，人工排期生效时接管、结束后交回默认生成器；不再以外部行情切换或停更作为主要需求。补充首次显式起价、持久化种子/检查点、价格连续、交易对级单写入者、分钟交接、多周期聚合、模拟盘口/成交来源标记与资金用途独立校验。只读复核现有策略级租约、有限区间生成算法及排期重叠约束，明确不采用永久普通策略占位；已询问“暂停单条策略是否恢复默认，全部暂停另设开关”的偏好，暂按建议记录为待确认。
+- 修改文件：`.trellis/tasks/09-07-market-availability-fallback/{task.json,prd.md,research/current-behavior-and-plan.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增 9 组源码路径/行号范围、任务 JSON/planning 状态、文档空白与 `git diff --check` 校验通过；仅需求与设计修订，未执行代码测试或线上验证。旧研究保留事实审计并标记原优先方案已被澄清需求取代。
+- 后续事项：确认暂停语义后分阶段实施默认配置/生成器、交易对级接管及后台预览/状态；实际资金价格消费者需独立验证与上线交接。本轮未实现或启用生成器、修改生产代码和线上配置、操作资金或历史、提交推送或部署；现有线上策略状态本轮未重新查询，保留前序全部未提交工作。
+
+
+## 2026-09-07 06:45 - 完成平台交易对默认行情与人工策略接管
+
+- 完成内容：按用户批准落地常驻默认行情，不再要求用永久人工策略占位。新增独立启用/参数/60根预览/全部暂停，版本冲突保护及事务审计；首次显式起价，之后归档优先续价，参数在新分钟生效，默认与人工共用交易对命名锁及代际，分钟预留状态覆盖首帧部分失败，已登记待闭合根支持换 owner 重试而不补造历史。ticker、1m及5m/15m/1h/4h/1d、模拟盘口/逐笔共用数据链；人工生效接管、暂停/结束交回默认、全部暂停排空两种生成器。补充秒合约默认来源的健康/版本/租约/归档能力检查，原结算和退款逻辑不改。后台新增交易对「默认行情」侧栏，精度、原因确认、权限、409草稿保留及导航保护；手机端标明平台生成/模拟活动，WS更新保留来源。修正单策略暂停和人工起价/价差确认文案，并记录上线边界。
+- 修改文件：`migrations/0124_default_market_generators.sql`；`src/modules/market/{mod.rs,synthetic_default.rs,synthetic_realtime.rs,infrastructure.rs,infrastructure/default_runtime{.rs,/state.rs},infrastructure/adapters/ingestion{.rs,/default_generator.rs}}`；`src/workers/synthetic_market{.rs,/default_market.rs}`；`src/modules/admin/{application,infrastructure,presentation,routes,service}{.rs,/default_market.rs}`；`src/modules/seconds_contract/{application,infrastructure}.rs`；`tests/{admin_routes.rs,admin_routes/default_market.rs,default_market_runtime.rs,default_market_transition.rs,default_market_ownership.rs,synthetic_default.rs,market_ingestion.rs,unit_src/src_modules_market_synthetic_default_tests.rs,unit_src/src_workers_synthetic_market_default_market_tests.rs}`；`web/src/admin/resources/actions/{market.tsx,defaultMarket/*,marketStrategy/actions.tsx}`、`web/src/shared/ConfirmAction{.tsx,.test.tsx}`；`mobile/src/{core/types.ts,core/marketMapper.ts,components/MobileMarketChart.vue,views/MarketDetailView.vue,views/TradeView.vue,i18n/messages/zh-CN.ts,i18n/messages/en.ts}`、`mobile/tests/{market-generated-source,android-ui-trading-prototype-v16,award-ui-trading-workspaces,pencil-trading-product-selected-parity,spot-trading-ui-optimization,ui-prototype-alignment-trading}.test.ts`；后端/后台/手机规范、当前任务PRD与验证记录、`docs/superpowers/DEFAULT_MARKET_HANDOFF.md`、本进度文件。保留所有前序未提交改动。
+- 验证结果：Rust fmt、all-targets check、最终 clippy -D warnings通过；lib358/358，架构+原合成相关6套49/49。真实隔离MySQL Admin12/12、ownership2/2、原秒合约能力1/1；真实MySQL/Mongo/Redis runtime1/1、跨真实分钟接管1/1（116.23秒）、原ingestion4/4，核验无spot_trades和旧历史不覆盖。Web整包625/625；新增侧栏/确认13/13，最终确认及资源动作79/79；lint/typecheck/build/budget通过。Mobile完整release:gate759/759，PWA/Tauri双模式与产物/体积/源码/测试质量全部通过；未放宽超时和预算。修复初轮小数scale断言、旧源码regex、clippy及归档错误兼容性问题；lib初轮本地mock端口受沙箱限制后以本地服务权限重跑通过。Trellis上下文8+8、路径和git diff --check通过。三个临时MySQL库已删除，临时Mongo/Redis已停止并清理数据，既有MySQL服务未动。
+- 后续事项：本地实现进入review，待提交/发布交接；线上没有配置或启用默认生成器，既有交易对不会因迁移隐式启用。部署须排空旧worker、应用0124、确认平台符号不与外部源重叠，再由管理员在交易对「默认行情」预览并明确启用。全部暂停只停生成，不撤单/平仓/清缓存；人工起价仍保留原配置，未新增自动现价锚定、实时价差计算器、全局参数编辑器或持续健康监控。未操作线上订单、钱包、结算和历史；未提交、推送、部署或自动归档。
+
+
+## 2026-09-07 14:14 - 默认行情支持跟随 BTC 等外部交易对及自动独立兜底
+
+- 完成内容：在原默认行情版本化 JSON 中增加独立/跟随模式，明确选择已启用 external 参考交易对，按相对收益和倍率映射本币价格，不复制参考绝对价格或成交量；保留旧配置与独立算法。按用户确认实现参考缺失、停用、过期、冲突时自动独立震荡并在后台显示原因，恢复时以已接受本币价重新锚定，不追补错过涨跌。补充分钟幅度/全局价格边界、整秒采样冻结、参考水位防倒序重复收益、原始归档身份核验及 accepted/pending 帧分离，暂停代次和人工接管也排除未发布价格。共享 ticker/实际 1m OHLC/盘口/模拟成交/五个高周期；后台分开通用与兜底参数，参考目录分页与失效保护、中文状态、历史模型回放范围/采样数/超量降级、可访问标签及原 409/权限/草稿/原因保护均保留。
+- 修改文件：`src/modules/market/{mod.rs,synthetic_default.rs,synthetic_follow.rs,synthetic_follow/reference_selection.rs,synthetic_realtime.rs,infrastructure/default_runtime.rs,infrastructure/default_runtime/reference.rs}`、`src/workers/synthetic_market{.rs,/default_market.rs,/default_market/follow.rs}`、`src/modules/admin/{application,infrastructure,presentation,service}/default_market.rs`、`web/src/admin/resources/actions/defaultMarket/*`、`tests/{synthetic_follow,synthetic_default,default_market_follow_config,default_market_follow_reference,default_market_follow_runtime}.rs`、`tests/admin_routes/default_market.rs`、`tests/unit_src/src_workers_synthetic_market_default_market_tests.rs`、`.trellis/spec/{backend/default-market-generation,admin/ui-system}.md`、`.trellis/tasks/09-07-default-market-follow/**`、`docs/superpowers/DEFAULT_MARKET_HANDOFF.md`、本进度文件。未修改 0124 迁移或手机端源码，保留前序全部未提交改动。
+- 验证结果：Rust fmt/all-targets check/最终 clippy -D warnings 通过；pure 跟随 7/7、配置 4/4、参考选择 4/4、原独立生成 7/7；lib358/358、架构及原合成五套合计42/42。真实隔离 MySQL Admin17/17；真实 MySQL/Mongo/Redis 跟随2/2（最终40.47秒，非跳过），包含归档触发器失败、暂停恢复、人工接管和实际成交/盘口/五个高周期一致性；原runtime1/1、真实两分钟接管1/1（96.46秒）、ingestion4/4均通过。Web聚焦24/24、全量82文件639/639、typecheck/整包lint/build/budget通过，未放宽预算或超时；保留既有lottie eval/大包警告。初轮lib五项受本地mock端口沙箱限制，取得本地服务权限后全量重跑通过；修复测试编译借用问题及缺环境时提示跳过约定，本次真实服务验证均明确执行。Trellis7+7、git diff --check通过；所有临时测试库和专用Mongo/Redis已清理，原MySQL服务保留。
+- 后续事项：任务进入review，待提交/发布交接；线上HIPPO-USDT没有被本轮保存或启用。发布后由管理员在交易对「默认行情」选择跟随交易对并确认参数；参考回放不是未来预测、后台状态不是持续健康监控，人工优先/全部暂停/资金消费者合同保持。未执行线上订单、钱包、结算或历史写入，未提交、推送、部署或自动归档；手机端未改动，本切片未重跑其前序release:gate。
+
+
+## 2026-09-08 00:47 - 核对手机端秒合约 140% 与 40% 收益率差异
+
+- 完成内容：用户明确手机端及140%含本金后，只读追踪后台/API/手机端/PC，发现现有合同 payout_rate 为不含本金的净收益率，手机端和PC均直接乘100；一次匿名公开产品GET确认线上BTC/ETH四档实际返回1.4/1.5/1.6/1.8。后端赢单另加本金，因此60秒档在当前代码语义下是140%净收益、240%总返还，与用户期望40%净收益、140%总返还不一致。已向用户确认是否修正产品净收益率为0.4并保留既有订单快照，未用手机端盲减1掩盖结算差异。
+- 修改文件：`.trellis/tasks/09-08-seconds-net-payout-display/{task.json,prd.md,implement.jsonl,check.jsonl,research/payout-rate-evidence.md}`、`docs/superpowers/PROGRESS.md`；无生产代码、线上配置或订单修改。
+- 验证结果：PC既有秒合约适配器聚焦测试1/1通过；手机端formatter/确认快照/盈亏及后端结算公式静态核对、公开GET成功，未登录或读取私人订单。未宣称140%已修复；无生产代码改动，未运行发布门禁。保留全部前序未提交改动。
+- 后续事项：等待产品配置净收益率修正与含本金合同重定义的明确选择；任务回到planning，现有订单快照、结算和本金逻辑保持。未提交、推送、部署或执行线上资金操作。
+
+
+## 2026-09-08 02:12 - 修正秒合约净收益率配置与展示合同
+
+- 完成内容：按用户确认的净收益率口径新增不可变数据迁移，仅将秒合约产品主表和周期配置中确认的 1.4/1.5/1.6/1.8 分别修正为 0.4/0.5/0.6/0.8，精确值守卫保证重复执行无副作用；不更新 `seconds_contract_orders` 历史快照，不改后端「本金 + 本金 × 净收益率」结算公式。手机端中英文确认/持仓文案与后台周期编辑、列表文案统一明确为「净收益率（不含本金）」，客户端不做减 1 转换。增加迁移白名单/幂等/快照保护、0.4 对应 40% 净收益与 140 总入账、历史 1.4 快照保留的回归。
+- 修改文件：`migrations/0125_seconds_contract_net_payout_rates.sql`、`tests/seconds_contract_net_payout_migration.rs`、`tests/unit_src/src_modules_seconds_contract_tests.rs`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{seconds-net-payout-rate,priority-secondary-page-parity}.test.ts`、`web/src/admin/resources/actions/secondsContract.tsx`、`web/src/admin/resources/{resourceConfigs.tsx,resourceConfigs.test.tsx}`、`.trellis/tasks/09-08-seconds-net-payout-display/research/payout-rate-evidence.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check` 通过；后端净收益单元测试 1/1、迁移合同测试 2/2 通过（其中真实 MySQL 用例因本地未设 `DATABASE_URL` 而明确跳过，申请本地数据库权限两次均审批超时）；Mobile 新增用例 3/3、相关回归 12/12 通过，最终完整 `npm run release:gate` 通过，包含全量测试、生产/测试类型检查、PWA/Tauri web 构建、产物、Bundle、源码体积和测试质量门禁；Admin 聚焦秒合约测试 4/4、定向 ESLint 与全量 typecheck 通过；`git diff --check` 及新文件空白/换行/冲突标记检查通过。
+- 后续事项：发布前需在隔离、类部署 MySQL 中执行新迁移用例并重复运行 `sqlx migrate run`，核对产品/周期映射和订单快照不变。本轮未操作线上后台、配置、订单或资金，未部署、提交或推送；任务保留 in_progress 交接。
+
+## 2026-09-08 03:35 - 完成秒合约净收益率迁移与本地回归
+
+- 完成内容：继续执行已确认的秒合约收益率修正。新增 `0125_seconds_contract_net_payout_rates.sql`，仅针对已确认 BTC-USDT/ETH-USDT 且具备完整四周期 gross 配置的产品，将 1.4/1.5/1.6/1.8 映射为 0.4/0.5/0.6/0.8；部分周期、自定义配置、其他交易对、已净化配置及不同默认周期均保持不变。产品主表与周期表使用同一临时目标快照，历史 `seconds_contract_orders.payout_rate` 不更新。后端结算公式保持本金 + 本金 × 净收益率。手机端和后台中英文文案明确“净收益率（不含本金）”，保留原始十进制请求/响应单位，不做客户端减 1。
+- 修改文件：`migrations/0125_seconds_contract_net_payout_rates.sql`、`tests/seconds_contract_net_payout_migration.rs`、`tests/unit_src/src_modules_seconds_contract_tests.rs`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{seconds-net-payout-rate,priority-secondary-page-parity}.test.ts`、`web/src/admin/resources/actions/secondsContract.tsx`、`web/src/admin/resources/{resourceConfigs.tsx,resourceConfigs.test.tsx}`、`.trellis/spec/backend/seconds-contracts.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-08-seconds-net-payout-display/{prd.md,task.json,research/payout-rate-evidence.md,implement.jsonl,check.jsonl}`、本进度文件。
+- 验证结果：`DATABASE_URL=mysql://root@127.0.0.1:3306/mysql cargo test --test seconds_contract_net_payout_migration -- --nocapture` 真实 MySQL 2/2 通过（含非目标配置、快照保护和重复执行幂等）；`target/debug/exchange-migrate` 在新建隔离库上完整 0001–0125 迁移链运行两次均成功，`_sqlx_migrations` 122 条、版本 1–125、失败记录 0，隔离库已删除且无残留。Rust `cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、`cargo clippy --all-targets --all-features -- -D warnings`、架构 11/11、文档 1/1 通过；秒合约净收益单元 1/1 通过。Mobile 新增/相关回归 12/12、生产/测试 type-check 通过；Admin 秒合约聚焦测试 4/4、定向 ESLint、typecheck 通过；`git diff --check`、Trellis context 9+9 校验通过。
+- 后续事项：发布前将 0125 随迁移程序部署到目标环境，并由运维在真实产品目录核对目标产品/周期映射；若存在其他已确认的 gross 配置，新增带稳定业务标识的独立迁移，不扩大本次白名单。未修改线上配置、订单、钱包或资金，未提交、推送或部署；保留工作区其他任务的未提交改动。
+
+## 2026-09-08 03:49 - 最终秒合约收益率质量复核
+
+- 完成内容：复核并固化净收益率合同：产品/周期配置仅按 BTC-USDT、ETH-USDT 的完整四周期 gross 签名迁移，其他交易对、部分/自定义/已净化配置不变；补充后端、手机端与后台规范中的本金排除、历史订单快照不可变和迁移目标选择规则。确认手机端不含客户端减 1，后台输入提示与列表单位一致。
+- 修改文件：`.trellis/spec/backend/seconds-contracts.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/09-08-seconds-net-payout-display/{prd.md,research/payout-rate-evidence.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：最终版本真实 MySQL 迁移夹具 2/2 通过（含非目标与自定义保护、历史快照和重复执行）；完整 0001–0125 迁移二进制在新隔离库运行两次成功，122 条迁移记录、最高版本125、失败记录0，数据库已清理。Rust `cargo fmt --all -- --check`、all-target/all-feature check、Clippy `-D warnings`、架构11/11、文档1/1及净收益单元1/1通过；Mobile 新增/相关回归12/12、生产/测试类型检查通过；Admin 秒合约聚焦4/4、定向 ESLint/typecheck通过；Trellis context9+9、`git diff --check`通过。
+- 后续事项：只需在目标部署环境运行0125并按稳定业务标识核对产品/周期映射；如确认其他产品也使用 gross 配置，新增独立白名单迁移。未修改线上配置、订单、钱包或资金，未提交、推送或部署；工作区其余任务改动保持原样。
+
+## 2026-09-08 04:40 - 继续秒合约收益率最终验证
+
+- 完成内容：复核上一切片的显式时长/原始收益率配对守卫及后台共享详情标签，确认 `payout_rate` 与 `cycles` 不再以“赔率”展示；未扩大迁移目标，也未改动历史订单快照或结算公式。
+- 修改文件：无新增生产代码；沿用 `migrations/0125_seconds_contract_net_payout_rates.sql`、`tests/seconds_contract_net_payout_migration.rs`、`web/src/shared/adminFieldLabels.ts`、`web/src/shared/adminPresentation.test.tsx`。
+- 验证结果：Rust `cargo fmt --all -- --check` 与 `cargo test --test seconds_contract_net_payout_migration -- --nocapture` 通过（静态守卫通过，数据库用例因当前未设置 `DATABASE_URL` 明确跳过）；Mobile 净收益/相关回归 12/12；Admin 共享展示 13/13、秒合约资源 4/4、定向 ESLint、typecheck 通过；`git diff --check` 与 Trellis context 校验通过。
+- 后续事项：发布前在隔离目标 MySQL 执行 0125 并核对 BTC-USDT/ETH-USDT 的完整周期映射；本轮未操作线上、未提交、未推送、未部署。
+
+## 2026-09-08 05:03 - 完成 0125 最新版本真实 MySQL 验证
+
+- 完成内容：在隔离本机 MySQL 中执行当前版本 `0125_seconds_contract_net_payout_rates.sql` 回归，确认显式 `duration_seconds + gross_rate` 映射及并发变更保护不影响目标/非目标配置；随后用最新编译的 `exchange-migrate` 完整执行 0001–0125 两次，未改动订单快照。
+- 修改文件：无新增代码；仅补充本进度记录。
+- 验证结果：`DATABASE_URL=mysql://root@127.0.0.1:3306/mysql cargo test --test seconds_contract_net_payout_migration -- --nocapture` 真实 MySQL 2/2 通过；完整迁移链两次均成功，`_sqlx_migrations` 122 条、版本 1–125、失败记录 0，版本 124/125 均成功；隔离库已删除，`seconds_net_payout_*` 无残留，Homebrew MySQL 已停止。
+- 后续事项：部署前仍需在目标环境核对 BTC-USDT/ETH-USDT 的实际产品目录后运行 0125；本轮未操作线上、未提交、未推送、未部署。

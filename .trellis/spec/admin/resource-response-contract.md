@@ -123,3 +123,67 @@ const rowContract = buildAdminResourceRowContract(columns);
 
 The presentation fallback can run while genuine response fields retain strict
 validation.
+
+## Resource Request Ownership and Batch Safety
+
+### 1. Scope / Trigger
+
+Shared resource list paging/filter/reload, detail drawers and batch mutations.
+
+### 2. Signatures
+
+`RowActionHelpers.loadDetail(loader: (signal: AbortSignal) => Promise<DetailDrawerData>)`
+is the only asynchronous resource-detail entry point. `openDetail(detail)` is
+for already available data. `DataTable.onPaginationChange` optionally notifies
+the page about local paging without changing its existing pagination model.
+
+### 3. Contracts
+
+- One page-owned controller identifies the current async detail request.
+  New async/static detail, close, request context change, local paging and
+  unmount invalidate the old request. Test ownership even if abort is ignored.
+- Current detail errors are consumed and shown through the Chinese formatter;
+  stale/canceled errors are silent, never unhandled button-handler rejections.
+- Selection is usable only if the loaded list belongs to the current endpoint,
+  filters, page/size, response contract and reload generation with no load/error.
+  Derive that readiness during render; clearing selection in a later effect
+  alone leaves a stale batch-action window. No stale CSV export during reload.
+- Paging (including local paging), filter/endpoint changes and reload clear
+  selection. Batch confirmation freezes the selected IDs and never follows a
+  replacement selection. Once invalidated it must be reopened, even if the
+  previous IDs later reappear. Mutation is single-flight and pending confirmation
+  cannot be canceled or retargeted.
+
+### 4. Validation & Error Matrix
+
+| Event | Required behavior |
+|---|---|
+| Detail A finishes after B | B remains displayed |
+| Detail request finishes after close/unmount/context replacement | No drawer reopening |
+| Loading/error or changed list context | No actionable old selected IDs or export |
+| Open batch confirmation's selection changes | Disable submit, explain in Chinese, require reopen |
+| Repeated batch confirm clicks | One request using snapshotted IDs |
+
+### 5. Good / Base / Bad Cases
+
+Good: moving from page 1 to 2 immediately disables page-1 batch targets.
+Base: an ordinary current detail opens with merged field metadata.
+Bad: old page selection remains usable until new data arrives, or detail A
+replaces B solely because A finished later.
+
+### 6. Tests Required
+
+Deferred real-component responses for A/B, current/stale errors, close/static
+open, endpoint, unmount; server/local paging, size, filter, reload, error and
+checkbox reset; batch invalidation/reselection and single-flight submission.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: request completion alone does not establish display ownership.
+helpers.openDetail(await fetchDetail(id));
+// Correct: page-owned lifetime and identity gate every completion.
+await helpers.loadDetail(async (signal) => ({
+  title: '详情', data: await apiRequest(path, { signal }),
+}));
+```

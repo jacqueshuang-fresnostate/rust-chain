@@ -340,7 +340,7 @@ test('shared REST depth adapter preserves exact text, sorts display numbers, and
 
 test('REST market functions preserve endpoint envelopes while delegating to the shared adapters', () => {
   const klineSource = marketApiSource.match(
-    /export async function fetchKlines[\s\S]*?\n}/,
+    /async function fetchKlinePage[\s\S]*?\n}/,
   )?.[0] ?? ''
   const depthSource = marketApiSource.match(
     /export async function fetchOrderBook[\s\S]*?\n}/,
@@ -350,7 +350,8 @@ test('REST market functions preserve endpoint envelopes while delegating to the 
   )?.[0] ?? ''
 
   assert.match(klineSource, /requestUrl\(`\/markets\/\$\{encodeURIComponent\(normalizeSymbol\(symbol\)\)\}\/klines`\)/)
-  assert.match(klineSource, /\{ params: \{ interval, start, end, limit } }/)
+  assert.match(klineSource, /\{ params: \{ interval, end, limit } }/)
+  assert.doesNotMatch(klineSource, /params:[^\n]*\bstart\b/)
   assert.match(klineSource, /return mapMarketKlines\(rawRows, limit\)/)
   assert.match(depthSource, /requestUrl\(`\/markets\/\$\{encodeURIComponent\(normalizeSymbol\(symbol\)\)\}\/depth`\)/)
   assert.match(depthSource, /return mapMarketDepthSnapshot\(response\.data\)/)

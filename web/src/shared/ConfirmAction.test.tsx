@@ -9,11 +9,12 @@ describe('ConfirmAction', () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn().mockResolvedValue(undefined);
 
-    render(<ConfirmAction actionText="保存配置" title="确认保存配置" onConfirm={onConfirm} />);
+    render(<ConfirmAction actionText="保存配置" title="确认保存配置" description="保存会更新行情来源，请先核对预览。" onConfirm={onConfirm} />);
 
     const trigger = screen.getByRole('button', { name: '保存配置' });
     expect(trigger).toHaveClass('semi-button-primary', 'semi-button-solid');
     await user.click(trigger);
+    expect(screen.getByText('保存会更新行情来源，请先核对预览。')).toBeVisible();
 
     const confirm = await screen.findByRole('button', { name: '确认' });
     expect(confirm).toBeDisabled();

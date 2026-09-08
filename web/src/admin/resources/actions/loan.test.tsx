@@ -84,7 +84,7 @@ const productRecord: ApiRecord = {
 
 function rowHelpers() {
   return {
-    openDetail: vi.fn(),
+    loadDetail: vi.fn(), openDetail: vi.fn(),
     reload: vi.fn()
   };
 }

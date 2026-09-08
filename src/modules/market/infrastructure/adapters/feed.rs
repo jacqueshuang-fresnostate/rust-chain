@@ -19,8 +19,8 @@ use super::{
     provider::{
         BitgetMarketAdapter, CoinbaseMarketAdapter, HtxMarketAdapter, MarketFeedProvider,
         bitget_rest_kline_payloads, bitget_rest_ticker_payload, coinbase_rest_kline_payloads,
-        coinbase_rest_ticker_payload, htx_rest_kline_payloads, htx_rest_ticker_payload,
-        market_feed_payload_hash, provider_name, validation_error,
+        coinbase_rest_kline_url_at, coinbase_rest_ticker_payload, htx_rest_kline_payloads,
+        htx_rest_ticker_payload, market_feed_payload_hash, provider_name, validation_error,
     },
 };
 use crate::{
@@ -376,7 +376,7 @@ impl MarketFeedRestFallbackKlineRequest {
     }
 
     /// 返回该 K 线兜底请求的完整 URL，已含 provider 基址、交易对与粒度参数。
-    /// Coinbase 的地址还包含按当前时刻回推的时间窗口，因此它是一次性的，不能缓存复用。
+    /// Coinbase 的时间窗口是配置预览值，实际发送前会按请求时刻刷新；此处不改变已存配置。
     pub fn url(&self) -> &str {
         &self.url
     }
@@ -604,7 +604,7 @@ impl MarketFeedFailureContext {
     }
 
     /// 返回失败请求的完整 URL，包含基址与全部查询参数，可直接复制出来手工复现。
-    /// Coinbase 的 K 线地址带有生成时刻的时间窗口，复现时拿到的数据范围会与当时不同。
+    /// Coinbase K 线记录实际发送时刷新的时间窗口，而非工作进程创建配置时的旧窗口。
     pub fn url(&self) -> &str {
         &self.url
     }
@@ -1092,6 +1092,20 @@ async fn fetch_rest_fallback_frames<C>(
 where
     C: MarketFeedRestFallbackHttpClient,
 {
+    fetch_rest_fallback_frames_with_clock(config, http_client, Utc::now).await
+}
+
+/// 每条 Coinbase 蜡烛请求发送前读取时钟并刷新边界；可注入时钟验证长队列不共用旧时间。
+/// URL 构造失败沿用单请求失败隔离，其他 provider 和 ticker 原样发送，不读取窗口时钟。
+async fn fetch_rest_fallback_frames_with_clock<C, F>(
+    config: &MarketFeedRestFallbackConfig,
+    http_client: &C,
+    mut now: F,
+) -> AppResult<Vec<MarketFeedRestFallbackFrameResult>>
+where
+    C: MarketFeedRestFallbackHttpClient,
+    F: FnMut() -> chrono::DateTime<Utc>,
+{
     let mut requests =
         VecDeque::with_capacity(config.ticker_requests().len() + config.kline_requests().len());
     requests.extend(
@@ -1108,7 +1122,20 @@ where
     );
 
     let mut frames = Vec::with_capacity(requests.len());
-    while let Some(request) = requests.pop_front() {
+    while let Some(mut request) = requests.pop_front() {
+        if config.provider() == MarketFeedProvider::Coinbase
+            && request.channel == MarketFeedChannel::Kline
+        {
+            let refreshed = required_rest_fallback_interval(&request)
+                .and_then(|interval| coinbase_rest_kline_url_at(&request.url, interval, now()));
+            match refreshed {
+                Ok(url) => request.url = url,
+                Err(error) => {
+                    frames.push(MarketFeedRestFallbackFrameResult::new(&request, Err(error)));
+                    continue;
+                }
+            }
+        }
         match http_client.get_text(&request.url).await {
             Ok(payload) => match rest_fallback_frames(config.provider(), &request, &payload) {
                 Ok(payload_frames) => frames.extend(
@@ -1272,3 +1299,7 @@ fn validate_feed_intervals(intervals: &[&str]) -> AppResult<Vec<String>> {
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit_src/src_modules_market_infrastructure_adapters_feed_tests.rs"]
+mod tests;

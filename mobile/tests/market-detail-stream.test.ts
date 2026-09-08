@@ -787,11 +787,10 @@ test('MarketDetailView wires the shared interval source and executable detail se
   const load = source.match(/async function load[\s\S]*?\n}/)?.[0] ?? ''
   const chooseInterval = source.match(/function chooseInterval[\s\S]*?\n}/)?.[0] ?? ''
 
-  assert.ok(load.indexOf('startLiveDetail(symbol, selectedInterval, version)') < load.indexOf('await Promise.allSettled'))
-  assert.match(load, /if \(version !== requestVersion \|\| symbol !== pairSymbol\.value\) return/)
-  assert.match(load, /beginKlineRequest\(liveState\)/)
-  assert.match(load, /resolveKlineRequest\(klineRequest, restPoints\)/)
-  assert.match(load, /if \(!liveState\.depthReceived && !currentDepthReceived\)/)
+  assert.ok(load.indexOf('startLiveDetail(symbol, selectedInterval, version)') < load.indexOf('await loadMarketDetailSnapshot'))
+  assert.match(load, /viewActive && version === requestVersion && symbol === pairSymbol\.value/)
+  assert.match(load, /session: detailStreamSession, context: liveState, isCurrent/)
+  assert.match(load, /hasLiveDepth: \(\) => liveDepthReceived\.value/)
   assert.match(load, /mergeMarketTradeHistory\(trades\.value, restTrades, 16\)/)
   assert.match(source, /createMarketDetailStreamSession\(\{/)
   assert.match(source, /v-for="item in MARKET_KLINE_INTERVALS"/)

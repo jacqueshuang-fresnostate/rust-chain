@@ -1,6 +1,7 @@
 import type { DecimalText } from './decimal'
 
 export interface MarketTicker {
+  marketType?: 'external' | 'internal' | 'strategy'
   id?: number
   symbol: string
   base: string

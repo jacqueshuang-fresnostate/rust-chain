@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Chart viewport, focus and strict release budgets"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Current REST/WS ownership and history loading"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Share pagination without duplicating view logic"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "API cursor to renderer data flow"}

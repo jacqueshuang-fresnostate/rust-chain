@@ -4,6 +4,7 @@
 //! `adapters` 负责第三方 provider 归一化与 ingestion。此文件仅保留稳定路径与可见性。
 
 mod cache;
+pub mod default_runtime;
 mod persistence;
 
 pub mod adapters;

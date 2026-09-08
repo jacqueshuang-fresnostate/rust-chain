@@ -141,7 +141,8 @@ pub(crate) async fn create_admin_risk_rule(
 }
 
 /// 切换单条风控规则的 enabled 标记，并返回包含原始配置的最终规则快照。
-/// 调用方提供管理员 ID；实现不校验显式审计原因，也不解析规则 config_json 或检查目标资源。
+/// 调用方提供管理员 ID；启用前校验锁定行的已知配置字段，不要求显式审计原因或重新检查目标资源。
+/// 停用始终保留旧配置与旧目标的恢复通道，标量、空值或失效字段不妨碍停止规则。
 /// 事务先锁规则，再更新启用位、回读并写 before/after 审计；记录缺失或 SQL 失败整体回滚。
 /// 相同值重放仍新增审计，提交后不主动刷新独立风控缓存或重放历史事件。
 pub(crate) async fn update_admin_risk_rule_status(
@@ -155,6 +156,10 @@ pub(crate) async fn update_admin_risk_rule_status(
     // 先锁定旧规则再更新状态，确保审计 before/after 对应同一次状态切换。
     let mut tx = pool.begin().await?;
     let before = lock_risk_rule_in_tx(&mut tx, rule_id).await?;
+    if request.enabled {
+        crate::modules::risk::service::validate_risk_rule_config(&before.config_json.0)
+            .map_err(|message| AppError::Validation(message.to_owned()))?;
+    }
     update_risk_rule_status_in_tx(&mut tx, rule_id, request.enabled).await?;
     let after = load_risk_rule_in_tx(&mut tx, rule_id).await?;
     insert_admin_audit_log_entry_in_tx(

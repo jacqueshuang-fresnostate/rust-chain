@@ -6,7 +6,7 @@ import type { ApiRecord } from '../../../api/types';
 import { AdminReferenceSelect, isReferenceSelectable, useAdminReferenceOptions } from '../../referenceOptions';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminPasswordInput, AdminTextInput } from '../../../shared/SemiFormControls';
-import { canonicalDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
+import { canonicalDecimalText, decimalFitsPrecision, isPositiveDecimalText } from '../../../shared/decimal';
 import {
   financialCommandIntents,
   financialCommandScopeFromSession,
@@ -20,7 +20,6 @@ import {
   type CreateActionProps,
   type RowActionHelpers,
   createModalProps,
-  errorMessage,
   isNonNegativeIntegerInput,
   openRecordDetail,
   optionalString,
@@ -85,20 +84,18 @@ function isAssignAgentSubmittable(values: AssignAgentValues, selectableAgentIds:
 }
 
 async function openUserAssets(userId: string, helpers: RowActionHelpers) {
-  try {
-    const result = await apiRequest<ApiRecord>(`/admin/api/v1/wallet/accounts?user_id=${userId}&include_empty=true&limit=100`);
+  await helpers.loadDetail(async (signal) => {
+    const result = await apiRequest<ApiRecord>(`/admin/api/v1/wallet/accounts?user_id=${userId}&include_empty=true&limit=100`, { signal });
     const accounts = Array.isArray(result.accounts) ? (result.accounts as ApiRecord[]) : [];
-    helpers.openDetail({ title: '用户资产', data: accounts });
-  } catch (error) {
-    Toast.error(errorMessage(error));
-    throw error;
-  }
+    return { title: '用户资产', data: accounts };
+  });
 }
 
 function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; userId: string }) {
   const [recharge, setRecharge] = useState(initialUserRecharge);
   const [visible, setVisible] = useState(false);
   const { assetError, assetLoading, assetOptions } = useAssetOptions(visible);
+  const precision = assetOptions.find((asset) => asset.id === recharge.assetId)?.precisionScale;
 
   return (
     <>
@@ -112,6 +109,12 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
               <AssetSelect label="充值资产" loading={assetLoading} options={assetOptions} value={recharge.assetId} onChange={(assetId) => setRecharge({ ...recharge, assetId })} />
               {assetError ? <span className="admin-reference-field__error" role="alert">资产目录加载失败，请关闭后重试</span> : null}
               <label>充值金额<AdminTextInput ariaLabel="充值金额" value={recharge.amount} onChange={(amount) => setRecharge({ ...recharge, amount })} /></label>
+              {recharge.assetId ? <span className="admin-form-hint">{precision === undefined
+                ? '资产精度尚未加载，新充值前请重新加载资产目录。'
+                : `该资产最多支持 ${precision} 位小数，超出精度不会自动舍入。`}</span> : null}
+              {precision !== undefined && isPositiveDecimalText(recharge.amount) && !decimalFitsPrecision(recharge.amount, precision) ? (
+                <span className="admin-reference-field__error" role="alert">充值金额超过资产精度。新充值请修改金额；未确认结果的原请求可保留原金额和原因重试核对。</span>
+              ) : null}
             </div>
             <ConfirmAction
               actionText="提交充值"
@@ -128,6 +131,11 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
                   amount,
                   reason: reason.trim()
                 };
+                const scope = financialCommandScopeFromSession(session, 'admin-user-recharge', businessIntent.user_id, businessIntent.asset_id);
+                if (!financialCommandIntents.hasPending(scope, businessIntent)) {
+                  if (assetLoading || assetError || precision === undefined) throw new Error('请重新加载资产目录并确认资产精度');
+                  if (!decimalFitsPrecision(amount, precision)) throw new Error(`充值金额最多支持 ${precision} 位小数，不会自动舍入`);
+                }
                 await runRecoverableFinancialCommand({
                   isDefinitiveFailure: isDefinitiveRechargeFailure,
                   request: (idempotencyKey) =>
@@ -142,12 +150,7 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
                       })
                     })
                     ),
-                  scope: financialCommandScopeFromSession(
-                    session,
-                    'admin-user-recharge',
-                    businessIntent.user_id,
-                    businessIntent.asset_id
-                  ),
+                  scope,
                   store: financialCommandIntents,
                   values: businessIntent
                 });

@@ -15,6 +15,7 @@ import { DataTable, DEFAULT_PAGE_SIZE, type DataTableDisplayMode } from '../../s
 import { FilterBar, type FilterField, type FilterValues } from '../../shared/FilterBar';
 import { DetailDrawer, type DetailDrawerData, type DetailDrawerFieldMeta } from '../../shared/DetailDrawer';
 import { formatAdminDisplayValue } from '../../shared/numberFormat';
+import { useResourceDetail, type ResourceDetailLoader } from './useResourceDetail';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 
@@ -69,6 +70,7 @@ type AdminResourcePageProps<T extends ApiRecord> = {
     record: T,
     helpers: {
       reload: () => void;
+      loadDetail: (loader: ResourceDetailLoader) => Promise<void>;
       openDetail: (detail: DetailDrawerData) => void;
     }
   ) => ReactNode;
@@ -209,15 +211,6 @@ function downloadCsv(fileName: string, csv: string) {
   URL.revokeObjectURL(url);
 }
 
-function mergeDetailFieldMeta(base: DetailDrawerFieldMeta, next?: DetailDrawerFieldMeta): DetailDrawerFieldMeta {
-  return {
-    assets: { ...base.assets, ...next?.assets },
-    labels: { ...base.labels, ...next?.labels },
-    types: { ...base.types, ...next?.types },
-    valueMaps: { ...base.valueMaps, ...next?.valueMaps }
-  };
-}
-
 export function AdminResourcePage<T extends ApiRecord>({
   actions,
   batchActions,
@@ -233,7 +226,6 @@ export function AdminResourcePage<T extends ApiRecord>({
   title,
   toolbarFilters
 }: AdminResourcePageProps<T>) {
-  const [detail, setDetail] = useState<DetailDrawerData | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [filterValues, setFilterValues] = useState<FilterValues>(initialFilters ?? {});
   const [toolbarFilterValues, setToolbarFilterValues] = useState<FilterValues>({});
@@ -285,18 +277,27 @@ export function AdminResourcePage<T extends ApiRecord>({
     [filterValues, page, pageSize, serverPaged, toolbarFilterValues]
   );
   const rowContract = useMemo(() => buildAdminResourceRowContract(columns), [columns]);
+  const requestContext = useMemo(
+    () => ({ endpoint, reloadVersion, requestFilterValues, responseKey, rowContract }),
+    [endpoint, reloadVersion, requestFilterValues, responseKey, rowContract]
+  );
+  const [loadedContext, setLoadedContext] = useState<typeof requestContext | null>(null);
+  // Render-time ownership closes the gap before the new request effect starts.
+  const listReady = loadedContext === requestContext && !loading && !error;
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    setSelectedRowKeys([]);
 
     listAdminResource<T>(endpoint, responseKey, requestFilterValues, { rowContract, signal: controller.signal })
       .then((result) => {
         if (!active) {
           return;
         }
+        setLoadedContext(requestContext);
         setRows(result.rows);
         setFilterOptionRows((current) => mergeFilterOptionRows(current, result.rows));
         setTotal(typeof result.total === 'number' ? result.total : null);
@@ -321,7 +322,7 @@ export function AdminResourcePage<T extends ApiRecord>({
       active = false;
       controller.abort();
     };
-  }, [endpoint, reloadVersion, requestFilterValues, responseKey, rowContract]);
+  }, [endpoint, reloadVersion, requestContext, requestFilterValues, responseKey, rowContract]);
 
   const filterFields = useMemo(
     () =>
@@ -357,8 +358,8 @@ export function AdminResourcePage<T extends ApiRecord>({
 
   const renderedActions = typeof actions === 'function' ? actions({ reload }) : actions;
   const selectedRows = useMemo(
-    () => rows.filter((row) => selectedRowKeys.some((key) => String(key) === String(row.id))),
-    [rows, selectedRowKeys]
+    () => listReady ? rows.filter((row) => selectedRowKeys.some((key) => String(key) === String(row.id)) && (!batchActions?.isRowSelectable || batchActions.isRowSelectable(row))) : [],
+    [batchActions, listReady, rows, selectedRowKeys]
   );
   const rowSelection = useMemo<RowSelectionProps<T> | undefined>(() => {
     if (!batchActions) {
@@ -367,10 +368,10 @@ export function AdminResourcePage<T extends ApiRecord>({
     const isRowSelectable = batchActions.isRowSelectable;
     return {
       getCheckboxProps: isRowSelectable ? (record: T) => ({ disabled: !isRowSelectable(record) }) : undefined,
-      onChange: (keys) => setSelectedRowKeys(keys ?? []),
-      selectedRowKeys
+      onChange: (keys) => setSelectedRowKeys(listReady ? keys ?? [] : []),
+      selectedRowKeys: listReady ? selectedRowKeys : []
     };
-  }, [batchActions, selectedRowKeys]);
+  }, [batchActions, listReady, selectedRowKeys]);
   const renderedBatchActions = batchActions ? batchActions.render({ clearSelection, reload, selectedRows }) : null;
   const renderedToolbarFilters = toolbarFilters?.map((field) => {
     if (field.type !== 'switch') {
@@ -413,14 +414,11 @@ export function AdminResourcePage<T extends ApiRecord>({
       ),
     [columns]
   );
-  const openDetail = useCallback(
-    (nextDetail: DetailDrawerData) =>
-      setDetail({
-        ...nextDetail,
-        fieldMeta: mergeDetailFieldMeta(detailFieldMeta, nextDetail.fieldMeta)
-      }),
-    [detailFieldMeta]
-  );
+  const { closeDetail, detail, loadDetail, openDetail } = useResourceDetail(requestContext, detailFieldMeta);
+  const handlePaginationChange = useCallback(() => {
+    clearSelection();
+    closeDetail();
+  }, [clearSelection, closeDetail]);
 
   const tableColumns = useMemo<Array<ColumnProps<T>>>(() => {
     const resourceColumns = columns.map<ColumnProps<T>>((column) => ({
@@ -437,7 +435,7 @@ export function AdminResourcePage<T extends ApiRecord>({
         key: 'actions',
         render: (_value: unknown, record: T) => (
           <Space className="admin-table-action-buttons" spacing={6}>
-            {rowActions?.(record, { reload, openDetail })}
+            {rowActions?.(record, { reload, loadDetail, openDetail })}
             {showJsonAction && !rowActions ? (
               <Button icon={<IconEyeOpened aria-hidden="true" />} onClick={() => openDetail({ title: '详情', data: record })} size="small" theme="borderless">
                 查看详情
@@ -449,7 +447,7 @@ export function AdminResourcePage<T extends ApiRecord>({
         width: 288
       }
     ];
-  }, [columns, openDetail, reload, rowActions, showJsonAction]);
+  }, [columns, loadDetail, openDetail, reload, rowActions, showJsonAction]);
 
   return (
     <main className="exchange-page admin-action-page">
@@ -483,9 +481,9 @@ export function AdminResourcePage<T extends ApiRecord>({
               {csvFileName ? (
                 <Tooltip content="以 CSV 导出当前已加载数据（非全量）">
                   <Button
-                    disabled={rows.length === 0}
+                    disabled={!listReady || rows.length === 0}
                     icon={<IconDownload aria-hidden="true" />}
-                    onClick={() => downloadCsv(csvFileName, toCsv(columns, rows))}
+                    onClick={() => { if (listReady) downloadCsv(csvFileName, toCsv(columns, rows)); }}
                     theme="borderless"
                   >
                     导出已加载数据
@@ -515,7 +513,8 @@ export function AdminResourcePage<T extends ApiRecord>({
             data={rows}
             displayMode={tableDisplayMode}
             error={error}
-            loading={loading}
+            loading={!error && !listReady}
+            onPaginationChange={handlePaginationChange}
             pagination={
               serverPaged
                 ? {
@@ -534,7 +533,7 @@ export function AdminResourcePage<T extends ApiRecord>({
           />
         </div>
       </Card>
-      <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
+      <DetailDrawer detail={detail} onClose={closeDetail} />
     </main>
   );
 }

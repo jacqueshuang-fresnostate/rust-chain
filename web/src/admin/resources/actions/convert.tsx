@@ -5,6 +5,7 @@ import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
+import { compareDecimalText, decimalFitsPrecision, isNonNegativeDecimalText } from '../../../shared/decimal';
 import { AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
   type AssetOption,
@@ -26,7 +27,7 @@ import {
   useAssetOptions
 } from './shared';
 
-type ConvertPairValues = {
+export type ConvertPairValues = {
   fromAssetId: string;
   toAssetId: string;
   pricingMode: string;
@@ -53,16 +54,34 @@ const initialConvertPair: ConvertPairValues = {
 };
 
 function isConvertPairCreatable(values: ConvertPairValues): boolean {
-  return Boolean(
-    values.fromAssetId.trim() &&
-      values.toAssetId.trim() &&
-      values.fromAssetId !== values.toAssetId &&
-      values.pricingMode.trim() &&
-      values.spreadRate.trim() &&
-      values.feeRate.trim() &&
-      values.minAmount.trim() &&
-      values.targetMinAmount.trim()
-  );
+  return convertPairValidationError(values) === null;
+}
+
+export function convertPairValidationError(values: ConvertPairValues): string | null {
+  try {
+    const from = requiredPositiveInteger(values.fromAssetId, '源资产');
+    const to = requiredPositiveInteger(values.toAssetId, '目标资产');
+    if (from === to) return '源资产与目标资产必须不同';
+  } catch {
+    return '请选择有效的源资产和目标资产';
+  }
+  if (!['fixed', 'market'].includes(values.pricingMode)) return '请选择支持的定价模式';
+  for (const [label, value] of [['价差率', values.spreadRate], ['手续费率', values.feeRate]]) {
+    if (!isNonNegativeDecimalText(value) || compareDecimalText(value, '1') !== -1) {
+      return `${label}必须大于等于 0 且小于 1（0.01 表示 1%）`;
+    }
+    if (!decimalFitsPrecision(value, 8)) return `${label}最多支持 8 位有效小数，不会自动舍入`;
+  }
+  for (const [label, minimum, maximum] of [
+    ['源资产', values.minAmount, values.maxAmount],
+    ['目标资产', values.targetMinAmount, values.targetMaxAmount]
+  ]) {
+    if (!isNonNegativeDecimalText(minimum)) return `${label}最小金额必须大于等于 0`;
+    if (maximum.trim() && (!isNonNegativeDecimalText(maximum) || compareDecimalText(maximum, minimum) === -1)) {
+      return `${label}最大金额必须大于等于最小金额，留空表示不限`;
+    }
+  }
+  return null;
 }
 
 function convertPairFromRecord(record: ApiRecord): ConvertPairValues {
@@ -81,6 +100,8 @@ function convertPairFromRecord(record: ApiRecord): ConvertPairValues {
 }
 
 function convertPairRequestBody(values: ConvertPairValues, reason: string) {
+  const error = convertPairValidationError(values);
+  if (error) throw new Error(error);
   return {
     from_asset_id: requiredPositiveInteger(values.fromAssetId, '源资产'),
     to_asset_id: requiredPositiveInteger(values.toAssetId, '目标资产'),
@@ -236,11 +257,15 @@ function ConvertPairFields({
       </label>
       <label>价差率<AdminTextInput ariaLabel="价差率" value={values.spreadRate} onChange={(spreadRate) => patch({ spreadRate })} /></label>
       <label>手续费率<AdminTextInput ariaLabel="手续费率" value={values.feeRate} onChange={(feeRate) => patch({ feeRate })} /></label>
+      <span className="admin-form-hint">价差率和手续费率按比例填写：0.01 表示 1%；取值大于等于 0、小于 1，最多支持 8 位有效小数。</span>
       <label>源资产最小金额<AdminTextInput ariaLabel="源资产最小金额" value={values.minAmount} onChange={(minAmount) => patch({ minAmount })} /></label>
       <label>源资产最大金额<AdminTextInput ariaLabel="源资产最大金额" value={values.maxAmount} onChange={(maxAmount) => patch({ maxAmount })} /></label>
       <label>目标资产最小金额<AdminTextInput ariaLabel="目标资产最小金额" value={values.targetMinAmount} onChange={(targetMinAmount) => patch({ targetMinAmount })} /></label>
       <label>目标资产最大金额<AdminTextInput ariaLabel="目标资产最大金额" value={values.targetMaxAmount} onChange={(targetMaxAmount) => patch({ targetMaxAmount })} /></label>
       <label>启用<BooleanSelect label="启用" value={values.enabled} onChange={(enabled) => patch({ enabled })} /></label>
+      {values.fromAssetId && values.toAssetId && convertPairValidationError(values) ? (
+        <span className="admin-reference-field__error" role="alert">{convertPairValidationError(values)}</span>
+      ) : null}
     </div>
   );
 }

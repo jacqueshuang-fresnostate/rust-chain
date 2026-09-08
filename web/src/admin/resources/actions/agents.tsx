@@ -1,5 +1,5 @@
 import { Button, Card, Modal, SideSheet, Space, TextArea, Toast } from '@douyinfe/semi-ui';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
@@ -153,30 +153,44 @@ export function batchStatusSummary(results: AgentCommissionBatchResult[]): strin
 }
 
 export function AgentCommissionBatchActions({ helpers }: { helpers: AdminResourceBatchHelpers<ApiRecord> }) {
-  const [pendingStatus, setPendingStatus] = useState<'settled' | 'rejected' | null>(null);
+  const [confirmation, setConfirmation] = useState<{ ids: number[]; invalidated: boolean; status: 'settled' | 'rejected' } | null>(null);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const ids = [...new Set(helpers.selectedRows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0))];
-  const actionLabel = pendingStatus === 'rejected' ? '批量驳回' : '批量结算';
+  const submittingRef = useRef(false);
+  const ids = [...new Set(helpers.selectedRows.map((row) => Number(row.id)).filter((id) => Number.isSafeInteger(id) && id > 0))];
+  const selectedKey = [...ids].sort((a, b) => a - b).join(',');
+  const confirmedKey = confirmation ? [...confirmation.ids].sort((a, b) => a - b).join(',') : '';
+  const scopeValid = Boolean(confirmation && !confirmation.invalidated && ids.length > 0 && ids.length <= BATCH_STATUS_LIMIT && selectedKey === confirmedKey);
+  const actionLabel = confirmation?.status === 'rejected' ? '批量驳回' : '批量结算';
+
+  // A replaced selection must never silently retarget or revive an already-open confirmation.
+  useEffect(() => {
+    if (confirmation && !confirmation.invalidated && selectedKey !== confirmedKey) {
+      setConfirmation({ ...confirmation, invalidated: true });
+    }
+  }, [confirmation, confirmedKey, selectedKey]);
 
   function openConfirm(status: 'settled' | 'rejected') {
+    if (submittingRef.current || ids.length === 0) return;
     if (ids.length > BATCH_STATUS_LIMIT) {
       Toast.error(`单次最多批量处理 ${BATCH_STATUS_LIMIT} 条`);
       return;
     }
-    setPendingStatus(status);
+    setReason('');
+    setConfirmation({ ids: [...ids], invalidated: false, status });
   }
 
   async function submit() {
-    if (!pendingStatus) {
+    if (submittingRef.current || !confirmation || !scopeValid) {
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const trimmed = reason.trim();
       const response = await apiRequest<{ results: AgentCommissionBatchResult[] }>('/admin/api/v1/agent-commissions/batch-status', {
         method: 'POST',
-        body: JSON.stringify({ ids, status: pendingStatus, ...(trimmed ? { reason: trimmed } : {}) })
+        body: JSON.stringify({ ids: confirmation.ids, status: confirmation.status, ...(trimmed ? { reason: trimmed } : {}) })
       });
       const summary = `${actionLabel}完成：${batchStatusSummary(response.results)}`;
       if (response.results.some((item) => item.status !== 'ok')) {
@@ -184,32 +198,37 @@ export function AgentCommissionBatchActions({ helpers }: { helpers: AdminResourc
       } else {
         Toast.success(summary);
       }
-      setPendingStatus(null);
+      setConfirmation(null);
       setReason('');
       helpers.clearSelection();
       helpers.reload();
     } catch (error) {
       Toast.error(errorMessage(error));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
 
   return (
     <>
-      <Button disabled={ids.length === 0} onClick={() => openConfirm('settled')} theme="solid" type="primary">批量结算</Button>
-      <Button disabled={ids.length === 0} onClick={() => openConfirm('rejected')} type="danger">批量驳回</Button>
+      <Button disabled={submitting || ids.length === 0} onClick={() => openConfirm('settled')} theme="solid" type="primary">批量结算</Button>
+      <Button disabled={submitting || ids.length === 0} onClick={() => openConfirm('rejected')} type="danger">批量驳回</Button>
       <Modal
+        cancelButtonProps={{ 'aria-label': '取消', disabled: submitting }}
+        closeOnEsc={!submitting}
         confirmLoading={submitting}
+        maskClosable={false}
         motion={false}
-        okButtonProps={{ 'aria-label': `确认${actionLabel}` }}
+        okButtonProps={{ 'aria-label': `确认${actionLabel}`, disabled: submitting || !scopeValid }}
         okText="确认"
-        onCancel={() => setPendingStatus(null)}
+        onCancel={() => { if (!submittingRef.current) { setConfirmation(null); setReason(''); } }}
         onOk={submit}
-        title={`${actionLabel}（${ids.length} 条）`}
-        visible={pendingStatus !== null}
+        title={`${actionLabel}（${confirmation?.ids.length ?? 0} 条）`}
+        visible={confirmation !== null}
       >
-        <TextArea aria-label="批量操作原因" autosize onChange={setReason} placeholder="操作原因（可选）" value={reason} />
+        {confirmation && !scopeValid && !submitting ? <div role="alert">列表或勾选记录已变化，请取消后重新选择并确认。</div> : null}
+        <TextArea aria-label="批量操作原因" autosize disabled={submitting} onChange={setReason} placeholder="操作原因（可选）" value={reason} />
       </Modal>
     </>
   );

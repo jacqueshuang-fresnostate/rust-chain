@@ -206,6 +206,7 @@ test('本地 Lightweight Charts 单引擎保留真实数据、指标、成交量
   assert.match(chartSource, /:points="normalizedPoints"/)
   assert.match(chartSource, /:moving-averages="movingAverages"/)
   assert.match(chartSource, /:symbol="symbol"/)
+  assert.match(chartSource, /:history-loading="loading"/)
   assert.match(chartSource, /const chartLocale = computed\(\(\) => locale\.value === 'en' \? 'en-US' : 'zh-CN'\)/)
   assert.equal(chartSource.match(/:locale="chartLocale"/g)?.length, 1)
   assert.match(chartSource, /data-fit-policy="initial-or-dataset"/)
@@ -230,7 +231,7 @@ test('本地 Lightweight Charts 单引擎保留真实数据、指标、成交量
   assert.match(lightweightChartSource, /if \(fitKeyChanged && !pointsChanged\) return/)
   assert.match(lightweightChartSource, /renderAllData\(false, viewport\)/)
   assert.match(lightweightChartSource, /captureMarketChartLogicalViewport\([\s\S]*resolveMarketChartLogicalRange\(/)
-  assert.match(lightweightChartSource, /requestAnimationFrame\(\(\) => \{[\s\S]*restoreViewport\(viewport\)/)
+  assert.match(lightweightChartSource, /requestAnimationFrame\(\(\) => \{[\s\S]*restoreViewport\(viewport, followAdvancingTail\)/)
   assert.match(lightweightChartSource, /watch\(\(\) => props\.locale[\s\S]*localization: \{ locale \}/)
   assert.match(lightweightChartSource, /horzTouchDrag: true[\s\S]*vertTouchDrag: false/)
   assert.match(lightweightChartSource, /pinch: true/)
@@ -241,13 +242,28 @@ test('本地 Lightweight Charts 单引擎保留真实数据、指标、成交量
   assert.match(lightweightChartSource, /role="region"/)
   assert.doesNotMatch(lightweightChartSource, /role="img"/)
   assert.match(lightweightChartSource, /\.market-chart-engine\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
-  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
 
   const chartRuntimeSources = [chartSource, lightweightChartSource]
   for (const runtimeSource of chartRuntimeSources) {
     assert.doesNotMatch(runtimeSource, /<iframe|<script[^>]+src=|https?:\/\/|cdn\.|TradingView\.widget|KLineChartPro|datafeed/i)
     assert.doesNotMatch(runtimeSource, /marketDetailStream|fetchKlines|WebSocket/)
   }
+})
+
+test('手机端仅隐藏蜡烛上下影线，保留真实高低价与其他图表系列', () => {
+  const candleOptions = lightweightChartSource.match(/candles = chart\.addSeries\(CandlestickSeries, \{([\s\S]*?)\n  \}\)/)?.[1]
+  assert.ok(candleOptions, 'CandlestickSeries creation options must exist')
+  assert.match(candleOptions, /wickVisible: false/)
+  assert.doesNotMatch(lightweightChartSource, /wickVisible: true/)
+  assert.doesNotMatch(candleOptions, /(?:priceLineVisible|lastValueVisible|visible): false/)
+  assert.match(lightweightChartSource, /high: point\.high/)
+  assert.match(lightweightChartSource, /low: point\.low/)
+  assert.match(lightweightChartSource, /open: point\.open/)
+  assert.match(lightweightChartSource, /close: point\.close/)
+  assert.equal(lightweightChartSource.match(/chart\.addSeries\(LineSeries/g)?.length, 3)
+  assert.doesNotMatch(lightweightChartSource, /lineVisible: false/)
+  assert.match(lightweightChartSource, /chart\.addSeries\(HistogramSeries/)
 })
 
 test('行情详情继续展示真实均线与成交量并传递交易对数据集键', () => {
@@ -326,7 +342,7 @@ test('图表沉浸展开使用 CSS fixed、安全区、Escape 和可还原滚动
   assert.doesNotMatch(marketDetailSource, /requestFullscreen|exitFullscreen|fullscreenElement/)
 })
 
-test('图表切换按钮使用双主题毛玻璃正方形并保持左上角定位', () => {
+test('图表切换按钮使用无边框双主题毛玻璃正方形并保持左上角定位', () => {
   const toggleSelector = '.market-detail .market-detail__chart > button.market-detail__chart-toggle'
   const expandedToggleSelector = '.market-detail__chart-panel.is-expanded .market-detail__chart > button.market-detail__chart-toggle'
   const legacyDarkSelector = '.app-stage.theme-dark .mobile-canvas .market-detail__chart-toggle'
@@ -361,30 +377,29 @@ test('图表切换按钮使用双主题毛玻璃正方形并保持左上角定�
   assert.equal(webkitBackdrop, standardBackdrop)
   assert.ok(blurStrength && Number(blurStrength) > 0)
   assert.ok(saturationStrength && Number(saturationStrength) > 100)
-  assert.match(inlineRule, /\bborder\s*:\s*1px solid color-mix\([^;]*var\(--detail-line\)[^;]*\)\s*;/)
-  assert.match(cssDeclarationValue(inlineRule, 'box-shadow'), /\binset\s+0\s+1px\s+0\b/)
-  assert.match(
-    cssDeclarationValue(inlineRule, 'box-shadow'),
-    /,\s*0\s+[\d.]+px\s+[\d.]+px\b/,
-  )
+  assert.equal(cssDeclarationValue(inlineRule, 'border'), '0')
+  assert.equal(cssDeclarationValue(inlineRule, 'box-shadow'), 'none')
+  assert.equal(cssDeclarationValue(inlineRule, 'color'), 'var(--detail-ink)')
   assert.match(cssDeclarationValue(inlineRule, 'transition'), /\btransform\b/)
+  assert.doesNotMatch(cssDeclarationValue(inlineRule, 'transition'), /\bbox-shadow\b/)
   assert.match(inlineRule, /\bleft\s*:\s*16px\s*;/)
   assert.match(inlineRule, /\btop\s*:\s*12px\s*;/)
   assert.doesNotMatch(inlineRule, /\bright\s*:/)
 
   assert.match(activeRule, /\btransform\s*:\s*translateY\(1px\)\s*;/)
-  assert.match(cssDeclarationValue(activeRule, 'box-shadow'), /\binset\s+0\s+1px\s+0\b/)
-  assert.match(cssDeclarationValue(activeRule, 'box-shadow'), /,\s*0\s+[\d.]+px\s+[\d.]+px\b/)
+  assert.match(cssDeclarationValue(activeRule, 'background'), /var\(--detail-surface\)/)
+  assert.notEqual(cssDeclarationValue(activeRule, 'background'), cssDeclarationValue(inlineRule, 'background'))
+  assert.equal(cssDeclarationValue(activeRule, 'box-shadow'), 'none')
   assert.match(focusRule, /\boutline\s*:\s*2px solid var\(--focus\)\s*;/)
   assert.match(focusRule, /\boutline-offset\s*:\s*3px\s*;/)
-  assert.match(cssDeclarationValue(focusRule, 'box-shadow'), /\binset\s+0\s+1px\s+0\b/)
-  assert.match(cssDeclarationValue(focusRule, 'box-shadow'), /,\s*0\s+[\d.]+px\s+[\d.]+px\b/)
+  assert.equal(cssDeclarationValue(focusRule, 'box-shadow'), 'none')
   assert.match(reducedToggleRule, /\btransition\s*:\s*none\s*;/)
   assert.match(reducedActiveRule, /\btransform\s*:\s*none\s*;/)
 
   assert.match(expandedRule, /\bleft\s*:\s*10px\s*;/)
   assert.match(expandedRule, /\btop\s*:\s*8px\s*;/)
   assert.doesNotMatch(expandedRule, /\bright\s*:/)
+  assert.doesNotMatch(expandedRule, /\b(?:border|box-shadow)\s*:/)
 
   assert.doesNotMatch(
     [inlineRule, activeRule, focusRule].join('\n'),
@@ -416,6 +431,8 @@ test('图表切换按钮使用双主题毛玻璃正方形并保持左上角定�
   ))
   assert.ok(compiledBaseRule)
   assert.ok(compiledExpandedRule)
+  assert.equal(cssDeclarationValue(compiledBaseRule.body, 'border'), '0')
+  assert.match(marketTemplate, /class="market-detail__chart-toggle"[\s\S]*?type="button"[\s\S]*?:aria-label=[\s\S]*?:aria-pressed="chartExpanded"/)
   assert.ok(
     compareSpecificity(
       cssSpecificity(compiledExpandedRule.header),
@@ -424,6 +441,7 @@ test('图表切换按钮使用双主题毛玻璃正方形并保持左上角定�
     `${compiledExpandedRule.header} must outrank ${compiledBaseRule.header}`,
   )
   for (const block of compiledToggleRules) {
+    assert.equal(cssDeclarationValue(block.body, 'box-shadow'), 'none')
     assert.ok(
       compareSpecificity(cssSpecificity(block.header), cssSpecificity(legacyDarkSelector)) > 0,
       `${block.header} must outrank the legacy dark-theme shadow rule`,

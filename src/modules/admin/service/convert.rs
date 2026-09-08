@@ -5,6 +5,7 @@
 //! 本层不查资产是否存在、不判断交易对是否重复、也不计算任何报价，这些都由应用事务与数据库约束负责。
 
 use super::*;
+use crate::modules::wallet::amount_fits_asset_precision;
 
 /// 校验新建闪兑交易对的资产编号、汇率、费率、最小/最大兑换量及状态组合约束。
 /// 这里只验证请求值；资产存在性和交易对唯一性由创建事务负责，失败前不产生资金或审计副作用。
@@ -35,9 +36,9 @@ pub(crate) fn validate_create_convert_pair(request: &CreateConvertPairRequest) -
     )
 }
 
-/// 校验换币交易对完整配置，防止同资产兑换、空计价模式及非法费率或金额区间入库。
+/// 校验换币交易对完整配置，防止同资产兑换、未实现的计价模式及非法费率或金额区间入库。
 /// 调用方须传入创建默认值或更新合并后的最终值，而不是仅校验局部请求字段。
-/// 费率保持在 `[0, 1)`，源/目标最小额不得为负，最大额存在时不得小于对应最小额。
+/// 价差与费率保持在 `[0, 1)` 且有效小数不超过存储的 8 位；源/目标金额区间必须非负有序。
 /// 这是无 I/O 的纯校验，不涉及事务、资金或审计；失败返回首个校验错误且不产生副作用。
 #[allow(clippy::too_many_arguments)] // 校验最终配置快照；字段保持显式可避免创建/更新路径遗漏约束。
 pub(crate) fn validate_convert_pair_values(
@@ -56,8 +57,10 @@ pub(crate) fn validate_convert_pair_values(
             "convert pair assets must be different".to_owned(),
         ));
     }
-    if optional_string(Some(pricing_mode.to_owned())).is_none() {
-        return Err(AppError::Validation("pricing_mode is required".to_owned()));
+    if !matches!(pricing_mode.trim(), "fixed" | "market") {
+        return Err(AppError::Validation(
+            "pricing_mode must be fixed or market".to_owned(),
+        ));
     }
     let zero = BigDecimal::from(0);
     if min_amount < &zero {
@@ -65,15 +68,23 @@ pub(crate) fn validate_convert_pair_values(
             "min_amount must be non-negative".to_owned(),
         ));
     }
-    if spread_rate < &zero {
+    if spread_rate < &zero || spread_rate >= &BigDecimal::from(1) {
         return Err(AppError::Validation(
-            "spread_rate must be non-negative".to_owned(),
+            "spread_rate must be greater than or equal to 0 and less than 1".to_owned(),
         ));
     }
     if fee_rate < &zero || fee_rate >= &BigDecimal::from(1) {
         return Err(AppError::Validation(
             "fee_rate must be greater than or equal to 0 and less than 1".to_owned(),
         ));
+    }
+    // DECIMAL(18,8) 不得把有效价差四舍五入为 1，尾零等价值仍允许提交。
+    for (field, ratio) in [("spread_rate", spread_rate), ("fee_rate", fee_rate)] {
+        if !amount_fits_asset_precision(ratio, 8) {
+            return Err(AppError::Validation(format!(
+                "{field} supports at most 8 decimal places"
+            )));
+        }
     }
     if let Some(max_amount) = max_amount
         && max_amount < min_amount

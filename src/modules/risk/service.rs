@@ -28,6 +28,60 @@ pub const OPERATION_SPOT_ORDER_CREATE: &str = "spot.order.create";
 /// 发起提现；金额口径为提币资产数量。
 pub const OPERATION_WALLET_WITHDRAWAL_CREATE: &str = "wallet.withdrawal.create";
 
+/// 新建或启用规则时校验已知字段；只读检查不规范化原始 JSON，也不拒绝未知扩展字段。
+/// 数值复用运行时解析器，显式非法值返回字段错误；缺省、空对象/列表和金额口径规则保持既有语义。
+/// 历史读取和停用不调用此入口，避免一条旧配置阻断所有交易或妨碍管理员停止失效规则。
+pub(crate) fn validate_risk_rule_config(config: &Value) -> Result<(), &'static str> {
+    if !config.is_object() {
+        return Err("config_json must be an object");
+    }
+    for (key, message) in [
+        (
+            "operations",
+            "config_json.operations must be an array of nonblank strings without outer whitespace",
+        ),
+        (
+            "blocked_operations",
+            "config_json.blocked_operations must be an array of nonblank strings without outer whitespace",
+        ),
+    ] {
+        if let Some(value) = config.get(key)
+            && !value.as_array().is_some_and(|items| {
+                items.iter().all(|item| {
+                    item.as_str()
+                        .is_some_and(|text| !text.is_empty() && text.trim() == text)
+                })
+            })
+        {
+            return Err(message);
+        }
+    }
+    if config.get("max_amount").is_some() && decimal_field(config, "max_amount").is_none() {
+        return Err("config_json.max_amount must be a nonnegative decimal string or number");
+    }
+    for (key, message) in [
+        (
+            "max_price_deviation_bps",
+            "config_json.max_price_deviation_bps must be an unsigned 32-bit integer",
+        ),
+        (
+            "max_requests",
+            "config_json.max_requests must be an unsigned 32-bit integer",
+        ),
+        (
+            "window_seconds",
+            "config_json.window_seconds must be a positive unsigned 32-bit integer",
+        ),
+    ] {
+        if config.get(key).is_some()
+            && !u32_field(config, key).is_some_and(|value| key != "window_seconds" || value > 0)
+        {
+            return Err(message);
+        }
+    }
+    Ok(())
+}
+
 /// 金额口径。限额只能作用在口径一致的操作上，否则 1 BTC 的提现上限会被套到 1 USDT 的下单名义额上。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AmountUnit {

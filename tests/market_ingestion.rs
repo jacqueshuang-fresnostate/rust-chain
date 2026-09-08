@@ -606,6 +606,42 @@ async fn synthetic_ticker_archives_replays_repairs_and_rejects_stale_lease()
             .await?;
     assert_eq!(repaired_archive_count, 1);
 
+    // A later default-source event remains authoritative even if Redis is lost:
+    // checking only this manual strategy's history would accept the old replay.
+    let default_key = hex::encode(sha2::Sha256::digest(format!(
+        "default-fence:{repair_symbol}"
+    )));
+    sqlx::query("INSERT INTO market_price_ticks(event_key,symbol,price,source,observed_at,generation,source_version,strategy_id,strategy_version) VALUES (?,?,41,'default',?,1,'default:fixture:g1:v1',NULL,NULL)")
+        .bind(&default_key).bind(&repair_symbol)
+        .bind((observed_at + chrono::TimeDelta::milliseconds(1)).naive_utc())
+        .execute(&pool).await?;
+    let _: usize = connection
+        .del(format!("market:ticker:{repair_symbol}"))
+        .await?;
+    let cross_source_error = ingestion
+        .ingest_and_publish_synthetic_ticker(&repair_snapshot, &repair_provenance)
+        .await
+        .expect_err("manual replay must not precede another source's committed tick");
+    assert!(
+        cross_source_error
+            .to_string()
+            .contains("event time regressed")
+    );
+    assert!(
+        !connection
+            .exists::<_, bool>(format!("market:ticker:{repair_symbol}"))
+            .await?
+    );
+    assert!(
+        timeout(Duration::from_millis(25), repair_receiver.recv())
+            .await
+            .is_err()
+    );
+    sqlx::query("DELETE FROM market_price_ticks WHERE event_key=?")
+        .bind(default_key)
+        .execute(&pool)
+        .await?;
+
     let payload: serde_json::Value = serde_json::from_str(
         &connection
             .get::<_, String>(format!("market:ticker:{symbol}"))

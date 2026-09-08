@@ -4,6 +4,7 @@ use super::*;
 pub(crate) struct AdminAssetSymbolRow {
     pub(crate) symbol: String,
     pub(crate) status: String,
+    pub(crate) precision_scale: i32,
 }
 
 #[derive(Debug)]
@@ -129,14 +130,14 @@ struct AdminWalletEmptyAssetRow {
     asset_symbol: String,
 }
 
-/// 在调用方事务中读取资产符号并确认其状态为 active，供人工充值等资金写入建立资产前置条件。
+/// 在调用方事务中读取资产符号并确认其状态为 active，供新币解锁手续费规则建立资产前置条件。
 /// 查询不加行锁也不提交事务；资产缺失返回未找到，非启用资产返回校验错误，SQL 失败由上层回滚。
 pub(crate) async fn load_active_asset_symbol_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
 ) -> AppResult<AdminAssetSymbolRow> {
     let asset = sqlx::query_as::<_, AdminAssetSymbolRow>(
-        "SELECT symbol, status FROM assets WHERE id = ? LIMIT 1",
+        "SELECT symbol, status, precision_scale FROM assets WHERE id = ? LIMIT 1",
     )
     .bind(asset_id)
     .fetch_optional(&mut **tx)
@@ -146,6 +147,22 @@ pub(crate) async fn load_active_asset_symbol_in_tx(
         return Err(AppError::Validation("asset must be active".to_owned()));
     }
     Ok(asset)
+}
+
+/// 在人工充值事务中共享锁定资产状态与金额精度，返回用于本次入账的权威配置。
+/// 调用方先锁用户，再取资产共享锁；锁阻止配置更新且兼容钱包写入的资产外键共享锁。
+/// 锁持有至充值事务结束，资产缺失返回未找到；本函数不校验业务值、不写钱包或审计。
+pub(crate) async fn lock_admin_recharge_asset_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<AdminAssetSymbolRow> {
+    sqlx::query_as::<_, AdminAssetSymbolRow>(
+        "SELECT symbol, status, precision_scale FROM assets WHERE id = ? LIMIT 1 FOR SHARE",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
 }
 
 /// 分页查询资产，返回符合调用方筛选条件的记录及相同谓词下的总数。

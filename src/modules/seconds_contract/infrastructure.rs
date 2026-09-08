@@ -244,7 +244,7 @@ pub(crate) async fn load_settlement_pair_capability(
     })
 }
 
-/// 判定 strategy/internal 交易对是否存在当前可运行的活跃策略与精确版本。
+/// 判定 strategy/internal 交易对是否具备人工策略或默认生成器的可结算归档能力；全部暂停优先拒绝。
 /// 条件同时要求策略 active、数据库当前时间在策略区间内、run 为 running/live，
 /// 租约 owner 非空且未过期，并能按 `active_version` 连到 `strategy_versions`；命中行会锁到调用方事务结束，
 /// 防止能力检查把仅有配置但没有实时归档 worker 的策略当成可结算。
@@ -253,6 +253,16 @@ pub(crate) async fn runnable_strategy_settlement_history_exists(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
 ) -> AppResult<bool> {
+    let paused = sqlx::query_scalar::<_, bool>(
+        "SELECT all_market_paused FROM market_default_generators WHERE pair_id = ? FOR UPDATE",
+    )
+    .bind(pair_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false);
+    if paused {
+        return Ok(false);
+    }
     let strategy_id = sqlx::query_scalar::<_, u64>(
         r#"SELECT runs.strategy_id
            FROM market_strategies strategies
@@ -275,7 +285,43 @@ pub(crate) async fn runnable_strategy_settlement_history_exists(
     .bind(pair_id)
     .fetch_optional(&mut **tx)
     .await?;
-    Ok(strategy_id.is_some())
+    if strategy_id.is_some() {
+        return Ok(true);
+    }
+    runnable_default_settlement_history_exists(tx, pair_id).await
+}
+
+/// 默认行情须无运行错误，并同时具备有效租约、不可变版本、60 秒内的非未来检查点及同代际真实归档记录。
+/// 此处只确认新开仓能力，不修改到期取价窗口或已有订单结果；配置存在或 Redis 旧价本身不构成证据。
+async fn runnable_default_settlement_history_exists(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+) -> AppResult<bool> {
+    let pair = sqlx::query_scalar::<_, u64>(
+        r#"SELECT runs.pair_id
+           FROM market_pair_generation_runs runs
+           INNER JOIN market_default_generators configs ON configs.pair_id = runs.pair_id
+           INNER JOIN market_default_generator_versions versions
+              ON versions.pair_id = runs.pair_id AND versions.version = runs.default_version
+           INNER JOIN trading_pairs pairs ON pairs.id = runs.pair_id
+           WHERE runs.pair_id = ? AND configs.enabled = TRUE AND configs.all_market_paused = FALSE
+             AND runs.active_source = 'default'
+             AND runs.error_message IS NULL
+             AND runs.lease_owner IS NOT NULL AND CHAR_LENGTH(TRIM(runs.lease_owner)) > 0
+             AND runs.lease_expires_at > CURRENT_TIMESTAMP(6)
+             AND runs.last_tick_at >= DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND)
+             AND runs.last_tick_at <= CURRENT_TIMESTAMP(6)
+             AND EXISTS (
+                 SELECT 1 FROM market_price_ticks ticks
+                 WHERE ticks.symbol = REPLACE(REPLACE(REPLACE(UPPER(pairs.symbol), '-', ''), '/', ''), '_', '')
+                   AND ticks.source = 'default' AND ticks.generation = runs.generation
+                   AND ticks.source_version = CONCAT('default:', runs.pair_id, ':g', runs.generation, ':v', runs.default_version)
+                   AND ticks.observed_at >= DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 60 SECOND)
+                   AND ticks.observed_at <= CURRENT_TIMESTAMP(6)
+             )
+           LIMIT 1 FOR UPDATE"#,
+    ).bind(pair_id).fetch_optional(&mut **tx).await?;
+    Ok(pair.is_some())
 }
 
 /// 读取全部已启用 `market_feed_configs` 覆盖集合，仅把 JSON 数组解析为仓储契约。
@@ -1087,6 +1133,7 @@ pub(crate) async fn select_settlement_price_snapshot(
                         WHEN 'htx' THEN 1
                         WHEN 'coinbase' THEN 2
                         WHEN 'strategy' THEN 3
+                        WHEN 'default' THEN 4
                         ELSE 9
                     END ASC,
                     source_version ASC,

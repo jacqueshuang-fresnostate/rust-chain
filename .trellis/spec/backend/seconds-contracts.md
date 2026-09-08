@@ -224,6 +224,104 @@ validate_product_stake(&stake_amount, &product)?;
 // Insert order, debit wallet, and ledger in one transaction only after validation.
 ```
 
+## Scenario: Net Payout Configuration And Historical Snapshots
+
+### 1. Scope / Trigger
+
+- Trigger: changing seconds-product payout configuration, correcting stored
+  payout rates, rendering the rate in Admin/Mobile, or settling an order whose
+  rate was captured before a configuration change.
+- This is a financial cross-layer contract: product/cycle configuration is
+  mutable, while each order's opening-time rate is immutable evidence.
+
+### 2. Signatures
+
+- Product configuration:
+  `seconds_contract_products.payout_rate DECIMAL(18,8)` and
+  `seconds_contract_product_cycles.payout_rate DECIMAL(18,8)`.
+- Order snapshot: `seconds_contract_orders.payout_rate DECIMAL(18,8)`.
+- Net-rate example: stored `0.40000000` -> visible `40%` -> a winning stake of
+  `100` receives `100 + 100 * 0.4 = 140` total.
+- Correction migration: an immutable `migrations/NNNN_*.sql` file whose target
+  predicate includes a stable product identity and the complete confirmed bad
+  configuration signature.
+
+### 3. Contracts
+
+- Every product and cycle `payout_rate` is a net-profit multiplier excluding
+  principal. Admin submits the raw decimal (`0.4`, not `40` or `1.4`), clients
+  render `rate * 100`, and settlement adds principal exactly once.
+- Opening copies the selected cycle rate unchanged into the order. Later product
+  edits or repair migrations must never rewrite an existing order snapshot.
+- Runtime/API/client code must not guess that values above one are gross-return
+  factors or subtract one. A legitimate historical `1.4` snapshot remains 140%
+  net profit and settles under the contract recorded when that order opened.
+- A data correction must not update every row merely because its decimal equals
+  a known bad value. Select targets by stable business identity plus the full
+  confirmed schedule, update product master and cycle rows from the same target
+  snapshot, and leave partial/custom schedules unchanged.
+- Admin and Mobile copy must call the value net profit and state that principal
+  is excluded; wording never changes the decimal request/response unit.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| New configured rate is `0.4` | API/order snapshot stays `0.4`; Mobile displays 40% |
+| Winning stake is 100 at `0.4` | Wallet/ledger total payout is 140 |
+| Existing order snapshot is `1.4` | Keep `1.4`; do not normalize during read or settlement |
+| Unconfirmed pair uses a matching decimal | Correction migration leaves it unchanged |
+| Confirmed pair has a partial/custom schedule | Correction migration leaves the entire product unchanged |
+| Correction SQL executes again | No further product/cycle/order change |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a specifically identified BTC-USDT four-cycle gross-style schedule is
+  migrated to 0.4/0.5/0.6/0.8, while its old orders retain their snapshots.
+- Base: an already-net schedule and a custom schedule are no-ops.
+- Bad: `UPDATE ... WHERE payout_rate IN (...)` across all products silently
+  corrupts another product that intentionally offers more than 100% net profit.
+- Bad: Mobile displays `rate - 1` to hide bad configuration; the screen and
+  backend settlement then disagree about the same order.
+
+### 6. Tests Required
+
+- Execute the exact correction migration against an isolated real MySQL fixture.
+  Assert target product/cycle mappings, non-target pair/custom schedule
+  preservation, unchanged order snapshots, and a second no-op execution.
+- Apply the complete SQLx migration chain twice on a fresh isolated database and
+  assert the final version succeeds with no dirty migration record.
+- Backend unit/integration coverage proves 0.4 and a 100 stake settle to 140,
+  while a historical 1.4 snapshot is not rewritten.
+- Mobile coverage proves 0.4 renders 40%, historical values are not transformed,
+  and both locales identify net profit excluding principal.
+- Admin coverage proves create/edit submits the exact decimal and explains that
+  0.4 means 40% profit with 140 total return on a 100 stake.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```sql
+UPDATE seconds_contract_product_cycles
+SET payout_rate = payout_rate - 1
+WHERE payout_rate IN (1.4, 1.5, 1.6, 1.8);
+```
+
+#### Correct
+
+```sql
+-- Build targets from the stable pair identity plus the complete confirmed
+-- duration/rate schedule, then update product and cycle configuration only.
+UPDATE seconds_contract_product_cycles AS cycles
+INNER JOIN confirmed_targets AS targets ON targets.product_id = cycles.product_id
+SET cycles.payout_rate = CASE cycles.payout_rate
+    WHEN 1.40000000 THEN 0.40000000
+    ELSE cycles.payout_rate
+END;
+-- Do not update seconds_contract_orders.
+```
+
 ## Scenario: Product Cycles
 
 ### 1. Scope / Trigger

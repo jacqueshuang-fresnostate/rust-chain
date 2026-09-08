@@ -66,6 +66,7 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
 
 /// 以一个共享门禁判定交易对是否能持续产生秒合约事件时间结算历史。
 /// `strategy`/`internal` 必须存在当前 active、在有效期、绑定精确版本且租约 owner 非空未过期的 running/live 策略；
+/// 或具有显式启用、未整体暂停、无运行错误且最近六十秒同版本同代际归档的默认来源；默认展示本身不等于结算能力。
 /// `external` 必须被某条已启用 `market_feed_configs` 覆盖，且同一配置至少含一个运行时支持的 provider。
 /// 产品创建/更新/上架和新订单开仓均调用本函数，任一路径都不能自行降级或绕过。
 async fn ensure_settlement_history_capability(

@@ -1,5 +1,139 @@
 # Mobile Backend Integration Contract
 
+## Backward Market Chart Pagination
+
+### 1. Scope / Trigger
+
+Shared MobileMarketChart history browsing in MarketDetailView and TradeView,
+including the existing public K-line API adapter. Do not write or fabricate
+missing backend candles in response to a chart gesture.
+
+### 2. Signatures
+
+- `fetchKlines(symbol, interval = '1m', limit = DEFAULT_MARKET_KLINE_LIMIT)`.
+- `fetchOlderKlines(symbol, interval, before /* Unix ms, exclusive */, limit = 100)`.
+- Backend `GET /markets/:symbol/klines?interval=...&end=...&limit=...` under the
+  configured user API prefix. The backend end bound is inclusive, in milliseconds.
+- Renderer emits `load-history`; the shared wrapper owns the history session.
+
+### 3. Contracts
+
+Latest requests use `end=Date.now()`. Older requests use `end=before-1`, where
+before is the earliest loaded real candle's millisecond timestamp. **Omit start**:
+a calculated interval-count lookback hides older stored rows across gaps. Clamp
+requests to the backend's 1–100 range, independently of the 160-row live-retention
+default. Preserve smaller sparkline limits. Mongo takes newest matching rows up
+to the limit then returns them ascending; no backend mutation is necessary.
+
+The renderer demands a page only after a real gesture moves toward the loaded
+left edge, not on initial fit, theme, live writes or prepend restoration. Keep one
+request in flight. Empty/no-progress results stop; a short mapped page alone does
+not prove exhaustion because normalization can filter rows. Failure retains data
+and offers explicit retry; do not retry every range notification.
+
+Deduplicate by timestamp within the symbol/interval owner. Current/live rows win
+over historical REST rows. Retain explicitly requested history across later
+bounded live-array replacements; do not pass it back through the default live
+truncation limit. Retained history grows only within that active chart browsing
+session and resets on dataset/reload/unmount; no global/persistent history cache.
+Older-page loading is independent of initial historyLoading and must not rearm
+fitContent. Preserve current timestamp/zoom and any newer user gesture on prepend.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| before is invalid, fractional, unsafe or <=1 | No HTTP request |
+| Sparse stored history | Fetch preceding available rows without artificial start |
+| Boundary/future rows appear in older response | Exclude them; never merge into current live slot |
+| Duplicate gesture while pending | One request only |
+| REST error | Visible localized retry, no lost candles or automatic request storm |
+| Empty/no older progress | Visible no-earlier-candles state, stop until dataset reset |
+| Symbol/period/reload/unmount during request | Ignore old owner's result/error |
+| Live update after history prepend | Keep older rows and authoritative newest value |
+
+### 5. Good / Base / Bad Cases
+
+Good: several end-only pages traverse missing time slots while maintaining the
+viewed timestamp. Base: a drag near the edge fetches at most one page at a time.
+Bad: fitContent recursively drains all pages; end=T repeats the boundary candle;
+or merging with the default 160 limit immediately deletes newly loaded history.
+
+### 6. Tests Required
+
+Executable API transport tests assert query/envelope, exclusive milliseconds,
+cap, sparse multi-page coverage and error propagation. Pure history-session tests
+cover single-flight, live precedence, retention and stale-owner reset. Actual
+SFC renderer/wrapper tests cover gesture→request/retry/status and viewport anchor;
+real-browser native dragging confirms the library event ordering. Run the full
+Mobile release gate without raising source, bundle or test-quality budgets.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: start = end - interval * N; before = priorBefore - interval * N
+Correct: omit start; end = minimumLoadedOpenTimeMs - 1; use returned real times
+```
+
+## Independent Market Snapshot Settlement
+
+### 1. Scope / Trigger
+
+MarketDetailView and TradeView initial/retry requests, interval switching and
+shared MobileMarketChart history hydration.
+
+### 2. Signatures
+
+`loadMarketDetailSnapshot({ session, context, isCurrent, hasLiveDepth,
+loadKlines, loadDepth, loadTrades, onKlines, onDepth, onTrades }): Promise<void>`
+starts the existing three API calls without changing their URL/data contracts.
+
+### 3. Contracts
+
+Each channel commits as soon as it settles. K-lines require both current
+symbol/load ownership and current stream K-line request generation; depth/trades
+require only active-view + symbol + full-load generation. Interval switches do
+not increment full-load generation. Symbol changes, retries and unmount reject
+old completions. A per-load live-depth flag survives interval replacement and
+protects even an empty live book. Trades keep existing live/history merge rules.
+
+`chartLoading` describes REST history readiness, not absence of live candles.
+Only current history settlement clears it, including failures. Book and trade
+panels use independent loading flags; their data/empty/error states never wait
+for a different channel. The detail retry action may use aggregate busy state.
+
+### 4. Validation & Error Matrix
+
+| Case | Result |
+|---|---|
+| Ready K-lines, slow depth/trades | Display K-lines and settle chart loading immediately |
+| Period switch while initial book pending | Accept same-symbol book/trades; reject old-period candles |
+| Live book from an intermediate interval, then another switch | Late REST never replaces live data, including an empty book |
+| REST fails after live K-lines | Keep live rows, settle history loading; no false empty error |
+| Symbol/retry/unmount invalidation | Ignore all stale results and errors |
+| Depth settles before trades | Keep trades indicator loading, not prematurely empty |
+
+### 5. Good / Base / Bad Cases
+
+Good: a 5m history request wins while the initial symbol book is still accepted.
+Base: any ready channel renders independently. Bad: await all settlements before
+applying ready data, or mark history complete on the first WebSocket candle.
+
+### 6. Tests Required
+
+`market-snapshot-loading.test.ts` executes source-extracted production view
+functions and real stream sessions with deferred transports. Cover independent
+settlement, channel failures, empty live authority across multiple intervals,
+symbol/retry/unmount races and panel loading bindings. Session protocol tests
+remain separate. Full `release:gate` and renderer hydration tests are required.
+
+### 7. Wrong vs Correct
+
+```text
+Wrong: await allSettled(kline, depth, trades) -> apply all results together
+Correct: start all -> independently apply each still-owned result on settlement
+```
+
 ## 1. Scope / Trigger
 
 Apply this contract when changing mobile runtime backend configuration, Vite
@@ -346,7 +480,10 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   ticker substitute.
 - Seconds "estimated profit" is exactly
   `stakeAmount * payoutRate`. `payoutRate` is the profit rate, so neither the
-  preview nor an active order may add the stake principal a second time.
+  preview nor an active order may add the stake principal a second time. Visible
+  cycle, confirmation, active-order, and settlement labels call this the net
+  profit rate and state that principal is excluded; copy never changes the raw
+  decimal unit or applies a client-side `- 1` conversion.
 - Seconds stake drafts are user-owned: initialization and clearing leave `''`,
   and neither `load()` nor duration selection may insert a configured minimum
   (including 500). Duration changes preserve the manual text and revalidate it
@@ -2224,6 +2361,13 @@ if (directory.state === 'loaded') {
 
 
 ## Strategy Chart Reconciliation Addendum
+
+- Preserve authoritative `/markets` `market_type` as optional `marketType` on
+  the shared ticker; only accept external/internal/strategy values. Live price
+  merges retain metadata, while late REST metadata does not roll prices back.
+  Trade and Detail pass that metadata to the shared chart; strategy/internal
+  show localized “platform-generated / simulated activity” text. Do not infer
+  provenance from symbol names or enable financial actions from this label.
 
 - Interactive Trade and Market Detail chart initialization and `fetchKlines`
   default use shared `DEFAULT_MARKET_KLINE_INTERVAL = '1m'`. Explicit Markets

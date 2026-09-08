@@ -48,7 +48,7 @@ test('交易工作台保留行情、K 线、盘口、余额、委托与下单处
   assert.match(tradeSource, /<OrderBookPanel[\s\S]*?class="trade-order-book"[\s\S]*?layout="split"/)
   assert.match(tradeSource, /data-market-data-panel="marketDataPanel"/)
   assert.match(tradeSource, /class="spot-recent-trades"/)
-  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
 })
 
 test('秒合约继续直用现货钱包、后台产品周期与真实下单接口且没有划转入口', () => {

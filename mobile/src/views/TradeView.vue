@@ -29,6 +29,7 @@ import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
+import { loadMarketDetailSnapshot } from '@/api/marketDetailSnapshot'
 import {
   createMarketDetailStreamSession,
   type MarketDetailStreamContext,
@@ -172,6 +173,7 @@ const interval = ref<MarketKlineInterval>(DEFAULT_MARKET_KLINE_INTERVAL)
 const marketDataPanel = ref<'orderBook' | 'trades'>('orderBook')
 const spotChartOpen = ref(false)
 const liveDetailActive = ref(false)
+const liveDepthReceived = ref(false)
 const liveDetailUpdatedAt = ref(0)
 const feedback = ref('')
 const feedbackTone = ref<'success' | 'error'>('error')
@@ -180,6 +182,7 @@ const settingsSaving = ref(false)
 const settingsError = ref('')
 const contractSheet = ref<'pair' | 'leverage' | 'marginMode' | 'orderType' | null>(null)
 const depthLoading = ref(false)
+const tradesLoading = ref(false)
 const depthError = ref(false)
 const chartLoading = ref(false)
 const productsLoading = ref(false)
@@ -366,6 +369,7 @@ const feedbackIsPositive = computed(() => feedbackTone.value === 'success')
 const detailStreamSession = createMarketDetailStreamSession({
   getUrl: publicMarketWebSocketUrl,
   onDepth: (_context, snapshot) => {
+    liveDepthReceived.value = true
     liveDetailActive.value = true
     liveDetailUpdatedAt.value = Date.now()
     bids.value = snapshot.bids
@@ -374,6 +378,7 @@ const detailStreamSession = createMarketDetailStreamSession({
     depthLoading.value = false
   },
   onTrade: (_context, trade) => {
+    tradesLoading.value = false
     liveDetailActive.value = true
     liveDetailUpdatedAt.value = Date.now()
     trades.value = mergeMarketTrades(trades.value, trade, 16)
@@ -382,7 +387,6 @@ const detailStreamSession = createMarketDetailStreamSession({
     liveDetailActive.value = true
     liveDetailUpdatedAt.value = Date.now()
     points.value = nextPoints
-    chartLoading.value = false
   },
 })
 
@@ -442,39 +446,39 @@ async function loadMarketData(forceMarket = false): Promise<void> {
   const symbol = pairSymbol.value
   const selectedInterval = interval.value
   depthLoading.value = true
+  tradesLoading.value = true
   chartLoading.value = true
   depthError.value = false
   liveDetailActive.value = false
   liveDetailUpdatedAt.value = 0
+  liveDepthReceived.value = false
   bids.value = []
   asks.value = []
   trades.value = []
   points.value = []
-
   const liveContext = detailStreamSession.replace(symbol, selectedInterval, version)
-  const klineRequest = detailStreamSession.beginKlineRequest(liveContext)
+  const isCurrent = () => viewActive && version === marketRequestVersion && symbol === pairSymbol.value
   if (forceMarket) void marketStore.refresh(true)
-  const [klineResult, depthResult, tradesResult] = await Promise.allSettled([
-    fetchKlines(symbol, selectedInterval),
-    fetchOrderBook(symbol),
-    fetchRecentTrades(symbol),
-  ])
-  if (!isCurrentMarketRequest(liveContext, version)) return
-
-  if (klineRequest && detailStreamSession.isCurrentKlineRequest(klineRequest)) {
-    const restPoints = klineResult.status === 'fulfilled' ? klineResult.value : []
-    const mergedPoints = detailStreamSession.resolveKlineRequest(klineRequest, restPoints)
-    if (mergedPoints) points.value = mergedPoints
-  }
-  if (!liveContext.depthReceived) {
-    bids.value = depthResult.status === 'fulfilled' ? depthResult.value.bids : []
-    asks.value = depthResult.status === 'fulfilled' ? depthResult.value.asks : []
-    depthError.value = depthResult.status === 'rejected'
-  }
-  const restTrades = tradesResult.status === 'fulfilled' ? tradesResult.value : []
-  trades.value = mergeMarketTradeHistory(trades.value, restTrades, 16)
-  chartLoading.value = false
-  depthLoading.value = false
+  await loadMarketDetailSnapshot({
+    session: detailStreamSession, context: liveContext, isCurrent,
+    hasLiveDepth: () => liveDepthReceived.value,
+    loadKlines: () => fetchKlines(symbol, selectedInterval),
+    loadDepth: () => fetchOrderBook(symbol),
+    loadTrades: () => fetchRecentTrades(symbol),
+    onKlines: (nextPoints) => {
+      points.value = nextPoints
+      chartLoading.value = false
+    },
+    onDepth: (snapshot, failed) => {
+      if (snapshot) { bids.value = snapshot.bids; asks.value = snapshot.asks }
+      depthError.value = failed
+      depthLoading.value = false
+    },
+    onTrades: (restTrades) => {
+      trades.value = mergeMarketTradeHistory(trades.value, restTrades, 16)
+      tradesLoading.value = false
+    },
+  })
 }
 
 async function retryMarket(): Promise<void> {
@@ -482,11 +486,12 @@ async function retryMarket(): Promise<void> {
 }
 
 async function refreshIntervalKlines(selectedInterval: MarketKlineInterval): Promise<void> {
-  const version = ++marketRequestVersion
+  const version = marketRequestVersion
   const symbol = pairSymbol.value
   chartLoading.value = true
   liveDetailActive.value = false
   const liveContext = detailStreamSession.replace(symbol, selectedInterval, version)
+  points.value = []
   const klineRequest = detailStreamSession.beginKlineRequest(liveContext)
   if (!klineRequest) {
     chartLoading.value = false
@@ -1852,7 +1857,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="spot-chart-canvas" :aria-busy="chartLoading">
-          <MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" />
+          <MobileMarketChart :market-type="ticker?.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" />
         </div>
         <div class="spot-market-data__tabs" role="tablist" :aria-label="t('marketDetail.marketData')">
           <button
@@ -1914,7 +1919,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <p v-else class="spot-recent-trades__empty" role="status">
-            {{ depthLoading ? t('common.loading') : t('trade.noRecentTrades') }}
+            {{ tradesLoading ? t('common.loading') : t('trade.noRecentTrades') }}
           </p>
         </section>
       </section>

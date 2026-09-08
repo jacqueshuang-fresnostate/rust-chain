@@ -131,19 +131,19 @@ use crate::{
             lock_admin_market_source_credential_in_tx, lock_admin_market_strategy_in_tx,
             lock_admin_new_coin_convert_rule_in_tx, lock_admin_new_coin_distribution_wallet_in_tx,
             lock_admin_new_coin_project_in_tx, lock_admin_news_item_in_tx,
-            lock_admin_smtp_config_by_id_in_tx, lock_admin_smtp_config_by_name_in_tx,
-            lock_admin_smtp_delivery_settings_in_tx, lock_admin_trading_pair_in_tx,
-            lock_admin_upload_config_in_tx, lock_agent_commission_in_tx,
-            lock_agent_commission_rule_in_tx, lock_deposit_address_pool_in_tx,
-            lock_deposit_network_config_in_tx, lock_or_create_admin_wallet_row_in_tx,
-            lock_risk_rule_in_tx, lock_user_referral_in_tx, mark_admin_market_feed_reload_failed,
-            mark_admin_market_feed_reload_skipped, mark_admin_market_feed_reload_success,
-            migrate_user_referral_descendants_in_tx, next_market_strategy_version_in_tx,
-            reclaim_deposit_address_pool_in_tx, replace_market_strategy_nodes_in_tx,
-            reserve_admin_new_coin_supply_in_tx, reset_admin_user_two_factor_in_tx,
-            save_admin_security_policy_in_tx, store_admin_wallet_recharge_response_in_tx,
-            update_admin_agent_status_in_tx, update_admin_asset_in_tx,
-            update_admin_convert_pair_in_tx, update_admin_country_in_tx,
+            lock_admin_recharge_asset_in_tx, lock_admin_smtp_config_by_id_in_tx,
+            lock_admin_smtp_config_by_name_in_tx, lock_admin_smtp_delivery_settings_in_tx,
+            lock_admin_trading_pair_in_tx, lock_admin_upload_config_in_tx,
+            lock_agent_commission_in_tx, lock_agent_commission_rule_in_tx,
+            lock_deposit_address_pool_in_tx, lock_deposit_network_config_in_tx,
+            lock_or_create_admin_wallet_row_in_tx, lock_risk_rule_in_tx, lock_user_referral_in_tx,
+            mark_admin_market_feed_reload_failed, mark_admin_market_feed_reload_skipped,
+            mark_admin_market_feed_reload_success, migrate_user_referral_descendants_in_tx,
+            next_market_strategy_version_in_tx, reclaim_deposit_address_pool_in_tx,
+            replace_market_strategy_nodes_in_tx, reserve_admin_new_coin_supply_in_tx,
+            reset_admin_user_two_factor_in_tx, save_admin_security_policy_in_tx,
+            store_admin_wallet_recharge_response_in_tx, update_admin_agent_status_in_tx,
+            update_admin_asset_in_tx, update_admin_convert_pair_in_tx, update_admin_country_in_tx,
             update_admin_country_status_in_tx, update_admin_deposit_network_config_in_tx,
             update_admin_market_strategy_in_tx, update_admin_new_coin_convert_rule_in_tx,
             update_admin_new_coin_project_lifecycle_in_tx,
@@ -333,6 +333,7 @@ mod config_center;
 mod config_changes;
 mod convert;
 mod dashboard_audit;
+mod default_market;
 mod margin;
 mod market;
 mod market_feed;
@@ -350,6 +351,7 @@ pub(crate) use self::config_center::*;
 pub(crate) use self::config_changes::*;
 pub(crate) use self::convert::*;
 pub(crate) use self::dashboard_audit::*;
+pub(crate) use self::default_market::*;
 pub(crate) use self::margin::*;
 pub(crate) use self::market::*;
 pub use self::market_feed::*;

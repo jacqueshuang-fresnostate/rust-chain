@@ -18,7 +18,7 @@ test('v16 现货与合约保留独立路由、实时报价、盘口和真实下�
   assert.match(tradeSource, /data-order-surface="live"/)
   assert.match(tradeSource, /t\('marketDetail\.high24h'\)/)
   assert.match(tradeSource, /t\('marketDetail\.low24h'\)/)
-  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
   assert.match(tradeSource, /<OrderBookPanel/)
   assert.match(tradeSource, /fetchWalletAccounts\(\)/)
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
@@ -85,8 +85,8 @@ test('秒合约显示真实参考价、预计收益、确认与后端返回订�
 test('行情详情与订单中心保持真实数据、二级操作面和危险操作复核', () => {
   assert.match(marketDetailSource, /data-market-workspace="live"/)
   assert.match(marketDetailSource, /fetchKlines\(pairSymbol\.value, interval\.value\)/)
-  assert.match(marketDetailSource, /fetchOrderBook\(pairSymbol\.value\)/)
-  assert.match(marketDetailSource, /fetchRecentTrades\(pairSymbol\.value\)/)
+  assert.match(marketDetailSource, /loadDepth: \(\) => fetchOrderBook\(symbol\)/)
+  assert.match(marketDetailSource, /loadTrades: \(\) => fetchRecentTrades\(symbol\)/)
   assert.match(marketDetailSource, /openTrade\('spot'\)/)
   assert.match(marketDetailSource, /openTrade\('contract'\)/)
 

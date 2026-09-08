@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Layer ownership and test placement"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Required Rust architecture and validation gates"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Typed failures and transaction boundaries"}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Authoritative spot pair/risk context"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Chart renderer, viewport, wick visibility and release gates"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Live versus REST authority and interval/symbol sessions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Paired validation and data flow ownership"}
+{"file": ".trellis/spec/backend/risk-configuration.md", "reason": "Known config schema and numeric spot scope contract"}
+{"file": ".trellis/spec/backend/market-fallback.md", "reason": "Dispatch-time fallback windows"}
+{"file": ".trellis/spec/admin/chinese-presentation.md", "reason": "Exact localized risk validation errors"}

@@ -629,18 +629,7 @@ async fn coinbase_rest_fallback_fetches_and_ingests_ticker_and_kline() -> Result
         &["5m"],
     )?
     .remove(0);
-    let ticker_urls = config.ticker_urls();
-    let kline_urls = config.kline_urls();
-    let http_client = RecordedRestFallbackHttpClient::new([
-        (
-            ticker_urls[0].clone(),
-            r#"{"product_id":"BTC-USDT","price":"70000.12","volume_24h":"125.50","price_percentage_change_24h":"1.45%"}"#.to_owned(),
-        ),
-        (
-            kline_urls[0].clone(),
-            r#"{"candles":[{"start":"1710000000","low":"69990.00","high":"70010.00","open":"70000.00","close":"70005.00","volume":"12.30"}]}"#.to_owned(),
-        ),
-    ]);
+    let http_client = CapturedCoinbaseFallbackClient::default();
     let sink = RecordedIngestionSink::default();
     let worker = MarketFeedWorker::new(sink.clone());
 
@@ -649,6 +638,20 @@ async fn coinbase_rest_fallback_fetches_and_ingests_ticker_and_kline() -> Result
         .await?;
     let events = sink.events.lock().await.clone();
 
+    let urls = http_client.urls.lock().await.clone();
+    assert_eq!(urls[0], config.ticker_url());
+    let dispatched = url::Url::parse(&urls[1])?;
+    let query: HashMap<_, _> = dispatched.query_pairs().into_owned().collect();
+    assert_eq!(dispatched.host_str(), Some("coinbase.test"));
+    assert_eq!(
+        dispatched.path(),
+        "/api/v3/brokerage/market/products/BTC-USDT/candles"
+    );
+    assert_eq!(query["granularity"], "FIVE_MINUTE");
+    assert_eq!(
+        query["end"].parse::<i64>()? - query["start"].parse::<i64>()?,
+        90_000
+    );
     assert_eq!(summary.received, 2);
     assert_eq!(summary.ingested, 2);
     assert_eq!(summary.failed, 0);
@@ -658,6 +661,76 @@ async fn coinbase_rest_fallback_fetches_and_ingests_ticker_and_kline() -> Result
             "ticker:3:BTCUSDT".to_owned(),
             "kline:3:BTCUSDT:5m".to_owned(),
         ]
+    );
+    Ok(())
+}
+
+#[derive(Clone, Default)]
+struct CapturedCoinbaseFallbackClient {
+    urls: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl MarketFeedRestFallbackHttpClient for CapturedCoinbaseFallbackClient {
+    async fn get_text(&self, url: &str) -> exchange_api::error::AppResult<String> {
+        self.urls.lock().await.push(url.to_owned());
+        if url::Url::parse(url).unwrap().path().ends_with("/candles") {
+            Ok(r#"{"candles":[{"start":"1710000000","low":"69990.00","high":"70010.00","open":"70000.00","close":"70005.00","volume":"12.30"}]}"#.to_owned())
+        } else {
+            Ok(r#"{"product_id":"BTC-USDT","price":"70000.12","volume_24h":"125.50","price_percentage_change_24h":"1.45%"}"#.to_owned())
+        }
+    }
+}
+
+#[tokio::test]
+async fn coinbase_rest_fallback_refreshes_old_window_at_actual_dispatch()
+-> Result<(), Box<dyn Error>> {
+    use exchange_api::modules::market::adapters::{
+        MarketFeedRestFallbackConfig, MarketFeedRestFallbackKlineRequest,
+        MarketFeedRestFallbackTickerRequest,
+    };
+    let ticker_url = "https://proxy.example.test/provider/products/BTC-USDT?tenant=fixture";
+    let candle_url = "https://proxy.example.test/provider/products/BTC-USDT/candles?start=1710000000&end=1710090000&granularity=FIVE_MINUTE&limit=17&tenant=fixture%2Bvalue#section";
+    let config = MarketFeedRestFallbackConfig::new(
+        MarketFeedProvider::Coinbase,
+        vec![MarketFeedRestFallbackTickerRequest::new(
+            "BTCUSDT", ticker_url,
+        )],
+        vec![MarketFeedRestFallbackKlineRequest::new(
+            "BTCUSDT", "5m", candle_url,
+        )],
+    );
+    let client = CapturedCoinbaseFallbackClient::default();
+    let sink = RecordedIngestionSink::default();
+    let worker = MarketFeedWorker::new(sink.clone());
+    let before = Utc::now().timestamp();
+    let summary = worker.run_rest_fallback_config(&config, &client).await?;
+    let after = Utc::now().timestamp();
+    let urls = client.urls.lock().await.clone();
+    assert_eq!(urls.len(), 2);
+    assert_eq!(urls[0], ticker_url);
+    let dispatched = url::Url::parse(&urls[1])?;
+    let query: HashMap<_, _> = dispatched.query_pairs().into_owned().collect();
+    let end: i64 = query["end"].parse()?;
+    let start: i64 = query["start"].parse()?;
+    assert!(
+        (before..=after).contains(&end),
+        "dispatched stale window: {}",
+        urls[1]
+    );
+    assert_eq!(end - start, 300 * 300);
+    assert_eq!(dispatched.host_str(), Some("proxy.example.test"));
+    assert_eq!(dispatched.path(), "/provider/products/BTC-USDT/candles");
+    assert_eq!(dispatched.fragment(), Some("section"));
+    assert_eq!(query["granularity"], "FIVE_MINUTE");
+    assert_eq!(query["limit"], "17");
+    assert_eq!(query["tenant"], "fixture+value");
+    assert_eq!(config.kline_urls(), vec![candle_url.to_owned()]);
+    assert_eq!(summary.ingested, 2);
+    assert_eq!(summary.failed, 0);
+    assert_eq!(
+        *sink.events.lock().await,
+        vec!["ticker:3:BTCUSDT", "kline:3:BTCUSDT:5m"]
     );
     Ok(())
 }

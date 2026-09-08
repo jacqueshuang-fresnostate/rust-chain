@@ -27,6 +27,8 @@ import {
   useAssetOptions
 } from './shared';
 
+import { DefaultMarketAction } from './defaultMarket/DefaultMarketAction';
+
 export { CreateMarketStrategyAction, MarketStrategyRowActions } from './marketStrategy';
 
 type SpotPairValues = {
@@ -163,6 +165,7 @@ export function MarketPairRowActions({ helpers, record }: { helpers: RowActionHe
       <Button disabled={!pairId} onClick={() => openRecordDetail('/admin/api/v1/market-pairs', pairId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
+      {['strategy', 'internal'].includes(recordString(record, 'market_type')) ? <DefaultMarketAction record={record} helpers={helpers} /> : null}
       <AdminRequestActionBoundary endpoint={`/admin/api/v1/market-pairs/${pairId}`} method="PATCH">
         <MarketPairEditAction helpers={helpers} pairId={pairId} record={record} />
         <ConfirmAction

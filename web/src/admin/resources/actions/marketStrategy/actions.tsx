@@ -130,7 +130,8 @@ export function MarketStrategyRowActions({
             key="pause"
             actionText="暂停"
             disabled={!strategyId}
-            title="暂停行情策略（停止实时生成后可修改配置）"
+            title="暂停行情策略（暂停后可修改配置）"
+            description="只暂停此人工策略；若交易对已启用默认行情，会在分钟边界接续生成。需要停止两种生成源时，请在交易对的默认行情中操作「暂停全部行情」。"
             onConfirm={async (reason) => {
               await submitAction('暂停行情策略', () =>
                 apiRequest(`/admin/api/v1/market-strategies/${strategyId}/status`, {
@@ -146,6 +147,9 @@ export function MarketStrategyRowActions({
           actionText={actionText}
           disabled={!strategyId || Boolean(activationError)}
           title={activationError ?? `${actionText}行情策略`}
+          description={nextStatus === 'active'
+            ? `人工策略按保存的起始价 ${recordString(record, 'start_price')} 和目标价运行，不会自动对齐现价。请先核对实时行情并预览；接管可能产生价差，确认代表接受该配置与价差。启用会影响使用此行情的订单触发与结算取价。`
+            : '仅禁用此人工策略；若默认行情已启用，会在分钟边界接续。全部停止请使用交易对的「暂停全部行情」。'}
           onConfirm={async (reason) => {
             await submitAction(`${actionText}行情策略`, () =>
               apiRequest(`/admin/api/v1/market-strategies/${strategyId}/status`, {

@@ -9,8 +9,8 @@ use crate::{
             create_limit_order, create_market_order, create_stop_limit_order,
             infrastructure::{
                 freeze_wallet_for_inserted_order_in_tx, insert_spot_order_in_tx,
-                latest_spot_market_price, load_spot_pair_db_id, spot_order_reservation_in_tx,
-                store_spot_order_idempotency_response_in_tx,
+                latest_spot_market_price, load_spot_pair_db_id, load_spot_pair_db_id_by_symbol,
+                spot_order_reservation_in_tx, store_spot_order_idempotency_response_in_tx,
             },
             presentation::{CreateSpotOrderRequest, SpotOrderResponse, SpotTradeResponse},
             service::{
@@ -140,6 +140,8 @@ async fn enforce_spot_order_risk_control(
     new_order: &NewOrder,
     triggered_execution_price: Option<&BigDecimal>,
 ) -> AppResult<()> {
+    // 原成功订单已在调用本闸门前重放；新请求才按权威符号精确补齐后台数字交易对目标。
+    let pair_db_id = load_spot_pair_db_id_by_symbol(pool, &new_order.pair_id).await?;
     let order_price = new_order
         .price
         .clone()
@@ -158,6 +160,7 @@ async fn enforce_spot_order_risk_control(
             scopes: vec![
                 RiskScope::new("user", user_id.to_string()),
                 RiskScope::new("pair", new_order.pair_id.clone()),
+                RiskScope::new("pair", pair_db_id.to_string()),
             ],
             // 限额统一按计价币种口径折算，避免不同交易对的基础币数量不可比。
             amount: order_price

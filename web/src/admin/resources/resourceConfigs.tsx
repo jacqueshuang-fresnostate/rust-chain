@@ -434,7 +434,7 @@ function SecondsProductCyclesText({ record }: { record: ApiRecord }) {
       const item = cycle as ApiRecord;
       const maxStake = item.max_stake;
       const maxText = maxStake === null || maxStake === undefined || maxStake === '' ? '无上限' : adminNumberText(maxStake);
-      return `${adminRawText(item.duration_seconds)}s / 赔率 ${adminNumberText(item.payout_rate)} / ${adminNumberText(item.min_stake)}-${maxText}`;
+      return `${adminRawText(item.duration_seconds)}s / 净收益率 ${adminNumberText(item.payout_rate)} / ${adminNumberText(item.min_stake)}-${maxText}`;
     })
     .filter(Boolean)
     .join('；');
@@ -1198,7 +1198,7 @@ export const resourceConfigs = {
       { key: 'symbol', title: '交易对' },
       { key: 'logo_url', title: 'Logo', render: (record) => <AdminImageCell alt="秒合约交易对 Logo" value={record.logo_url} /> },
       { key: 'stake_asset_symbol', title: '押注资产' },
-      { key: 'cycles', title: '周期 / 赔率 / 押注范围', render: (record) => <SecondsProductCyclesText record={record} /> },
+      { key: 'cycles', title: '周期 / 净收益率 / 押注范围', render: (record) => <SecondsProductCyclesText record={record} /> },
       { key: 'status', title: '状态', type: 'status' }
     ]
   },

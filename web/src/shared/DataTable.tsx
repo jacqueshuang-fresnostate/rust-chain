@@ -28,6 +28,7 @@ type DataTableProps<T extends Record<string, unknown>> = {
   displayMode?: DataTableDisplayMode;
   error?: Error | null;
   loading?: boolean;
+  onPaginationChange?: () => void;
   pagination?: DataTableServerPagination;
   rowKey?: Extract<keyof T, string> | ((record: T) => string | number);
   rowSelection?: RowSelectionProps<T>;
@@ -62,7 +63,7 @@ export function normalizeTableColumns<T extends Record<string, unknown>>(columns
   return columns.map(normalize);
 }
 
-export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, pagination, rowKey, rowSelection }: DataTableProps<T>) {
+export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, onPaginationChange, pagination, rowKey, rowSelection }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const tableColumns = useMemo(() => normalizeTableColumns(columns, displayMode), [columns, displayMode]);
@@ -86,8 +87,13 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
       pageSizeOpts: PAGE_SIZE_OPTIONS,
       showSizeChanger: true,
       total: pagination ? pagination.total : data.length,
-      onPageChange: pagination ? pagination.onPageChange : setCurrentPage,
+      onPageChange: (nextPage: number) => {
+        onPaginationChange?.();
+        if (pagination) pagination.onPageChange(nextPage);
+        else setCurrentPage(nextPage);
+      },
       onPageSizeChange: (nextPageSize: number) => {
+        onPaginationChange?.();
         if (pagination) {
           pagination.onPageSizeChange(nextPageSize);
           return;
@@ -96,7 +102,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
         setCurrentPage(1);
       }
     }),
-    [currentPage, data.length, pageSize, pagination]
+    [currentPage, data.length, onPaginationChange, pageSize, pagination]
   );
 
   if (loading) {

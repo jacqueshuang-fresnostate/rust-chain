@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Existing resource, confirmations and financial idempotency contracts"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "Strict API rows and raw request values"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend responsibilities and test placement"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Required architecture and Rust verification"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Asset precision authority and no rounding of input"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Backend/frontend validation and state ownership"}
+{"file": ".trellis/tasks/09-06-admin-cross-layer-design-hardening/research/settings-boundary-audit.md", "reason": "Evidence, preserved behavior and deferred protocol debt"}
+{"file": ".trellis/spec/backend/admin-financial-validation.md", "reason": "Cross-layer financial regression contract"}

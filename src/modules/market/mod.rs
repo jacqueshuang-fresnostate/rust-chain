@@ -5,6 +5,8 @@ pub mod presentation;
 pub mod repository;
 pub mod service;
 pub mod synthetic;
+pub mod synthetic_default;
+pub mod synthetic_follow;
 pub mod synthetic_realtime;
 pub mod synthetic_snapshot;
 
@@ -27,6 +29,7 @@ pub use synthetic::{
     SyntheticScenario, SyntheticSeedMode, SyntheticTargetType, SyntheticVolumeShape,
     aggregate_1m_candles,
 };
+pub use synthetic_default::{DefaultMarketParameters, generate_default_1m};
 pub use synthetic_snapshot::{
     SyntheticStrategySnapshot, SyntheticStrategySnapshotError, synthetic_config_from_snapshot,
     synthetic_execution_mode_from_code, synthetic_generator_settings_from_snapshot,

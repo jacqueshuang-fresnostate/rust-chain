@@ -3,6 +3,7 @@ import { tryNormalizeDecimalText } from './decimal.ts'
 import type { MarketTicker } from './types.ts'
 
 export interface BackendMarketRecord {
+  market_type?: string | null
   id?: string | number | null
   symbol: string
   logo_url?: string | null
@@ -38,6 +39,8 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
 
   return {
     id: asNumber(market.id) || undefined,
+    marketType: market.market_type === 'strategy' || market.market_type === 'internal' || market.market_type === 'external'
+      ? market.market_type : undefined,
     symbol: `${pair.base}/${pair.quote}`,
     base: pair.base,
     quote: pair.quote,

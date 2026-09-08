@@ -1132,6 +1132,14 @@ body {
   font-weight: 700;
 }
 
+.admin-action-form .admin-form-hint {
+  grid-column: 1 / -1;
+  color: var(--admin-color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .admin-reference-field__meta {
   display: flex;
   min-width: 0;
