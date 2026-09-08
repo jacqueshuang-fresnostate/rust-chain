@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Migration entrypoint, Compose completion gate, external dependency and secret handling contract"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend error, transaction and immutable migration requirements"}
+{"file": "docs/deployment/docker.md", "reason": "Operational migration recovery and 1Panel runbook"}
+{"file": ".trellis/tasks/09-08-09-09-production-migration-exit1/research/production-log-audit.md", "reason": "Evidence and scope for migration exit code fix"}
