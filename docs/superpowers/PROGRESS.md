@@ -8717,3 +8717,17 @@
 - 修改文件：`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/09-08-09-09-production-migration-exit1/prd.md`、`docs/deployment/docker.md`、`docs/superpowers/PROGRESS.md`（代码与 Compose 文件沿用上一条记录）。
 - 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features`（本地权限受限初跑后用本地服务权限重跑全量通过）、迁移单元 8/8、bootstrap 集成 3/3（真实 MySQL）、Docker/Compose 合同 7/7、后端架构 11/11、两份 Compose `config --quiet`、`git diff --check`、Trellis context 校验均通过。完整 0001–0125 迁移两次成功（122 条、最高版本 125），人为 dirty 版本重跑以非零码输出版本/dirty 诊断。Docker daemon 当前未运行，因此未执行镜像构建或线上重建。
 - 后续事项：提交前需要用户确认提交范围；确认后由主会话提交本次迁移器、bootstrap、Compose、文档和测试改动，再按需要推送。部署仍须使用新镜像 tag 并先检查 `TARGET` 的迁移日志。
+
+## 2026-09-09 - 行情健康快照
+
+- 完成内容：新增行情周期健康状态计算，识别无数据、断流超时和摄取失败，并提供可复用健康判定。
+- 修改文件：src/modules/market/infrastructure/adapters/feed.rs；tests/unit_src/src_modules_market_infrastructure_adapters_feed_tests.rs
+- 验证结果：cargo fmt --all -- --check；cargo check；行情健康定向单测，均通过。
+- 后续事项：由主任务接入监控指标或告警端点。
+
+## 2026-09-09 - 业务治理审查与首批修复
+
+- 完成内容：修复预测订单幂等键复用不同 quote_id 时错误返回旧订单的问题，改为冲突响应；新增行情健康快照，识别无数据、断流过期和处理失败；CI 发布工作流增加 push/手动发布前的 MySQL、Redis、Mongo 服务容器与真实迁移 smoke gate。
+- 修改文件：`.github/workflows/docker-image.yml`、`src/modules/prediction/{infrastructure.rs,presentation.rs,repository.rs}`、`src/modules/market/infrastructure/adapters/feed.rs`、`tests/unit_src/src_modules_market_infrastructure_adapters_feed_tests.rs`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、行情健康定向测试 1/1、`git diff --check` 通过。
+- 后续事项：新币派发/退款批次对账、后台权限与审计中文统一仍需单独切片实施；CI 真实服务门禁需在 GitHub Actions 上跑一轮确认。

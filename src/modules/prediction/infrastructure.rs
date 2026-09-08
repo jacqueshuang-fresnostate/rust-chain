@@ -286,7 +286,7 @@ pub(crate) async fn list_stake_assets(
 /// 消费后端报价创建竞猜订单；报价必须属于用户、未过期未消费，市场开放且金额符合资产精度。
 /// 新请求在单事务中依次锁报价和市场、插入订单占用幂等键，再消费报价并锁钱包完成冻结、扣费和佣金记录。
 /// 可用余额减少本金与手续费、冻结余额增加本金，订单、报价、钱包及全部流水必须原子提交。
-/// 同用户同键命中时直接返回原订单且 `changed=false`，不比较本次 `quote_id`；并发重复键回滚后重读，提交后仅加载响应，无外部副作用。
+/// 同用户同键且同报价命中时直接返回原订单且 `changed=false`；复用幂等键提交不同报价返回冲突。
 /// 幂等键与报价编号先经必填与长度校验，分别限长 128 与 64，超限在开事务前即拒绝。
 /// 事务外先做一次无锁幂等回读作为快路径，命中即返回既有订单，完全不接触事务与钱包；
 /// 回读到的订单状态为空视为脏数据，返回冲突而不是把它当作可重放的成功结果。
@@ -313,6 +313,11 @@ pub(crate) async fn create_order_in_tx(
         if existing.status.is_empty() {
             return Err(AppError::Conflict(
                 "prediction order idempotency key is invalid".to_owned(),
+            ));
+        }
+        if existing.quote_id != quote_id {
+            return Err(AppError::Conflict(
+                "prediction idempotency key was already used with a different quote".to_owned(),
             ));
         }
         return Ok((existing, false));
@@ -986,7 +991,7 @@ pub(crate) fn prediction_order_count_query_builder() -> QueryBuilder<'static, My
 /// 本函数只拼语句不执行查询，也绝不修改任何订单状态。
 pub(crate) fn prediction_order_query_builder() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
-        r#"SELECT orders.id, orders.order_no, orders.user_id, users.email AS user_email,
+        r#"SELECT orders.id, orders.order_no, orders.user_id, orders.quote_id, users.email AS user_email,
                   orders.market_id, markets.title AS market_title, orders.outcome,
                   orders.asset_id, assets.symbol AS asset_symbol, orders.stake_amount,
                   orders.fee_amount, orders.accepted_price, orders.shares,

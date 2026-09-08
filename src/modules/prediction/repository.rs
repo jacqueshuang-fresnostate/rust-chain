@@ -122,6 +122,7 @@ pub(crate) struct PredictionOrderRow {
     pub(crate) id: u64,
     pub(crate) order_no: Option<String>,
     pub(crate) user_id: u64,
+    pub(crate) quote_id: String,
     pub(crate) user_email: Option<String>,
     pub(crate) market_id: u64,
     pub(crate) market_title: String,

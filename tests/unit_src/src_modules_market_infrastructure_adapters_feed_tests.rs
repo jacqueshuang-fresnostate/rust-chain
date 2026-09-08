@@ -203,3 +203,22 @@ async fn static_provider_and_coinbase_ticker_urls_do_not_materialize_a_clock() {
         assert_eq!(*urls, expected);
     }
 }
+
+#[test]
+fn market_feed_health_marks_missing_or_stale_data_unhealthy() {
+    use chrono::{Duration as ChronoDuration, Utc};
+    use std::time::Duration;
+    let summary = MarketFeedSummary::new(1, 1, 0);
+    let now = Utc::now();
+    let healthy = MarketFeedHealth::from_summary(&summary, Some(now), now, Duration::from_secs(60));
+    assert!(healthy.is_healthy());
+    let stale = MarketFeedHealth::from_summary(
+        &summary,
+        Some(now - ChronoDuration::seconds(61)),
+        now,
+        Duration::from_secs(60),
+    );
+    assert!(!stale.is_healthy());
+    let missing = MarketFeedHealth::from_summary(&summary, None, now, Duration::from_secs(60));
+    assert!(!missing.is_healthy());
+}

@@ -36,10 +36,11 @@ use crate::{
     state::AppState,
 };
 use axum::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures_util::{Stream, StreamExt};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
+use std::time::Duration;
 
 #[async_trait]
 pub trait MarketFeedRestFallbackHttpClient: Clone + Send + Sync + 'static {
@@ -622,6 +623,39 @@ pub struct MarketFeedSummary {
     pub ingested: u32,
     pub failed: u32,
     failure_contexts: Vec<MarketFeedFailureContext>,
+}
+
+/// 行情周期健康快照，供监督器、指标端点和告警任务复用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarketFeedHealth {
+    pub received: u32,
+    pub ingested: u32,
+    pub failed: u32,
+    pub stale: bool,
+}
+
+impl MarketFeedHealth {
+    /// 根据最近一次成功摄取时间判断是否断流。空周期或超过阈值均视为不健康。
+    pub fn from_summary(
+        summary: &MarketFeedSummary,
+        last_ingested_at: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+        stale_after: Duration,
+    ) -> Self {
+        let stale = last_ingested_at
+            .map(|at| now.signed_duration_since(at).to_std().unwrap_or_default() > stale_after)
+            .unwrap_or(true);
+        Self {
+            received: summary.received,
+            ingested: summary.ingested,
+            failed: summary.failed,
+            stale,
+        }
+    }
+
+    pub fn is_healthy(&self) -> bool {
+        !self.stale && self.failed == 0 && self.ingested > 0
+    }
 }
 
 impl MarketFeedSummary {

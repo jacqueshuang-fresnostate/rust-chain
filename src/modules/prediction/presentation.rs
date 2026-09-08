@@ -253,6 +253,8 @@ pub(crate) struct PredictionQuoteResponse {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub(crate) struct PredictionOrderResponse {
     pub(crate) id: u64,
+    /// Original quote identity used to validate idempotent request replays.
+    pub(crate) quote_id: String,
     pub(crate) order_no: Option<String>,
     pub(crate) user_id: u64,
     pub(crate) user_email: Option<String>,
@@ -447,6 +449,7 @@ impl From<PredictionOrderRow> for PredictionOrderResponse {
             id: row.id,
             order_no: row.order_no,
             user_id: row.user_id,
+            quote_id: row.quote_id,
             user_email: row.user_email,
             market_id: row.market_id,
             market_title: row.market_title,
