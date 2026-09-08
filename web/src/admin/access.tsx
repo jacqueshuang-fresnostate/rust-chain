@@ -61,6 +61,7 @@ const frontendPathResources: Array<[string, string]> = [
   ['/admin/new-coins/subscriptions', 'new_coin.subscriptions'],
   ['/admin/new-coins/distributions', 'new_coin.distributions'],
   ['/admin/new-coins/purchases', 'new_coin.purchases'],
+  ['/admin/new-coins/reconciliation', 'new_coin.distributions'],
   ['/admin/new-coins/lock-positions', 'new_coin.locks'],
   ['/admin/new-coins/unlocks', 'new_coin.unlocks'],
   ['/admin/convert/pairs', 'convert.pairs'],
@@ -173,8 +174,16 @@ export function adminReadPermissionForPath(path: string): string {
 
 export function adminPermissionForEndpoint(endpoint: string, action: AdminMutationAction): string {
   const path = endpoint.replace(/^\/admin\/api\/v1/, '');
-  const resource = apiPathResources.find(([prefix]) => path.startsWith(prefix))?.[1] ?? 'admin.unmapped';
+  const resource = apiPermissionResource(path);
   return `${resource}.${action}`;
+}
+
+function apiPermissionResource(path: string): string {
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length === 3 && segments[0] === 'new-coins' && segments[2] === 'reconciliation') {
+    return 'new_coin.distributions';
+  }
+  return apiPathResources.find(([prefix]) => path.startsWith(prefix))?.[1] ?? 'admin.unmapped';
 }
 
 /** 与后端 required_admin_permission/operational_action 保持同序的单动作解析。 */
@@ -211,7 +220,7 @@ export function adminPermissionForRequest(endpoint: string, method: AdminHttpMet
   if (!action) return null;
   if (action === 'read') {
     const path = endpoint.replace(/^\/admin\/api\/v1/, '').split('?')[0];
-    const resource = apiPathResources.find(([prefix]) => path.startsWith(prefix))?.[1] ?? 'admin.unmapped';
+    const resource = apiPermissionResource(path);
     return `${resource}.read`;
   }
   return adminPermissionForEndpoint(endpoint, action);

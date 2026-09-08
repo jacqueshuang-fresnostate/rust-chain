@@ -14,6 +14,7 @@ mod deposit_networks;
 mod market;
 mod market_feed;
 mod new_coin;
+mod new_coin_reconciliation;
 mod news;
 mod risk_security;
 mod system_config;
@@ -22,7 +23,8 @@ mod wallet_assets;
 
 pub(crate) use self::{
     access_control::*, agents::*, config_center::*, config_changes::*, convert::*, countries::*,
-    dashboard_audit::*, default_market::*, deposit_networks::*, market::*, new_coin::*, news::*,
+    dashboard_audit::*, default_market::*, deposit_networks::*, market::*, new_coin::*,
+    new_coin_reconciliation::*, news::*,
     risk_security::*, users::*, wallet_assets::*,
 };
 pub use self::{market_feed::*, system_config::*};

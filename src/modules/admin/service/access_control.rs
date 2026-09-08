@@ -162,6 +162,14 @@ fn invalid_permissions() -> AppError {
 }
 
 fn permission_resource(path: &str) -> Option<&'static str> {
+    let segments = path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
+    if segments.len() == 3
+        && segments[0] == "new-coins"
+        && segments[2] == "reconciliation"
+    {
+        return Some("new_coin.distributions");
+    }
+
     let mappings = [
         ("/prediction/sync", "prediction.sync"),
         ("/prediction/settings", "prediction.settings"),

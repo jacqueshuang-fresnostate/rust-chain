@@ -21,6 +21,10 @@ pub(super) fn routes() -> Router<AppState> {
             get(list_new_coin_projects).post(create_new_coin_project),
         )
         .route("/new-coins/:id", get(get_new_coin_project_center))
+        .route(
+            "/new-coins/:id/reconciliation",
+            get(get_new_coin_reconciliation),
+        )
         .route("/new-coins/:id/issuance", patch(update_new_coin_issuance))
         .route("/new-coins/:id/lifecycle", patch(update_new_coin_lifecycle))
         .route("/new-coins/:id/distribute", post(distribute_new_coin))
@@ -397,6 +401,17 @@ async fn get_new_coin_project_center(
             id,
         )
         .await?,
+    ))
+}
+
+/// 读取项目级派发/退款批次对账快照；只读聚合不触发补发、退款或生命周期变更。
+async fn get_new_coin_reconciliation(
+    _admin: AdminAuth,
+    State(state): State<AppState>,
+    Path(project_id): Path<u64>,
+) -> AppResult<Json<NewCoinReconciliationResponse>> {
+    Ok(Json(
+        get_new_coin_reconciliation_use_case(state.mysql.clone(), project_id).await?,
     ))
 }
 
