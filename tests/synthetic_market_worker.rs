@@ -181,22 +181,49 @@ fn runtime_contract_uses_one_second_tick_and_half_open_strategy_range() {
     assert!(main_source.contains("state.settings.kline_recovery_batch_limit"));
     assert!(main_source.contains("synthetic_market_state,"));
     assert!(main_source.contains("max_strategies_per_round,"));
-    assert!(main_source.contains("历史缺口只能由后台预览确认后手动执行"));
+    assert!(main_source.contains("market_health::run_recovery_loop"));
+    assert!(main_source.contains("闭合历史缺口由下方独立健康巡检有界补偿"));
     assert!(!main_source.contains("kline_recovery::run_loop"));
     assert!(worker_source.contains("AND strategies.end_time > ?"));
     assert!(!worker_source.contains("AND strategies.end_time >= ?"));
+    assert!(worker_source.contains("runs.recovery_status = CASE"));
+    assert!(worker_source.contains("THEN 'catching_up'"));
+    assert!(worker_source.contains("THEN runs.last_kline_open_time"));
+    let recovery_source = include_str!("../src/workers/kline_recovery.rs");
+    assert!(recovery_source.contains("pairs.market_type IN ('strategy', 'internal')"));
+    assert!(recovery_source.contains(
+        "DATE_ADD(COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time), INTERVAL 1 MINUTE) < strategies.end_time"
+    ));
+    assert!(recovery_source.contains("COALESCE(runs.recovery_status, 'idle') <> 'live'"));
+    assert!(recovery_source.contains("automatic_recovery_strategy_version"));
+    assert!(recovery_source.contains("list_compatible_one_minute_kline_open_times"));
+    assert!(
+        recovery_source.contains(
+            "INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id"
+        )
+    );
+    assert!(recovery_source.contains("AND strategies.status = 'active'"));
+    assert!(recovery_source.contains("AND runs.run_status IN ('running', 'live', 'catching_up')"));
+    assert!(recovery_source.contains("AND runs.active_version = ?"));
+    assert!(recovery_source.contains(
+        "AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) = ?"
+    ));
+    assert!(!recovery_source.contains("recovery_status, 'idle') <> 'failed'"));
 }
 
 #[test]
 fn checkpoint_sql_keeps_lease_owner_expiry_and_latest_version_guards() {
     let worker_source = include_str!("../src/workers/synthetic_market.rs");
 
-    assert!(worker_source.contains("AND lease_owner = ?"));
-    assert!(worker_source.contains("AND lease_expires_at >= ?"));
-    assert!(worker_source.contains("AND active_version = ?"));
+    assert!(worker_source.contains("AND runs.lease_owner = ?"));
+    assert!(worker_source.contains("AND runs.lease_expires_at >= ?"));
+    assert!(worker_source.contains("AND runs.active_version = ?"));
     assert!(worker_source.contains("AND versions.version = runs.active_version"));
-    assert!(worker_source.contains("last_tick_at IS NULL OR last_tick_at <= ?"));
-    assert!(worker_source.contains("last_kline_open_time IS NULL OR last_kline_open_time <= ?"));
+    assert!(worker_source.contains("runs.last_tick_at IS NULL OR runs.last_tick_at <= ?"));
+    assert!(
+        worker_source
+            .contains("runs.last_kline_open_time IS NULL OR runs.last_kline_open_time <= ?")
+    );
     assert!(worker_source.contains("SyntheticIngestionOutcome::RejectedStale"));
     assert!(worker_source.contains("SyntheticTickerProvenance::new("));
     assert!(

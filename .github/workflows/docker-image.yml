@@ -148,6 +148,22 @@ jobs:
           MONGODB_URI: mongodb://127.0.0.1:27017/exchange_ci
         run: |
           cargo run --bin exchange-migrate
+      - name: Verify migrated schema and dependency read-write paths
+        env:
+          DATABASE_URL: mysql://root@127.0.0.1:3306/exchange_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          MONGODB_URI: mongodb://127.0.0.1:27017
+          MONGODB_DATABASE: exchange_ci
+          RUN_REAL_DEPENDENCY_SMOKE: '1'
+        run: cargo test --test real_dependency_smoke -- --nocapture
+      - name: Verify governance queries against migrated schema
+        env:
+          DATABASE_URL: mysql://root@127.0.0.1:3306/exchange_ci
+          RUN_REAL_DEPENDENCY_SMOKE: '1'
+        run: >-
+          cargo test --lib
+          query_runs_against_migrated_mysql
+          -- --nocapture
   publish-platform:
     name: Build and publish ${{ matrix.platform }}
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

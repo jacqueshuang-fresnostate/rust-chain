@@ -13,6 +13,12 @@ pub(crate) const MARKET_SOURCE_AUTH_TYPE_API_KEY: &str = "api_key";
 
 pub(crate) const MARKET_SOURCE_AUTH_TYPE_NONE: &str = "none";
 
+/// 后台行情健康快照使用的默认断流阈值。
+///
+/// 90 秒略大于一个完整分钟和 worker 的重连抖动，既能在单次采样延迟时避免误报，
+/// 又不会把连续两根缺失 K 线隐藏太久。该值只影响监控判定，不会改变行情写入或恢复策略。
+pub(crate) const MARKET_FEED_STALE_AFTER_SECONDS: u64 = 90;
+
 /// 行情运行状态读取端口，由持有 supervisor 的基础设施状态实现。
 /// 服务层只依赖该能力，不感知 `AppState` 或监督器的具体存储方式。
 #[allow(async_fn_in_trait)]
@@ -28,6 +34,136 @@ pub(crate) async fn load_market_feed_runtime(
     source: &impl MarketFeedRuntimeStatusSource,
 ) -> MarketFeedRuntimeStatus {
     source.market_feed_runtime_status().await
+}
+
+/// 单个交易对最近一次上游事件和本地摄取时间。
+///
+/// 两个时间戳分开保存，是为了让断流判定使用 provider 事件时间，而把本服务写入延迟
+/// 单独展示成诊断信息。缺失的交易对不会出现在该结构中，由健康折叠函数补成 stale。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MarketFeedSymbolObservation {
+    pub(crate) symbol: String,
+    pub(crate) observed_at: Option<DateTime<Utc>>,
+    pub(crate) ingested_at: Option<DateTime<Utc>>,
+}
+
+/// 折叠后台行情健康快照所需的只读输入。
+///
+/// 调用方负责提供已保存配置、数据库观测和 supervisor 运行态；本结构不持有连接，
+/// 也不暗示会触发补偿或重载。把这些字段收口后，健康判定保持单一参数入口。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MarketFeedHealthInput<'a> {
+    pub(crate) configured_symbols: &'a [String],
+    pub(crate) latest_observations: &'a [MarketFeedSymbolObservation],
+    pub(crate) runtime_ready: bool,
+    pub(crate) runtime_status: Option<&'a str>,
+    pub(crate) now: DateTime<Utc>,
+    pub(crate) stale_after: std::time::Duration,
+    pub(crate) kline_gap_count: i64,
+    pub(crate) kline_recovery_failed_count: i64,
+}
+
+/// 将数据库最新行情事件/摄取时间、运行时 supervisor 状态和 K 线恢复指标折叠成稳定的后台健康响应。
+///
+/// 这是纯内存函数：不访问数据库、不读取缓存，也不会修改运行状态。交易对先按领域值对象
+/// 规范化并去重，缺少最新行情事件时间的交易对明确列入 `stale_symbols`；未来时间戳按非陈旧处理，
+/// 避免时钟轻微漂移导致误报。摄取时间只反映本服务仍在写入，断流判定必须使用上游事件时间，
+/// 否则重复摄取旧行情会被误判为健康。未配置外部交易对时不要求 supervisor ready，但策略恢复异常仍会
+/// 标记 degraded；状态优先级为 `stale` → `degraded` → `not_configured` → `healthy`。
+pub(crate) fn build_market_feed_health(
+    input: MarketFeedHealthInput<'_>,
+) -> MarketFeedHealthResponse {
+    let symbols = input
+        .configured_symbols
+        .iter()
+        .filter_map(|symbol| ValidatedMarketSymbol::from_raw(symbol).ok())
+        .map(|symbol| symbol.as_str().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let latest_by_symbol = input
+        .latest_observations
+        .iter()
+        .filter_map(|observation| {
+            ValidatedMarketSymbol::from_raw(&observation.symbol)
+                .ok()
+                .map(|symbol| {
+                    (
+                        symbol.as_str().to_owned(),
+                        (observation.observed_at, observation.ingested_at),
+                    )
+                })
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut stale_symbols = symbols
+        .iter()
+        .filter(|symbol| {
+            latest_by_symbol
+                .get(*symbol)
+                .copied()
+                .and_then(|(observed_at, _)| observed_at)
+                .is_none_or(|timestamp| {
+                    input
+                        .now
+                        .signed_duration_since(timestamp)
+                        .to_std()
+                        .is_ok_and(|age| age > input.stale_after)
+                })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    stale_symbols.sort();
+
+    let healthy_symbols = symbols.len().saturating_sub(stale_symbols.len()) as u32;
+    let last_observed_at = symbols
+        .iter()
+        .filter_map(|symbol| {
+            latest_by_symbol
+                .get(symbol)
+                .copied()
+                .and_then(|(observed_at, _)| observed_at)
+        })
+        .max();
+    let last_ingested_at = symbols
+        .iter()
+        .filter_map(|symbol| {
+            latest_by_symbol
+                .get(symbol)
+                .copied()
+                .and_then(|(_, ingested_at)| ingested_at)
+        })
+        .max();
+    let has_stale = !stale_symbols.is_empty();
+    let runtime_failed = !input.runtime_ready
+        || input
+            .runtime_status
+            .is_some_and(|status| matches!(status, "failed" | "error"));
+    let degraded = (!symbols.is_empty() && runtime_failed)
+        || input.kline_gap_count > 0
+        || input.kline_recovery_failed_count > 0;
+    let status = if has_stale {
+        "stale"
+    } else if degraded {
+        "degraded"
+    } else if symbols.is_empty() {
+        "not_configured"
+    } else {
+        "healthy"
+    };
+
+    MarketFeedHealthResponse {
+        status: status.to_owned(),
+        healthy: status == "healthy",
+        stale_after_seconds: input.stale_after.as_secs(),
+        configured_symbols: symbols.len() as u32,
+        healthy_symbols,
+        stale_symbols,
+        last_observed_at,
+        last_ingested_at,
+        kline_gap_count: input.kline_gap_count.max(0),
+        kline_recovery_failed_count: input.kline_recovery_failed_count.max(0),
+        checked_at: input.now,
+    }
 }
 
 /// 校验行情订阅交易对并转换为标准市场符号；启用配置时至少需要一个合法符号。
@@ -240,3 +376,7 @@ pub fn market_feed_runtime_config_from_response(
         settings.market_feed_reconnect_seconds,
     )
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit_src/src_modules_admin_service_market_feed_tests.rs"]
+mod tests;

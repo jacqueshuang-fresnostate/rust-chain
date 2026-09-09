@@ -51,7 +51,28 @@ describe('Admin Chinese presentation coverage', () => {
     expect(displayDetailValue({ duration_seconds: 60, payout_rate: '0.4', min_stake: '10' }, 'cycles')).toContain('净收益率（不含本金）');
   });
 
-  it.each(['paused', 'stopped', 'running', 'live', 'partial_allocated', 'refunded', 'pending_confirmation'])('uses consistent labels for %s across status and details', (value) => {
+  it('完整标注新币批次对账字段', () => {
+    for (const key of [
+      'supply_delta',
+      'subscription_allocated_quantity',
+      'distribution_ledger_quantity',
+      'subscription_distribution_delta',
+      'distribution_ledger_delta',
+      'manual_quote_delta',
+      'anomaly_count',
+      'checked_at',
+      'duplicate_idempotency_groups',
+      'missing_idempotency_keys',
+      'orphan_ledger_entries',
+      'stale_symbols',
+      'kline_gap_count',
+      'kline_recovery_failed_count'
+    ]) {
+      expect(adminFieldLabel(key), key).not.toBe(key);
+    }
+  });
+
+  it.each(['paused', 'stopped', 'running', 'live', 'partial_allocated', 'refunded', 'pending_confirmation', 'balanced', 'attention', 'healthy', 'degraded', 'stale', 'not_configured'])('uses consistent labels for %s across status and details', (value) => {
     render(<StatusTag value={value} />);
     expect(screen.getByText(displayDetailValue(value, 'status'))).toBeInTheDocument();
   });

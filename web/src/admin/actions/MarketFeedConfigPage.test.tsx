@@ -25,6 +25,19 @@ const originalResizeObserver = globalThis.ResizeObserver;
 
 function statusResponse(overrides = {}) {
   return {
+    health: {
+      checked_at: 1_735_732_860_000,
+      configured_symbols: 2,
+      healthy: true,
+      healthy_symbols: 2,
+      kline_gap_count: 0,
+      kline_recovery_failed_count: 0,
+      last_observed_at: 1_735_732_848_000,
+      last_ingested_at: 1_735_732_850_000,
+      stale_after_seconds: 90,
+      stale_symbols: [],
+      status: 'healthy'
+    },
     saved_config: {
       applied_version: 1,
       enabled: true,
@@ -139,6 +152,10 @@ describe('MarketFeedConfigPage', () => {
     expect(screen.getAllByText('成功').length).toBeGreaterThan(0);
     expect(screen.getByText(/运行交易对/)).toBeInTheDocument();
     expect(screen.getByText('BTCUSDT,ETHUSDT')).toBeInTheDocument();
+    expect(screen.getByText('行情健康与断线补偿')).toBeInTheDocument();
+    expect(screen.getByText('健康')).toBeInTheDocument();
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(screen.getByText(/^待补 1m K线策略/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: 'Provider 凭证' }));
 
@@ -156,6 +173,38 @@ describe('MarketFeedConfigPage', () => {
     expect(within(credentialList).getByRole('columnheader', { name: 'Key 掩码' })).toBeInTheDocument();
     expect(within(credentialList).getByText('Bitget 行情')).toBeInTheDocument();
     expect(within(credentialList).getByText('abcd****wxyz')).toBeInTheDocument();
+  });
+
+  it('shows stale symbols and failed K-line recovery in Chinese', async () => {
+    const user = userEvent.setup();
+    apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/market-feed/status' && !init?.method) {
+        return Promise.resolve({
+          ...statusResponse(),
+          health: {
+            ...statusResponse().health,
+            healthy: false,
+            healthy_symbols: 1,
+            kline_gap_count: 2,
+            kline_recovery_failed_count: 1,
+            stale_symbols: ['ETHUSDT'],
+            status: 'stale'
+          }
+        });
+      }
+      if (path === '/admin/api/v1/market-feed/credentials' && !init?.method) {
+        return Promise.resolve(credentialsResponse);
+      }
+      return Promise.resolve({});
+    });
+
+    render(<MarketFeedConfigPage />);
+    await user.click(await screen.findByRole('tab', { name: '运行状态' }));
+
+    expect(screen.getByText('行情已断流')).toBeInTheDocument();
+    expect(screen.getByText(/没有新的上游行情事件：ETHUSDT/)).toBeInTheDocument();
+    expect(screen.getByText(/存在 1 个 K 线补偿失败项/)).toBeInTheDocument();
+    expect(screen.getByText(/^待补 1m K线策略/).closest('.semi-descriptions-item')).toHaveTextContent('2');
   });
 
   it('renders market feed subscriptions as a toggleable list', async () => {

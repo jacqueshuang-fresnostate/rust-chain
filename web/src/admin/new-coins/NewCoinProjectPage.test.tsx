@@ -80,7 +80,13 @@ describe('new coin project center',()=>{
   const data={...center('distribution'),pending_manual_count:1,lifecycle_block_reason:'仍有待派发或待退款申购，请先完成结算'};
   mount(data,['new_coin.projects.read']);await screen.findByText('HIP · 项目中心');expect(screen.queryByRole('button',{name:'确认上市'})).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('tab',{name:'配置详情'}));expect(screen.getByRole('button',{name:'保存当前配置'})).toBeDisabled();expect(screen.queryByRole('tab',{name:'额外赠币'})).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('tab',{name:'关联记录'}));expect(screen.queryByRole('link',{name:'派发与退款批次对账'})).not.toBeInTheDocument();
   expect(request.mock.calls).toHaveLength(1);
+ });
+ it('仅向拥有派发读权限的角色展示批次对账入口',async()=>{
+  mount(center(),['new_coin.projects.read','new_coin.distributions.read']);await screen.findByText('HIP · 项目中心');
+  await userEvent.click(screen.getByRole('tab',{name:'关联记录'}));
+  expect(screen.getByRole('link',{name:'派发与退款批次对账'})).toHaveAttribute('href','/admin/new-coins/reconciliation/7');
  });
  it('refuses malformed decimal configuration rather than rendering writable defaults',async()=>{
   request.mockResolvedValue({...center(),project:{...center().project,issue_price:2.5}});

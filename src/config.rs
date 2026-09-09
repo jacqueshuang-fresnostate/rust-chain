@@ -274,20 +274,20 @@ fn default_unlock_scanner_batch_limit() -> u32 {
     100
 }
 
-/// 提供 `KLINE_RECOVERY_ENABLED` 缺省值 true，该开关现已被复用为模拟行情实时循环的总开关，不再表示历史补数。
-/// 真正启动还要求 MySQL、Mongo 与 Redis 同时可用，缺任一项只打印告警；关闭后当前分钟的模拟 K 线不再生成。
+/// 提供 `KLINE_RECOVERY_ENABLED` 缺省值 true，同时控制模拟行情实时生成和闭合历史缺口巡检。
+/// 实时生成要求 MySQL、Mongo 与 Redis，历史补偿只要求 MySQL 与 Mongo；关闭后两类任务都不启动。
 fn default_kline_recovery_enabled() -> bool {
     true
 }
 
-/// 提供 `KLINE_RECOVERY_INTERVAL_SECONDS` 缺省值 30 秒，属于仅为兼容旧部署而保留解析的历史配置项。
-/// 模拟行情循环固定按一秒节奏运行并不读取该值，它只会随启动日志打印出来，用于确认旧配置是否还留在环境里。
+/// 提供 `KLINE_RECOVERY_INTERVAL_SECONDS` 缺省值 30 秒，控制闭合历史缺口的健康巡检周期。
+/// 模拟行情实时循环仍固定按一秒节奏运行；巡检运行时把该值约束到 1..=3600 秒，防止忙循环或长期静默。
 fn default_kline_recovery_interval_seconds() -> u64 {
     30
 }
 
-/// 提供 `KLINE_RECOVERY_BATCH_LIMIT` 缺省值 100，当前语义是模拟行情单轮最多处理的策略数量上限。
-/// 策略数超过上限时本轮只处理其中一部分，其余等待下一轮；调大能覆盖更多交易对，但会拉长单轮耗时。
+/// 提供 `KLINE_RECOVERY_BATCH_LIMIT` 缺省值 100，是实时生成和历史巡检共用的单轮策略数量上限。
+/// 两个 worker 都会继续约束到 1..=100；历史巡检的单策略补偿另有 500 根 1m K 线上限。
 fn default_kline_recovery_batch_limit() -> u32 {
     100
 }

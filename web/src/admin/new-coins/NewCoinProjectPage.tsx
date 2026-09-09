@@ -15,8 +15,8 @@ import { loadProjectCenter, projectQueryKey, stages } from './projectModel';
 import { NewCoinProjectSettings } from './NewCoinProjectSettings';
 import { NewCoinGrant } from './NewCoinGrant';
 
-function RecordLink({ path, children }: { path:string; children:React.ReactNode }) {
-  const endpoint=path.split('?')[0].replace('/admin/','/admin/api/v1/');
+function RecordLink({ path, endpoint: explicitEndpoint, children }: { path:string; endpoint?: string; children:React.ReactNode }) {
+  const endpoint=explicitEndpoint ?? path.split('?')[0].replace('/admin/','/admin/api/v1/');
   const canRead=useCanAdminRequest(endpoint,'GET');
   return canRead ? <Link to={path}>{children}</Link> : null;
 }
@@ -79,6 +79,7 @@ export function NewCoinProjectPage() {
           <RecordLink path={`/admin/new-coins/subscriptions?project_id=${p.id}&status=pending`}>处理待派发申购</RecordLink>
           <RecordLink path={`/admin/new-coins/subscriptions?project_id=${p.id}`}>全部申购与配售</RecordLink>
           <RecordLink path={`/admin/new-coins/distributions?project_id=${p.id}`}>派发与退款记录</RecordLink>
+          <RecordLink endpoint={`/admin/api/v1/new-coins/${p.id}/reconciliation`} path={`/admin/new-coins/reconciliation/${p.id}`}>派发与退款批次对账</RecordLink>
           <RecordLink path={`/admin/new-coins/lock-positions?asset_id=${p.asset_id}`}>该资产锁仓（含其他项目及来源）</RecordLink>
           <RecordLink path={`/admin/new-coins/unlocks?asset_id=${p.asset_id}`}>该资产解禁记录（含其他项目及来源）</RecordLink>
           <RecordLink path={`/admin/new-coins/purchases?project_id=${p.id}`}>上市后购买订单</RecordLink>

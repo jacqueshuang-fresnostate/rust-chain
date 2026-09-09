@@ -41,6 +41,143 @@ struct AdminMarketSourceCredentialRow {
     enabled: bool,
 }
 
+/// 行情健康扫描所需的数据库快照。
+///
+/// `latest_observations` 只返回数据库中实际出现过的交易对；缺失的交易对由应用层补成 stale，
+/// 这样查询不会用一条伪造的零时间记录掩盖断流。缺口和失败计数分别按策略/任务计数，
+/// 不把大量蜡烛根数直接暴露给后台状态接口。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AdminMarketFeedHealthData {
+    pub(crate) latest_observations:
+        Vec<crate::modules::admin::service::MarketFeedSymbolObservation>,
+    pub(crate) kline_gap_count: i64,
+    pub(crate) kline_recovery_failed_count: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AdminMarketFeedLatestIngestedRow {
+    symbol: String,
+    last_observed_at: Option<DateTime<Utc>>,
+    last_ingested_at: Option<DateTime<Utc>>,
+}
+
+/// 读取行情健康状态的权威数据库指标。
+///
+/// 最新事件/摄取时间来自 append-only `market_price_ticks`，且只统计当前配置的 provider，
+/// 不会读取 Redis/Mongo 的易失缓存，也不会让旧 provider 的新记录掩盖当前行情源断流；
+/// K 线缺口按 active strategy run 的检查点与最近闭合分钟比较，恢复失败同时覆盖运行状态和手动
+/// `kline_recovery_jobs`。所有查询均为只读，且交易对集合为空时不构造 `IN ()`，返回空快照。
+pub(crate) async fn load_admin_market_feed_health_data(
+    pool: &Pool<MySql>,
+    symbols: &[String],
+    providers: &[String],
+    now: DateTime<Utc>,
+) -> AppResult<AdminMarketFeedHealthData> {
+    let mut data = AdminMarketFeedHealthData::default();
+
+    // 符号来自已保存配置，但仍只通过 bind 参数进入 SQL；去重由应用层完成，
+    // 这里保留一个防御性去重，避免旧配置重复项造成无意义的占位符和扫描。
+    let mut unique_symbols = BTreeSet::new();
+    for symbol in symbols {
+        let symbol = symbol.trim();
+        if !symbol.is_empty() {
+            unique_symbols.insert(symbol.to_owned());
+        }
+    }
+    let unique_providers = providers
+        .iter()
+        .map(|provider| provider.trim().to_ascii_lowercase())
+        .filter(|provider| !provider.is_empty())
+        .collect::<BTreeSet<_>>();
+
+    if !unique_symbols.is_empty() && !unique_providers.is_empty() {
+        let symbol_placeholders = (0..unique_symbols.len())
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let provider_placeholders = (0..unique_providers.len())
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let latest_sql = format!(
+            "SELECT symbol, MAX(observed_at) AS last_observed_at, \
+             MAX(ingested_at) AS last_ingested_at FROM market_price_ticks \
+             WHERE symbol IN ({symbol_placeholders}) \
+             AND source IN ({provider_placeholders}) GROUP BY symbol"
+        );
+        let mut latest_query = sqlx::query_as::<_, AdminMarketFeedLatestIngestedRow>(&latest_sql);
+        for symbol in &unique_symbols {
+            latest_query = latest_query.bind(symbol);
+        }
+        for provider in &unique_providers {
+            latest_query = latest_query.bind(provider);
+        }
+        let latest_rows = latest_query.fetch_all(pool).await?;
+        data.latest_observations = latest_rows
+            .into_iter()
+            .map(
+                |row| crate::modules::admin::service::MarketFeedSymbolObservation {
+                    symbol: row.symbol,
+                    observed_at: row.last_observed_at,
+                    ingested_at: row.last_ingested_at,
+                },
+            )
+            .collect();
+    }
+
+    // `last_closed_open_time(now, 1m)` 的等价绑定值：当前分钟尚未闭合，
+    // 因此只把严格早于上一个整分钟开盘时刻的检查点视为缺口。
+    let closed_cutoff = last_closed_minute(now);
+    data.kline_gap_count = sqlx::query_scalar::<_, i64>(
+        r#"SELECT CAST(COUNT(*) AS SIGNED)
+           FROM strategy_runs runs
+           INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id
+           INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id
+           WHERE strategies.status = 'active'
+             AND pairs.status = 'active'
+             AND pairs.market_type IN ('strategy', 'internal')
+             AND runs.run_status IN ('running', 'live', 'catching_up')
+             AND COALESCE(runs.recovery_status, 'idle') <> 'failed'
+             AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) < ?
+             AND (
+               DATE_ADD(COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time), INTERVAL 1 MINUTE) < strategies.end_time
+               OR (
+                 COALESCE(runs.recovery_status, 'idle') <> 'live'
+                 AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) < strategies.end_time
+               )
+             )"#,
+    )
+    .bind(closed_cutoff.naive_utc())
+    .fetch_one(pool)
+    .await?;
+
+    data.kline_recovery_failed_count = sqlx::query_scalar::<_, i64>(
+        r#"SELECT CAST(
+                 (SELECT COUNT(*)
+                    FROM strategy_runs runs
+                    INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id
+                    INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id
+                   WHERE strategies.status = 'active'
+                     AND pairs.status = 'active'
+                     AND pairs.market_type IN ('strategy', 'internal')
+                     AND runs.recovery_status = 'failed')
+                 + (SELECT COUNT(*) FROM kline_recovery_jobs WHERE status = 'failed')
+               AS SIGNED)"#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(data)
+}
+
+/// 计算最近一根已闭合 1m K 线的开盘时刻，使用欧几里得除法覆盖 Unix 纪元前的边界。
+/// 结果始终是 UTC 整分钟，和自动恢复 worker 的扫描终点保持同一口径。
+fn last_closed_minute(now: DateTime<Utc>) -> DateTime<Utc> {
+    let current_minute = now.timestamp().div_euclid(60);
+    DateTime::from_timestamp((current_minute - 1) * 60, 0)
+        .unwrap_or(now - chrono::Duration::minutes(1))
+}
+
 /// 按传入主键或筛选条件从连接池读取行情订阅配置并映射为应用层所需的可选记录。
 /// 行情订阅配置不追加行锁，查询不创建事务；记录缺失时返回空值，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_market_feed_config(

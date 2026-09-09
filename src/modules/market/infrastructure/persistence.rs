@@ -18,6 +18,7 @@ use crate::{
     },
 };
 use chrono::{DateTime, Utc};
+use futures_util::TryStreamExt;
 use mongodb::{
     Database,
     bson::{DateTime as BsonDateTime, Document, doc},
@@ -30,6 +31,93 @@ use sqlx::{MySql, Pool};
 /// 交易对已在类型层完成规范化，这里不再裁剪或转换大小写；改动命名规则会让既有历史蜡烛失联。
 pub fn kline_collection_name(symbol: &ValidatedMarketSymbol) -> String {
     format!("market_klines_{}", symbol.as_str())
+}
+
+/// 查询指定交易对半开时间区间内已存在的 1m K 线开盘时间。
+///
+/// 交易对先经领域值对象规范化，再使用共享集合命名；Mongo 只投影 `open_time` 并稳定升序，
+/// 供后台缺口预览和自动断线补偿共同计算差集。非法 symbol 或 Mongo 文档时间返回错误，
+/// 不会把脏数据当成缺口并覆盖；本函数只读且不会创建集合或索引。
+pub(crate) async fn list_one_minute_kline_open_times(
+    database: &Database,
+    symbol: &str,
+    range_start: DateTime<Utc>,
+    range_end: DateTime<Utc>,
+) -> AppResult<Vec<DateTime<Utc>>> {
+    list_one_minute_kline_open_times_with_filter(database, symbol, range_start, range_end, None)
+        .await
+}
+
+/// 查询自动补偿可接受的 1m K 线：普通实时/人工历史视为权威，自动补偿历史只有在策略和
+/// active version 同时匹配时才视为已存在。这样旧版本补偿在 Mongo 写入后、MySQL CAS 前
+/// 遇到配置切换或进程崩溃，也会被新版本下一轮重新生成，而不会成为永久的错误历史。
+pub(crate) async fn list_compatible_one_minute_kline_open_times(
+    database: &Database,
+    symbol: &str,
+    range_start: DateTime<Utc>,
+    range_end: DateTime<Utc>,
+    strategy_id: u64,
+    strategy_version: i32,
+) -> AppResult<Vec<DateTime<Utc>>> {
+    let strategy_id = i64::try_from(strategy_id).map_err(|_| {
+        AppError::Validation("strategy id exceeds Mongo signed integer range".to_owned())
+    })?;
+    list_one_minute_kline_open_times_with_filter(
+        database,
+        symbol,
+        range_start,
+        range_end,
+        Some((strategy_id, strategy_version)),
+    )
+    .await
+}
+
+async fn list_one_minute_kline_open_times_with_filter(
+    database: &Database,
+    symbol: &str,
+    range_start: DateTime<Utc>,
+    range_end: DateTime<Utc>,
+    automatic_recovery: Option<(i64, i32)>,
+) -> AppResult<Vec<DateTime<Utc>>> {
+    let symbol = ValidatedMarketSymbol::from_raw(symbol)
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    let collection = database.collection::<Document>(&kline_collection_name(&symbol));
+    let mut filter = doc! {
+        "interval": "1m",
+        "open_time": {
+            "$gte": BsonDateTime::from_millis(range_start.timestamp_millis()),
+            "$lt": BsonDateTime::from_millis(range_end.timestamp_millis()),
+        }
+    };
+    if let Some((strategy_id, strategy_version)) = automatic_recovery {
+        filter.insert(
+            "$or",
+            vec![
+                doc! { "automatic_recovery_strategy_id": { "$exists": false } },
+                doc! {
+                    "automatic_recovery_strategy_id": strategy_id,
+                    "automatic_recovery_strategy_version": strategy_version,
+                },
+            ],
+        );
+    }
+    let mut cursor = collection
+        .find(filter)
+        .projection(doc! { "_id": 0, "open_time": 1 })
+        .sort(doc! { "open_time": 1 })
+        .await?;
+    let mut open_times = Vec::new();
+    while let Some(document) = cursor.try_next().await? {
+        let value = document.get_datetime("open_time").map_err(|error| {
+            AppError::Validation(format!("invalid kline open_time document: {error}"))
+        })?;
+        let open_time =
+            DateTime::from_timestamp_millis(value.timestamp_millis()).ok_or_else(|| {
+                AppError::Validation("kline open_time is outside supported range".to_owned())
+            })?;
+        open_times.push(open_time);
+    }
+    Ok(open_times)
 }
 
 /// 从 MySQL 返回全部 active 交易对及 base/quote 资产 Logo、精度和最小下单额，按 symbol 升序排列。

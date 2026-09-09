@@ -96,6 +96,29 @@ pub(crate) struct AdminAuditLogsResponse {
 
 impl PresentationLayer for AdminAuditLogsResponse {}
 
+/// 资金与结算幂等审计快照。
+///
+/// 这是只读治理视图，不会自动修复异常。计数字段保留原始数量，`status` 只使用
+/// `balanced`/`attention` 两个稳定值，便于后台统一映射中文状态；`anomalies` 给出可操作
+/// 的检查项，但不包含用户邮箱、余额或其他敏感明细。
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminFinancialIdempotencyAuditResponse {
+    pub(crate) status: String,
+    pub(crate) duplicate_idempotency_groups: i64,
+    pub(crate) missing_idempotency_keys: i64,
+    pub(crate) orphan_ledger_entries: i64,
+    pub(crate) expired_seconds_orders: i64,
+    pub(crate) expired_prediction_orders: i64,
+    pub(crate) pending_loan_orders: i64,
+    pub(crate) pending_new_coin_subscriptions: i64,
+    pub(crate) anomaly_count: i64,
+    pub(crate) anomalies: Vec<String>,
+    #[serde(with = "unix_millis")]
+    pub(crate) checked_at: DateTime<Utc>,
+}
+
+impl PresentationLayer for AdminFinancialIdempotencyAuditResponse {}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminDashboardResponse {
     #[serde(with = "unix_millis")]

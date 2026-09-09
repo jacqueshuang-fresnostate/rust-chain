@@ -92,9 +92,38 @@ pub(crate) async fn get_admin_market_feed_status(
     let saved_config = load_admin_market_feed_config_from_store(&pool)
         .await?
         .map(market_feed_config_response);
+    let configured_symbols = match saved_config.as_ref() {
+        Some(config) if config.enabled => config.symbols.clone(),
+        Some(_) => Vec::new(),
+        None => runtime.symbols.clone(),
+    };
+    let configured_providers = match saved_config.as_ref() {
+        Some(config) if config.enabled => config.providers.clone(),
+        Some(_) => Vec::new(),
+        None => runtime.providers.clone(),
+    };
+    let checked_at = Utc::now();
+    let health_data = load_admin_market_feed_health_data(
+        &pool,
+        &configured_symbols,
+        &configured_providers,
+        checked_at,
+    )
+    .await?;
+    let health = build_market_feed_health(MarketFeedHealthInput {
+        configured_symbols: &configured_symbols,
+        latest_observations: &health_data.latest_observations,
+        runtime_ready: runtime.ready,
+        runtime_status: runtime.last_reload_status.as_deref(),
+        now: checked_at,
+        stale_after: std::time::Duration::from_secs(MARKET_FEED_STALE_AFTER_SECONDS),
+        kline_gap_count: health_data.kline_gap_count,
+        kline_recovery_failed_count: health_data.kline_recovery_failed_count,
+    });
     Ok(MarketFeedStatusResponse {
         saved_config,
         runtime,
+        health,
     })
 }
 

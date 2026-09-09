@@ -83,10 +83,12 @@ describe('adminRoutes', () => {
     ['agents', 'AgentManagementPage'],
     ['dashboard', 'DashboardPage'],
     ['config-center', 'ConfigCenterPage'],
+    ['governance/financial-idempotency', 'FinancialIdempotencyPage'],
     ['support', 'AdminSupportPage'],
     ['audit-logs', 'AuditLogsPage'],
     ['new-coins/actions', 'NewCoinActions'],
     ['new-coins/projects/:projectId', 'NewCoinProjectPage'],
+    ['new-coins/reconciliation/:projectId', 'NewCoinReconciliationPage'],
     ['new-coins/lock-positions', 'NewCoinLocksPage'],
     ['new-coins/unlocks', 'NewCoinLocksPage'],
     ['prediction/settings', 'PredictionSettingsPage'],
@@ -131,8 +133,10 @@ describe('adminRoutes', () => {
     ['prediction/sync', 'prediction.sync.read'],
     ['account/security', 'account.security.read'],
     ['config-center', 'config_center.read'],
+    ['governance/financial-idempotency', 'governance.financial.read'],
     ['support', 'support.conversations.read'],
-    ['audit-logs', 'audit.logs.read']
+    ['audit-logs', 'audit.logs.read'],
+    ['new-coins/reconciliation/:projectId', 'new_coin.distributions.read']
   ])('keeps the %s route behind %s', (path, permission) => {
     expect(routePermission(path)).toBe(permission);
   });

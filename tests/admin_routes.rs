@@ -2916,6 +2916,11 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
             Some(market_feed_config_body.as_str()),
         ),
         ("GET", "/admin/api/v1/market-feed/status", None),
+        (
+            "GET",
+            "/admin/api/v1/governance/financial-idempotency",
+            None,
+        ),
         ("GET", "/admin/api/v1/market-feed/credentials", None),
         (
             "PATCH",

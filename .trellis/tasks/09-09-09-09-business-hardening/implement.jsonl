@@ -1,3 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
 {"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "资金与结算合同"}
 {"file": ".trellis/spec/backend/container-delivery.md", "reason": "发布与迁移合同"}
+{"file": ".trellis/spec/backend/synthetic-market-kline.md", "reason": "行情健康监控与 K 线缺口恢复合同"}
+{"file": ".trellis/spec/backend/new-coin-manual-distribution.md", "reason": "新币手工派发、退款与供应量守恒合同"}
+{"file": ".trellis/spec/backend/new-coin-project-center.md", "reason": "新币项目中心与对账入口合同"}
+{"file": ".trellis/spec/admin/chinese-presentation.md", "reason": "后台中文展示与原始值保留规范"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "后台响应严格解析与展示合同"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流安全检查"}
+{"file": ".trellis/spec/backend/business-governance-audits.md", "reason": "资金幂等、行情健康、新币对账、权限审计与 CI 门禁合同"}

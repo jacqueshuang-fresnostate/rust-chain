@@ -24,8 +24,7 @@ mod wallet_assets;
 pub(crate) use self::{
     access_control::*, agents::*, config_center::*, config_changes::*, convert::*, countries::*,
     dashboard_audit::*, default_market::*, deposit_networks::*, market::*, new_coin::*,
-    new_coin_reconciliation::*, news::*,
-    risk_security::*, users::*, wallet_assets::*,
+    new_coin_reconciliation::*, news::*, risk_security::*, users::*, wallet_assets::*,
 };
 pub use self::{market_feed::*, system_config::*};
 

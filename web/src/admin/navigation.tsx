@@ -150,6 +150,7 @@ export const adminNavItems: AdminNavItem[] = [
     label: '风控中心',
     icon: <IconShieldStroked aria-hidden="true" />,
     children: [
+      { path: '/admin/governance/financial-idempotency', label: '资金与结算审计' },
       { path: '/admin/risk', label: '风控规则' },
       { path: '/admin/risk/events', label: '风控事件' }
     ]

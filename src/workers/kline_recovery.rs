@@ -1,8 +1,9 @@
 //! 后台 K 线补偿任务，包含自动缺口扫描与管理员手动补偿两条彼此独立的路径。
 //!
-//! 自动路径按 `strategy_runs` 的检查点逐个补齐已闭合的 1m 缺口，蜡烛由检查点价格向目标价线性插值得到，
-//! 写入 Mongo 成功后再以旧检查点为乐观条件推进 MySQL。手动路径由后台显式触发，
-//! 复用与实时发布、后台预览完全相同的确定性生成器补写指定槽位，并重建受影响的完整聚合窗口，全程不写 MySQL。
+//! 自动路径按 `strategy_runs` 的连续检查点扫描已闭合的 1m 槽位，先与 Mongo 权威历史做差集，
+//! 再复用实时发布和后台预览的 active-version 确定性生成器补齐实际缺根；写入成功后
+//! 只以旧检查点和版本为乐观条件推进 MySQL 历史位置。手动路径由后台显式触发，
+//! 补写指定槽位并重建受影响的完整聚合窗口，全程不写 MySQL。
 //!
 //! 两条路径都只写 Mongo K 线集合，一律以 `interval` 加 `open_time` 幂等 upsert，同键重放只覆盖不新增。
 //! 本文件不写 Redis 行情缓存、不推进实时 checkpoint、不触发现货限价单，也不广播任何 WebSocket 事件。
@@ -13,6 +14,7 @@ use crate::{
     modules::market::{
         KlineUpsertKey, SyntheticCandle, SyntheticKlineInterval, SyntheticMarketConfig,
         ValidatedMarketSymbol, aggregate_1m_candles,
+        infrastructure::list_compatible_one_minute_kline_open_times,
     },
     state::AppState,
 };
@@ -37,6 +39,24 @@ const MANUAL_RECOVERY_INTERVALS: [SyntheticKlineInterval; 5] = [
     SyntheticKlineInterval::FourHours,
     SyntheticKlineInterval::OneDay,
 ];
+
+/// 自动补偿写入 Mongo 的版本证据。Mongo 整数是有符号类型，因此在任何 I/O 前验证策略 ID。
+#[derive(Debug, Clone, Copy)]
+struct AutomaticRecoveryProvenance {
+    strategy_id: i64,
+    strategy_version: i32,
+}
+
+impl AutomaticRecoveryProvenance {
+    fn new(strategy_id: u64, strategy_version: i32) -> AppResult<Self> {
+        Ok(Self {
+            strategy_id: i64::try_from(strategy_id).map_err(|_| {
+                AppError::Validation("strategy id exceeds Mongo signed integer range".to_owned())
+            })?,
+            strategy_version,
+        })
+    }
+}
 
 /// 自动 K 线缺口恢复任务的调用入口，自身不持有状态，所需依赖在每次执行时由调用方传入。
 pub struct KlineRecoveryWorker;
@@ -240,21 +260,6 @@ impl KlineRecoveryStrategyRun {
             volume_max,
         })
     }
-
-    /// 把扫描到的到期策略行转成校验过的恢复快照，字段顺序与查询列一一对应。
-    /// 数据库中的检查点、当前价与目标价直接进入校验，历史脏数据会在这里失败而不是写出错误蜡烛。
-    fn from_row(row: DueKlineRecoveryRun) -> AppResult<Self> {
-        Self::from_values(
-            row.strategy_id,
-            &row.symbol,
-            row.checkpoint_open_time,
-            row.current_price,
-            row.target_price,
-            row.volatility,
-            row.volume_min,
-            row.volume_max,
-        )
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,12 +361,6 @@ impl KlineRecoveryPlan {
     /// 提供按开盘时间排序的完整恢复批次；空批次表示检查点后没有已闭合缺口，worker 应跳过写入和检查点推进。
     pub fn candles(&self) -> &[KlineRecoveryCandle] {
         &self.candles
-    }
-
-    /// 取批次末根蜡烛，它的开盘时间与收盘价决定检查点推进到哪一槽、下一轮从哪个价格续接。
-    /// 空批次返回 `None`，此时调用方直接结束本策略，既不写 Mongo 也不推进检查点。
-    fn last_candle(&self) -> Option<&KlineRecoveryCandle> {
-        self.candles.last()
     }
 }
 
@@ -474,9 +473,10 @@ pub async fn run_once(
     run_once_with_dependencies(pool, mongo, now, limit).await
 }
 
-/// 按策略 ID 扫描至多 `limit` 收敛后的 100 个到期策略，每项最多生成 500 根截至最近闭合周期的 K 线。
-/// 先逐根以 interval+open_time 唯一键 upsert Mongo，再以旧检查点作乐观条件推进 MySQL；并发已推进时跳过覆盖，崩溃在两步之间会于下轮安全重写同键。
-/// 单策略校验、Mongo 或检查点失败记录后继续后项，已完成策略不回滚；本 worker 不发布 WebSocket 或 outbox 事件。
+/// 按策略 ID 扫描至多 `limit` 收敛后的 100 个到期策略，每项检查最多 500 个截至最近闭合分钟的槽位。
+/// 实际缺根先与 Mongo 权威 1m 做差集，再使用实时 worker 的 active version 确定性配置补写并重建完整高周期；
+/// 成功后只乐观推进连续恢复检查点，不覆盖实时 `current_price/last_tick_at/last_generated_at`。
+/// 单策略校验、Mongo 或检查点失败记录后继续后项；本 worker 不发布 WebSocket、Redis 或 outbox 事件。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     mongo: &Database,
@@ -488,25 +488,16 @@ pub async fn run_once_with_dependencies(
 
     for row in rows {
         let strategy_id = row.strategy_id;
-        let outcome = match KlineRecoveryStrategyRun::from_row(row).and_then(|strategy| {
-            KlineRecoveryPlan::from_strategy(&strategy, now, TimeDelta::minutes(1))
-        }) {
-            Ok(plan) if plan.candles().is_empty() => KlineRecoveryPlanSummary::Skipped,
-            Ok(plan) => match recover_plan(pool, mongo, &plan).await {
-                Ok(candles) => KlineRecoveryPlanSummary::Recovered { candles },
-                Err(KlineRecoveryCheckpointError::AlreadyAdvanced) => {
-                    warn!(strategy_id, "K 线恢复检查点已被推进");
-                    KlineRecoveryPlanSummary::Skipped
-                }
-                Err(KlineRecoveryCheckpointError::App(error)) => {
-                    warn!(strategy_id, %error, "K 线恢复计划执行失败");
-                    mark_recovery_failed(pool, strategy_id, &error.to_string()).await;
-                    KlineRecoveryPlanSummary::Failed
-                }
-            },
-            Err(error) => {
+        let outcome = match recover_detected_strategy_gap(pool, mongo, &row, now).await {
+            Ok(0) => KlineRecoveryPlanSummary::Skipped,
+            Ok(candles) => KlineRecoveryPlanSummary::Recovered { candles },
+            Err(KlineRecoveryCheckpointError::AlreadyAdvanced) => {
+                warn!(strategy_id, "K 线恢复检查点或配置版本已被推进");
+                KlineRecoveryPlanSummary::Skipped
+            }
+            Err(KlineRecoveryCheckpointError::App(error)) => {
                 warn!(strategy_id, %error, "K 线恢复计划无效");
-                mark_recovery_failed(pool, strategy_id, &error.to_string()).await;
+                mark_recovery_failed(pool, &row, &error.to_string()).await;
                 KlineRecoveryPlanSummary::Failed
             }
         };
@@ -514,6 +505,96 @@ pub async fn run_once_with_dependencies(
     }
 
     Ok(summarize_recovery_plans(&outcomes))
+}
+
+/// 对单策略检查连续的有界分钟窗口，只补 Mongo 中实际缺少的槽位。
+///
+/// 候选窗口包含旧检查点自身，因为新建策略会先把起始时刻写入检查点、随后才可能产生首根 K 线；
+/// 已存在的检查点根会被 Mongo 差集排除。补写复用实时 active version 的确定性生成器，成功后
+/// 检查点推进到本轮最后检查的槽位；即使本轮没有缺根也要推进，从而收敛已由人工补好的历史。
+async fn recover_detected_strategy_gap(
+    pool: &Pool<MySql>,
+    mongo: &Database,
+    row: &DueKlineRecoveryRun,
+    now: DateTime<Utc>,
+) -> Result<u32, KlineRecoveryCheckpointError> {
+    let recovery_until = last_closed_open_time(now, TimeDelta::minutes(1))?.min(
+        align_open_time(
+            row.strategy_end_time - TimeDelta::microseconds(1),
+            TimeDelta::minutes(1),
+        )
+        .map_err(|error| AppError::Validation(error.to_string()))?,
+    );
+    let scan_times = recovery_scan_open_times(row.checkpoint_open_time, recovery_until);
+    let Some(first_open_time) = scan_times.first().copied() else {
+        return Ok(0);
+    };
+    let last_open_time = scan_times.last().copied().expect("non-empty scan times");
+    let range_end = last_open_time + TimeDelta::minutes(1);
+    let provenance = AutomaticRecoveryProvenance::new(row.strategy_id, row.active_version)?;
+    let existing = list_compatible_one_minute_kline_open_times(
+        mongo,
+        &row.symbol,
+        first_open_time,
+        range_end,
+        row.strategy_id,
+        row.active_version,
+    )
+    .await?
+    .into_iter()
+    .collect::<std::collections::HashSet<_>>();
+    let missing = scan_times
+        .iter()
+        .copied()
+        .filter(|open_time| !existing.contains(open_time))
+        .collect::<Vec<_>>();
+
+    let recovered_candles = if missing.is_empty() {
+        0
+    } else {
+        let (version, config) =
+            super::synthetic_market::load_strategy_config_for_recovery(pool, row.strategy_id)
+                .await?;
+        if version != row.active_version {
+            return Err(KlineRecoveryCheckpointError::AlreadyAdvanced);
+        }
+        execute_synthetic_recovery(mongo, &config, &missing, now, Some(provenance))
+            .await
+            .map_err(|error| AppError::Internal(format!("automatic kline recovery: {error}")))?
+            .actual_1m_count
+    };
+
+    update_recovery_checkpoint(
+        pool,
+        row.strategy_id,
+        row.active_version,
+        row.checkpoint_open_time,
+        last_open_time,
+        last_open_time >= recovery_until,
+    )
+    .await?;
+    Ok(recovered_candles)
+}
+
+/// 形成包含旧检查点自身的连续分钟扫描窗口，并把单轮工作量限制为 500 个槽位。
+/// 检查点正好等于恢复终点时仍扫描该槽，供从未生成或失败的短策略完成最后一次核验；
+/// 检查点已经越过终点才返回空。函数不访问存储，也不推断 Mongo 中是否已存在对应 K 线。
+fn recovery_scan_open_times(
+    checkpoint_open_time: DateTime<Utc>,
+    recovery_until: DateTime<Utc>,
+) -> Vec<DateTime<Utc>> {
+    if checkpoint_open_time > recovery_until {
+        return Vec::new();
+    }
+    let mut open_time =
+        DateTime::from_timestamp(checkpoint_open_time.timestamp().div_euclid(60) * 60, 0)
+            .unwrap_or(checkpoint_open_time);
+    let mut times = Vec::new();
+    while open_time <= recovery_until && times.len() < MAX_CANDLES_PER_STRATEGY_RUN {
+        times.push(open_time);
+        open_time += TimeDelta::minutes(1);
+    }
+    times
 }
 
 /// 以交易对集合及 interval+open_time 唯一键 upsert 一根恢复 K 线，重放只覆盖同一根蜡烛而不新增重复记录。
@@ -529,6 +610,7 @@ pub async fn upsert_recovered_kline(db: &Database, candle: &KlineRecoveryCandle)
 
 /// 使用与实时/预览相同的 [`SyntheticMarketConfig`] 生成任务原始范围的 1m，并重建所有受影响完整聚合窗口。
 /// 本入口只读写 Mongo K 线集合：每根以 `interval + open_time` 幂等 upsert，不接触 Redis ticker/Kline、WebSocket 或 MySQL 检查点。
+/// 管理员手动补偿会清除自动补偿版本标记，使人工确认后的结果成为权威历史；自动调用由内部入口写入策略/version 证据。
 /// 聚合前会从 Mongo 重读完整 1m 窗口；窗口仅因缺根不完整时跳过该高周期，已存根的非法数值或不连续仍使任务失败。
 /// 入参必须非空、严格递增、单次不超过 10080 根，且每个槽位都是落在策略区间内且已经闭合的整分钟，任一条不满足在写入前失败。
 pub async fn execute_manual_synthetic_recovery(
@@ -536,6 +618,16 @@ pub async fn execute_manual_synthetic_recovery(
     config: &SyntheticMarketConfig,
     missing_open_times: &[DateTime<Utc>],
     observed_at: DateTime<Utc>,
+) -> Result<ManualKlineRecoveryCounts, ManualKlineRecoveryError> {
+    execute_synthetic_recovery(db, config, missing_open_times, observed_at, None).await
+}
+
+async fn execute_synthetic_recovery(
+    db: &Database,
+    config: &SyntheticMarketConfig,
+    missing_open_times: &[DateTime<Utc>],
+    observed_at: DateTime<Utc>,
+    automatic_recovery: Option<AutomaticRecoveryProvenance>,
 ) -> Result<ManualKlineRecoveryCounts, ManualKlineRecoveryError> {
     let mut counts = ManualKlineRecoveryCounts::default();
     if missing_open_times.is_empty() {
@@ -595,9 +687,16 @@ pub async fn execute_manual_synthetic_recovery(
         let candle = config.generate_1m(*open_time).map_err(|error| {
             manual_recovery_error(counts, AppError::Validation(error.to_string()))
         })?;
-        upsert_manual_candle(&collection, "1m", candle.open_time, &candle, observed_at)
-            .await
-            .map_err(|error| manual_recovery_error(counts, error))?;
+        upsert_manual_candle(
+            &collection,
+            "1m",
+            candle.open_time,
+            &candle,
+            observed_at,
+            automatic_recovery,
+        )
+        .await
+        .map_err(|error| manual_recovery_error(counts, error))?;
         counts.actual_1m_count = counts.actual_1m_count.saturating_add(1);
     }
 
@@ -624,6 +723,7 @@ pub async fn execute_manual_synthetic_recovery(
                 candle.open_time,
                 &candle,
                 observed_at,
+                automatic_recovery,
             )
             .await
             .map_err(|error| manual_recovery_error(counts, error))?;
@@ -646,9 +746,12 @@ fn manual_recovery_error(
     }
 }
 
-/// 手动补偿的单根写入：先用领域键校验周期与开盘时间，再按周期加开盘时间幂等 upsert。
+/// 补偿的单根写入：先用领域键校验周期与开盘时间，再按周期加开盘时间幂等 upsert。
 /// 除 OHLCV 外还写入固定的 `source` 标记与本次执行的 `updated_at`，便于区分补偿产物和实时摄取结果。
-/// 与实时路径不同，这里不比较既有文档的新旧，同槽记录会被确定性重算的值直接覆盖。
+/// 自动路径附带策略/version 证据，手动路径显式清除这两个字段；实时摄取也会清除，避免旧标记污染新快照。
+/// 自动路径只允许匹配已有自动补偿文档（且不能晚于本轮观察时间）；普通实时/人工文档不会被
+/// 覆盖。若普通文档在读差集之后抢先写入，唯一键会把 upsert 转成冲突，调用方下一轮会重新
+/// 读取权威历史。这样既保留旧自动版本可被新版本替换的能力，也避免恢复任务覆盖人工结果。
 /// 本函数只写 Mongo，不触碰 Redis 缓存、不推进任何检查点，也不广播实时事件。
 async fn upsert_manual_candle(
     collection: &mongodb::Collection<Document>,
@@ -656,30 +759,88 @@ async fn upsert_manual_candle(
     open_time: DateTime<Utc>,
     candle: &SyntheticCandle,
     observed_at: DateTime<Utc>,
+    automatic_recovery: Option<AutomaticRecoveryProvenance>,
 ) -> AppResult<()> {
     KlineUpsertKey::new(interval, open_time)
         .map_err(|error| AppError::Validation(error.to_string()))?;
-    collection
-        .update_one(
+    let mut fields = doc! {
+        "interval": interval,
+        "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
+        "open": candle.values.open.to_string(),
+        "high": candle.values.high.to_string(),
+        "low": candle.values.low.to_string(),
+        "close": candle.values.close.to_string(),
+        "volume": candle.values.volume.to_string(),
+        "source": "strategy",
+        "updated_at": BsonDateTime::from_millis(observed_at.timestamp_millis()),
+    };
+    let mut update = Document::new();
+    if let Some(provenance) = automatic_recovery {
+        fields.insert("automatic_recovery_strategy_id", provenance.strategy_id);
+        fields.insert(
+            "automatic_recovery_strategy_version",
+            provenance.strategy_version,
+        );
+    } else {
+        update.insert(
+            "$unset",
             doc! {
-                "interval": interval,
-                "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
+                "automatic_recovery_strategy_id": "",
+                "automatic_recovery_strategy_version": "",
             },
-            doc! { "$set": {
-                "interval": interval,
-                "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
-                "open": candle.values.open.to_string(),
-                "high": candle.values.high.to_string(),
-                "low": candle.values.low.to_string(),
-                "close": candle.values.close.to_string(),
-                "volume": candle.values.volume.to_string(),
-                "source": "strategy",
-                "updated_at": BsonDateTime::from_millis(observed_at.timestamp_millis()),
-            }},
-        )
+        );
+    }
+    update.insert("$set", fields);
+    let filter =
+        automatic_recovery_write_filter(interval, open_time, observed_at, automatic_recovery);
+    match collection
+        .update_one(filter, update)
         .with_options(UpdateOptions::builder().upsert(true).build())
-        .await?;
-    Ok(())
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(error) if automatic_recovery.is_some() && error.to_string().contains("E11000") => Err(
+            AppError::Conflict("automatic kline recovery lost a newer Mongo write race".to_owned()),
+        ),
+        Err(error) => Err(AppError::Mongo(error)),
+    }
+}
+
+/// 构造补偿写入过滤器。普通/人工文档只要已经占据唯一键，就不能被自动补偿匹配；
+/// 没有同槽文档时过滤器自然触发 upsert，唯一索引负责把并发首写收敛为一次。
+/// 已有自动文档必须带完整来源标记，且 `updated_at` 不晚于本轮观察时间，避免旧任务覆盖
+/// 实时或另一轮补偿刚写入的较新值。手动路径不加这些条件，仍保持原有的确定性幂等覆盖。
+fn automatic_recovery_write_filter(
+    interval: &str,
+    open_time: DateTime<Utc>,
+    observed_at: DateTime<Utc>,
+    automatic_recovery: Option<AutomaticRecoveryProvenance>,
+) -> Document {
+    let mut filter = doc! {
+        "interval": interval,
+        "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
+    };
+    if automatic_recovery.is_some() {
+        let observed_at = BsonDateTime::from_millis(observed_at.timestamp_millis());
+        // 过滤器刻意要求已有记录带完整自动来源标记。没有匹配记录时 upsert 仍会插入新
+        // 自动文档；若普通/人工记录已占据该唯一键，Mongo 会返回 E11000 而不会覆盖它。
+        filter.insert(
+            "$or",
+            vec![
+                doc! {
+                    "automatic_recovery_strategy_id": { "$exists": true },
+                    "automatic_recovery_strategy_version": { "$exists": true },
+                    "updated_at": { "$exists": false },
+                },
+                doc! {
+                    "automatic_recovery_strategy_id": { "$exists": true },
+                    "automatic_recovery_strategy_version": { "$exists": true },
+                    "updated_at": { "$lte": observed_at },
+                },
+            ],
+        );
+    }
+    filter
 }
 
 /// 由本次补写的 1m 槽位反推需要重建的高周期窗口起点，按周期秒数向下取整后排序去重。
@@ -807,17 +968,16 @@ pub enum KlineRecoveryGapError {
 struct DueKlineRecoveryRun {
     strategy_id: u64,
     symbol: String,
+    active_version: i32,
     checkpoint_open_time: DateTime<Utc>,
-    current_price: BigDecimal,
-    target_price: BigDecimal,
-    volatility: BigDecimal,
-    volume_min: BigDecimal,
-    volume_max: BigDecimal,
+    strategy_end_time: DateTime<Utc>,
 }
 
 /// 扫描存在 1m 缺口的策略：要求策略与交易对均为 active、运行状态属于 running、live 或 catching_up，
-/// 恢复状态不是 failed，且检查点早于最近一根已闭合的分钟。
-/// 检查点按最后 K 线开盘时间、最后生成时间、策略起始时间的顺序取首个非空值，当前价同理回退到起始价。
+/// 且检查点早于最近一根已闭合的分钟。失败状态仍会在后续轮次重试，避免短暂存储故障将恢复永久冻结。
+/// 检查点按最后 K 线开盘时间、最后生成时间、策略起始时间的顺序取首个非空值；
+/// 同时读取 active version 与策略结束时间，后续补偿不会越过半开策略区间。
+/// 已到最后可生成分钟且状态为 live 的已结束策略不再重复扫描；idle/failed 的最后单槽仍保留一次恢复机会。
 /// 结果按检查点与策略 ID 升序，优先处理落后最多的策略，条数夹紧到 1 至 100；本查询只读，不加锁也不占用租约。
 async fn fetch_due_strategy_runs(
     pool: &Pool<MySql>,
@@ -827,20 +987,24 @@ async fn fetch_due_strategy_runs(
     sqlx::query_as::<_, DueKlineRecoveryRun>(
         r#"SELECT strategies.id AS strategy_id,
                   pairs.symbol,
+                  runs.active_version,
                   COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) AS checkpoint_open_time,
-                  COALESCE(runs.current_price, strategies.start_price) AS current_price,
-                  strategies.target_price,
-                  strategies.volatility,
-                  strategies.volume_min,
-                  strategies.volume_max
+                  strategies.end_time AS strategy_end_time
            FROM strategy_runs runs
            INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id
            INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id
            WHERE strategies.status = 'active'
              AND pairs.status = 'active'
+             AND pairs.market_type IN ('strategy', 'internal')
              AND runs.run_status IN ('running', 'live', 'catching_up')
-             AND COALESCE(runs.recovery_status, 'idle') <> 'failed'
              AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) < ?
+             AND (
+               DATE_ADD(COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time), INTERVAL 1 MINUTE) < strategies.end_time
+               OR (
+                 COALESCE(runs.recovery_status, 'idle') <> 'live'
+                 AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) < strategies.end_time
+               )
+             )
            ORDER BY COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) ASC,
                     strategies.id ASC
            LIMIT ?"#,
@@ -852,59 +1016,41 @@ async fn fetch_due_strategy_runs(
     .map_err(AppError::from)
 }
 
-/// 执行一个恢复计划：先确保目标集合的唯一索引存在，再按开盘时间顺序逐根幂等补写，最后推进检查点。
-/// 空计划直接返回零根且完全不触碰存储；检查点已被并发推进时返回 `AlreadyAdvanced`，由调用方记为跳过而非失败。
-/// Mongo 写入与 MySQL 检查点不在同一事务内，两步之间崩溃会留下已补蜡烛，下一轮以同键安全重写。
-async fn recover_plan(
-    pool: &Pool<MySql>,
-    mongo: &Database,
-    plan: &KlineRecoveryPlan,
-) -> Result<u32, KlineRecoveryCheckpointError> {
-    let Some(last_candle) = plan.last_candle() else {
-        return Ok(0);
-    };
-
-    // 先保证目标 collection 的唯一索引存在，再按 open_time 幂等补写缺口 K 线。
-    ensure_kline_indexes(mongo, last_candle.symbol()).await?;
-    for candle in plan.candles() {
-        upsert_recovered_kline(mongo, candle).await?;
-    }
-    update_recovery_checkpoint(
-        pool,
-        plan.strategy_id(),
-        last_candle.open_time(),
-        last_candle.close(),
-    )
-    .await?;
-    Ok(plan.candles().len() as u32)
-}
-
-/// 以旧检查点为乐观条件推进策略进度：写入末根收盘价、生成时间与最后 K 线开盘时间，
-/// 同时把恢复状态标回 live 并清空错误信息。
-/// WHERE 要求既有检查点严格早于本次开盘时间，空值按 1970 处理，因此并发实例不会让进度倒退。
-/// 影响行数不为 1 时返回 `AlreadyAdvanced`，此刻 Mongo 蜡烛已经写入且不做任何回滚。
+/// 以旧检查点和 active version 为乐观条件推进连续历史扫描位置。
+///
+/// 该更新刻意不写 `current_price`、`last_tick_at` 或 `last_generated_at`，避免历史补偿回退实时行情；
+/// 完全追到最近闭合分钟时标记 live，否则保留 catching_up 供后续轮次继续。更新再次约束策略仍启用、
+/// 运行状态仍可恢复以及 active version/旧检查点均未变化；暂停、改版或并发推进时返回
+/// `AlreadyAdvanced`，Mongo 已写根可由同键与后续差集安全收敛。
 async fn update_recovery_checkpoint(
     pool: &Pool<MySql>,
     strategy_id: u64,
+    active_version: i32,
+    previous_open_time: DateTime<Utc>,
     last_open_time: DateTime<Utc>,
-    current_price: &str,
+    fully_caught_up: bool,
 ) -> Result<(), KlineRecoveryCheckpointError> {
-    let current_price = parse_decimal(current_price)?;
     let result = sqlx::query(
-        r#"UPDATE strategy_runs
-           SET current_price = ?,
-               last_generated_at = ?,
-               last_kline_open_time = ?,
-               recovery_status = 'live',
-               error_message = NULL
-           WHERE strategy_id = ?
-             AND COALESCE(last_kline_open_time, last_generated_at, '1970-01-01 00:00:00') < ?"#,
+        r#"UPDATE strategy_runs runs
+           INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id
+           SET runs.last_kline_open_time = ?,
+               runs.recovery_status = ?,
+               runs.error_message = NULL
+           WHERE runs.strategy_id = ?
+             AND strategies.status = 'active'
+             AND runs.run_status IN ('running', 'live', 'catching_up')
+             AND runs.active_version = ?
+             AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) = ?"#,
     )
-    .bind(current_price)
     .bind(last_open_time.naive_utc())
-    .bind(last_open_time.naive_utc())
+    .bind(if fully_caught_up {
+        "live"
+    } else {
+        "catching_up"
+    })
     .bind(strategy_id)
-    .bind(last_open_time.naive_utc())
+    .bind(active_version)
+    .bind(previous_open_time.naive_utc())
     .execute(pool)
     .await
     .map_err(AppError::from)?;
@@ -914,22 +1060,29 @@ async fn update_recovery_checkpoint(
     Ok(())
 }
 
-/// 把策略的恢复状态置为 failed 并记录截断到 1024 字符的原因，使其在人工处理前不再被扫描选中。
-/// 与检查点更新不同，这里没有乐观条件，会无条件覆盖该策略上一次留下的失败信息。
-/// 本函数吞掉自身的数据库错误并只记告警，避免在失败处理路径上再次中断整轮扫描。
-async fn mark_recovery_failed(pool: &Pool<MySql>, strategy_id: u64, error_message: &str) {
+/// 把仍指向本轮版本与检查点的策略恢复状态置为 failed，并记录截断到 1024 字符的原因。
+/// 扫描查询不排除 failed，因此短暂故障在下一轮仍会重试；乐观条件保证并发成功、暂停或改版后，
+/// 迟到的失败不会覆盖更新状态。记录失败本身的数据库错误只写告警，不中断整轮扫描。
+async fn mark_recovery_failed(pool: &Pool<MySql>, row: &DueKlineRecoveryRun, error_message: &str) {
     let truncated = error_message.chars().take(1024).collect::<String>();
     if let Err(error) = sqlx::query(
-        r#"UPDATE strategy_runs
-           SET recovery_status = 'failed', error_message = ?
-           WHERE strategy_id = ?"#,
+        r#"UPDATE strategy_runs runs
+           INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id
+           SET runs.recovery_status = 'failed', runs.error_message = ?
+           WHERE runs.strategy_id = ?
+             AND strategies.status = 'active'
+             AND runs.run_status IN ('running', 'live', 'catching_up')
+             AND runs.active_version = ?
+             AND COALESCE(runs.last_kline_open_time, runs.last_generated_at, strategies.start_time) = ?"#,
     )
     .bind(truncated)
-    .bind(strategy_id)
+    .bind(row.strategy_id)
+    .bind(row.active_version)
+    .bind(row.checkpoint_open_time.naive_utc())
     .execute(pool)
     .await
     {
-        warn!(strategy_id, %error, "标记 K 线恢复错误失败");
+        warn!(strategy_id = row.strategy_id, %error, "标记 K 线恢复错误失败");
     }
 }
 

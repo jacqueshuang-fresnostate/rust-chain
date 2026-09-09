@@ -16,7 +16,8 @@ pub use cache::{
 };
 pub use persistence::kline_collection_name;
 pub(crate) use persistence::{
-    add_user_market_favorite, list_active_markets, list_klines, list_recent_trades,
-    list_user_market_favorites, load_cached_depth, load_cached_kline, load_cached_ticker,
-    market_symbol_is_listed, market_symbol_is_synthetic, remove_user_market_favorite,
+    add_user_market_favorite, list_active_markets, list_compatible_one_minute_kline_open_times,
+    list_klines, list_one_minute_kline_open_times, list_recent_trades, list_user_market_favorites,
+    load_cached_depth, load_cached_kline, load_cached_ticker, market_symbol_is_listed,
+    market_symbol_is_synthetic, remove_user_market_favorite,
 };

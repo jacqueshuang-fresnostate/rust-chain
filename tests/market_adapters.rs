@@ -297,17 +297,23 @@ fn adapter_snapshots_build_cache_entries_and_mongo_kline_upsert() {
     );
     assert_eq!(
         mongo_write.upsert_update(),
-        doc! { "$set": {
-            "interval": "5m",
-            "open_time": BsonDateTime::from_millis(kline.open_time().timestamp_millis()),
-            "open": "3000",
-            "high": "3010",
-            "low": "2990",
-            "close": "3005",
-            "volume": "88",
-            "source": "htx",
-            "updated_at": BsonDateTime::from_millis(kline.observed_at().timestamp_millis()),
-        }}
+        doc! {
+            "$set": {
+                "interval": "5m",
+                "open_time": BsonDateTime::from_millis(kline.open_time().timestamp_millis()),
+                "open": "3000",
+                "high": "3010",
+                "low": "2990",
+                "close": "3005",
+                "volume": "88",
+                "source": "htx",
+                "updated_at": BsonDateTime::from_millis(kline.observed_at().timestamp_millis()),
+            },
+            "$unset": {
+                "automatic_recovery_strategy_id": "",
+                "automatic_recovery_strategy_version": "",
+            },
+        }
     );
 }
 

@@ -79,3 +79,66 @@ fn audit_log_time_range_rejects_an_inverted_window() {
         "validation error: created_from must not be later than created_to"
     );
 }
+
+fn financial_audit_record()
+-> crate::modules::admin::infrastructure::AdminFinancialIdempotencyAuditRecord {
+    crate::modules::admin::infrastructure::AdminFinancialIdempotencyAuditRecord {
+        duplicate_idempotency_groups: 0,
+        missing_idempotency_keys: 0,
+        orphan_ledger_entries: 0,
+        expired_seconds_orders: 0,
+        expired_prediction_orders: 0,
+        pending_loan_orders: 3,
+        pending_new_coin_subscriptions: 2,
+    }
+}
+
+#[test]
+fn financial_idempotency_audit_treats_business_queues_as_informational() {
+    let response = build_admin_financial_idempotency_audit(financial_audit_record(), Utc::now());
+
+    assert_eq!(response.status, "balanced");
+    assert_eq!(response.pending_loan_orders, 3);
+    assert_eq!(response.pending_new_coin_subscriptions, 2);
+    assert_eq!(response.anomaly_count, 0);
+    assert!(response.anomalies.is_empty());
+}
+
+#[test]
+fn financial_idempotency_audit_reports_every_integrity_failure() {
+    let mut record = financial_audit_record();
+    record.duplicate_idempotency_groups = 1;
+    record.missing_idempotency_keys = 2;
+    record.orphan_ledger_entries = 3;
+    record.expired_seconds_orders = 4;
+    record.expired_prediction_orders = 5;
+
+    let response = build_admin_financial_idempotency_audit(record, Utc::now());
+
+    assert_eq!(response.status, "attention");
+    assert_eq!(response.anomaly_count, 5);
+    assert!(
+        response
+            .anomalies
+            .iter()
+            .any(|value| value.contains("幂等键"))
+    );
+    assert!(
+        response
+            .anomalies
+            .iter()
+            .any(|value| value.contains("钱包流水"))
+    );
+    assert!(
+        response
+            .anomalies
+            .iter()
+            .any(|value| value.contains("秒合约"))
+    );
+    assert!(
+        response
+            .anomalies
+            .iter()
+            .any(|value| value.contains("竞猜"))
+    );
+}

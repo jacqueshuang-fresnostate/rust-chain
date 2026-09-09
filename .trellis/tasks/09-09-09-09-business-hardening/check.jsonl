@@ -1,2 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
 {"file": ".trellis/spec/admin/ui-system.md", "reason": "后台权限和中文规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端架构、测试与质量门禁"}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "CI 真实依赖及发布门禁"}
+{"file": ".trellis/spec/backend/synthetic-market-kline.md", "reason": "行情断流与恢复回归检查"}
+{"file": ".trellis/spec/backend/new-coin-manual-distribution.md", "reason": "新币对账守恒与幂等验收"}
+{"file": ".trellis/spec/admin/chinese-presentation.md", "reason": "中文文案与未知枚举保底检查"}
+{"file": ".trellis/spec/admin/resource-response-contract.md", "reason": "前后端响应字段对齐检查"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "存储、应用、API 与后台数据流审查"}
+{"file": ".trellis/spec/backend/business-governance-audits.md", "reason": "资金幂等、行情健康、新币对账、权限审计与 CI 门禁合同"}

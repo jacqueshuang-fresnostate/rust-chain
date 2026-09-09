@@ -78,6 +78,78 @@ pub(crate) fn normalize_admin_dashboard_environment(app_env: &str) -> &'static s
     }
 }
 
+/// 把存储层的审计计数转换为稳定的后台治理响应。
+///
+/// 待审核贷款和待人工派发新币是业务队列，只展示计数而不影响健康状态；
+/// 重复/缺失幂等键、孤儿流水和逾期未结算订单才会将状态标记为 `attention`。
+pub(crate) fn build_admin_financial_idempotency_audit(
+    record: crate::modules::admin::infrastructure::AdminFinancialIdempotencyAuditRecord,
+    checked_at: DateTime<Utc>,
+) -> crate::modules::admin::presentation::AdminFinancialIdempotencyAuditResponse {
+    let mut anomalies = Vec::new();
+    if record.duplicate_idempotency_groups > 0 {
+        anomalies.push(format!(
+            "存在重复幂等键分组（{} 组）",
+            record.duplicate_idempotency_groups
+        ));
+    }
+    if record.missing_idempotency_keys > 0 {
+        anomalies.push(format!(
+            "存在缺失或空白幂等键（{} 条）",
+            record.missing_idempotency_keys
+        ));
+    }
+    if record.orphan_ledger_entries > 0 {
+        anomalies.push(format!(
+            "存在无法关联业务对象的钱包流水（{} 条）",
+            record.orphan_ledger_entries
+        ));
+    }
+    if record.expired_seconds_orders > 0 {
+        anomalies.push(format!(
+            "存在已过期但未结算的秒合约订单（{} 笔）",
+            record.expired_seconds_orders
+        ));
+    }
+    if record.expired_prediction_orders > 0 {
+        anomalies.push(format!(
+            "存在市场已结束但仍未结算的竞猜订单（{} 笔）",
+            record.expired_prediction_orders
+        ));
+    }
+
+    crate::modules::admin::presentation::AdminFinancialIdempotencyAuditResponse {
+        status: if anomalies.is_empty() {
+            "balanced".to_owned()
+        } else {
+            "attention".to_owned()
+        },
+        duplicate_idempotency_groups: record.duplicate_idempotency_groups,
+        missing_idempotency_keys: record.missing_idempotency_keys,
+        orphan_ledger_entries: record.orphan_ledger_entries,
+        expired_seconds_orders: record.expired_seconds_orders,
+        expired_prediction_orders: record.expired_prediction_orders,
+        pending_loan_orders: record.pending_loan_orders,
+        pending_new_coin_subscriptions: record.pending_new_coin_subscriptions,
+        anomaly_count: anomalies.len() as i64,
+        anomalies,
+        checked_at,
+    }
+}
+
+/// 读取资金/结算幂等与钱包流水完整性快照。
+/// 本用例不修改任何订单、余额或状态，重复调用只返回当前计数。
+pub(crate) async fn get_admin_financial_idempotency_audit(
+    pool: Option<Pool<MySql>>,
+) -> AppResult<crate::modules::admin::presentation::AdminFinancialIdempotencyAuditResponse> {
+    let pool = admin_mysql_pool(pool)?;
+    let checked_at = Utc::now();
+    let record =
+        crate::modules::admin::infrastructure::load_admin_financial_idempotency_audit(&pool)
+            .await?;
+    Ok(build_admin_financial_idempotency_audit(record, checked_at))
+}
+
 /// 按管理员、动作、目标类型、目标 ID 和审计时间范围筛选后台审计日志，并返回倒序分页记录与总数。
 /// 文本筛选去除空白，时间范围使用包含边界且开始时间不得晚于结束时间；
 /// limit 裁剪到 1～100、offset 最大 100000，读取审计日志本身不会再生成审计。

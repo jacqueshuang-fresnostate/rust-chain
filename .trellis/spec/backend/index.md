@@ -41,6 +41,7 @@ the feature contract for the business context being modified.
 | [Realtime WebSocket Contracts](./realtime-websockets.md) | Business-scoped public aliases, exact-user private refresh hints, and REST reconciliation boundaries | Active |
 | [Agent-Routed Online Support Contracts](./online-support.md) | Durable support messages, exact owning-agent isolation, admin fallback, reassignment, unread, pagination, and refresh contracts | Active |
 | [Synthetic Market and K-line Recovery Contracts](./synthetic-market-kline.md) | Deterministic strategy ticker/K-line generation, active-version leases, authoritative 1m aggregation, and admin-only historical recovery | Active |
+| [Business Governance Audit Contracts](./business-governance-audits.md) | Financial idempotency, market health/recovery, new-coin reconciliation, Admin permission/audit parity, and CI dependency gates | Active |
 | [Default Platform Market Generation](./default-market-generation.md) | Pair-scoped baseline generation, coordinated handoff, immutable parameters, pause-all and default-source capability | Active |
 | [New Coin Mobile Contract](./new-coin-mobile-contract.md) | Public project purchase-pair exposure and authenticated mobile lifecycle actions | Active |
 | [Manual New Coin Distribution](./new-coin-manual-distribution.md) | Subscription freeze, final Admin allocation, partial refunds, replay and listing readiness | Active |

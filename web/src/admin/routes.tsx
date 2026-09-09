@@ -62,6 +62,11 @@ export const adminRoutes: RouteObject[] = [
     async () => (await import('./config-center/ConfigCenterPage')).ConfigCenterPage
   ),
   guardedLazyRoute(
+    'governance/financial-idempotency',
+    async () =>
+      (await import('./governance/FinancialIdempotencyPage')).FinancialIdempotencyPage
+  ),
+  guardedLazyRoute(
     'support',
     async () => (await import('./support/AdminSupportPage')).AdminSupportPage
   ),
@@ -112,6 +117,10 @@ export const adminRoutes: RouteObject[] = [
   resourceRoute('spot/trades', 'spotTrades'),
   resourceRoute('new-coins/projects', 'newCoinProjects'),
   guardedLazyRoute('new-coins/projects/:projectId', async () => (await import('./new-coins/NewCoinProjectPage')).NewCoinProjectPage),
+  guardedLazyRoute(
+    'new-coins/reconciliation/:projectId',
+    async () => (await import('./new-coins/NewCoinReconciliationPage')).NewCoinReconciliationPage
+  ),
   guardedLazyRoute('new-coins/actions', async () => (await import('./actions/NewCoinActions')).NewCoinActions),
   resourceRoute('new-coins/subscriptions', 'newCoinSubscriptions'),
   resourceRoute('new-coins/distributions', 'newCoinDistributions'),

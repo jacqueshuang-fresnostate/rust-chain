@@ -1,7 +1,7 @@
 //! 新币策略模拟行情实时 worker。
 //!
-//! 每轮只读取并生成“当前 UTC 分钟”这一槽位，不从 `strategy_runs` 检查点向前扫描；因此进程重启
-//! 只恢复当前实时行情，停机历史缺口继续留给管理员显式预览、确认并调用 `kline_recovery` 复用入口。
+//! 每轮只读取并生成“当前 UTC 分钟”这一槽位，不从 `strategy_runs` 检查点向前扫描；进程重启后
+//! 闭合历史缺口由独立 `market_health` worker 有界、幂等补偿，管理员入口继续负责指定范围预览与重建高周期。
 
 use std::{collections::HashMap, str::FromStr, sync::OnceLock};
 
@@ -807,6 +807,51 @@ async fn load_active_strategies(
     .map_err(AppError::from)
 }
 
+/// 按策略主键读取运行检查点绑定的不可变版本，并转换成与实时生成完全相同的配置。
+///
+/// 自动 K 线断线补偿调用此入口，避免另写一套线性价格算法而与后台预览/实时 OHLCV 漂移。
+/// 查询要求策略、交易对和 active version 关系完整，但不要求当前处于实时租约时段；旧版本 JSON
+/// 缺少 `nodes` 时仍复用关系表回退。函数只读 MySQL，不获取实时租约、不改变检查点。
+pub(crate) async fn load_strategy_config_for_recovery(
+    pool: &Pool<MySql>,
+    strategy_id: u64,
+) -> AppResult<(i32, SyntheticMarketConfig)> {
+    let row = sqlx::query_as::<_, SyntheticStrategyRow>(
+        r#"SELECT pairs.id AS pair_id, strategies.id AS strategy_id,
+                  pairs.symbol,
+                  pairs.price_precision,
+                  pairs.qty_precision,
+                  strategies.start_price,
+                  strategies.target_price,
+                  strategies.start_time,
+                  strategies.end_time,
+                  strategies.volatility,
+                  strategies.volume_min,
+                  strategies.volume_max,
+                  versions.version,
+                  versions.seed,
+                  versions.config_json
+           FROM market_strategies strategies
+           INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id
+           INNER JOIN strategy_runs runs ON runs.strategy_id = strategies.id
+           INNER JOIN strategy_versions versions
+                   ON versions.strategy_id = strategies.id
+                  AND versions.version = runs.active_version
+           WHERE strategies.id = ?
+             AND strategies.status = 'active'
+             AND pairs.status = 'active'
+             AND pairs.market_type IN ('strategy', 'internal')
+             AND runs.run_status IN ('running', 'live', 'catching_up')"#,
+    )
+    .bind(strategy_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let version = row.version;
+    let relation_nodes = load_strategy_nodes(pool, row.strategy_id).await?;
+    Ok((version, strategy_config(&row, relation_nodes)?))
+}
+
 /// 用单条 UPDATE 完成租约 CAS：只有策略仍活跃、运行状态合法、当前落在起止区间内，
 /// 且租约为空、已过期或属于自己，同时 `active_version` 仍等于扫描时读到的版本，才写入新的 owner 与到期时间。
 /// 影响行数恰为 1 表示本进程取得租约，否则说明版本已切换或已被其他实例抢占，调用方必须跳过该策略。
@@ -1005,8 +1050,9 @@ fn stale_market_write_conflict(channel: &str) -> AppError {
     ))
 }
 
-/// 在本轮全部行情副作用成功后推进策略检查点：写入最新价、最后 tick 时间和最后 K 线开盘时间，
-/// 把恢复状态标回 live、清空 `error_message`，同时把租约续期到本轮计算出的到期时刻。
+/// 在本轮全部行情副作用成功后推进策略检查点：总是写入最新价、最后 tick/生成时间并续租；
+/// 只有原历史检查点与当前分钟至多相差一根时才跟随实时分钟推进。更大断层保留原位置并标记
+/// `catching_up`，使独立历史 worker 能继续发现缺口，而不被重启后的当前分钟覆盖恢复游标。
 /// WHERE 条件同时约束 owner、租约未过期、运行状态与 `active_version`，并要求既有的 `last_tick_at`
 /// 和 `last_kline_open_time` 都不晚于本次值，因此迟到的旧计划无法让检查点倒退。
 /// 影响行数不为 1 一律按冲突返回；此时行情可能已经写入并广播，检查点留待后续轮次重新推进。
@@ -1018,22 +1064,33 @@ async fn update_checkpoint(
     lease_expires_at: DateTime<Utc>,
 ) -> AppResult<()> {
     let result = sqlx::query(
-        r#"UPDATE strategy_runs
-           SET active_version = ?,
-               current_price = ?,
-               last_tick_at = ?,
-               last_generated_at = ?,
-               last_kline_open_time = ?,
-               recovery_status = 'live',
-               error_message = NULL,
-               lease_expires_at = ?
-           WHERE strategy_id = ?
-             AND lease_owner = ?
-             AND lease_expires_at >= ?
-             AND run_status IN ('running', 'live')
-             AND active_version = ?
-             AND (last_tick_at IS NULL OR last_tick_at <= ?)
-             AND (last_kline_open_time IS NULL OR last_kline_open_time <= ?)"#,
+        r#"UPDATE strategy_runs runs
+           INNER JOIN market_strategies strategies ON strategies.id = runs.strategy_id
+           SET runs.active_version = ?,
+               runs.current_price = ?,
+               runs.last_tick_at = ?,
+               runs.last_generated_at = ?,
+               runs.recovery_status = CASE
+                 WHEN COALESCE(runs.last_kline_open_time, strategies.start_time)
+                        < DATE_SUB(?, INTERVAL 1 MINUTE)
+                 THEN 'catching_up'
+                 ELSE 'live'
+               END,
+               runs.last_kline_open_time = CASE
+                 WHEN runs.last_kline_open_time IS NULL THEN LEAST(strategies.start_time, ?)
+                 WHEN runs.last_kline_open_time < DATE_SUB(?, INTERVAL 1 MINUTE)
+                   THEN runs.last_kline_open_time
+                 ELSE ?
+               END,
+               runs.error_message = NULL,
+               runs.lease_expires_at = ?
+           WHERE runs.strategy_id = ?
+             AND runs.lease_owner = ?
+             AND runs.lease_expires_at >= ?
+             AND runs.run_status IN ('running', 'live')
+             AND runs.active_version = ?
+             AND (runs.last_tick_at IS NULL OR runs.last_tick_at <= ?)
+             AND (runs.last_kline_open_time IS NULL OR runs.last_kline_open_time <= ?)"#,
     )
     .bind(i32::try_from(plan.version()).map_err(|_| {
         AppError::Validation("synthetic strategy version exceeds database range".to_owned())
@@ -1041,6 +1098,9 @@ async fn update_checkpoint(
     .bind(plan.ticker().last_price())
     .bind(observed_at.naive_utc())
     .bind(observed_at.naive_utc())
+    .bind(plan.kline().open_time().naive_utc())
+    .bind(plan.kline().open_time().naive_utc())
+    .bind(plan.kline().open_time().naive_utc())
     .bind(plan.kline().open_time().naive_utc())
     .bind(lease_expires_at.naive_utc())
     .bind(plan.strategy_id())

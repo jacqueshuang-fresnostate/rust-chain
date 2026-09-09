@@ -23,6 +23,7 @@ const ADMIN_PERMISSION_RESOURCES: &[&str] = &[
     "earn.products",
     "earn.subscriptions",
     "governance.changes",
+    "governance.financial",
     "governance.roles",
     "loan.orders",
     "loan.products",
@@ -161,13 +162,31 @@ fn invalid_permissions() -> AppError {
     AppError::Internal("admin role permissions contain an invalid value".to_owned())
 }
 
+/// 只把完整路由段视为权限前缀；例如 `/users/7` 命中 `/users`，而 `/users-export`
+/// 必须回落到 `admin.unmapped`，避免未来新增相似路径时继承了错误资源权限。
+fn path_matches_permission_prefix(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|remainder| remainder.starts_with('/'))
+}
+
 fn permission_resource(path: &str) -> Option<&'static str> {
-    let segments = path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
-    if segments.len() == 3
-        && segments[0] == "new-coins"
-        && segments[2] == "reconciliation"
-    {
-        return Some("new_coin.distributions");
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.len() == 3 && segments[0] == "new-coins" && segments[2] == "reconciliation" {
+        return Some(
+            if segments[1]
+                .parse::<u64>()
+                .is_ok_and(|project_id| project_id > 0)
+            {
+                "new_coin.distributions"
+            } else {
+                "admin.unmapped"
+            },
+        );
     }
 
     let mappings = [
@@ -179,6 +198,7 @@ fn permission_resource(path: &str) -> Option<&'static str> {
         ("/access/permissions", "governance.roles"),
         ("/config-center", "config_center"),
         ("/config-change-requests", "governance.changes"),
+        ("/governance/financial-idempotency", "governance.financial"),
         ("/seconds-contracts/products", "seconds.products"),
         ("/seconds-contracts/orders", "seconds.orders"),
         ("/wallet/withdrawals", "wallet.withdrawals"),
@@ -242,9 +262,9 @@ fn permission_resource(path: &str) -> Option<&'static str> {
         ("/events", "system.events"),
     ];
 
-    mappings
-        .iter()
-        .find_map(|(prefix, resource)| path.starts_with(prefix).then_some(*resource))
+    mappings.iter().find_map(|(prefix, resource)| {
+        path_matches_permission_prefix(path, prefix).then_some(*resource)
+    })
 }
 
 fn operational_action(path: &str) -> Option<&'static str> {

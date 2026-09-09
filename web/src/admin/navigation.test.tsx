@@ -37,6 +37,7 @@ describe('admin navigation registry', () => {
     );
     const users = adminNavItems.find((item) => item.label === '用户与代理');
     const prediction = adminNavItems.find((item) => item.label === '竞猜管理');
+    const risk = adminNavItems.find((item) => item.label === '风控中心');
     const system = adminNavItems.find((item) => item.label === '系统配置');
     const account = adminNavItems.find((item) => item.label === '我的账号');
 
@@ -50,6 +51,14 @@ describe('admin navigation registry', () => {
       expect.arrayContaining([
         expect.objectContaining({ label: '竞猜配置', path: '/admin/prediction/settings' }),
         expect.objectContaining({ label: '同步运行', path: '/admin/prediction/sync' })
+      ])
+    );
+    expect(risk?.children).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: '资金与结算审计',
+          path: '/admin/governance/financial-idempotency'
+        })
       ])
     );
     expect(system?.children?.some((item) => item.path === '/admin/system/two-factor')).toBe(false);

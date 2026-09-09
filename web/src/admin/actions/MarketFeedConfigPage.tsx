@@ -66,14 +66,31 @@ type MarketFeedConfig = {
 
 type MarketFeedRuntimeStatus = {
   applied_version?: number | null;
+  generation?: number;
   intervals: string[];
   last_reload_error?: string | null;
   last_reload_status?: string | null;
   providers: string[];
+  ready?: boolean;
   symbols: string[];
 };
 
+type MarketFeedHealth = {
+  checked_at: number;
+  configured_symbols: number;
+  healthy: boolean;
+  healthy_symbols: number;
+  kline_gap_count: number;
+  kline_recovery_failed_count: number;
+  last_observed_at: number | null;
+  last_ingested_at: number | null;
+  stale_after_seconds: number;
+  stale_symbols: string[];
+  status: 'degraded' | 'healthy' | 'not_configured' | 'stale';
+};
+
 type MarketFeedStatusResponse = {
+  health: MarketFeedHealth;
   runtime: MarketFeedRuntimeStatus;
   saved_config: MarketFeedConfig | null;
 };
@@ -221,6 +238,7 @@ async function submitAction(label: string, request: () => Promise<unknown>) {
 
 export function MarketFeedConfigPage() {
   const [config, setConfig] = useState<MarketFeedConfig | null>(null);
+  const [health, setHealth] = useState<MarketFeedHealth | null>(null);
   const [runtime, setRuntime] = useState<MarketFeedRuntimeStatus | null>(null);
   const [credentials, setCredentials] = useState<MarketSourceCredential[]>([]);
   const [configForm, setConfigForm] = useState<ConfigForm>(defaultConfigForm);
@@ -250,6 +268,19 @@ export function MarketFeedConfigPage() {
       { key: '运行K线周期', value: joinList(runtime?.intervals) }
     ],
     [config, runtime]
+  );
+  const healthData = useMemo(
+    () => [
+      { key: '行情健康状态', value: <StatusTag value={health?.status ?? 'not_configured'} /> },
+      { key: '健康交易对', value: health ? `${health.healthy_symbols} / ${health.configured_symbols}` : '-' },
+      { key: '最近行情事件', value: <TimestampText value={health?.last_observed_at ?? null} /> },
+      { key: '最近数据库摄取', value: <TimestampText value={health?.last_ingested_at ?? null} /> },
+      { key: '断流判定阈值', value: health ? `${health.stale_after_seconds} 秒` : '-' },
+      { key: '待补 1m K线策略', value: health?.kline_gap_count ?? '-' },
+      { key: 'K线补偿失败任务', value: health?.kline_recovery_failed_count ?? '-' },
+      { key: '健康检查时间', value: <TimestampText value={health?.checked_at ?? null} /> }
+    ],
+    [health]
   );
 
   function toggleSubscription(row: SubscriptionRow) {
@@ -331,6 +362,7 @@ export function MarketFeedConfigPage() {
         apiRequest<MarketSourceCredentialsResponse>('/admin/api/v1/market-feed/credentials')
       ]);
       setConfig(status.saved_config);
+      setHealth(status.health);
       setRuntime(status.runtime);
       setCredentials(credentialList.credentials);
       if (status.saved_config) {
@@ -483,6 +515,24 @@ export function MarketFeedConfigPage() {
             >
               <Title heading={4}>运行状态</Title>
               <Descriptions align="plain" column={3} data={runtimeData} layout="horizontal" />
+              <Title heading={4}>行情健康与断线补偿</Title>
+              <Descriptions align="plain" column={3} data={healthData} layout="horizontal" />
+              {health?.stale_symbols.length ? (
+                <Banner
+                  closeIcon={null}
+                  description={`以下交易对超过 ${health.stale_after_seconds} 秒没有新的上游行情事件：${health.stale_symbols.join('、')}`}
+                  icon={null}
+                  type="warning"
+                />
+              ) : null}
+              {health && health.kline_recovery_failed_count > 0 ? (
+                <Banner
+                  closeIcon={null}
+                  description={`存在 ${health.kline_recovery_failed_count} 个 K 线补偿失败项，请在行情策略恢复记录中核查。`}
+                  icon={null}
+                  type="danger"
+                />
+              ) : null}
               <div data-testid="runtime-providers">
                 <Space spacing={8}>
                   <Text strong>当前启动 providers</Text>

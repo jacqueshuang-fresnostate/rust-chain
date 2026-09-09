@@ -80,6 +80,42 @@ fn recovered_kline_builds_symbol_scoped_upsert_documents() {
 }
 
 #[test]
+fn automatic_recovery_filter_never_matches_an_ordinary_or_manual_candle() {
+    use mongodb::bson::{DateTime as BsonDateTime, doc};
+
+    let open_time = Utc.with_ymd_and_hms(2026, 5, 26, 10, 1, 0).unwrap();
+    let observed_at = open_time + TimeDelta::minutes(2);
+    let provenance = AutomaticRecoveryProvenance::new(7, 3).unwrap();
+    let filter = automatic_recovery_write_filter("1m", open_time, observed_at, Some(provenance));
+
+    assert_eq!(
+        filter.get_str("interval").unwrap(),
+        "1m",
+        "the domain key remains part of the race guard"
+    );
+    assert_eq!(
+        filter.get_datetime("open_time").unwrap(),
+        &BsonDateTime::from_millis(open_time.timestamp_millis())
+    );
+    let alternatives = filter.get_array("$or").unwrap();
+    assert_eq!(alternatives.len(), 2);
+    for alternative in alternatives {
+        let document = alternative.as_document().unwrap();
+        assert!(document.contains_key("automatic_recovery_strategy_id"));
+        assert!(document.contains_key("automatic_recovery_strategy_version"));
+    }
+
+    let manual_filter = automatic_recovery_write_filter("1m", open_time, observed_at, None);
+    assert_eq!(
+        manual_filter,
+        doc! {
+            "interval": "1m",
+            "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
+        }
+    );
+}
+
+#[test]
 fn recovery_gap_aligns_open_times_and_caps_batch_size() {
     let checkpoint = Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 30).unwrap();
     let now = checkpoint + TimeDelta::minutes(800);
@@ -95,6 +131,35 @@ fn recovery_gap_aligns_open_times_and_caps_batch_size() {
         gap.missing_open_times().last().copied().unwrap(),
         Utc.with_ymd_and_hms(2026, 5, 29, 18, 20, 0).unwrap()
     );
+}
+
+#[test]
+fn automatic_recovery_scan_includes_checkpoint_and_caps_work() {
+    let checkpoint = Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 30).unwrap();
+    let recovery_until = checkpoint + TimeDelta::minutes(800);
+
+    let slots = recovery_scan_open_times(checkpoint, recovery_until);
+
+    assert_eq!(slots.len(), MAX_CANDLES_PER_STRATEGY_RUN);
+    assert_eq!(
+        slots.first().copied(),
+        Some(Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 0).unwrap())
+    );
+    assert_eq!(
+        slots.last().copied(),
+        Some(Utc.with_ymd_and_hms(2026, 5, 29, 18, 19, 0).unwrap())
+    );
+    assert_eq!(
+        recovery_scan_open_times(recovery_until, recovery_until),
+        [DateTime::from_timestamp(recovery_until.timestamp().div_euclid(60) * 60, 0).unwrap()]
+    );
+}
+
+#[test]
+fn automatic_recovery_skips_checkpoint_after_final_slot() {
+    let final_open = Utc.with_ymd_and_hms(2026, 5, 29, 10, 0, 0).unwrap();
+
+    assert!(recovery_scan_open_times(final_open + TimeDelta::minutes(1), final_open).is_empty());
 }
 
 #[test]

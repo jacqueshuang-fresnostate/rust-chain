@@ -6,6 +6,10 @@
 //! 图片上传是唯一使用 multipart 的入口，并单独放宽了请求体大小上限；仪表盘则会额外汇集行情监督器运行快照。
 
 use super::*;
+use crate::modules::admin::{
+    application::get_admin_financial_idempotency_audit as get_financial_idempotency_audit_use_case,
+    presentation::AdminFinancialIdempotencyAuditResponse,
+};
 
 /// 构建仪表盘、审计、SMTP、上传及平台品牌配置的后台传输路由。
 ///
@@ -17,6 +21,10 @@ use super::*;
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_admin_dashboard))
+        .route(
+            "/governance/financial-idempotency",
+            get(get_financial_idempotency_audit),
+        )
         .route(
             "/smtp/config",
             get(get_smtp_config).patch(save_smtp_config_route),
@@ -243,6 +251,17 @@ async fn get_admin_dashboard(
     let runtime = load_market_feed_runtime(&state).await;
     Ok(Json(
         get_admin_dashboard_use_case(state.mysql.clone(), runtime, &state.settings.app_env).await?,
+    ))
+}
+
+/// 处理 GET /governance/financial-idempotency，返回资金订单幂等键、流水关联和
+/// 逾期未结算数量。该路由 `governance.financial.read` 单独授权，查询本身不产生资金或审计写入。
+async fn get_financial_idempotency_audit(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+) -> AppResult<Json<AdminFinancialIdempotencyAuditResponse>> {
+    Ok(Json(
+        get_financial_idempotency_audit_use_case(state.mysql.clone()).await?,
     ))
 }
 

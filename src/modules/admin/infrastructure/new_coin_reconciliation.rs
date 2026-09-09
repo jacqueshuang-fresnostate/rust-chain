@@ -1,6 +1,6 @@
 //! 新币派发/退款批次对账查询。
 //!
-//! 这里不执行任何补发、退款或钱包写入。所有聚合在同一个只读事务快照中读取，应用层
+//! 这里不执行任何补发、退款或钱包写入。所有聚合在同一个只执行 `SELECT` 的事务快照中读取，应用层
 //! 只负责把守恒差额转换成可读异常。这样后台刷新对账不会改变新币生命周期，也不会与
 //! 正在进行的人工派发共享写锁。
 
@@ -63,7 +63,7 @@ struct ReconciliationDistributionRow {
 
 /// 在单个一致性快照中读取项目及其申购、派发、退款和钱包流水汇总。
 ///
-/// 对账查询使用 `READ ONLY` 事务并以项目主键读取；聚合字段通过 `CAST(... AS DECIMAL)`
+/// 对账查询只在事务中执行 `SELECT` 并以项目主键读取；聚合字段通过 `CAST(... AS DECIMAL)`
 /// 保持与业务金额相同的十进制精度。钱包流水只统计 `new_coin_distribution` 的正向腿，
 /// 因而锁仓和可用余额两种入账路径都能纳入同一总量，而退款收据（数量为零）不会虚增发行量。
 pub(crate) async fn load_admin_new_coin_reconciliation(
@@ -106,14 +106,26 @@ pub(crate) async fn load_admin_new_coin_reconciliation(
 
     let distributions = sqlx::query_as::<_, ReconciliationDistributionRow>(
         r#"SELECT CAST(COALESCE(SUM(distributions.quantity), 0) AS DECIMAL(38,18)) AS distribution_quantity,
-                  CAST(COALESCE(SUM(CASE WHEN distributions.subscription_id IS NOT NULL
-                                         THEN distributions.quantity ELSE 0 END), 0) AS DECIMAL(38,18)) AS linked_distribution_quantity,
+                  CAST(COALESCE(SUM(CASE
+                      WHEN subscriptions.id IS NOT NULL
+                       AND subscriptions.project_id = distributions.project_id
+                       AND subscriptions.user_id = distributions.user_id
+                       AND distributions.asset_id = projects.asset_id
+                       AND (projects.quote_asset_id IS NULL OR subscriptions.quote_asset = projects.quote_asset_id)
+                      THEN distributions.quantity ELSE 0 END), 0) AS DECIMAL(38,18)) AS linked_distribution_quantity,
                   CAST(COALESCE(SUM(CASE WHEN distributions.subscription_id IS NULL
                                          THEN distributions.quantity ELSE 0 END), 0) AS DECIMAL(38,18)) AS unlinked_distribution_quantity,
-                  CAST(COALESCE(SUM(CASE WHEN distributions.subscription_id IS NOT NULL
-                                              AND (subscriptions.id IS NULL OR subscriptions.project_id <> distributions.project_id)
-                                         THEN 1 ELSE 0 END), 0) AS SIGNED) AS invalid_subscription_link_count
+                  CAST(COALESCE(SUM(CASE
+                      WHEN distributions.subscription_id IS NOT NULL
+                       AND (subscriptions.id IS NULL
+                            OR subscriptions.project_id <> distributions.project_id
+                            OR subscriptions.user_id <> distributions.user_id
+                            OR distributions.asset_id <> projects.asset_id
+                            OR (projects.quote_asset_id IS NOT NULL AND subscriptions.quote_asset <> projects.quote_asset_id))
+                      THEN 1 ELSE 0 END), 0) AS SIGNED) AS invalid_subscription_link_count
            FROM new_coin_distributions distributions
+           INNER JOIN new_coin_projects projects
+             ON projects.id = distributions.project_id
            LEFT JOIN new_coin_subscriptions subscriptions
              ON subscriptions.id = distributions.subscription_id
            WHERE distributions.project_id = ?"#,
@@ -130,6 +142,8 @@ pub(crate) async fn load_admin_new_coin_reconciliation(
            INNER JOIN new_coin_distributions distributions
              ON distributions.idempotency_key = ledger.ref_id
             AND distributions.project_id = ?
+            AND distributions.user_id = ledger.user_id
+            AND distributions.asset_id = ledger.asset_id
            WHERE ledger.ref_type = 'new_coin_distribution'
              AND ledger.amount > 0"#,
     )
@@ -161,3 +175,7 @@ pub(crate) async fn load_admin_new_coin_reconciliation(
         manual_refunded_quote_amount: subscriptions.manual_refunded_quote_amount,
     })
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit_src/src_modules_admin_infrastructure_new_coin_reconciliation_tests.rs"]
+mod tests;

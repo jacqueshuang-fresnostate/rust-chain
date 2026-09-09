@@ -15,7 +15,7 @@ use exchange_api::{
     state::AppState,
     workers::{
         agent_commission_settlement, earn_auto_redemption, event_inbox, event_outbox, loan_overdue,
-        margin_interest, margin_liquidation, market_feed, prediction_market_close,
+        margin_interest, margin_liquidation, market_feed, market_health, prediction_market_close,
         seconds_contract_settlement, synthetic_market, unlock_scanner, wallet_chain,
     },
 };
@@ -27,7 +27,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 /// 全部使用问号向上传播，任一失败都直接结束进程，因此能走到后续步骤就说明所有基础依赖均已就绪。
 /// 行情订阅优先读取后台数据库中的启用配置，读取失败或没有记录时才回落到环境变量里的交易对、周期与数据源。
 /// 其余后台协程各自带开关，且还要满足所依赖的资源已挂载才会真正启动，条件不足时要么静默跳过要么只记录告警。
-/// K 线补数相关开关已被复用为模拟行情实时循环的开关，历史缺口不会自动补写，只能由后台预览确认后手动执行。
+/// K 线补数开关同时控制模拟行情实时循环和有界的断线巡检；实时循环只生成当前分钟，巡检只幂等补写已闭合 1m 历史。
 /// 所有协程都在监听建立之前拉起，`axum::serve` 之后函数将一直阻塞，正常情况下不会返回。
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -120,8 +120,8 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // KLINE_RECOVERY_ENABLED/BATCH_LIMIT 兼容为实时模拟行情开关与扫描上限；
-    // INTERVAL_SECONDS 仍仅解析旧部署配置，历史缺口只能由后台预览确认后手动执行。
+    // KLINE_RECOVERY_ENABLED/BATCH_LIMIT 同时作为实时模拟行情开关与单轮策略扫描上限；
+    // 实时循环固定一秒生成当前分钟，闭合历史缺口由下方独立健康巡检有界补偿。
     if state.settings.kline_recovery_enabled
         && state.mysql.is_some()
         && state.mongo.is_some()
@@ -133,10 +133,10 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(
                 interval_seconds = 1_u64,
                 max_strategies_per_round,
-                legacy_interval_seconds = synthetic_market_state
+                recovery_interval_seconds = synthetic_market_state
                     .settings
                     .kline_recovery_interval_seconds,
-                "模拟行情实时循环已启动；仅生成当前分钟，停机缺口不会自动补写"
+                "模拟行情实时循环已启动；仅生成当前分钟，闭合缺口交由独立巡检补偿"
             );
             if let Err(error) =
                 synthetic_market::run_loop(synthetic_market_state, 1, max_strategies_per_round)
@@ -154,6 +154,32 @@ async fn main() -> anyhow::Result<()> {
         );
     } else {
         tracing::info!("模拟行情实时循环已由 KLINE_RECOVERY_ENABLED 兼容开关关闭");
+    }
+
+    // 断线补偿巡检只需要 MySQL 检查点和 Mongo 历史库，不依赖 Redis；
+    // 与上面的实时生成器分离，避免缓存故障阻断历史 K 线恢复。扫描使用现有
+    // KLINE_RECOVERY_INTERVAL_SECONDS/BATCH_LIMIT，单轮失败会在 worker 内部重试。
+    if state.settings.kline_recovery_enabled && state.mysql.is_some() && state.mongo.is_some() {
+        let recovery_state = state.clone();
+        let recovery_interval_seconds = state.settings.kline_recovery_interval_seconds;
+        let recovery_batch_limit = state.settings.kline_recovery_batch_limit;
+        tokio::spawn(async move {
+            if let Err(error) = market_health::run_recovery_loop(
+                recovery_state,
+                recovery_interval_seconds,
+                recovery_batch_limit,
+            )
+            .await
+            {
+                tracing::error!(%error, "K 线健康巡检循环已停止");
+            }
+        });
+    } else if state.settings.kline_recovery_enabled {
+        tracing::warn!(
+            mysql = state.mysql.is_some(),
+            mongo = state.mongo.is_some(),
+            "K 线健康巡检未启动：缺少 MySQL 或 Mongo"
+        );
     }
 
     if state.settings.seconds_contract_settlement_enabled && state.mysql.is_some() {

@@ -471,13 +471,43 @@ fn admin_permission_mapping_is_fail_closed_and_action_aware() {
         Some("admin.unmapped.read")
     );
     assert_eq!(
+        required_admin_permission("GET", "/admin/api/v1/users-export").as_deref(),
+        Some("admin.unmapped.read")
+    );
+    assert_eq!(
+        required_admin_permission("POST", "/admin/api/v1/riskier/review").as_deref(),
+        Some("admin.unmapped.review")
+    );
+    assert_eq!(
         required_admin_permission("GET", "/admin/api/v1/support/conversations").as_deref(),
         Some("support.conversations.read")
+    );
+    assert_eq!(
+        required_admin_permission("GET", "/admin/api/v1/new-coins/7/reconciliation").as_deref(),
+        Some("new_coin.distributions.read")
+    );
+    assert_eq!(
+        required_admin_permission(
+            "GET",
+            "/admin/api/v1/new-coins/not-a-project/reconciliation"
+        )
+        .as_deref(),
+        Some("admin.unmapped.read")
     );
     assert_eq!(
         required_admin_permission("POST", "/admin/api/v1/support/conversations/7/messages")
             .as_deref(),
         Some("support.conversations.write")
+    );
+    assert_eq!(
+        required_admin_permission("GET", "/admin/api/v1/governance/financial-idempotency")
+            .as_deref(),
+        Some("governance.financial.read")
+    );
+    assert!(
+        admin_permission_catalog()
+            .iter()
+            .any(|permission| permission == "governance.financial.read")
     );
 }
 

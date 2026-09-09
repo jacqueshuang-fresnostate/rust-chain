@@ -308,6 +308,26 @@ fn dockerfile_does_not_depend_on_remote_frontend() {
 }
 
 #[test]
+fn release_publish_waits_for_real_dependency_read_write_smoke() {
+    for required in [
+        "integration-smoke:",
+        "mysql:8.4",
+        "redis:7.4",
+        "mongo:8.0",
+        "cargo run --bin exchange-migrate",
+        "cargo test --test real_dependency_smoke -- --nocapture",
+        "MONGODB_DATABASE: exchange_ci",
+        "RUN_REAL_DEPENDENCY_SMOKE: '1'",
+        "- integration-smoke",
+    ] {
+        assert!(
+            DOCKER_IMAGE_WORKFLOW.contains(required),
+            "Docker workflow is missing real dependency contract: {required}"
+        );
+    }
+}
+
+#[test]
 fn legacy_unscoped_admin_build_is_rejected() {
     let legacy_dockerfile = r#"
 FROM node:24-bookworm-slim AS web-builder

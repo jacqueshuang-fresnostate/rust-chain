@@ -653,6 +653,8 @@ impl MarketFeedHealth {
         }
     }
 
+    /// 判断本轮是否健康：必须有成功摄取、没有失败帧，且最近成功时间未超过断流阈值。
+    /// 该判断只读取快照，不触发重连、补偿或任何外部 I/O；调用方可据此更新指标和告警状态。
     pub fn is_healthy(&self) -> bool {
         !self.stale && self.failed == 0 && self.ingested > 0
     }

@@ -9,6 +9,12 @@ type StatusMeta = {
 };
 
 export const ADMIN_STATUS_META: Record<string, StatusMeta> = {
+  attention: { label: '需要核查', color: 'orange' },
+  balanced: { label: '对账平衡', color: 'green' },
+  degraded: { label: '运行降级', color: 'orange' },
+  healthy: { label: '健康', color: 'green' },
+  not_configured: { label: '未配置', color: 'grey' },
+  stale: { label: '行情已断流', color: 'red' },
   paused: { label: '暂停', color: 'orange' },
   stopped: { label: '已停止', color: 'grey' },
   running: { label: '运行中', color: 'light-blue' },

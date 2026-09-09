@@ -1,3 +1,10 @@
+## 2026-09-10 02:56 - 完成资金、行情、新币、后台权限与 CI 五项业务治理
+
+- 完成内容：补齐只读资金/结算幂等审计、行情健康快照与独立 K 线断线补偿、新币派发/退款批次对账、后台精确权限/审计入口和中文展示，以及发布前真实 MySQL/Redis/Mongo 依赖 smoke。资金审计按业务范围统计重复/空白幂等键、孤儿流水和逾期未结算，待审贷款与待派发新币只作队列信息不单独告警。行情状态以上游事件时间为断流权威，策略检查点滞后与补偿失败记为 degraded；自动补偿只写闭合 1m 及完整聚合窗口，Mongo 幂等且不覆盖普通/手动 K 线，不写 Redis/WebSocket。新币对账校验申购/项目/用户/资产身份后再汇总差额。后台新增资金审计页与项目对账页，动态 ID 失败关闭到 unmapped，CI 在 publish 前跑迁移和真实依赖读写。
+- 修改文件：`.github/workflows/docker-image.yml`、`.trellis/spec/backend/{index.md,synthetic-market-kline.md,business-governance-audits.md}`、`src/config.rs`、`src/main.rs`、`src/modules/admin/**`、`src/modules/market/infrastructure/**`、`src/workers/{kline_recovery.rs,market_health.rs,mod.rs,synthetic_market.rs}`、`tests/**`、`web/src/admin/{access,navigation,routes,governance,new-coins,actions}/**`、`web/src/shared/{adminResponseFieldLabels.ts,adminStatus.ts,adminPresentation.test.tsx,StatusTag.test.tsx}`、`.trellis/tasks/09-09-09-09-business-hardening/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo check --all-targets --all-features`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；权限映射 1/1、行情健康 5/5、资金/新币/K 线/巡检相关库测 24/24、docker 合同 8/8（含远程 Dockerfile frontend 隔离与 publish 依赖 smoke）、架构 11/11、kline_recovery/synthetic_market_worker/market_adapters 定向测试通过；Admin 聚焦 9 文件 147/147 及补跑 3 文件 31/31、`npm --prefix web run typecheck` 通过。`RUN_REAL_DEPENDENCY_SMOKE` 未置 1 时真实库查询按约定跳过。
+- 后续事项：推送后由 GitHub Actions 在真实 MySQL/Redis/Mongo 服务上执行 integration-smoke；未在本机启动这些服务，因此未跑 opt-in 真实依赖查询。
+
 ## 2026-09-08 04:34 - 秒合约净收益率显示与迁移守卫修正
 
 - 完成内容：为 `migrations/0125_seconds_contract_net_payout_rates.sql` 增加 `duration_seconds + gross_rate` 配对守卫映射表，更新产品与周期的净收益率时都必须命中显式时长/原始值组合，避免目标快照后并发编辑触发错误 CASE 映射；同时将管理端共享字段标签里的秒合约 `payout_rate/cycles` 从“赔率”改为“净收益率（不含本金）/周期 / 净收益率 / 押注范围”，并补了最小展示测试。
@@ -8731,3 +8738,10 @@
 - 修改文件：`.github/workflows/docker-image.yml`、`src/modules/prediction/{infrastructure.rs,presentation.rs,repository.rs}`、`src/modules/market/infrastructure/adapters/feed.rs`、`tests/unit_src/src_modules_market_infrastructure_adapters_feed_tests.rs`。
 - 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets --all-features`、行情健康定向测试 1/1、`git diff --check` 通过。
 - 后续事项：新币派发/退款批次对账、后台权限与审计中文统一仍需单独切片实施；CI 真实服务门禁需在 GitHub Actions 上跑一轮确认。
+
+## 2026-09-09 05:38 - 完成新币派发与退款批次对账后台页
+
+- 完成内容：新增项目级只读对账页，同屏展示发行供给、申购/派发、钱包入账与人工申购资金守恒差额，并提供中文平衡/需核查、加载、错误和无异常状态。边界校验保留 Decimal 原始文本与 Unix 毫秒，对项目 ID、枚举、计数、异常数组与响应形状失败关闭。项目中心新增“派发与退款批次对账”深链，前后端均精确映射 `new_coin.distributions.read`，无效动态 ID 回落 `admin.unmapped.read`；补齐对账字段与状态中文字典。
+- 修改文件：`web/src/admin/new-coins/NewCoinReconciliationPage{.tsx,.test.tsx}`、`web/src/admin/new-coins/NewCoinProjectPage{.tsx,.test.tsx}`、`web/src/admin/{routes,access}{.tsx,.test.tsx}`、`web/src/shared/{adminResponseFieldLabels.ts,adminStatus.ts,adminPresentation.test.tsx}`、`src/modules/admin/service/access_control.rs`、`tests/unit_src/src_modules_admin_service_tests.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`npm --prefix web run budget` 通过；新币对账/项目中心/路由/权限/中文展示聚焦测试已全部纳入全量门禁，Admin Web 全量 83 文件 653/653 通过；本切片两个 Rust 文件的 `rustfmt --check` 与全库 `git diff --check` 通过。Rust 权限定向测试已发起，但被并行资金审计切片尚未定义或导出 `AdminFinancialIdempotencyAuditResponse` 的 E0432 整库编译错误阻断；并行行情切片随后也在 `src/modules/admin/application.rs` 留下整库 `cargo fmt --all -- --check` 差异，两者均不位于本切片。
+- 后续事项：资金审计 DTO 接线完成后重跑 `cargo test --lib admin_permission_mapping_is_fail_closed_and_action_aware -- --nocapture`；由主任务统一执行最终 Rust/CI 门禁、提交与推送。

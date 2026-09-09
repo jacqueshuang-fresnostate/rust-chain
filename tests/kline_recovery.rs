@@ -151,7 +151,7 @@ async fn kline_recovery_backfills_mongo_and_updates_checkpoint_idempotently()
     let summary = run_once_with_dependencies(&pool, &mongo, now, 10).await?;
 
     assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.recovered_candles, 2);
+    assert_eq!(summary.recovered_candles, 3);
     assert_eq!(summary.skipped, 0);
     assert_eq!(summary.failed, 0);
     let collection = mongo.collection::<Document>(&collection_name);
@@ -159,7 +159,7 @@ async fn kline_recovery_backfills_mongo_and_updates_checkpoint_idempotently()
         collection
             .count_documents(doc! { "interval": "1m" })
             .await?,
-        2
+        3
     );
     let last_candle = collection
         .find_one(doc! {
@@ -168,7 +168,16 @@ async fn kline_recovery_backfills_mongo_and_updates_checkpoint_idempotently()
         })
         .await?
         .expect("last recovered candle exists");
-    assert_eq!(last_candle.get_str("close")?, "1.060000000000000000");
+    assert_eq!(last_candle.get_str("source")?, "strategy");
+    assert_eq!(
+        last_candle.get_i64("automatic_recovery_strategy_id")?,
+        strategy_id as i64
+    );
+    assert_eq!(
+        last_candle.get_i32("automatic_recovery_strategy_version")?,
+        1
+    );
+    assert_ne!(last_candle.get_str("close")?, "1.060000000000000000");
     let checkpoint_row = sqlx::query_as::<_, (DateTime<Utc>, String, String)>(
         r#"SELECT last_kline_open_time,
                   CAST(current_price AS CHAR) AS current_price,
@@ -180,7 +189,7 @@ async fn kline_recovery_backfills_mongo_and_updates_checkpoint_idempotently()
     .fetch_one(&pool)
     .await?;
     assert_eq!(checkpoint_row.0, last_closed);
-    assert_eq!(checkpoint_row.1, "1.060000000000000000");
+    assert_eq!(checkpoint_row.1, "1.000000000000000000");
     assert_eq!(checkpoint_row.2, "live");
 
     let idempotent = run_once_with_dependencies(&pool, &mongo, now, 10).await?;
@@ -191,7 +200,7 @@ async fn kline_recovery_backfills_mongo_and_updates_checkpoint_idempotently()
         collection
             .count_documents(doc! { "interval": "1m" })
             .await?,
-        2
+        3
     );
     Ok(())
 }

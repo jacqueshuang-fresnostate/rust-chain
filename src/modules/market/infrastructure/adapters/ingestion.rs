@@ -907,7 +907,8 @@ impl MarketKlineMongoWrite {
         }
     }
 
-    /// 生成 Mongo `$set` 文档，覆盖同一周期和开盘时间的 OHLC、成交量、provider 与观察时间。
+    /// 生成 Mongo 更新文档，覆盖同一周期和开盘时间的 OHLC、成交量、provider 与观察时间，
+    /// 同时清除历史自动补偿的策略/version 标记，使实时或外部行情重新成为该槽位的权威值。
     /// 形成中的蜡烛会反复走这条路径，每次都是整段字段替换，不做逐字段的取大取小合并。
     /// `$set` 里同时重写了周期与开盘时间，虽然它们本就是匹配条件，但保留可让文档结构与首写插入完全一致。
     /// 该更新文档必须配合带时序条件的过滤器使用，单独使用会失去防倒退保护。
@@ -923,7 +924,11 @@ impl MarketKlineMongoWrite {
                 "volume": &self.volume,
                 "source": &self.source,
                 "updated_at": BsonDateTime::from_millis(self.updated_at.timestamp_millis()),
-            }
+            },
+            "$unset": {
+                "automatic_recovery_strategy_id": "",
+                "automatic_recovery_strategy_version": "",
+            },
         }
     }
 }

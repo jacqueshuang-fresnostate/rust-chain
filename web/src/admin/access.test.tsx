@@ -115,14 +115,25 @@ describe('admin access mapping', () => {
     expect(adminReadPermissionForPath('/admin/prediction/assets')).toBe('prediction.assets.read');
     expect(adminReadPermissionForPath('/admin/account/security')).toBe('account.security.read');
     expect(adminReadPermissionForPath('/admin/config-center')).toBe('config_center.read');
+    expect(adminReadPermissionForPath('/admin/governance/financial-idempotency')).toBe(
+      'governance.financial.read'
+    );
     expect(adminReadPermissionForPath('/admin/support')).toBe('support.conversations.read');
+    expect(adminReadPermissionForPath('/admin/new-coins/reconciliation/7')).toBe('new_coin.distributions.read');
     expect(adminReadPermissionForPath('/admin/not-mapped')).toBe('admin.unmapped.read');
+    expect(adminReadPermissionForPath('/admin/users-export')).toBe('admin.unmapped.read');
   });
 
   it('maps resource endpoints and fails closed for unknown endpoints', () => {
     expect(adminPermissionForRequest('/admin/api/v1/market-pairs', 'POST')).toBe('market.pairs.write');
     expect(adminPermissionForRequest('/admin/api/v1/new-coins', 'POST')).toBe('new_coin.projects.write');
+    expect(adminPermissionForRequest('/admin/api/v1/new-coins/7/reconciliation', 'GET')).toBe('new_coin.distributions.read');
+    expect(adminPermissionForRequest('/admin/api/v1/new-coins/not-an-id/reconciliation', 'GET')).toBe('admin.unmapped.read');
+    expect(adminPermissionForRequest('/admin/api/v1/users-export', 'GET')).toBe('admin.unmapped.read');
     expect(adminPermissionForRequest('/admin/api/v1/config-center', 'POST')).toBe('config_center.write');
+    expect(
+      adminPermissionForRequest('/admin/api/v1/governance/financial-idempotency', 'GET')
+    ).toBe('governance.financial.read');
     expect(adminPermissionForRequest('/admin/api/v1/support/conversations/11/messages', 'POST')).toBe('support.conversations.write');
     expect(adminPermissionForRequest('/admin/api/v1/not-mapped', 'POST')).toBe('admin.unmapped.write');
   });

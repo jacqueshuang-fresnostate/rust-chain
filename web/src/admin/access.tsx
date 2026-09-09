@@ -26,6 +26,7 @@ const AdminAccessContext = createContext<AdminAccess | null>(null);
 const frontendPathResources: Array<[string, string]> = [
   ['/admin/support', 'support.conversations'],
   ['/admin/config-center', 'config_center'],
+  ['/admin/governance/financial-idempotency', 'governance.financial'],
   ['/admin/prediction/sync-logs', 'prediction.sync'],
   ['/admin/prediction/sync', 'prediction.sync'],
   ['/admin/prediction/settings', 'prediction.settings'],
@@ -95,6 +96,7 @@ const apiPathResources: Array<[string, string]> = [
   ['/access/permissions', 'governance.roles'],
   ['/config-center', 'config_center'],
   ['/config-change-requests', 'governance.changes'],
+  ['/governance/financial-idempotency', 'governance.financial'],
   ['/seconds-contracts/products', 'seconds.products'],
   ['/seconds-contracts/orders', 'seconds.orders'],
   ['/wallet/withdrawals', 'wallet.withdrawals'],
@@ -168,7 +170,8 @@ export function hasAdminPermission(access: AdminAccess, permission: string): boo
 }
 
 export function adminReadPermissionForPath(path: string): string {
-  const resource = frontendPathResources.find(([prefix]) => path.startsWith(prefix))?.[1] ?? 'admin.unmapped';
+  const pathname = path.split('?')[0];
+  const resource = frontendPathResources.find(([prefix]) => pathMatchesPermissionPrefix(pathname, prefix))?.[1] ?? 'admin.unmapped';
   return `${resource}.read`;
 }
 
@@ -179,11 +182,16 @@ export function adminPermissionForEndpoint(endpoint: string, action: AdminMutati
 }
 
 function apiPermissionResource(path: string): string {
-  const segments = path.split('/').filter(Boolean);
+  const pathname = path.split('?')[0];
+  const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 3 && segments[0] === 'new-coins' && segments[2] === 'reconciliation') {
-    return 'new_coin.distributions';
+    return /^[1-9]\d*$/.test(segments[1]) ? 'new_coin.distributions' : 'admin.unmapped';
   }
-  return apiPathResources.find(([prefix]) => path.startsWith(prefix))?.[1] ?? 'admin.unmapped';
+  return apiPathResources.find(([prefix]) => pathMatchesPermissionPrefix(pathname, prefix))?.[1] ?? 'admin.unmapped';
+}
+
+function pathMatchesPermissionPrefix(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
 }
 
 /** 与后端 required_admin_permission/operational_action 保持同序的单动作解析。 */

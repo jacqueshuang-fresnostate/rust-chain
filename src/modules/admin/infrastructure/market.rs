@@ -718,34 +718,13 @@ pub(crate) async fn list_existing_one_minute_open_times(
     range_start: DateTime<Utc>,
     range_end: DateTime<Utc>,
 ) -> AppResult<Vec<DateTime<Utc>>> {
-    use futures_util::TryStreamExt;
-    use mongodb::bson::{DateTime as BsonDateTime, Document, doc};
-
-    let symbol = crate::modules::market::ValidatedMarketSymbol::from_raw(symbol)
-        .map_err(|error| AppError::Validation(error.to_string()))?;
-    let collection = database.collection::<Document>(
-        &crate::modules::market::infrastructure::kline_collection_name(&symbol),
-    );
-    let mut cursor = collection
-        .find(doc! {
-            "interval": "1m",
-            "open_time": {
-                "$gte": BsonDateTime::from_millis(range_start.timestamp_millis()),
-                "$lt": BsonDateTime::from_millis(range_end.timestamp_millis()),
-            }
-        })
-        .projection(doc! { "_id": 0, "open_time": 1 })
-        .sort(doc! { "open_time": 1 })
-        .await?;
-    let mut open_times = Vec::new();
-    while let Some(document) = cursor.try_next().await? {
-        if let Ok(value) = document.get_datetime("open_time")
-            && let Some(open_time) = DateTime::from_timestamp_millis(value.timestamp_millis())
-        {
-            open_times.push(open_time);
-        }
-    }
-    Ok(open_times)
+    crate::modules::market::infrastructure::list_one_minute_kline_open_times(
+        database,
+        symbol,
+        range_start,
+        range_end,
+    )
+    .await
 }
 
 /// 按策略和可选状态分页查询手动补偿任务，数据行与 COUNT 共用完全相同的谓词。

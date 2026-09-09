@@ -13,10 +13,14 @@
   not change the spot-order reservation and settlement contracts or create real fills.
 - Realtime publication and historical recovery are deliberately asymmetric:
   realtime uses the existing Redis/Mongo/WebSocket ingestion path, while
-  manual recovery is an administrator-confirmed Mongo history operation.
-- A process start or restart must not scan or fill historical gaps. Missing
-  historical minutes remain visible to the admin gap API until an
-  administrator previews and executes a recovery.
+  automatic recovery uses a bounded MySQL/Mongo supervisor and manual recovery
+  remains an administrator-confirmed Mongo history operation.
+- A process start or restart starts the independent health supervisor only
+  after the configured recovery interval; it scans closed gaps in bounded
+  batches and converges through deterministic, idempotent writes. It never
+  publishes Redis/WebSocket data or advances a realtime price checkpoint.
+  Missing or failed historical minutes remain visible to the admin gap/health
+  views until the supervisor or an administrator closes them.
 - Traceability source: task PRD
   [`08-12-synthetic-new-coin-market`](../../tasks/08-12-synthetic-new-coin-market/prd.md).
   If code, migration, or UI behavior diverges, update this executable contract
@@ -83,8 +87,11 @@
     strategy and requesting admin.
 - Mongo collection: `kline_collection_name(ValidatedMarketSymbol)`.
   A candle is idempotently addressed inside that symbol collection by
-  `(interval, open_time)`. Decimal OHLCV values are stored as strings; manual
-  writes also store `source = "strategy"` and `updated_at`.
+  `(interval, open_time)`. Decimal OHLCV values are stored as strings; recovery
+  writes also store `source = "strategy"` and `updated_at`. Automatic 1m and
+  aggregate writes carry `automatic_recovery_strategy_id` and
+  `automatic_recovery_strategy_version`; ordinary realtime or manual records
+  are authoritative and cannot be overwritten by an automatic write race.
 - Realtime Redis keys remain:
   `market:ticker:{SANITIZED_SYMBOL}` and
   `market:kline:{SANITIZED_SYMBOL}:{interval}`.
@@ -183,17 +190,17 @@ admin-authenticated.
 
 #### Startup-compatible environment
 
-- `KLINE_RECOVERY_ENABLED` remains the compatibility switch for starting the
-  **realtime synthetic worker**. Default: `true`. It no longer starts any
-  historical-recovery loop.
-- `KLINE_RECOVERY_BATCH_LIMIT` remains the realtime strategy scan limit;
-  default `100`, runtime-clamped to `1..=100`.
-- `KLINE_RECOVERY_INTERVAL_SECONDS` is still parsed for deployment/config
-  compatibility, default `30`, but it no longer controls a worker and must not
-  trigger automatic compensation. The synthetic worker cadence is one second.
-- Realtime startup additionally requires configured MySQL, MongoDB, and Redis.
-  Manual gap/preview/execute routes require MySQL and MongoDB but deliberately
-  do not require Redis.
+- `KLINE_RECOVERY_ENABLED` controls both the one-second realtime synthetic
+  worker and the independent historical-recovery supervisor. Default: `true`.
+- `KLINE_RECOVERY_BATCH_LIMIT` is the shared per-round strategy bound; default
+  `100`, runtime-clamped to `1..=100` for both workers.
+- `KLINE_RECOVERY_INTERVAL_SECONDS` controls the historical supervisor's first
+  and subsequent ticks; default `30`, runtime-clamped to `1..=3600`. The
+  realtime synthetic worker remains fixed at one second.
+- Realtime startup requires configured MySQL, MongoDB, and Redis. The automatic
+  recovery supervisor requires MySQL and MongoDB and deliberately does not
+  require Redis. Manual gap/preview/execute routes likewise require MySQL and
+  MongoDB but do not require Redis.
 - Existing required `DATABASE_URL`, `MONGODB_URI`, `MONGODB_DATABASE`, and
   `REDIS_URL` supply those stores. `JWT_SECRET` signs the ten-minute
   HMAC-SHA256 preview token; no separate recovery secret is introduced.
@@ -271,6 +278,30 @@ admin-authenticated.
   adjacent minute, and the observation gap is at most five seconds.
   Lack of in-memory continuity after restart is intentional and must not be
   reconstructed from the checkpoint.
+
+#### Automatic closed-gap recovery
+
+- The health supervisor scans active `strategy|internal` runs whose checkpoint
+  is behind the most recent closed minute. Each round is bounded by the shared
+  strategy limit and each strategy by 500 generated 1m roots; the next round
+  continues from the optimistic checkpoint when more work remains.
+- Recovery considers only closed UTC minutes inside the half-open strategy
+  range. It loads the exact `active_version`, computes the Mongo difference,
+  generates deterministic 1m roots, and rebuilds only complete higher-period
+  windows from those roots. Current/forming minutes are never backfilled.
+- Mongo writes are idempotent on `(interval, open_time)`. Automatic writes may
+  replace an older automatic provenance after an active-version change, but a
+  normal realtime or manual document wins a race and is never overwritten.
+  A newer automatic write also wins the `updated_at` race; the losing round
+  records a conflict and retries from the next health tick.
+- Only after Mongo writes succeed does the supervisor CAS the MySQL historical
+  checkpoint using strategy, active-version, status, and previous-checkpoint
+  guards. It does not write Redis, WebSocket, ticker, spot orders, financial
+  ledgers, or realtime `current_price` fields. A failed round records bounded
+  recovery status/error and leaves the checkpoint available for retry.
+- At the strategy end boundary, a live run does not repeatedly scan a final
+  slot after it is caught up; an idle/failed final slot receives one recovery
+  attempt so a never-published closed candle is not stranded.
 
 #### Realtime worker, `active_version`, and lease
 
@@ -407,10 +438,11 @@ admin-authenticated.
 - Base: a legacy strategy has no node rows and no `nodes` key in an old
   snapshot; it follows `start_price -> target_price` and continues to run.
 - Base: the service restarts after eight hours; the first realtime pass writes
-  only the current forming minute. The eight-hour gap remains in `kline-gaps`.
-- Bad: start `kline_recovery::run_loop` from `main`, derive missing minutes from
-  `last_kline_open_time`, or use `KLINE_RECOVERY_INTERVAL_SECONDS` as an
-  automatic backfill timer.
+  only the current forming minute, then the independent health supervisor
+  discovers and fills closed minutes in bounded rounds after its interval.
+- Bad: let the realtime worker derive missing minutes from
+  `last_kline_open_time`, run an unbounded startup scan, or let automatic
+  recovery use Redis/WebSocket ingestion and move the realtime checkpoint.
 - Bad: let manual recovery call `MarketIngestionService`; this can overwrite
   live Redis data, emit historical WebSocket updates, trigger spot orders, and
   move the checkpoint backward.
@@ -436,8 +468,8 @@ cargo test --manifest-path Cargo.toml --test market_ingestion -- --nocapture
 Assert identical slot replay, adjacent continuity, hard/percentage nodes,
 soft/range tolerance, positive precision-rounded OHLCV, all five complete 1m
 aggregations, partial/discontinuous rejection, forming-minute finalization,
-ticker close equality, lease/version SQL guards, one-second cadence, and both
-restart/skipped-slot no-auto-close cases. Redis/Mongo integration must assert
+ticker close equality, lease/version SQL guards, one-second cadence, automatic
+restart-gap recovery, and skipped-slot/end-boundary cases. Redis/Mongo integration must assert
 first/new writes are accepted, equal/older writes are rejected, 32-way ticker
 writers converge on the newest timestamp, and rejected K-lines do not mutate
 Mongo or publish a WebSocket event.
@@ -495,9 +527,9 @@ and progress, and stable single-line row actions.
 #### Wrong
 
 ```rust
-// Startup backfills every checkpoint gap and the old interval env drives it.
+// Wrong: the realtime worker is made responsible for historical backfill.
 if settings.kline_recovery_enabled {
-    kline_recovery::run_loop(state, settings.kline_recovery_interval_seconds, limit).await?;
+    synthetic_market::run_loop(state, settings.kline_recovery_interval_seconds, limit).await?;
 }
 
 // Historical recovery reuses realtime ingestion and can regress live state.
@@ -513,9 +545,16 @@ SELECT MAX(version) FROM strategy_versions WHERE strategy_id = ?;
 #### Correct
 
 ```rust
-// Compatibility env controls only the one-second realtime worker.
+// Compatibility env controls realtime and the separately bounded health loop.
 if settings.kline_recovery_enabled && mysql_ready && mongo_ready && redis_ready {
     synthetic_market::run_loop(state, 1, settings.kline_recovery_batch_limit).await?;
+}
+if settings.kline_recovery_enabled && mysql_ready && mongo_ready {
+    market_health::run_recovery_loop(
+        state,
+        settings.kline_recovery_interval_seconds,
+        settings.kline_recovery_batch_limit,
+    ).await?;
 }
 
 // Manual recovery has only Mongo and deterministic version config as inputs.
@@ -531,9 +570,11 @@ JOIN strategy_versions versions
 WHERE runs.strategy_id = ?;
 ```
 
-The correct path makes service restart inert with respect to historical gaps,
-binds every writer to the selected configuration version, and keeps manual
-history repair isolated from Redis, WebSocket, spot triggering, and checkpoints.
+The correct path keeps realtime restart publication limited to the current
+forming minute, while the independent supervisor repairs only closed gaps in
+bounded, version-fenced rounds. Every writer stays bound to the selected
+configuration version, and manual history repair remains isolated from Redis,
+WebSocket, spot triggering, and realtime checkpoints.
 
 ## Scenario: Configurable synthetic OHLCV settings and immutable rollback
 
@@ -836,7 +877,8 @@ chart sessions. Historical recovery remains explicitly admin-only.
 
 Good: a new strategy immediately updates all intervals and book/trades; the
 15m candle forms from its one current root while no false 15m history is stored.
-Base: a restarted worker resumes only now; historical gaps stay detectable.
+Base: a restarted realtime worker resumes only now; the independent health
+supervisor subsequently repairs closed historical gaps in bounded rounds.
 Bad: insert display trades into spot_trades, multiply whole-minute volume by
 60, retain only one pending candle, or query oldest 100 of a 160-minute range.
 
