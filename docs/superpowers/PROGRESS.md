@@ -8745,3 +8745,17 @@
 - 修改文件：`web/src/admin/new-coins/NewCoinReconciliationPage{.tsx,.test.tsx}`、`web/src/admin/new-coins/NewCoinProjectPage{.tsx,.test.tsx}`、`web/src/admin/{routes,access}{.tsx,.test.tsx}`、`web/src/shared/{adminResponseFieldLabels.ts,adminStatus.ts,adminPresentation.test.tsx}`、`src/modules/admin/service/access_control.rs`、`tests/unit_src/src_modules_admin_service_tests.rs`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`npm --prefix web run budget` 通过；新币对账/项目中心/路由/权限/中文展示聚焦测试已全部纳入全量门禁，Admin Web 全量 83 文件 653/653 通过；本切片两个 Rust 文件的 `rustfmt --check` 与全库 `git diff --check` 通过。Rust 权限定向测试已发起，但被并行资金审计切片尚未定义或导出 `AdminFinancialIdempotencyAuditResponse` 的 E0432 整库编译错误阻断；并行行情切片随后也在 `src/modules/admin/application.rs` 留下整库 `cargo fmt --all -- --check` 差异，两者均不位于本切片。
 - 后续事项：资金审计 DTO 接线完成后重跑 `cargo test --lib admin_permission_mapping_is_fail_closed_and_action_aware -- --nocapture`；由主任务统一执行最终 Rust/CI 门禁、提交与推送。
+
+## 2026-09-10 - 完成迁移完整性风险评估
+
+- 完成内容：盘点 `migrations/` 得到 122 个 SQL 文件，最高迁移版本 `0125_seconds_contract_net_payout_rates.sql`；版本缺口为 0091、0093、0094，无重复版本。按文件执行 `git log --follow --diff-filter=M` 并核对全历史状态，未发现任何迁移 SQL 在新增后被修改；2026-08 以来近期迁移提交均为 `A`。
+- 修改文件：`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo test --test docker_image_contract -- --nocapture` 8/8 通过；`cargo test --lib migration -- --nocapture` 8/8 通过；迁移工作树无未提交变更。指定合同测试仅覆盖重试边界、错误脱敏与 Compose 一次性迁移门禁，不直接模拟 dirty/checksum mismatch；运行器源码和部署文档确认失败保持非零退出、诊断最多 8 个 dirty 版本、不自动改写 `_sqlx_migrations`。
+- 后续事项：若线上仍出现迁移退出码 1，应使用同一不可变镜像检查 `_sqlx_migrations` 的失败记录、版本、checksum 与实际 DDL，再按部署 runbook 人工恢复；无代码改动或线上操作。
+
+## 2026-09-11 02:20 - 1Panel migrate exit 1 复发根因调查（仓库侧）
+
+- 完成内容：针对 1Panel 再次报 `service "migrate" didn't complete successfully: exit 1` 且回滚失败，完成仓库侧四路并行调查：枚举 `exchange-migrate` 全部 exit 1 路径及其精确日志特征（连接配置/暂时性重试耗尽/300 秒上限/dirty/checksum/VersionMissing/SQL 执行/bootstrap 校验）；提取 `docs/deployment/docker.md` 诊断命令与 dirty/checksum 人工恢复边界；确认加固提交 `dc286f2`（2026-09-09 01:14）已在 `origin/main` 且之后无后续改动，`:latest` 随每次 main push 成功发布更新；确认全部 122 个迁移文件历史无发布后修改，仓库侧无 checksum mismatch 风险。
+- 修改文件：`docs/superpowers/PROGRESS.md`（仅本记录；四路调查均为只读）。
+- 验证结果：本切片为只读调查，无代码改动；引用事实来自工作流四个调查代理（exit-paths / runbook / image-chain / migration-risk）对源码、文档、git 历史与 GitHub Actions 工作流的核对，migration-risk 代理另跑通 `docker_image_contract` 8/8 与迁移单测 8/8。无法在本机验证服务器实际镜像 digest 与容器日志（本地 Docker daemon 未运行，目标在远程 1Panel），已明确标注为待服务器侧取证。
+- 后续事项：等用户提供 1Panel 服务器上 `docker logs --tail=200 hippo-exchange-migrate`、`docker inspect`（含 StartedAt/FinishedAt/Image）输出后按日志特征表定位根因；建议生产改用固定 semver/sha tag 并按「拉取→停 api→只重建 migrate→确认退出 0→重建 api」顺序更新。
