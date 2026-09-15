@@ -3403,14 +3403,15 @@ describe('resourceConfigs create actions', () => {
       equity: '2.7500',
       interest_amount: '1.2500',
       payout_amount: '2.7500',
+      bad_debt_amount: '0.0000',
       reason: 'maintenance_margin',
       liquidated_at: 1_735_732_800_000
     };
     const withoutField = (field: 'email' | 'symbol') => Object.fromEntries(Object.entries(row).filter(([key]) => key !== field));
 
     expect(rowContract).toEqual({
-      decimalFields: ['mark_price', 'equity', 'interest_amount', 'payout_amount'],
-      requiredFields: ['email', 'symbol', 'mark_price', 'equity', 'interest_amount', 'payout_amount', 'reason', 'liquidated_at']
+      decimalFields: ['mark_price', 'equity', 'interest_amount', 'payout_amount', 'bad_debt_amount'],
+      requiredFields: ['email', 'symbol', 'mark_price', 'equity', 'interest_amount', 'payout_amount', 'bad_debt_amount', 'reason', 'liquidated_at']
     });
 
     apiRequestMock.mockResolvedValueOnce({ liquidations: [row], total: 1 });

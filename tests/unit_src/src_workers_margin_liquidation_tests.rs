@@ -71,6 +71,48 @@ fn margin_liquidation_risk_state_rejects_invalid_direction() {
 }
 
 #[test]
+fn isolated_liquidation_registers_negative_equity_as_bad_debt() {
+    assert_eq!(
+        isolated_liquidation_bad_debt_amount(&decimal("-12.5")),
+        decimal("12.500000000000000000")
+    );
+    assert_eq!(
+        isolated_liquidation_bad_debt_amount(&decimal("3.25")),
+        decimal("0.000000000000000000")
+    );
+    assert_eq!(
+        isolated_liquidation_bad_debt_amount(&decimal("0")),
+        decimal("0.000000000000000000")
+    );
+}
+
+#[test]
+fn isolated_payout_plus_bad_debt_reconstructs_the_position_equity() {
+    for equity in ["-12.5", "-0.000000000000000001", "0", "3.25", "100"] {
+        let equity = decimal(equity);
+        let payout = non_negative_amount(&equity);
+        let bad_debt = isolated_liquidation_bad_debt_amount(&equity);
+
+        assert_eq!(
+            payout - bad_debt,
+            equity.with_scale(18),
+            "payout minus bad debt must equal equity so no shortfall disappears"
+        );
+    }
+}
+
+#[test]
+fn isolated_bad_debt_is_persisted_and_exposed_to_ops() {
+    let worker = include_str!("../../src/workers/margin_liquidation.rs");
+    let admin = include_str!("../../src/modules/admin/infrastructure/margin.rs");
+    let response = include_str!("../../src/modules/admin/presentation/dashboard_audit.rs");
+
+    assert!(worker.contains("bad_debt_amount"));
+    assert!(admin.contains("liquidation.bad_debt_amount"));
+    assert!(response.contains("bad_debt_amount"));
+}
+
+#[test]
 fn liquidation_mark_is_rechecked_after_waiting_for_database_locks() {
     let logical_now = Utc::now();
     let fresh = MarginLiquidationMark {

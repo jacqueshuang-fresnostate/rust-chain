@@ -1,3 +1,10 @@
+## 2026-09-16 01:20 - 落地逐仓强平坏账登记
+
+- 完成内容：逐仓强平此前把负权益直接截零、缺口在库内无处可查，报表口径与全仓账户级 `last_bad_debt` 也对不上。新增 `isolated_liquidation_bad_debt_amount`（负权益取绝对值，否则为零），与 `non_negative_amount` 互补：返还额取权益正部、坏账取权益负部，两者之差恒等于权益，强平不会凭空多出或少掉金额。新增 migration 0127 给 `margin_liquidation_records` 加 `bad_debt_amount` 列（含 `>= 0` 约束），逐仓强平写审计时落库该缺口。全仓逐仓行显式写零，账户级坏账仍留在 `margin_cross_accounts.last_bad_debt`，避免两边累加重复计数。后台强平列表与详情查询、`AdminMarginLiquidationResponse` 增加该字段，web 后台「强平记录」表新增「穿仓坏账」列。
+- 修改文件：`migrations/0127_margin_liquidation_bad_debt.sql(新)`、`src/workers/margin_liquidation.rs`、`src/modules/admin/infrastructure/margin.rs`、`src/modules/admin/presentation/dashboard_audit.rs`、`tests/unit_src/src_workers_margin_liquidation_tests.rs`、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib` 403/403 通过（新增 3 项：负权益登记坏账、`payout - bad_debt = equity` 还原、落库与后台暴露接线）。web `npx tsc -b` 通过；`resourceConfigs.test.tsx` 强平字段契约用例 1/1 通过，同文件渲染类用例报 `React.act is not a function`，已用 `git stash` 在 HEAD 上复现同样失败，确认是既有环境问题而非本次改动。未跑 MySQL 集成：本机凭据不匹配，migration 0127 未实际执行。
+- 后续事项：Admin 现货 fill UI、客户端幂等、UserAuth 状态、理财 worker 重试（CUR-P1-08）、逐仓计息口径（用当前利率并丢小时余数）。
+
 ## 2026-09-16 00:40 - 落地理财资产精度量化与平台对手腿
 
 - 完成内容：理财申购金额新增资产口径校验 `validate_amount_asset_precision`，超过 `assets.precision_scale` 一律拒绝而非隐式截断，超精度输入不落订阅、不扣款。赎回新增 `quantize_earn_redemption_amounts`，把 18 位账本口径的费用与收益向零截断到资产精度后重新相减得出净到账额，保证 `redeem_amount = principal + gross_yield - fee_amount` 精确成立、`wallet_ledger.amount` 与 available 增量一致。新增 `earn/journal.rs` 构造平台对手腿：申购写 `platform_earn_cash_received`/`earn_principal_payable_open`，赎回写 `earn_principal_payable_close`/`platform_earn_redemption_cash`，并按需补 `earn_yield_expense`/`platform_earn_fee_income`；同 `transaction_key` 腿内和为零、零额腿在构造阶段省略。三项费率叠加超过本金加毛收益时用户实收兜底为零，费用腿按可收上限截断以保证分录仍然闭合；写入前再复核一次腿总和，不闭合按内部错误中止。手工赎回（`earn/application.rs`）与自动赎回（`workers/earn_auto_redemption.rs`）共用同一量化与同一对手腿构造，均在同一事务写入。

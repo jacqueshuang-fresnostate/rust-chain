@@ -47,7 +47,7 @@ pub(crate) async fn list_admin_margin_liquidations(
     .await
 }
 
-/// 按强平记录 ID 读取用户邮箱、交易对、持仓方向、保证金、价格、权益、盈亏和结算原因等完整快照。
+/// 按强平记录 ID 读取用户邮箱、交易对、持仓方向、保证金、价格、权益、盈亏、返还额与穿仓缺口等完整快照。
 /// 查询不锁持仓或强平记录，也不重新执行清算；记录缺失返回未找到，SQL 或十进制映射失败返回错误。
 pub(crate) async fn load_admin_margin_liquidation(
     pool: &Pool<MySql>,
@@ -73,8 +73,8 @@ fn admin_margin_liquidation_query() -> QueryBuilder<'static, MySql> {
                   liquidation.interest_amount, liquidation.entry_price, liquidation.mark_price,
                   liquidation.maintenance_margin_rate, liquidation.equity,
                   liquidation.maintenance_margin, liquidation.realized_pnl,
-                  liquidation.payout_amount, liquidation.reason, liquidation.liquidated_at,
-                  liquidation.created_at
+                  liquidation.payout_amount, liquidation.bad_debt_amount, liquidation.reason,
+                  liquidation.liquidated_at, liquidation.created_at
            FROM margin_liquidation_records AS liquidation
            INNER JOIN users AS liquidation_user ON liquidation_user.id = liquidation.user_id
            INNER JOIN trading_pairs AS liquidation_pair ON liquidation_pair.id = liquidation.pair_id"#,

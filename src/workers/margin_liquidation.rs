@@ -634,6 +634,7 @@ async fn liquidate_position_by_id(
         accumulate_margin_realized_pnl(position.realized_pnl.as_ref(), &risk_state.realized_pnl);
 
     let payout_amount = non_negative_amount(&risk_state.equity);
+    let bad_debt_amount = isolated_liquidation_bad_debt_amount(&risk_state.equity);
     credit_margin_position_amount(
         &mut tx,
         position.user_id,
@@ -654,6 +655,7 @@ async fn liquidate_position_by_id(
         &mark.price,
         &risk_state,
         &payout_amount,
+        &bad_debt_amount,
         now,
     )
     .await?;
@@ -975,6 +977,10 @@ async fn lock_position_by_id(
 /// （权益、维持保证金、已实现盈亏、返还额），使事后无需依赖行情历史即可离线复算这次强平是否正确。
 /// `reason` 硬编码为 `maintenance_margin`，与全仓路径的记录在同一张表里靠该列区分。
 /// 与钱包入账、仓位终态处于同一事务，回滚时一并消失，不会留下无对应资金变动的孤立审计。
+/// 在逐仓强平事务内写入强平审计，含返还额与本次穿仓缺口。
+/// `bad_debt_amount` 是负权益的绝对值，未穿仓时为零；它只登记缺口，不产生额外资金移动。
+/// 返还额与缺口由同一次权益结果派生，两者之差恒等于权益，因此本次强平可完整对账。
+#[allow(clippy::too_many_arguments)]
 async fn insert_liquidation_record(
     tx: &mut Transaction<'_, MySql>,
     position: &LockedMarginPosition,
@@ -982,14 +988,15 @@ async fn insert_liquidation_record(
     mark_price: &BigDecimal,
     risk_state: &MarginLiquidationRiskState,
     payout_amount: &BigDecimal,
+    bad_debt_amount: &BigDecimal,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query(
         r#"INSERT INTO margin_liquidation_records
            (position_id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
             notional_amount, interest_amount, entry_price, mark_price, maintenance_margin_rate, equity,
-            maintenance_margin, realized_pnl, payout_amount, reason, liquidated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'maintenance_margin', ?)"#,
+            maintenance_margin, realized_pnl, payout_amount, bad_debt_amount, reason, liquidated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'maintenance_margin', ?)"#,
     )
     .bind(position.id)
     .bind(position.user_id)
@@ -1007,6 +1014,7 @@ async fn insert_liquidation_record(
     .bind(&risk_state.maintenance_margin)
     .bind(&risk_state.realized_pnl)
     .bind(payout_amount)
+    .bind(bad_debt_amount)
     .bind(now.naive_utc())
     .execute(&mut **tx)
     .await?;
@@ -1018,7 +1026,8 @@ async fn insert_liquidation_record(
 /// 两条路径共用 `margin_liquidation_records` 一张表，靠该列区分处置类型。
 /// 全仓记录的 `payout_amount` 恒为零，不再把单仓正权益或组合剩余权益分摊成返款。
 /// 真正的资金变更只在共享钱包上发生一次：将事务锁定前 available 全部消耗并记一条负增量流水。
-/// `equity` 记的是单仓权益而非账户权益，账户级的结算后余额与坏账另行写入账户行。
+/// `equity` 记的是单仓权益而非账户权益；账户级的结算后余额与坏账另行写入账户行，
+/// 因此这里固定写零，避免逐仓行累加出来的缺口与账户级 `last_bad_debt` 重复计数。
 async fn insert_cross_liquidation_record(
     tx: &mut Transaction<'_, MySql>,
     position: &LockedCrossMarginPosition,
@@ -1032,8 +1041,8 @@ async fn insert_cross_liquidation_record(
         r#"INSERT INTO margin_liquidation_records
            (position_id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
             notional_amount, interest_amount, entry_price, mark_price, maintenance_margin_rate, equity,
-            maintenance_margin, realized_pnl, payout_amount, reason, liquidated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cross_maintenance_margin', ?)"#,
+            maintenance_margin, realized_pnl, payout_amount, bad_debt_amount, reason, liquidated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'cross_maintenance_margin', ?)"#,
     )
     .bind(position.id)
     .bind(position.user_id)
@@ -1099,11 +1108,24 @@ async fn schedule_next_liquidation_attempt(
 }
 
 /// 把逐仓强平的权益截断为非负并归一到十八位小数，得到实际返还给用户的金额。
-/// 权益为负说明亏损已吃穿保证金，此时只退零，缺口在逐仓路径下不单独登记为坏账；
-/// 与全仓账户结算把穿仓部分显式记入 `bad_debt` 的做法不同，这是两种模式的既定差异。
+/// 权益为负说明亏损已吃穿保证金，此时只退零，缺口由 `isolated_liquidation_bad_debt_amount` 单独登记。
+/// 与全仓账户结算把穿仓部分显式记入 `bad_debt` 的做法在金额口径上一致，区别只在登记位置。
 fn non_negative_amount(amount: &BigDecimal) -> BigDecimal {
     if amount > &BigDecimal::from(0) {
         amount.clone().with_scale(18)
+    } else {
+        BigDecimal::from(0).with_scale(18)
+    }
+}
+
+/// 把逐仓强平的穿仓缺口登记为非负金额，即负权益的绝对值；权益不为负时为零。
+/// 与 `non_negative_amount` 互补：返还额取权益的正部，坏账取权益的负部，两者之差恒等于权益本身，
+/// 因此强平不会凭空多出或少掉任何金额，缺口能在库内被完整重现。
+/// 缺口必须落库，否则逐仓穿仓损失在报表里消失，也无法与全仓的 `last_bad_debt` 对齐。
+/// 与全仓的唯一区别是登记位置：全仓记在账户行的账户级坏债，逐仓记在本次强平记录上。
+fn isolated_liquidation_bad_debt_amount(equity: &BigDecimal) -> BigDecimal {
+    if equity < &BigDecimal::from(0) {
+        (-equity.clone()).with_scale(18)
     } else {
         BigDecimal::from(0).with_scale(18)
     }

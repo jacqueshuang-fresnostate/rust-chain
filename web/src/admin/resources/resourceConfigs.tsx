@@ -1273,6 +1273,7 @@ export const resourceConfigs = {
       { key: 'equity', title: '权益', type: 'amount' },
       { key: 'interest_amount', title: '累计利息', type: 'amount' },
       { key: 'payout_amount', title: '返还金额', type: 'amount' },
+      { key: 'bad_debt_amount', title: '穿仓坏账', type: 'amount' },
       { key: 'reason', title: '原因' },
       { key: 'liquidated_at', title: '强平时间', type: 'timestamp' }
     ]

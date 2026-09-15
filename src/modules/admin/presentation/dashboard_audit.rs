@@ -53,6 +53,8 @@ pub(crate) struct AdminMarginLiquidationResponse {
     pub(crate) maintenance_margin: BigDecimal,
     pub(crate) realized_pnl: BigDecimal,
     pub(crate) payout_amount: BigDecimal,
+    /// 逐仓强平的穿仓缺口；全仓逐仓行恒为零，账户级坏债记在账户行。
+    pub(crate) bad_debt_amount: BigDecimal,
     pub(crate) reason: String,
     #[serde(with = "unix_millis")]
     pub(crate) liquidated_at: DateTime<Utc>,
