@@ -251,6 +251,7 @@ pub struct WalletDepositEventResponse {
     pub tx_hash: String,
     pub event_index: u32,
     pub amount: BigDecimal,
+    pub fee_amount: BigDecimal,
     pub block_height: Option<u64>,
     pub confirmations: u32,
     pub required_confirmations: u32,

@@ -58,6 +58,24 @@ fn truncate_amount_to_asset_precision_drops_extra_digits() {
 }
 
 #[test]
+fn deposit_net_credit_subtracts_fee_and_rejects_non_positive_credit() {
+    assert_eq!(
+        deposit_net_credit_amount(&decimal("3.50000000"), &decimal("0"), 8)
+            .unwrap()
+            .normalized(),
+        decimal("3.5").normalized()
+    );
+    assert_eq!(
+        deposit_net_credit_amount(&decimal("1.23456789"), &decimal("0.01000001"), 8)
+            .unwrap()
+            .normalized(),
+        decimal("1.22456788").normalized()
+    );
+    assert!(deposit_net_credit_amount(&decimal("0.01"), &decimal("0.01"), 8).is_err());
+    assert!(deposit_net_credit_amount(&decimal("1"), &decimal("-0.01"), 8).is_err());
+}
+
+#[test]
 fn tiered_withdraw_fee_uses_min_inclusive_and_max_exclusive_ranges() {
     let tiers = normalize_withdraw_fee_tiers(vec![
         WithdrawFeeTier {

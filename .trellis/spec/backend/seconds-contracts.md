@@ -496,7 +496,7 @@ exception terminal state: manual_review
 - Product activation and order opening call the same settlement-history-capability check.
 - External pairs must be covered by an enabled feed configuration with a supported provider. Strategy/internal pairs must have a current runnable strategy, active immutable version, non-blank lease owner, and an unexpired archival-writer lease.
 - Capability failure rejects activation/opening before the shared wallet is debited.
-- Settlement reads append-only event-time snapshots. It never substitutes the current Redis ticker, processing time, a generated candle, or a guessed price for a missing historical tick.
+- Settlement reads append-only event-time snapshots. It never substitutes the current Redis ticker, processing time, a generated candle, or a guessed price for a missing historical tick. Archived `default`-generator ticks are valid settlement evidence when they already exist in the event-time window; they are not synthesized at settlement time.
 - Tick selection is deterministic for an order window and records tick id, source, observed time, and price on the order.
 - After the configured maximum wait, a still-unprovable order transitions atomically from `opened` to `manual_review`, records a stable failure code/time/window, and appends one settlement-exception record.
 - `manual_review` is an operational terminal state for automatic settlement. It causes no guessed payout and no implicit refund. A future refund command must define commission reversal and strong idempotency separately.

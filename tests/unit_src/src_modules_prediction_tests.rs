@@ -204,3 +204,14 @@ fn prediction_trading_window_is_left_open_at_end_and_rejects_stale_sync() {
         );
     }
 }
+
+#[test]
+fn invalid_prediction_refund_rejects_pending_agent_commissions() {
+    let source = include_str!("../../src/modules/prediction/infrastructure.rs");
+    let settle = source
+        .split("pub(crate) async fn settle_market_in_tx")
+        .nth(1)
+        .expect("settle_market_in_tx");
+    assert!(settle.contains("reject_pending_agent_commissions_for_source_in_tx"));
+    assert!(settle.contains("apply_wallet_prediction_refund"));
+}

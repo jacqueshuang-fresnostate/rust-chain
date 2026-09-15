@@ -10,6 +10,8 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 
+use crate::modules::wallet::truncate_amount_to_asset_precision;
+
 /// 提前赎回费基准：不收取，此时费率被强制归零。
 pub(crate) const EARLY_REDEEM_FEE_BASIS_NONE: &str = "none";
 /// 提前赎回费基准：按本金计费，无论收益多少都按申购金额乘费率收取。
@@ -110,6 +112,50 @@ pub(crate) fn calculate_earn_redemption_amounts(
             zero_amount()
         };
     let yield_amount = scaled_amount(gross_yield_amount.clone() - profit_fee_amount);
+
+    EarnRedemptionAmounts {
+        principal_amount,
+        gross_yield_amount,
+        redemption_fee_amount,
+        maturity_profit_fee_amount,
+        early_redeem_fee_amount,
+        fee_amount,
+        yield_amount,
+        redeem_amount,
+    }
+}
+
+/// 把 18 位账本口径的赎回结果量化到资产自身的 precision_scale，全部向零截断。
+/// 钱包只应收到该资产真实可表达的金额，否则 18 位尾差会让流水累计和与余额增量永久漂移。
+/// 三项费用各自截断后再求和，净到账额由截断后的本金、毛收益与费用重新相减得出，
+/// 因此 `redeem_amount == principal + gross_yield - fee_amount` 在任意精度下都精确成立。
+/// 费用超过本金加收益时净额仍取下限零，此时上式不再成立，与原有兜底语义一致。
+/// 展示用的 `yield_amount` 只截断不作重算，它不进入钱包与流水，允许与费用明细存在末位差。
+pub(crate) fn quantize_earn_redemption_amounts(
+    amounts: EarnRedemptionAmounts,
+    precision_scale: i32,
+) -> EarnRedemptionAmounts {
+    let principal_amount =
+        truncate_amount_to_asset_precision(&amounts.principal_amount, precision_scale);
+    let gross_yield_amount =
+        truncate_amount_to_asset_precision(&amounts.gross_yield_amount, precision_scale);
+    let redemption_fee_amount =
+        truncate_amount_to_asset_precision(&amounts.redemption_fee_amount, precision_scale);
+    let maturity_profit_fee_amount =
+        truncate_amount_to_asset_precision(&amounts.maturity_profit_fee_amount, precision_scale);
+    let early_redeem_fee_amount =
+        truncate_amount_to_asset_precision(&amounts.early_redeem_fee_amount, precision_scale);
+    let fee_amount = redemption_fee_amount.clone()
+        + maturity_profit_fee_amount.clone()
+        + early_redeem_fee_amount.clone();
+    let raw_redeem_amount =
+        principal_amount.clone() + gross_yield_amount.clone() - fee_amount.clone();
+    let redeem_amount = if raw_redeem_amount < 0 {
+        BigDecimal::from(0).with_scale(i64::from(precision_scale.clamp(0, 18)))
+    } else {
+        truncate_amount_to_asset_precision(&raw_redeem_amount, precision_scale)
+    };
+    let yield_amount = truncate_amount_to_asset_precision(&amounts.yield_amount, precision_scale);
 
     EarnRedemptionAmounts {
         principal_amount,

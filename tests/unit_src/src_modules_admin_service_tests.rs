@@ -627,3 +627,61 @@ fn risk_rule_config_preserves_valid_runtime_representations_and_extensions() {
         );
     }
 }
+
+#[test]
+fn agent_commission_payout_requires_source_terminal_state() {
+    assert!(agent_commission_source_is_payable(
+        "convert_order",
+        Some("completed")
+    ));
+    assert!(agent_commission_source_is_payable(
+        "seconds_contract_order",
+        Some("settled")
+    ));
+    assert!(agent_commission_source_is_payable(
+        "prediction_order",
+        Some("settled")
+    ));
+    assert!(agent_commission_source_is_payable("spot_trade_buy", None));
+    assert!(agent_commission_source_is_payable("spot_trade_sell", None));
+    assert!(agent_commission_source_is_payable("margin_position", None));
+
+    assert!(!agent_commission_source_is_payable(
+        "seconds_contract_order",
+        Some("opened")
+    ));
+    assert!(!agent_commission_source_is_payable(
+        "seconds_contract_order",
+        Some("manual_review")
+    ));
+    assert!(!agent_commission_source_is_payable(
+        "prediction_order",
+        Some("open")
+    ));
+    assert!(!agent_commission_source_is_payable(
+        "prediction_order",
+        Some("refunded")
+    ));
+    assert!(!agent_commission_source_is_payable(
+        "convert_order",
+        Some("pending")
+    ));
+    assert!(!agent_commission_source_is_payable("spot_trade", None));
+
+    assert_eq!(
+        agent_commission_source_payout_readiness("seconds_contract_order", Some("opened")),
+        AgentCommissionSourcePayoutReadiness::Waiting
+    );
+    assert_eq!(
+        agent_commission_source_payout_readiness("seconds_contract_order", Some("manual_review")),
+        AgentCommissionSourcePayoutReadiness::Unpayable
+    );
+    assert_eq!(
+        agent_commission_source_payout_readiness("prediction_order", Some("open")),
+        AgentCommissionSourcePayoutReadiness::Waiting
+    );
+    assert_eq!(
+        agent_commission_source_payout_readiness("prediction_order", Some("refunded")),
+        AgentCommissionSourcePayoutReadiness::Unpayable
+    );
+}

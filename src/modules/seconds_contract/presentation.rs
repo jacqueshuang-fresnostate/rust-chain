@@ -285,7 +285,7 @@ pub(crate) struct SecondsContractOrderResponse {
     pub(crate) settlement_price: Option<BigDecimal>,
     /// 结算价引用的不可变行情历史主键；pending 订单为 `None`。
     pub(crate) settlement_price_tick_id: Option<u64>,
-    /// 结算行情来源，例如 bitget、htx 或 coinbase。
+    /// 结算行情来源，例如 bitget、htx、coinbase、strategy 或 default。
     pub(crate) settlement_price_source: Option<String>,
     /// 结算行情的事件观察时刻，而非 worker 实际处理时刻。
     #[serde(default, with = "option_unix_millis")]

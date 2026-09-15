@@ -195,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { Icon } from '@iconify/vue'
 import { toDataURL } from 'qrcode'
 import {
@@ -231,6 +231,22 @@ const quickOrder = ref<QuickRechargeOrder | null>(null)
 const loading = ref(false)
 const loadingNetworks = ref(false)
 const quickRechargeLoading = ref(false)
+let addressRequestGeneration = 0
+let addressRequestAbort: AbortController | null = null
+
+function isAbortError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false
+    const candidate = error as { name?: string; code?: string }
+    return candidate.name === 'CanceledError' || candidate.name === 'AbortError' || candidate.code === 'ERR_CANCELED'
+}
+
+function beginAddressRequest(): { generation: number; signal: AbortSignal } {
+    addressRequestAbort?.abort()
+    addressRequestGeneration += 1
+    const controller = new AbortController()
+    addressRequestAbort = controller
+    return { generation: addressRequestGeneration, signal: controller.signal }
+}
 
 type QuickRechargeBridgeWindow = Window & {
     __TAURI__?: unknown
@@ -270,46 +286,21 @@ const loadCoins = async () => {
     }
 }
 
-const selectCoin = async (coin: string) => {
-    selectedCoin.value = coin
-    selectedNetwork.value = ''
-    selectedNetworkKey.value = ''
-    walletData.value = null
-    qrCodeUrl.value = ''
-    qrCodeError.value = ''
-    availableNetworks.value = []
-
-    loadingNetworks.value = true
-    try {
-        const res = await fetchCoinNetworks(coin)
-        if (res.data.code === 0 && res.data.data.length > 0) {
-            availableNetworks.value = res.data.data.filter(n => n.depositEnabled)
-            if (availableNetworks.value.length > 0) {
-                // Auto select first network
-                selectNetwork(availableNetworks.value[0])
-            }
-        } else {
-             toast.warning(t('wallet.no_networks'))
-        }
-    } catch (e) {
-        console.error(e)
-        toast.error(t('wallet.load_networks_failed'))
-    } finally {
-        loadingNetworks.value = false
+const networkIdentity = (network: CoinNetwork | string) => {
+    if (typeof network === 'string') {
+        return { displayName: network, networkKey: network }
     }
+    return { displayName: network.name, networkKey: network.networkKey || network.name }
 }
 
-const selectNetwork = async (network: CoinNetwork | string) => {
-    const displayName = typeof network === 'string' ? network : network.name
-    const networkKey = typeof network === 'string' ? network : network.networkKey || network.name
-    selectedNetwork.value = displayName
-    selectedNetworkKey.value = networkKey
+const loadDepositAddress = async (networkKey: string, generation: number, signal: AbortSignal) => {
     loading.value = true
     walletData.value = null
     qrCodeUrl.value = ''
     qrCodeError.value = ''
     try {
-        const res = await getDepositAddress(selectedCoin.value, networkKey)
+        const res = await getDepositAddress(selectedCoin.value, networkKey, { signal })
+        if (generation !== addressRequestGeneration) return
         if (res.data.code === 0) {
             walletData.value = res.data.data
             if (walletData.value?.address) {
@@ -319,11 +310,58 @@ const selectNetwork = async (network: CoinNetwork | string) => {
             toast.error(t('wallet.address_failed'))
         }
     } catch (e) {
+        if (isAbortError(e) || generation !== addressRequestGeneration) return
         console.error(e)
         toast.error(t('wallet.address_fetch_failed'))
     } finally {
-        loading.value = false
+        if (generation === addressRequestGeneration) {
+            loading.value = false
+        }
     }
+}
+
+const selectCoin = async (coin: string) => {
+    selectedCoin.value = coin
+    selectedNetwork.value = ''
+    selectedNetworkKey.value = ''
+    walletData.value = null
+    qrCodeUrl.value = ''
+    qrCodeError.value = ''
+    availableNetworks.value = []
+
+    const { generation, signal } = beginAddressRequest()
+    loadingNetworks.value = true
+    try {
+        const res = await fetchCoinNetworks(coin, 'deposit', { signal })
+        if (generation !== addressRequestGeneration) return
+        if (res.data.code === 0 && res.data.data.length > 0) {
+            availableNetworks.value = res.data.data.filter(n => n.depositEnabled)
+            if (availableNetworks.value.length > 0) {
+                const { displayName, networkKey } = networkIdentity(availableNetworks.value[0])
+                selectedNetwork.value = displayName
+                selectedNetworkKey.value = networkKey
+                await loadDepositAddress(networkKey, generation, signal)
+            }
+        } else {
+             toast.warning(t('wallet.no_networks'))
+        }
+    } catch (e) {
+        if (isAbortError(e) || generation !== addressRequestGeneration) return
+        console.error(e)
+        toast.error(t('wallet.load_networks_failed'))
+    } finally {
+        if (generation === addressRequestGeneration) {
+            loadingNetworks.value = false
+        }
+    }
+}
+
+const selectNetwork = async (network: CoinNetwork | string) => {
+    const { displayName, networkKey } = networkIdentity(network)
+    selectedNetwork.value = displayName
+    selectedNetworkKey.value = networkKey
+    const { generation, signal } = beginAddressRequest()
+    await loadDepositAddress(networkKey, generation, signal)
 }
 
 const renderAddressQrCode = async (address: string) => {
@@ -453,6 +491,11 @@ onMounted(() => {
     loadCoins()
     loadQuickRechargeConfig()
     void loadQuickOrders()
+})
+
+onUnmounted(() => {
+    addressRequestAbort?.abort()
+    addressRequestGeneration += 1
 })
 </script>
 

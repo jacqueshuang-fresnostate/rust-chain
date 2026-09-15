@@ -1943,6 +1943,11 @@ async fn wallet_deposit_observation_credits_once_and_reorg_reverses_once()
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (asset_id, asset_symbol) = create_deposit_asset(&pool).await;
+    sqlx::query("UPDATE assets SET deposit_fee = ? WHERE id = ?")
+        .bind(decimal("0.010000000000000000"))
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
     upsert_deposit_network_config(&pool, "tron", "C").await;
     let address = format!("T{}", Uuid::now_v7().simple());
     sqlx::query(
@@ -2022,7 +2027,18 @@ async fn wallet_deposit_observation_credits_once_and_reorg_reverses_once()
     .bind(asset_id)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(credited_available, decimal("3.000000000000000000"));
+    assert_eq!(
+        BigDecimal::from_str(observed_payload["fee_amount"].as_str().unwrap()).unwrap(),
+        decimal("0.010000000000000000")
+    );
+    assert_eq!(credited_available, decimal("2.990000000000000000"));
+    let credited_ledger_amount: BigDecimal = sqlx::query_scalar(
+        "SELECT amount FROM wallet_ledger WHERE ref_type = 'wallet_deposit_event' AND ref_id = ? AND change_type = 'deposit_confirm'",
+    )
+    .bind(deposit_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(credited_ledger_amount, decimal("2.990000000000000000"));
     let credit_ledger_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'wallet_deposit_event' AND ref_id = ? AND change_type = 'deposit_confirm'",
     )

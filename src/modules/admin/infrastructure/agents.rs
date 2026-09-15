@@ -679,6 +679,62 @@ pub(crate) async fn ensure_agent_exists_in_tx(
     Ok(())
 }
 
+/// 在调用方事务内按来源类型读取关联单据当前状态，供结算前终态校验。
+/// 秒合约、预测、闪兑返回 `status`；现货成交和杠杆仓位只确认行存在并回传固定占位状态。
+/// 未知来源或不存在的单据返回未找到，调用方据此拒绝打款，本函数不加额外行锁。
+pub(crate) async fn load_agent_commission_source_status_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    source_type: &str,
+    source_id: &str,
+) -> AppResult<String> {
+    let status = match source_type {
+        "seconds_contract_order" => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM seconds_contract_orders WHERE id = ? LIMIT 1",
+            )
+            .bind(parse_agent_commission_source_id(source_id)?)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        "prediction_order" => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM prediction_orders WHERE id = ? LIMIT 1",
+            )
+            .bind(parse_agent_commission_source_id(source_id)?)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        "convert_order" => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM convert_orders WHERE quote_id = ? LIMIT 1",
+            )
+            .bind(source_id)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        "spot_trade_buy" | "spot_trade_sell" => {
+            sqlx::query_scalar::<_, String>("SELECT 'filled' FROM spot_trades WHERE id = ? LIMIT 1")
+                .bind(parse_agent_commission_source_id(source_id)?)
+                .fetch_optional(&mut **tx)
+                .await?
+        }
+        "margin_position" => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT 'opened' FROM margin_positions WHERE id = ? LIMIT 1",
+            )
+            .bind(parse_agent_commission_source_id(source_id)?)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        _ => None,
+    };
+    status.ok_or(AppError::NotFound)
+}
+
+fn parse_agent_commission_source_id(source_id: &str) -> AppResult<u64> {
+    source_id.parse::<u64>().map_err(|_| AppError::NotFound)
+}
+
 /// 连接佣金记录与代理主表，解析结算应入账的代理用户 ID 和 payout_asset_id。
 /// 查询不加锁且要求佣金已设置入账资产；无匹配返回未找到，函数不创建钱包或写入余额。
 pub(crate) async fn load_agent_commission_payout_target_in_tx(

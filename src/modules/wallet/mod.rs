@@ -16,9 +16,10 @@ pub use domain::{
     LockSchedule, MAX_ASSET_PRECISION_SCALE, MAX_WITHDRAW_FEE_TIER_COUNT, WalletAccount,
     WalletDomainError, WalletLedgerEntry, WalletServiceError, WithdrawFeeTier,
     amount_fits_asset_precision, asset_amount_fractional_scale, calculate_withdraw_fee,
-    create_lock_positions, fixed_time_merge_key, immediate_on_listing_merge_key,
-    normalize_withdraw_fee_tiers, truncate_amount_to_asset_precision,
-    verify_locked_balance_invariant, withdrawal_fee_config_version, withdrawal_quote_fingerprint,
+    create_lock_positions, deposit_net_credit_amount, fixed_time_merge_key,
+    immediate_on_listing_merge_key, normalize_withdraw_fee_tiers,
+    truncate_amount_to_asset_precision, verify_locked_balance_invariant,
+    withdrawal_fee_config_version, withdrawal_quote_fingerprint,
 };
 pub use infrastructure::{MySqlWalletRepository, NewAssetLockPosition, NewAssetLockPositionSource};
 pub use repository::WalletRepository;

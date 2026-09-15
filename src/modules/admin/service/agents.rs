@@ -7,6 +7,65 @@
 
 use super::*;
 
+/// 来源单据尚未终态，本轮不能打款但应在后续周期重试。
+pub(crate) const AGENT_COMMISSION_SOURCE_NOT_TERMINAL: &str =
+    "agent commission source cannot be settled before the source order is terminal";
+
+/// 来源缺失、已退款/人工审核，或类型不支持打款，本进程不再自动重试。
+pub(crate) const AGENT_COMMISSION_SOURCE_UNPAYABLE: &str =
+    "agent commission source cannot be settled without payout support";
+
+/// 佣金来源相对打款的就绪状态：可入账、等待终态、或永久不可打款。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentCommissionSourcePayoutReadiness {
+    Payable,
+    Waiting,
+    Unpayable,
+}
+
+/// 判断佣金来源单据是否已到可打款终态，避免开仓待结算或已退款的佣金入账。
+/// 秒合约与预测必须 `settled`；闪兑必须 `completed`；现货成交和杠杆开仓以单据存在为准。
+/// 未知来源、退款或人工审核一律不可打款；仍在持仓/待确认的来源返回等待，供 worker 下轮重试。
+pub(crate) fn agent_commission_source_payout_readiness(
+    source_type: &str,
+    source_status: Option<&str>,
+) -> AgentCommissionSourcePayoutReadiness {
+    match source_type {
+        "convert_order" => match source_status {
+            Some("completed") => AgentCommissionSourcePayoutReadiness::Payable,
+            Some("pending") => AgentCommissionSourcePayoutReadiness::Waiting,
+            _ => AgentCommissionSourcePayoutReadiness::Unpayable,
+        },
+        "seconds_contract_order" => match source_status {
+            Some("settled") => AgentCommissionSourcePayoutReadiness::Payable,
+            Some("opened") => AgentCommissionSourcePayoutReadiness::Waiting,
+            _ => AgentCommissionSourcePayoutReadiness::Unpayable,
+        },
+        "prediction_order" => match source_status {
+            Some("settled") => AgentCommissionSourcePayoutReadiness::Payable,
+            Some("open") | Some("pending_confirmation") => {
+                AgentCommissionSourcePayoutReadiness::Waiting
+            }
+            _ => AgentCommissionSourcePayoutReadiness::Unpayable,
+        },
+        "spot_trade_buy" | "spot_trade_sell" | "margin_position" => {
+            AgentCommissionSourcePayoutReadiness::Payable
+        }
+        _ => AgentCommissionSourcePayoutReadiness::Unpayable,
+    }
+}
+
+/// 来源已到可打款终态时返回 true；等待中与永久不可打款都返回 false。
+pub(crate) fn agent_commission_source_is_payable(
+    source_type: &str,
+    source_status: Option<&str>,
+) -> bool {
+    matches!(
+        agent_commission_source_payout_readiness(source_type, source_status),
+        AgentCommissionSourcePayoutReadiness::Payable
+    )
+}
+
 /// 规范化佣金审核状态，仅允许 `settled` 或 `rejected`，拒绝空值和其他生命周期状态。
 /// pending 被刻意排除在外，因为该状态是佣金生成时的初值而不是人工可设置的目标，
 /// 从 pending 迁出是单向的，重复处理会在应用层被冲突拦截。

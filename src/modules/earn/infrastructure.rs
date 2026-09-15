@@ -9,10 +9,13 @@
 //! 资金侧只有两个原语：申购从 available 扣本金写一条 earn_subscribe 负流水，
 //! 赎回向 available 加净额写一条 earn_redeem 正流水，frozen 与 locked 全程不变，
 //! 两条流水都以 earn_subscription 加订阅编号作为引用，也是已赎回重放时恢复金额的依据。
+//! 除用户钱包流水外，申购与赎回还要在同一事务写入平台对手腿到 `platform_financial_journal`，
+//! 否则平台持有的本金、支付的收益与收取的费用没有对手方，无法按资产证明守恒。
 
 use crate::{
     error::{AppError, AppResult},
     modules::earn::{
+        journal::{EARN_PLATFORM_JOURNAL_CONTEXT, EarnPlatformJournalLeg},
         presentation::{
             EarnCategoryResponse, EarnProductResponse, EarnProductsResponse,
             EarnSubscriptionResponse, EarnSubscriptionsResponse,
@@ -677,6 +680,60 @@ pub(crate) async fn lock_wallet_row(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| AppError::Validation("wallet account is required for earn".to_owned()))
+}
+
+/// 在调用方事务中按主键读取资产精度，供申购校验与赎回量化使用。
+/// 已形成负债的资产即使被下架也必须能结清，因此这里只读精度、不要求 status 为 active。
+/// 资产缺失返回 NotFound 并中止当前资金流程，不做任何默认精度兜底。
+pub(crate) async fn load_asset_precision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<i32> {
+    sqlx::query_scalar::<_, i32>("SELECT precision_scale FROM assets WHERE id = ? LIMIT 1")
+        .bind(asset_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// 在调用方事务中写入理财的平台对手腿，是理财平台分录的唯一出口。
+/// 同一 transaction_key 下的腿由纯函数保证求和为零，零额腿已在构造阶段省略。
+/// 写入前再复核一次总和，不闭合的分录直接按内部错误中止，避免把不平的账提交进对账表。
+/// 冲突时沿用唯一键 `(transaction_key, account_code, asset_id)` 语义拒绝重复分录，
+/// 由调用方事务回滚，绝不静默跳过，避免出现只有用户腿而没有平台腿的半截账。
+pub(crate) async fn insert_earn_platform_journal_legs_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    transaction_key: &str,
+    asset_id: u64,
+    subscription_id: u64,
+    legs: &[EarnPlatformJournalLeg],
+) -> AppResult<()> {
+    let total = legs
+        .iter()
+        .fold(BigDecimal::from(0), |total, leg| total + leg.amount.clone());
+    if total != 0 {
+        return Err(AppError::Internal(format!(
+            "earn platform journal legs for {transaction_key} do not balance"
+        )));
+    }
+    for leg in legs {
+        sqlx::query(
+            r#"INSERT INTO platform_financial_journal
+               (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id,
+                metadata_json)
+               VALUES (?, ?, ?, ?, ?, 'earn_subscription', ?, JSON_OBJECT('subscription_id', ?))"#,
+        )
+        .bind(transaction_key)
+        .bind(EARN_PLATFORM_JOURNAL_CONTEXT)
+        .bind(leg.account_code)
+        .bind(asset_id)
+        .bind(&leg.amount)
+        .bind(subscription_id.to_string())
+        .bind(subscription_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 /// 按已锁钱包快照从 available 扣除申购本金，frozen/locked 保持不变。

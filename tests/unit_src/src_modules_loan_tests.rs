@@ -319,3 +319,15 @@ fn loan_oracle_rejects_stale_future_and_wrong_symbol_payloads() {
         .expect_err("invalid ticker must fail closed");
     }
 }
+
+#[test]
+fn user_repay_and_overdue_collection_share_the_same_locked_settlement() {
+    let source = include_str!("../../src/modules/loan/application.rs");
+    let repay = source
+        .split("pub(crate) async fn repay_loan_order_use_case")
+        .nth(1)
+        .expect("repay use case");
+    assert!(repay.contains("settle_locked_loan_order_repayment_in_tx"));
+    assert!(source.contains("pub(crate) async fn settle_locked_loan_order_repayment_in_tx"));
+    assert!(source.contains("\"loan_repayment\""));
+}

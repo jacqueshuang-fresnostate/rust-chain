@@ -33,10 +33,10 @@
              <div class="flex flex-wrap gap-2">
                 <button
                   v-for="network in availableNetworks"
-                  :key="network.name"
-                  @click="selectNetwork(network.name)"
+                  :key="network.networkKey || network.name"
+                  @click="selectNetwork(network)"
                   class="px-3 py-1.5 text-sm rounded border transition-colors"
-                  :class="selectedNetwork === network.name ? 'bg-primary/20 text-primary border-primary' : 'bg-background border-border hover:border-primary/50'"
+                  :class="selectedNetworkKey === (network.networkKey || network.name) ? 'bg-primary/20 text-primary border-primary' : 'bg-background border-border hover:border-primary/50'"
                 >
                   {{ network.name }}
                 </button>
@@ -146,7 +146,7 @@
             <div class="bg-muted p-4 rounded-lg space-y-2">
                 <div class="flex justify-between">
                      <span>{{ t('wallet.network') }}</span>
-                    <span class="font-mono text-foreground">{{ selectedNetwork || '-' }}</span>
+                    <span class="font-mono text-foreground">{{ selectedNetwork || selectedNetworkKey || '-' }}</span>
                 </div>
                 <div class="flex justify-between">
                     <span>{{ t('wallet.minimum_withdrawal') }}</span>
@@ -222,7 +222,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { calculateWithdrawFee, fetchWithdrawCoins, fetchCoinNetworks, fetchWithdrawRecords, getNetworkInfo, submitWithdraw, type WalletAddress, type CoinNetwork, type WithdrawalRecord } from '@/api/wallet'
+import { calculateWithdrawFee, fetchWithdrawCoins, fetchCoinNetworks, fetchWithdrawRecords, fetchWithdrawalQuote, getNetworkInfo, submitWithdraw, type WalletAddress, type CoinNetwork, type WithdrawalRecord } from '@/api/wallet'
 import { getTwoFactorStatus, type PaymentPolicy, type TwoFactorStatus } from '@/api/user'
 import { useUserStore } from '@/stores/user'
 import { useToast } from 'vue-toastification'
@@ -236,6 +236,7 @@ const supportedCoins = ref<string[]>([])
 const selectedCoin = ref<string>('')
 const availableNetworks = ref<CoinNetwork[]>([])
 const selectedNetwork = ref<string>('')
+const selectedNetworkKey = ref<string>('')
 const coinInfo = ref<WalletAddress | null>(null) // reusing WalletAddress type for coin info
 const loadingInfo = ref(false)
 const loadingNetworks = ref(false)
@@ -331,6 +332,7 @@ const loadSecurityPolicy = async () => {
 const selectCoin = async (coin: string) => {
     selectedCoin.value = coin
     selectedNetwork.value = ''
+    selectedNetworkKey.value = ''
     availableNetworks.value = []
     coinInfo.value = null
     form.value.address = ''
@@ -343,7 +345,7 @@ const selectCoin = async (coin: string) => {
         if (res.data.code === 0 && res.data.data.length > 0) {
              availableNetworks.value = res.data.data.filter(n => n.withdrawEnabled)
              if (availableNetworks.value.length > 0) {
-                 selectNetwork(availableNetworks.value[0].name)
+                 selectNetwork(availableNetworks.value[0])
              }
         } else {
              toast.warning(t('wallet.no_networks'))
@@ -356,14 +358,17 @@ const selectCoin = async (coin: string) => {
     }
 }
 
-const selectNetwork = async (network: string) => {
-    selectedNetwork.value = network
+const selectNetwork = async (network: CoinNetwork | string) => {
+    const displayName = typeof network === 'string' ? network : network.name
+    const networkKey = typeof network === 'string' ? network : (network.networkKey || network.name)
+    selectedNetwork.value = displayName
+    selectedNetworkKey.value = networkKey
     loadingInfo.value = true
     coinInfo.value = null
     form.value.amount = 0 // Reset amount on network change as fee might change
 
     try {
-        const res = await getNetworkInfo(selectedCoin.value, network, 'withdraw')
+        const res = await getNetworkInfo(selectedCoin.value, networkKey, 'withdraw')
         if (res.data.code === 0) {
             coinInfo.value = res.data.data
         }
@@ -432,16 +437,22 @@ const setMaxAmount = () => {
 }
 
 const handleSubmit = async () => {
-    if (!isValid.value || !coinInfo.value) return
+    if (!isValid.value || !coinInfo.value || !selectedNetworkKey.value) return
 
     submitting.value = true
     try {
-        const res = await submitWithdraw({
-            unit: selectedCoin.value,
-            network: selectedNetwork.value,
-            address: form.value.address,
+        const quote = await fetchWithdrawalQuote({
+            assetSymbol: selectedCoin.value,
+            network: selectedNetworkKey.value,
             amount: form.value.amount,
-            fee: withdrawFee.value,
+        })
+        const res = await submitWithdraw({
+            quoteId: quote.quoteId,
+            unit: quote.assetSymbol,
+            network: quote.network,
+            address: form.value.address,
+            amount: quote.amount,
+            fee: quote.fee,
             code: form.value.code,
             fundPassword: form.value.fundPassword,
             totpCode: form.value.totpCode

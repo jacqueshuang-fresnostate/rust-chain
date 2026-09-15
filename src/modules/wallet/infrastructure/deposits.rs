@@ -8,11 +8,13 @@ use super::shared::{
 use crate::{
     error::{AppError, AppResult},
     modules::wallet::{
-        WithdrawFeeTier, amount_fits_asset_precision,
+        MAX_ASSET_PRECISION_SCALE, WithdrawFeeTier, amount_fits_asset_precision,
+        deposit_net_credit_amount,
         presentation::{
             DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
             ObserveDepositRequest, WalletDepositEventResponse,
         },
+        truncate_amount_to_asset_precision,
     },
 };
 use bigdecimal::BigDecimal;
@@ -51,12 +53,14 @@ struct DepositAssetRow {
     withdraw_fee: BigDecimal,
     withdraw_fee_tiers: SqlxJson<Vec<WithdrawFeeTier>>,
 }
+
 #[derive(Debug, sqlx::FromRow)]
 struct DepositTargetRow {
     user_id: u64,
     asset_id: u64,
     precision_scale: i32,
     min_deposit_amount: BigDecimal,
+    deposit_fee: BigDecimal,
     required_confirmations: u32,
 }
 /// 列出状态启用且开放充值的资产及其精度、最小额和费率配置，按资产代码升序返回。
@@ -385,8 +389,8 @@ pub async fn list_wallet_chain_event_dead_letters(
 
 /// 以 network、tx_hash、event_index 作为链事件唯一身份，记录确认数并在达到阈值时入账。
 /// 事务先锁已分配地址/配置目标，再插入或更新事件并锁事件；事件达到确认阈值时才锁钱包。
-/// 地址、资产、金额、memo 与既有事件不一致会冲突；金额必须符合资产精度和最小充值额。
-/// 首次确认入账只增加 available，frozen/locked 不变，并写一条引用 deposit event 的正向 available 流水；事件、余额和流水同事务提交。
+/// 地址、资产、金额、memo 与既有事件不一致会冲突；金额必须符合资产精度和最小充值额，且扣除快照手续费后净额必须为正。
+/// 首次确认入账只把净额记入 available，frozen/locked 不变，并写一条引用 deposit event 的正向 available 流水；事件、余额和流水同事务提交。
 /// 入账后的 available 统一按 18 位定点写回，账本的 balance_after 与三桶 after 取同一账后快照，不做二次舍入。
 /// 锁顺序固定为地址与资产配置、链事件行、钱包账户行三级递进，与提现路径的先单据后钱包保持同向，避免交叉死锁。
 /// 重放只单调更新确认数，credited 状态不再增加余额；任一步失败回滚本次事件进度及资金写入。
@@ -397,7 +401,7 @@ pub(crate) async fn observe_deposit_event(
     let mut tx = pool.begin().await?;
     let target = sqlx::query_as::<_, DepositTargetRow>(
         r#"SELECT pool.assigned_user_id AS user_id, assets.id AS asset_id,
-                  assets.precision_scale, assets.min_deposit_amount,
+                  assets.precision_scale, assets.min_deposit_amount, assets.deposit_fee,
                   configs.required_confirmations
            FROM deposit_address_pool pool
            INNER JOIN assets ON assets.symbol = pool.assigned_asset_symbol
@@ -435,11 +439,15 @@ pub(crate) async fn observe_deposit_event(
             target.min_deposit_amount
         )));
     }
+    let deposit_fee =
+        truncate_amount_to_asset_precision(&target.deposit_fee, target.precision_scale);
+    deposit_net_credit_amount(&request.amount, &deposit_fee, target.precision_scale)
+        .map_err(AppError::Validation)?;
     sqlx::query(
         r#"INSERT INTO wallet_deposit_events
               (user_id, asset_id, asset_symbol, network, address, memo, tx_hash, event_index,
-               amount, block_height, confirmations, required_confirmations, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'observed')
+               amount, fee_amount, block_height, confirmations, required_confirmations, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'observed')
            ON DUPLICATE KEY UPDATE
              confirmations = GREATEST(confirmations, VALUES(confirmations)),
              block_height = COALESCE(VALUES(block_height), block_height)"#,
@@ -453,6 +461,7 @@ pub(crate) async fn observe_deposit_event(
     .bind(&request.tx_hash)
     .bind(request.event_index)
     .bind(&request.amount)
+    .bind(&deposit_fee)
     .bind(request.block_height)
     .bind(request.confirmations)
     .bind(target.required_confirmations)
@@ -484,8 +493,8 @@ pub(crate) async fn observe_deposit_event(
 }
 
 /// 锁定已入账事件后处理链重组冲正；已 reversed 时直接返回，其他非 credited 状态冲突。
-/// available 足额时扣回原充值额，frozen/locked 不变，并写一条 `deposit_reorg_reverse` 负向 available 流水后标记 reversed。
-/// 冲正金额恒等于原事件金额，扣减后的 available 按 18 位定点写回，流水以事件编号为业务引用，与入账条目共用同一身份。
+/// available 足额时扣回当时净入账额，frozen/locked 不变，并写一条 `deposit_reorg_reverse` 负向 available 流水后标记 reversed。
+/// 冲正金额恒等于毛额减去快照手续费后的净额，扣减后的 available 按 18 位定点写回，流水以事件编号为业务引用，与入账条目共用同一身份。
 /// 锁顺序与入账一致：先按事件主键取排他锁，再锁钱包账户行，因此正向入账与反向冲正不会互相形成环路等待。
 /// available 不足时不扣任何余额、不写冲正流水，而是提交 manual_review 与失败原因，保留人工处置事实。
 /// 状态更新均带原状态条件，配合事件行锁保证并发重放中最多一次生效；事件、余额和流水由该函数自有事务提交。
@@ -507,8 +516,9 @@ pub(crate) async fn reverse_deposit_event(
             event.status
         )));
     }
+    let credit_amount = deposit_credit_amount(&event)?;
     let wallet = lock_wallet_balance(&mut tx, event.user_id, event.asset_id).await?;
-    if wallet.available < event.amount {
+    if wallet.available < credit_amount {
         sqlx::query(
             r#"UPDATE wallet_deposit_events
                SET status = 'manual_review', failure_reason = ?
@@ -522,7 +532,7 @@ pub(crate) async fn reverse_deposit_event(
         tx.commit().await?;
         return Ok(event);
     }
-    let available_after = (wallet.available.clone() - event.amount.clone()).with_scale(18);
+    let available_after = (wallet.available.clone() - credit_amount.clone()).with_scale(18);
     update_wallet_balance(
         &mut tx,
         event.user_id,
@@ -537,7 +547,7 @@ pub(crate) async fn reverse_deposit_event(
         event.user_id,
         event.asset_id,
         "deposit_reorg_reverse",
-        &(-event.amount.clone()),
+        &(-credit_amount.clone()),
         "available",
         &available_after,
         &available_after,
@@ -634,7 +644,7 @@ fn deposit_networks_sql() -> &'static str {
 fn wallet_deposit_select_sql() -> &'static str {
     r#"SELECT events.id, events.user_id, events.asset_id, events.asset_symbol,
               events.network, events.address, events.memo, events.tx_hash, events.event_index,
-              events.amount, events.block_height, events.confirmations,
+              events.amount, events.fee_amount, events.block_height, events.confirmations,
               events.required_confirmations, events.status, events.failure_reason,
               events.credited_at, events.reversed_at, events.created_at
        FROM wallet_deposit_events events"#
@@ -694,7 +704,7 @@ async fn load_deposit_event_by_id_in_tx(
     .ok_or(AppError::NotFound)
 }
 
-/// 在调用方事务中完成一笔充值的实际入账：锁钱包、增加 available、写正向流水并把事件推进为已入账。
+/// 在调用方事务中完成一笔充值的实际入账：锁钱包、把毛额减去快照手续费后的净额记入 available、写正向流水并把事件推进为已入账。
 /// 资金只进 available，frozen 与 locked 原值回写；入账后的可用余额按 18 位定点计算，避免不同链精度污染账本。
 /// 流水变更类型固定为 deposit_confirm，业务引用指向充值事件编号，因此重复入账可由引用维度直接甄别。
 /// 状态更新带上原状态为已观测的条件，受影响行数不为一即判定并发抢先，返回冲突让整个事务回滚。
@@ -703,8 +713,9 @@ async fn credit_deposit_event_in_tx(
     tx: &mut Transaction<'_, MySql>,
     event: &WalletDepositEventResponse,
 ) -> AppResult<()> {
+    let credit_amount = deposit_credit_amount(event)?;
     let wallet = lock_wallet_balance(tx, event.user_id, event.asset_id).await?;
-    let available_after = (wallet.available.clone() + event.amount.clone()).with_scale(18);
+    let available_after = (wallet.available.clone() + credit_amount.clone()).with_scale(18);
     update_wallet_balance(
         tx,
         event.user_id,
@@ -719,7 +730,7 @@ async fn credit_deposit_event_in_tx(
         event.user_id,
         event.asset_id,
         "deposit_confirm",
-        &event.amount,
+        &credit_amount,
         "available",
         &available_after,
         &available_after,
@@ -743,6 +754,12 @@ async fn credit_deposit_event_in_tx(
         ));
     }
     Ok(())
+}
+
+/// 用事件快照上的毛额和手续费算出实际入账净额；手续费为负或净额非正则拒绝。
+fn deposit_credit_amount(event: &WalletDepositEventResponse) -> AppResult<BigDecimal> {
+    deposit_net_credit_amount(&event.amount, &event.fee_amount, MAX_ASSET_PRECISION_SCALE)
+        .map_err(AppError::Validation)
 }
 
 /// 把资产配置行搬运为充提资产响应项，同时带出充值与提现两侧开关供前端判断可用动作。

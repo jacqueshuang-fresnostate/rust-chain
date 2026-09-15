@@ -112,6 +112,24 @@ pub(crate) async fn insert_agent_business_commission_in_tx(
     Ok(())
 }
 
+/// 在调用方事务内把指定来源仍为 pending 的返佣记录一次性标为 rejected。
+/// 用于预测退款等来源永久不可打款的场景，避免账龄达标后仍被 worker 入账。
+/// 只改 pending 行，已 settled 的佣金不回冲；无匹配行视为空操作。函数不提交、不写钱包。
+pub(crate) async fn reject_pending_agent_commissions_for_source_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    source_type: &str,
+    source_id: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE agent_commission_records SET status = 'rejected' WHERE source_type = ? AND source_id = ? AND status = 'pending'",
+    )
+    .bind(source_type)
+    .bind(source_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// 按代理管理员 ID 读取账号与代理节点，本节点或任一祖先停用时不返回记录。
 /// 查询不锁行且无写入副作用；未命中由应用层统一映射为未授权。
 /// 祖先状态用路径前缀子查询整体核验，只要链路上任一级停用整条线即失效，下级不会退化成孤立可用节点。

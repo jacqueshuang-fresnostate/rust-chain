@@ -1,7 +1,14 @@
 use crate::{
     error::{AppError, AppResult},
     modules::{
-        earn::redemption::{EarnRedemptionTerms, calculate_earn_redemption_amounts},
+        earn::{
+            infrastructure::{insert_earn_platform_journal_legs_in_tx, load_asset_precision_in_tx},
+            journal::earn_redemption_journal_legs,
+            redemption::{
+                EarnRedemptionTerms, calculate_earn_redemption_amounts,
+                quantize_earn_redemption_amounts,
+            },
+        },
         events::{EventBroadcastHub, EventBroadcastMessage},
     },
     state::AppState,
@@ -223,19 +230,23 @@ async fn redeem_subscription_by_id(
         return Ok(EarnRedemptionOutcome::Skipped);
     }
 
-    let amounts = calculate_earn_redemption_amounts(
-        EarnRedemptionTerms {
-            amount: &subscription.amount,
-            apr_rate: &subscription.apr_rate,
-            term_days: subscription.term_days,
-            subscribed_at: subscription.subscribed_at,
-            matures_at: subscription.matures_at,
-            redemption_fee_rate: &subscription.redemption_fee_rate,
-            maturity_profit_fee_rate: &subscription.maturity_profit_fee_rate,
-            early_redeem_fee_basis: &subscription.early_redeem_fee_basis,
-            early_redeem_fee_rate: &subscription.early_redeem_fee_rate,
-        },
-        now,
+    let asset_precision = load_asset_precision_in_tx(&mut tx, subscription.asset_id).await?;
+    let amounts = quantize_earn_redemption_amounts(
+        calculate_earn_redemption_amounts(
+            EarnRedemptionTerms {
+                amount: &subscription.amount,
+                apr_rate: &subscription.apr_rate,
+                term_days: subscription.term_days,
+                subscribed_at: subscription.subscribed_at,
+                matures_at: subscription.matures_at,
+                redemption_fee_rate: &subscription.redemption_fee_rate,
+                maturity_profit_fee_rate: &subscription.maturity_profit_fee_rate,
+                early_redeem_fee_basis: &subscription.early_redeem_fee_basis,
+                early_redeem_fee_rate: &subscription.early_redeem_fee_rate,
+            },
+            now,
+        ),
+        asset_precision,
     );
     let wallet = lock_wallet_row(&mut tx, subscription.user_id, subscription.asset_id).await?;
     let available_after = wallet.available.clone() + amounts.redeem_amount.clone();
@@ -268,6 +279,20 @@ async fn redeem_subscription_by_id(
     .bind(&wallet.locked)
     .bind(subscription.id.to_string())
     .execute(&mut *tx)
+    .await?;
+
+    insert_earn_platform_journal_legs_in_tx(
+        &mut tx,
+        &format!("earn_redeem:{}", subscription.id),
+        subscription.asset_id,
+        subscription.id,
+        &earn_redemption_journal_legs(
+            &amounts.principal_amount,
+            &amounts.gross_yield_amount,
+            &amounts.fee_amount,
+            &amounts.redeem_amount,
+        ),
+    )
     .await?;
 
     let subscription_update = sqlx::query(

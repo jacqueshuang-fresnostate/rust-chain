@@ -122,6 +122,7 @@ export interface PcMemberWallet {
 }
 
 export interface BackendCreateWithdrawalRequest {
+  quote_id: string
   asset_symbol: string
   network?: string
   address: string
@@ -133,11 +134,12 @@ export interface BackendCreateWithdrawalRequest {
 }
 
 export interface PcWithdrawalParams {
+  quoteId: string
   unit: string
   network?: string
   address: string
-  amount: number
-  fee: number
+  amount: number | string
+  fee: number | string
   idempotencyKey?: string
   code?: string
   fundPassword?: string
@@ -665,6 +667,8 @@ export interface BackendSecondsOrder {
   duration_seconds?: number
   payout_rate: string | number
   entry_price?: string | number | null
+  settlement_price?: string | number | null
+  payout_amount?: string | number | null
   status: string
   result?: string | null
   idempotency_key: string
@@ -1243,14 +1247,15 @@ export function mapWalletAccountsToTradeWallets(
 }
 
 export function mapPcWithdrawalRequest(params: PcWithdrawalParams): BackendCreateWithdrawalRequest {
+  const quoteId = params.quoteId.trim()
   return {
+    quote_id: quoteId,
     asset_symbol: params.unit.trim().toUpperCase(),
     network: params.network?.trim() || undefined,
     address: params.address.trim(),
     amount: String(params.amount),
     fee: String(params.fee),
-    idempotency_key: params.idempotencyKey?.trim()
-      || `pc-withdraw-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    idempotency_key: params.idempotencyKey?.trim() || `pc-withdraw-${quoteId}`,
     fund_password: params.fundPassword?.trim() || undefined,
     totp_code: params.totpCode?.trim() || undefined,
   }
@@ -1524,7 +1529,7 @@ export function mapSecondsOrdersToPcOrders(response: BackendSecondsOrdersRespons
       amount: toNumber(order.stake_amount),
       betAmount: toNumber(order.stake_amount),
       openPrice: toNumber(order.entry_price ?? 0),
-      closePrice: 0,
+      closePrice: toNumber(order.settlement_price ?? 0),
       cycleLength: toNumber(order.duration_seconds ?? 0),
       cycleRate: toNumber(order.payout_rate),
       status: secondsStatusToPc(order.status),
@@ -1845,8 +1850,15 @@ function secondsResultToPc(result?: string | null): string | number {
 }
 
 function secondsProfit(order: BackendSecondsOrder): number {
-  if (order.result?.toLowerCase() === 'win') return toNumber(order.stake_amount) * toNumber(order.payout_rate)
-  if (order.result?.toLowerCase() === 'loss' || order.result?.toLowerCase() === 'lose') return -toNumber(order.stake_amount)
+  const stake = toNumber(order.stake_amount)
+  const result = order.result?.toLowerCase()
+  if (result === 'win') {
+    if (order.payout_amount !== undefined && order.payout_amount !== null && order.payout_amount !== '') {
+      return toNumber(order.payout_amount) - stake
+    }
+    return stake * toNumber(order.payout_rate)
+  }
+  if (result === 'loss' || result === 'lose') return -stake
   return 0
 }
 

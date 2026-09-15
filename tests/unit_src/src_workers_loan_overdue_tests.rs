@@ -18,3 +18,12 @@ fn loan_overdue_and_health_worker_is_enabled_by_default() {
     assert_eq!(config.interval_seconds, 300);
     assert_eq!(config.batch_limit, 100);
 }
+
+#[test]
+fn overdue_scan_collects_due_orders_with_the_shared_repayment_path() {
+    let source = include_str!("../../src/workers/loan_overdue.rs");
+    assert!(source.contains("settle_locked_loan_order_repayment_in_tx"));
+    assert!(source.contains("insufficient available balance for loan repayment"));
+    assert!(source.contains("collected"));
+    assert!(!source.contains("不改钱包"));
+}

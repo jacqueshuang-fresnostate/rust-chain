@@ -21,6 +21,13 @@ fn settlement_snapshot_validates_all_provenance_and_window_boundaries() {
     let valid = snapshot(expires_at);
     assert!(service::validate_settlement_price_snapshot(&valid, "btc-usdt", expires_at).is_ok());
 
+    let mut default_source = valid.clone();
+    default_source.source = "default".to_owned();
+    assert!(
+        service::validate_settlement_price_snapshot(&default_source, "BTCUSDT", expires_at).is_ok(),
+        "default-generator ticks are archival settlement evidence"
+    );
+
     let mut invalid = valid.clone();
     invalid.symbol = "ETHUSDT".to_owned();
     assert!(service::validate_settlement_price_snapshot(&invalid, "BTCUSDT", expires_at).is_err());

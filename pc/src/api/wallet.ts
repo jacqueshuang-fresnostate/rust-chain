@@ -35,14 +35,39 @@ export interface WalletAddress {
 }
 
 export interface WithdrawParams {
+    quoteId: string
     unit: string
-    network?: string // Selected network
+    network?: string
     address: string
-    amount: number
-    fee: number
-    code: string // email/sms code
+    amount: number | string
+    fee: number | string
+    code: string
     fundPassword?: string
     totpCode?: string
+}
+
+export interface WithdrawalQuote {
+    quoteId: string
+    assetSymbol: string
+    network: string
+    amount: string
+    fee: string
+    net: string
+    totalReserved: string
+    feeConfigVersion: string
+    expiresAt: number
+}
+
+interface BackendWithdrawalQuote {
+    quote_id?: string
+    asset_symbol?: string
+    network?: string
+    amount?: string | number
+    fee?: string | number
+    net?: string | number
+    total_reserved?: string | number
+    fee_config_version?: string
+    expires_at?: number
 }
 
 interface BackendDepositAddressResponse {
@@ -149,6 +174,12 @@ export async function fetchWithdrawCoins(): Promise<{ data: { code: number, mess
     return normalizeCoinListResponse(assets)
 }
 
+function isAbortError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false
+    const candidate = error as { name?: string; code?: string }
+    return candidate.name === 'CanceledError' || candidate.name === 'AbortError' || candidate.code === 'ERR_CANCELED'
+}
+
 function normalizeCoinListResponse(assets: BackendDepositAssetResponse[]): { data: { code: number, message: string, data: string[] } } {
     const symbols = [...new Set(assets.map((asset) => asset.symbol.toUpperCase()).filter(Boolean))]
     return {
@@ -160,11 +191,11 @@ function normalizeCoinListResponse(assets: BackendDepositAssetResponse[]): { dat
     }
 }
 
-export async function fetchCoinNetworks(unit: string, purpose: AssetPurpose = 'deposit'): Promise<{ data: { code: number, message: string, data: CoinNetwork[] } }> {
-    const asset = await fetchAssetSetting(unit, purpose)
+export async function fetchCoinNetworks(unit: string, purpose: AssetPurpose = 'deposit', options?: { signal?: AbortSignal }): Promise<{ data: { code: number, message: string, data: CoinNetwork[] } }> {
+    const asset = await fetchAssetSetting(unit, purpose, options)
     if (purpose === 'deposit') {
         try {
-            const networks = await fetchBackendDepositNetworks(unit)
+            const networks = await fetchBackendDepositNetworks(unit, options)
             if (networks.length > 0) {
                 return {
                     data: {
@@ -174,7 +205,10 @@ export async function fetchCoinNetworks(unit: string, purpose: AssetPurpose = 'd
                     }
                 }
             }
-        } catch {
+        } catch (error) {
+            if (options?.signal?.aborted || isAbortError(error)) {
+                throw error
+            }
             // Fall back to the built-in network list so the recharge page stays usable during local setup.
         }
     }
@@ -187,13 +221,15 @@ export async function fetchCoinNetworks(unit: string, purpose: AssetPurpose = 'd
     }
 }
 
-export async function getDepositAddress(unit: string, network?: string): Promise<{ data: { code: number, message: string, data: WalletAddress | null } }> {
+export async function getDepositAddress(unit: string, network?: string, options?: { signal?: AbortSignal }): Promise<{ data: { code: number, message: string, data: WalletAddress | null } }> {
     const networkValue = backendNetworkValue(network || supportedDepositNetworks(unit)[0])
     const res = await request.instance.post<BackendDepositAddressResponse>(backendApiUrl('/wallet/deposit-address'), {
         asset_symbol: unit.toUpperCase(),
         network: networkValue,
+    }, {
+        signal: options?.signal,
     })
-    const asset = await fetchAssetSetting(res.data.asset_symbol, 'deposit')
+    const asset = await fetchAssetSetting(res.data.asset_symbol, 'deposit', options)
     const coin = defaultNetwork(res.data.asset_symbol, depositNetworkLabel(res.data.network), asset)
     return {
         data: {
@@ -283,6 +319,19 @@ export async function fetchWithdrawRecords(limit = 50): Promise<{ data: { code: 
     }
 }
 
+export async function fetchWithdrawalQuote(input: {
+    assetSymbol: string
+    network: string
+    amount: number | string
+}): Promise<WithdrawalQuote> {
+    const res = await request.instance.post<BackendWithdrawalQuote>(backendApiUrl('/wallet/withdrawals/quote'), {
+        asset_symbol: input.assetSymbol.trim().toUpperCase(),
+        network: input.network.trim(),
+        amount: String(input.amount),
+    })
+    return mapWithdrawalQuote(res.data)
+}
+
 export async function submitWithdraw(params: WithdrawParams): Promise<{ data: { code: number, message: string, data?: unknown } }> {
     const res = await request.instance.post(backendApiUrl('/wallet/withdrawals'), mapPcWithdrawalRequest(params))
     return {
@@ -292,6 +341,24 @@ export async function submitWithdraw(params: WithdrawParams): Promise<{ data: { 
             data: res.data,
         }
     }
+}
+
+function mapWithdrawalQuote(raw: BackendWithdrawalQuote): WithdrawalQuote {
+    const quote: WithdrawalQuote = {
+        quoteId: String(raw.quote_id || '').trim(),
+        assetSymbol: String(raw.asset_symbol || '').trim().toUpperCase(),
+        network: String(raw.network || '').trim(),
+        amount: String(raw.amount ?? ''),
+        fee: String(raw.fee ?? ''),
+        net: String(raw.net ?? ''),
+        totalReserved: String(raw.total_reserved ?? ''),
+        feeConfigVersion: String(raw.fee_config_version || '').trim(),
+        expiresAt: typeof raw.expires_at === 'number' ? raw.expires_at : Number(raw.expires_at),
+    }
+    if (!quote.quoteId || !quote.assetSymbol || !quote.network || !quote.amount || !quote.fee) {
+        throw new Error('invalid withdrawal quote')
+    }
+    return quote
 }
 
 function supportedDepositNetworks(unit: string): string[] {
@@ -367,22 +434,25 @@ function networkAddressRegex(network: string): string {
     }
 }
 
-async function fetchBackendWalletAssets(purpose: AssetPurpose): Promise<BackendDepositAssetResponse[]> {
+async function fetchBackendWalletAssets(purpose: AssetPurpose, options?: { signal?: AbortSignal }): Promise<BackendDepositAssetResponse[]> {
     const endpoint = purpose === 'withdraw' ? '/wallet/withdraw-assets' : '/wallet/deposit-assets'
-    const res = await request.instance.get<{ assets?: BackendDepositAssetResponse[] }>(backendApiUrl(endpoint))
+    const res = await request.instance.get<{ assets?: BackendDepositAssetResponse[] }>(backendApiUrl(endpoint), {
+        signal: options?.signal,
+    })
     return Array.isArray(res.data?.assets) ? res.data.assets : []
 }
 
-async function fetchBackendDepositNetworks(unit: string): Promise<BackendDepositNetworkResponse[]> {
+async function fetchBackendDepositNetworks(unit: string, options?: { signal?: AbortSignal }): Promise<BackendDepositNetworkResponse[]> {
     const res = await request.instance.get<{ networks?: BackendDepositNetworkResponse[] }>(backendApiUrl('/wallet/deposit-networks'), {
         params: { asset_symbol: unit.trim().toUpperCase() },
+        signal: options?.signal,
     })
     return Array.isArray(res.data?.networks) ? res.data.networks : []
 }
 
-async function fetchAssetSetting(unit: string, purpose: AssetPurpose): Promise<BackendDepositAssetResponse | undefined> {
+async function fetchAssetSetting(unit: string, purpose: AssetPurpose, options?: { signal?: AbortSignal }): Promise<BackendDepositAssetResponse | undefined> {
     const symbol = unit.trim().toUpperCase()
-    const assets = await fetchBackendWalletAssets(purpose)
+    const assets = await fetchBackendWalletAssets(purpose, options)
     return assets.find((asset) => asset.symbol.toUpperCase() === symbol)
 }
 

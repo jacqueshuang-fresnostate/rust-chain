@@ -58,7 +58,10 @@ use crate::{
             revoke_actor_auth_sessions, verify_password,
         },
         countries::normalize_country_code,
-        events::{infrastructure::insert_event_in_tx, user_created_outbox_event},
+        events::{
+            infrastructure::{create_wallet_accounts_for_user_in_tx, insert_event_in_tx},
+            user_created_outbox_event,
+        },
         security::domain::login_challenge_expired,
         security::{
             LoginTwoFactorChallengeType, LoginTwoFactorMode, confirm_admin_totp, confirm_user_totp,
@@ -504,9 +507,9 @@ pub(crate) async fn load_login_config(state: &AppState) -> AppResult<LoginConfig
     })
 }
 
-/// 编排邮件码注册：同事务锁国家配置、消费验证码、写用户、邀请关系与 outbox。
+/// 编排邮件码注册：同事务锁国家配置、消费验证码、写用户、邀请关系、零余额钱包与 outbox。
 /// 错码仅提交试错计数；其他事务内失败整体回滚。提交后才签发令牌，令牌后端失败时
-/// 已注册用户、邀请关系和 outbox 仍然保留；重放注册受邮箱唯一约束阻断。
+/// 已注册用户、邀请关系、钱包账户和 outbox 仍然保留；重放注册受邮箱唯一约束阻断。
 pub(crate) async fn register_user_with_email_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -557,6 +560,7 @@ pub(crate) async fn register_user_with_email_code(
     if let Some(binding) = referral_binding {
         bind_registered_user_referral_in_tx(&mut tx, user_id, binding).await?;
     }
+    create_wallet_accounts_for_user_in_tx(&mut tx, user_id).await?;
     insert_event_in_tx(&mut tx, &user_created_outbox_event(user_id, now)).await?;
 
     tx.commit().await?;

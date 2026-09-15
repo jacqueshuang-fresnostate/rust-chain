@@ -93,3 +93,12 @@ fn agent_commission_businesses_allow_all_configurable_trading_products() {
     );
     assert!(super::service::normalize_agent_commission_product_type("earn").is_err());
 }
+
+#[test]
+fn pending_commissions_are_rejected_by_source_identity() {
+    let sql = include_str!("../../src/modules/agent/infrastructure.rs");
+    assert!(sql.contains("reject_pending_agent_commissions_for_source_in_tx"));
+    assert!(sql.contains(
+        "UPDATE agent_commission_records SET status = 'rejected' WHERE source_type = ? AND source_id = ? AND status = 'pending'"
+    ));
+}

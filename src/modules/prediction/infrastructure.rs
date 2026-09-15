@@ -31,8 +31,12 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         agent::{
-            infrastructure::insert_agent_business_commission_in_tx,
-            repository::AgentBusinessCommissionWrite, service::AGENT_COMMISSION_PRODUCT_PREDICTION,
+            infrastructure::{
+                insert_agent_business_commission_in_tx,
+                reject_pending_agent_commissions_for_source_in_tx,
+            },
+            repository::AgentBusinessCommissionWrite,
+            service::AGENT_COMMISSION_PRODUCT_PREDICTION,
         },
         wallet::truncate_amount_to_asset_precision,
     },
@@ -526,6 +530,12 @@ pub(crate) async fn settle_market_in_tx(
                 &order.stake_amount,
                 &fee_refund_amount,
                 order.id,
+            )
+            .await?;
+            reject_pending_agent_commissions_for_source_in_tx(
+                &mut tx,
+                "prediction_order",
+                &order.id.to_string(),
             )
             .await?;
             sqlx::query(

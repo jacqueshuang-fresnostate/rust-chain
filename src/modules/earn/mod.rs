@@ -8,6 +8,7 @@
 
 pub mod application;
 pub mod infrastructure;
+pub(crate) mod journal;
 pub mod presentation;
 pub(crate) mod redemption;
 pub mod repository;

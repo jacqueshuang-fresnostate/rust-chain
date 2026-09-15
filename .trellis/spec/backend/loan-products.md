@@ -22,6 +22,20 @@
 - Combined filters use AND semantics.
 - The public `/api/v1/loan/products` route remains independent and returns active products only.
 
+## Scenario: Due-date collection after overdue marking
+
+### 1. Scope / Trigger
+
+- Trigger: `loan_overdue` worker processing a `disbursed` order whose `due_at` has passed, or the user repay path for `disbursed`/`overdue` orders.
+- Applies to wallet debit, repayment journal, collateral release, and the `repaid` terminal write.
+
+### 2. Contracts
+
+- Overdue scan first marks `overdue` with `overdue_at`.
+- If available balance covers principal plus the existing interest formula, the same locked repayment helper used by user repay debits `loan_repayment`, writes the repayment journal, releases collateral, and sets `repaid`.
+- Insufficient available balance leaves the order `overdue`; no partial debit, no invented late-fee rate.
+- Already-settled commission/liquidation races: unexpected errors roll back the collection attempt; a concurrent repay that already reached `repaid` is skipped.
+
 ### 4. Validation & Error Matrix
 
 - Unsupported non-empty `loan_type` -> `400 VALIDATION_ERROR` before SQL execution.

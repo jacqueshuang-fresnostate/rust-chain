@@ -67,6 +67,8 @@ pub(crate) struct LoanOrderLockRow {
     pub(crate) status: String,
     /// 放款时刻，为空则无法按实际天数计息，还款会被拒绝。
     pub(crate) disbursed_at: Option<DateTime<Utc>>,
+    /// 到期时刻，逾期扫描用它判断是否已过 due_at。
+    pub(crate) due_at: Option<DateTime<Utc>>,
     /// 抵押释放时刻，非空即视为已释放，可防止重复退回 frozen。
     pub(crate) collateral_released_at: Option<DateTime<Utc>>,
 }
@@ -758,7 +760,7 @@ pub(crate) async fn lock_loan_order(
                   interest_calculation_mode, term_days, collateral_asset_id,
                   collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
                   oracle_symbol, oracle_source, oracle_max_age_seconds,
-                  status, disbursed_at, collateral_released_at
+                  status, disbursed_at, due_at, collateral_released_at
            FROM loan_orders
            WHERE id = ?
            LIMIT 1
@@ -785,7 +787,7 @@ pub(crate) async fn lock_user_loan_order(
                   interest_calculation_mode, term_days, collateral_asset_id,
                   collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
                   oracle_symbol, oracle_source, oracle_max_age_seconds,
-                  status, disbursed_at, collateral_released_at
+                  status, disbursed_at, due_at, collateral_released_at
            FROM loan_orders
            WHERE id = ? AND user_id = ?
            LIMIT 1
@@ -809,7 +811,7 @@ pub(crate) async fn load_user_loan_risk_order(
                   interest_calculation_mode, term_days, collateral_asset_id,
                   collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
                   oracle_symbol, oracle_source, oracle_max_age_seconds,
-                  status, disbursed_at, collateral_released_at
+                  status, disbursed_at, due_at, collateral_released_at
            FROM loan_orders
            WHERE id = ? AND user_id = ?
            LIMIT 1"#,

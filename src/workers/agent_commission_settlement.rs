@@ -5,10 +5,14 @@
 //! 由该用例在单个事务内锁记录、给代理用户钱包可用余额入账、写流水并把状态改为 settled。
 //! 幂等由数据库状态承担：仅 pending 可被结算，重放会被状态检查挡下而不会二次入账；
 //! 进程内另有失败集合避免同一批坏记录在每个周期反复重试，重启后该集合清空并重新尝试。
+//! 来源订单尚未终态时保持 pending 且不进入失败集合，等上游结算后再打款。
 
 use crate::{
     error::{AppError, AppResult},
-    modules::admin::application::apply_admin_agent_commission_status,
+    modules::admin::{
+        application::apply_admin_agent_commission_status,
+        service::AGENT_COMMISSION_SOURCE_NOT_TERMINAL,
+    },
 };
 use chrono::{DateTime, Utc};
 use sqlx::{MySql, Pool};
@@ -86,7 +90,12 @@ pub async fn run_once_with_dependencies(
         summary.scanned += 1;
         match apply_admin_agent_commission_status(pool, None, candidate.id, "settled", None).await {
             Ok(_) => summary.settled += 1,
-            // 无打款支持等冲突只记录并跳过，不做任何状态回写。
+            // 来源仍未终态时保持 pending 并允许后续周期重试，不写入失败 guard。
+            Err(AppError::Conflict(reason)) if reason == AGENT_COMMISSION_SOURCE_NOT_TERMINAL => {
+                summary.skipped += 1;
+                warn!(commission_id = candidate.id, %reason, "代理佣金自动结算等待来源终态");
+            }
+            // 无打款支持等永久冲突只记录并跳过，不做任何状态回写。
             Err(AppError::Conflict(reason)) => {
                 summary.skipped += 1;
                 guard.record_failure(candidate.id);

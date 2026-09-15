@@ -25,7 +25,7 @@ use crate::{
     modules::{
         loan::{
             infrastructure::{
-                AdminLoanOrdersFilter, LoanApprovalRiskSnapshot, LoanOrderCreate,
+                AdminLoanOrdersFilter, LoanApprovalRiskSnapshot, LoanOrderCreate, LoanOrderLockRow,
                 LoanOrderReplayRow, LoanProductCollateralWrite, LoanProductWrite,
                 apply_loan_wallet_credit, apply_loan_wallet_debit, apply_loan_wallet_freeze,
                 ensure_loan_collateral_frozen_in_tx, ensure_loan_user_kyc_level,
@@ -66,7 +66,7 @@ use bigdecimal::BigDecimal;
 use chrono::Utc;
 use redis::aio::ConnectionManager;
 use serde_json::Value;
-use sqlx::{MySql, Pool};
+use sqlx::{MySql, Pool, Transaction};
 use std::collections::HashSet;
 
 /// 按产品编号倒序列出可申请的借贷产品，状态过滤硬编码为 active，调用方无法查看已下架配置。
@@ -1176,11 +1176,26 @@ pub(crate) async fn repay_loan_order_use_case(
             "loan order is not disbursed for repayment".to_owned(),
         ));
     }
+    settle_locked_loan_order_repayment_in_tx(&mut tx, &order, Utc::now()).await?;
+
+    tx.commit().await?;
+    Ok((load_loan_order_response(pool, order_id).await?, true))
+}
+
+/// 在调用方已锁定的订单上按现有计息口径扣本息、写还款流水、释放抵押并置为 repaid。
+/// 调用方须已确认订单为 disbursed/overdue，且同一事务持有订单行锁；本函数再按资产编号升序锁钱包。
+/// 利息在全部资金锁之后才计算，避免锁等待跨过 actual_days 边界。余额不足原样向上返回，由调用方决定回滚或保持 overdue。
+/// 不提交、不回滚；逾期扫描与用户还款共用此路径，避免两套扣款口径。
+pub(crate) async fn settle_locked_loan_order_repayment_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    order: &LoanOrderLockRow,
+    now: chrono::DateTime<Utc>,
+) -> AppResult<()> {
     let disbursed_at = order.disbursed_at.ok_or_else(|| {
         AppError::Validation("loan order disbursed_at is required for repayment".to_owned())
     })?;
     let asset_precisions = lock_loan_asset_precisions_in_order(
-        &mut tx,
+        tx,
         std::iter::once(order.asset_id).chain(order.collateral_asset_id),
     )
     .await?;
@@ -1189,19 +1204,18 @@ pub(crate) async fn repay_loan_order_use_case(
         .find_map(|(asset_id, precision)| (*asset_id == order.asset_id).then_some(*precision))
         .ok_or_else(|| AppError::Internal("locked loan asset precision is missing".to_owned()))?;
     lock_loan_wallets_in_order(
-        &mut tx,
+        tx,
         order.user_id,
         std::iter::once(order.asset_id).chain(order.collateral_asset_id),
     )
     .await?;
-    // 钱包锁等待可能跨过实际天数计息边界，必须在取得全部资金锁之后确定最终利息。
     let interest_amount = calculate_interest_amount(
         &order.amount,
         &order.interest_rate,
         &order.interest_calculation_mode,
         order.term_days,
         disbursed_at,
-        Utc::now(),
+        now,
         asset_precision,
     )?;
     let repayment_amount = truncate_amount_to_asset_precision(
@@ -1209,9 +1223,8 @@ pub(crate) async fn repay_loan_order_use_case(
         asset_precision,
     );
 
-    // 还款扣款、抵押释放、订单结清金额必须原子提交，保证账务和订单状态一致。
     apply_loan_wallet_debit(
-        &mut tx,
+        tx,
         order.user_id,
         order.asset_id,
         &repayment_amount,
@@ -1220,7 +1233,7 @@ pub(crate) async fn repay_loan_order_use_case(
     )
     .await?;
     insert_loan_repayment_journal_in_tx(
-        &mut tx,
+        tx,
         order.id,
         order.user_id,
         order.asset_id,
@@ -1229,9 +1242,7 @@ pub(crate) async fn repay_loan_order_use_case(
         &repayment_amount,
     )
     .await?;
-    release_loan_collateral_if_needed(&mut tx, &order).await?;
-    mark_loan_order_repaid_in_tx(&mut tx, order.id, &interest_amount, &repayment_amount).await?;
-
-    tx.commit().await?;
-    Ok((load_loan_order_response(pool, order_id).await?, true))
+    release_loan_collateral_if_needed(tx, order).await?;
+    mark_loan_order_repaid_in_tx(tx, order.id, &interest_amount, &repayment_amount).await?;
+    Ok(())
 }

@@ -82,3 +82,18 @@ async fn login_turnstile_use_case_preserves_missing_token_error() {
     assert_eq!(code, "CF_TURNSTILE_TOKEN_MISSING");
     assert_eq!(message, "cf_turnstile_token is required");
 }
+
+#[test]
+fn email_registration_creates_wallet_accounts_in_the_same_transaction() {
+    let source = include_str!("../../src/modules/auth/application.rs");
+    let register_fn = source
+        .split("pub(crate) async fn register_user_with_email_code(")
+        .nth(1)
+        .and_then(|rest: &str| {
+            rest.split("pub(crate) async fn register_user_with_email_code_response(")
+                .next()
+        })
+        .expect("register use case source");
+    assert!(register_fn.contains("create_wallet_accounts_for_user_in_tx"));
+    assert!(register_fn.contains("user_created_outbox_event"));
+}

@@ -136,6 +136,7 @@ direct_inviter_id = inviter.user_id;
 - An inverted or repeated cumulative rate creates no negative/zero record and never reduces an amount already allocated.
 - Calculate each cumulative amount with `truncate_amount_to_asset_precision(source_amount * cumulative_rate, assets.precision_scale)`, then subtract the previously allocated cumulative amount. This keeps the sum equal to the highest quantized cumulative payout.
 - Insert commission records in the same MySQL transaction as the source business funds/order mutation. A source transaction rollback must also remove every level's commission record.
+- Invalid prediction refunds must reject still-pending `prediction_order` commission rows in the same settlement transaction. Already-settled commission is not clawed back here.
 - Business basis and payout asset mapping:
   - `convert_order`: source amount and source asset.
   - `prediction_order`: stake amount and stake asset.

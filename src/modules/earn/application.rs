@@ -15,6 +15,7 @@ use crate::{
     modules::{
         earn::{
             infrastructure,
+            journal::{earn_redemption_journal_legs, earn_subscription_journal_legs},
             presentation::{
                 AdminCategoriesQuery, AdminEarnProductsResponse, AdminEarnSubscriptionsResponse,
                 AdminProductsQuery, AdminSubscriptionsQuery, CreateEarnCategoryRequest,
@@ -34,8 +35,8 @@ use crate::{
                 optional_string, product_audit_json, product_fee_config_from_create_request,
                 product_fee_config_from_update_request, redemption_amounts_for_subscription,
                 required_reason, route_limit, route_offset, user_id_from_subject, validate_amount,
-                validate_create_product_request, validate_product_amount,
-                validate_update_product_request,
+                validate_amount_asset_precision, validate_create_product_request,
+                validate_product_amount, validate_update_product_request,
             },
         },
         events::{EventBroadcastHub, EventBroadcastMessage},
@@ -614,6 +615,9 @@ async fn subscribe_in_tx(
         Err(error) => return Err(error),
     };
     validate_product_amount(&amount, &product)?;
+    let asset_precision =
+        infrastructure::load_asset_precision_in_tx(&mut tx, product.asset_id).await?;
+    validate_amount_asset_precision(&amount, asset_precision)?;
     let matures_at = earn_matures_at(product.term_days)?;
     let Some(subscription_id) = infrastructure::insert_subscription_in_tx(
         &mut tx,
@@ -645,6 +649,14 @@ async fn subscribe_in_tx(
         &amount,
         &wallet,
         subscription_id,
+    )
+    .await?;
+    infrastructure::insert_earn_platform_journal_legs_in_tx(
+        &mut tx,
+        &format!("earn_subscribe:{subscription_id}"),
+        product.asset_id,
+        subscription_id,
+        &earn_subscription_journal_legs(&amount),
     )
     .await?;
 
@@ -682,7 +694,9 @@ async fn redeem_subscription_in_tx(
     }
 
     let now = Utc::now();
-    let amounts = redemption_amounts_for_subscription(&subscription, now);
+    let asset_precision =
+        infrastructure::load_asset_precision_in_tx(&mut tx, subscription.asset_id).await?;
+    let amounts = redemption_amounts_for_subscription(&subscription, now, asset_precision);
     let wallet =
         infrastructure::lock_wallet_row(&mut tx, subscription.user_id, subscription.asset_id)
             .await?;
@@ -691,6 +705,19 @@ async fn redeem_subscription_in_tx(
         &subscription,
         &wallet,
         &amounts.redeem_amount,
+    )
+    .await?;
+    infrastructure::insert_earn_platform_journal_legs_in_tx(
+        &mut tx,
+        &format!("earn_redeem:{}", subscription.id),
+        subscription.asset_id,
+        subscription.id,
+        &earn_redemption_journal_legs(
+            &amounts.principal_amount,
+            &amounts.gross_yield_amount,
+            &amounts.fee_amount,
+            &amounts.redeem_amount,
+        ),
     )
     .await?;
     infrastructure::mark_subscription_redeemed_in_tx(&mut tx, subscription.id).await?;
@@ -770,7 +797,9 @@ async fn redeemed_response_from_existing_subscription(
     let (principal_amount, yield_amount, redeem_amount) =
         infrastructure::load_redeemed_amounts_from_ledger(tx, &subscription).await?;
     let redeemed_at = subscription.redeemed_at.unwrap_or_else(Utc::now);
-    let amounts = redemption_amounts_for_subscription(&subscription, redeemed_at);
+    let asset_precision =
+        infrastructure::load_asset_precision_in_tx(tx, subscription.asset_id).await?;
+    let amounts = redemption_amounts_for_subscription(&subscription, redeemed_at, asset_precision);
     Ok(RedeemEarnResponse {
         subscription,
         principal_amount,
@@ -792,3 +821,7 @@ fn earn_mysql_pool(pool: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
         AppError::Internal("mysql pool is not configured for earn routes".to_owned())
     })
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_earn_application_tests.rs"]
+mod tests;

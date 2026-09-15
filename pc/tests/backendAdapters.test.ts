@@ -430,8 +430,9 @@ test('maps PC spot order requests and trade wallet balances to backend shapes', 
 
 test('maps PC withdrawal request into backend security verification payload', () => {
   assert.deepEqual(mapPcWithdrawalRequest({
+    quoteId: '0193c0de-5b1a-7c3d-8e9f-0123456789ab',
     unit: 'usdt',
-    network: 'TRC20',
+    network: 'tron',
     address: 'TDestinationAddress',
     amount: 25.5,
     fee: 1,
@@ -440,8 +441,9 @@ test('maps PC withdrawal request into backend security verification payload', ()
     fundPassword: 'fund-secret',
     totpCode: '123456',
   }), {
+    quote_id: '0193c0de-5b1a-7c3d-8e9f-0123456789ab',
     asset_symbol: 'USDT',
-    network: 'TRC20',
+    network: 'tron',
     address: 'TDestinationAddress',
     amount: '25.5',
     fee: '1',
@@ -451,15 +453,18 @@ test('maps PC withdrawal request into backend security verification payload', ()
   })
 
   assert.deepEqual(mapPcWithdrawalRequest({
+    quoteId: '0193c0de-5b1a-7c3d-8e9f-0123456789ac',
     unit: 'btc',
+    network: 'btc',
     address: 'bc1destination',
     amount: 0.1,
     fee: 0,
     idempotencyKey: 'withdraw-test-2',
     code: '',
   }), {
+    quote_id: '0193c0de-5b1a-7c3d-8e9f-0123456789ac',
     asset_symbol: 'BTC',
-    network: undefined,
+    network: 'btc',
     address: 'bc1destination',
     amount: '0.1',
     fee: '0',
@@ -945,7 +950,9 @@ test('maps backend seconds contract products and orders into PC seconds shapes',
         duration_seconds: 120,
         payout_rate: '0.85',
         entry_price: '70000',
-        status: 'opened',
+        settlement_price: '70120.5',
+        payout_amount: '46.25',
+        status: 'settled',
         result: 'win',
         idempotency_key: 'sec-1',
         created_at: 1_717_170_880_000,
@@ -957,8 +964,10 @@ test('maps backend seconds contract products and orders into PC seconds shapes',
   assert.equal(orders.data[0].betAmount, 25)
   assert.equal(orders.data[0].cycleLength, 120)
   assert.equal(orders.data[0].cycleRate, 0.85)
-  assert.equal(orders.data[0].status, 'OPEN')
+  assert.equal(orders.data[0].status, 'CLOSE')
   assert.equal(orders.data[0].result, 'WIN')
+  assert.equal(orders.data[0].closePrice, 70120.5)
+  assert.equal(orders.data[0].profit, 21.25)
   assert.equal(orders.data[0].createTime, 1_717_170_880_000)
   assert.equal(orders.data[0].endTime, 1_717_171_000_000)
 })
@@ -1232,7 +1241,11 @@ test('PC 2FA login security and withdrawal screens use the Rust security endpoin
   assert.match(sources.wallet, /deposit_fee/)
   assert.match(sources.wallet, /withdraw_fee/)
   assert.match(sources.wallet, /withdraw_fee_tiers/)
-  assert.match(sources.withdraw, /calculateWithdrawFee/)
+  assert.match(sources.wallet, /\/wallet\/withdrawals\/quote/)
+  assert.match(sources.wallet, /fetchWithdrawalQuote/)
+  assert.match(sources.withdraw, /fetchWithdrawalQuote/)
+  assert.match(sources.withdraw, /selectedNetworkKey/)
+  assert.match(sources.withdraw, /quoteId/)
   assert.match(sources.withdraw, /fetchWithdrawCoins/)
   assert.match(sources.wallet, /\/wallet\/quick-recharge\/config/)
   assert.match(sources.wallet, /\/wallet\/quick-recharge\/orders/)
@@ -1241,6 +1254,9 @@ test('PC 2FA login security and withdrawal screens use the Rust security endpoin
   assert.match(sources.wallet, /getNetworkInfo/)
   assert.match(sources.recharge, /getDepositAddress/)
   assert.match(sources.recharge, /selectedNetworkKey/)
+  assert.match(sources.recharge, /AbortController/)
+  assert.match(sources.recharge, /addressRequestGeneration/)
+  assert.match(sources.wallet, /signal:\s*options\?\.signal/)
   assert.match(sources.recharge, /createQuickRechargeOrder/)
   assert.match(sources.recharge, /activeRechargeTab/)
   assert.match(sources.recharge, /wallet\.normal_deposit/)

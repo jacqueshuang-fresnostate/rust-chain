@@ -129,6 +129,26 @@ pub fn truncate_amount_to_asset_precision(amount: &BigDecimal, precision_scale: 
     amount.with_scale(i64::from(bounded_scale))
 }
 
+/// 计算链上充值应记入用户 available 的净额：毛额减去快照手续费，再按资产精度向零截断。
+/// 手续费不得为负；净额必须为正，否则拒绝入账，避免零入账或把费用记成用户负债。
+/// 本函数不写钱包、不入账手续费到平台账户；调用方须用同一净额写余额、流水和冲正。
+pub fn deposit_net_credit_amount(
+    gross_amount: &BigDecimal,
+    deposit_fee: &BigDecimal,
+    precision_scale: i32,
+) -> Result<BigDecimal, String> {
+    if *deposit_fee < 0 {
+        return Err("deposit_fee must be non-negative".to_owned());
+    }
+    let gross = truncate_amount_to_asset_precision(gross_amount, precision_scale);
+    let fee = truncate_amount_to_asset_precision(deposit_fee, precision_scale);
+    let net = truncate_amount_to_asset_precision(&(gross - fee), precision_scale);
+    if net <= 0 {
+        return Err("deposit amount must exceed deposit fee".to_owned());
+    }
+    Ok(net)
+}
+
 /// 返回 BigDecimal 去除尾随零后的有效小数位数，整数和负指数结果均按零位处理。
 /// 先做规范化再取指数，因此形如一点一零零的金额只计一位，避免因存储标度不同而误判精度越界。
 /// 该纯函数仅用于精度判定，不修改入参，也不承担金额是否为正或是否符合业务限额的检查。

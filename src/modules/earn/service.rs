@@ -11,6 +11,7 @@
 //! 富文本采用白名单策略：块级节点只允许 p、h1、h2、h3、blockquote，
 //! 叶子节点只允许 text 加 bold、italic、underline 三个布尔标记，出现其他键一律整体拒绝。
 
+use crate::modules::wallet::amount_fits_asset_precision;
 use crate::{
     error::{AppError, AppResult},
     modules::earn::{
@@ -21,7 +22,7 @@ use crate::{
         redemption::{
             EARLY_REDEEM_FEE_BASIS_NONE, EARLY_REDEEM_FEE_BASIS_PRINCIPAL,
             EARLY_REDEEM_FEE_BASIS_PROFIT, EarnRedemptionAmounts, EarnRedemptionTerms,
-            calculate_earn_redemption_amounts,
+            calculate_earn_redemption_amounts, quantize_earn_redemption_amounts,
         },
         repository::{EarnProductFeeConfig, EarnProductRuleRow},
     },
@@ -817,6 +818,22 @@ pub(crate) fn validate_amount(amount: &BigDecimal) -> AppResult<()> {
     )
 }
 
+/// 校验申购金额能被目标资产的小数位无损表达，超精度一律拒绝而非隐式截断。
+/// 与 `validate_amount` 的 18 位存储校验形成两道门槛：前者守数据库列，本函数守资产口径。
+/// 拒绝而非量化是为了让用户提交的金额与最终扣款金额完全一致，避免静默少扣或多扣。
+/// 本函数只比较小数位，不读数据库，资产精度由调用方在锁定产品后从 `assets.precision_scale` 传入。
+pub(crate) fn validate_amount_asset_precision(
+    amount: &BigDecimal,
+    precision_scale: i32,
+) -> AppResult<()> {
+    if !amount_fits_asset_precision(amount, precision_scale) {
+        return Err(AppError::Validation(format!(
+            "earn subscription amount exceeds asset precision of {precision_scale} decimal places"
+        )));
+    }
+    Ok(())
+}
+
 /// 判定一个十进制数能否无损存入指定精度的数据库列，APR、费率和金额三类校验共用该实现。
 /// 先比较 scale：超过允许的小数位即拒绝，注意此处不做归一化，因此 `1.500` 会按 3 位小数计。
 /// 再由有效数字位数反推整数位数：去掉符号与前导零后的长度减去 scale 即整数位。
@@ -889,24 +906,30 @@ pub(crate) fn optional_image_url(value: Option<String>, field: &str) -> AppResul
 
 /// 仅使用订阅快照计算赎回：到期按 `本金*APR*term_days/365`，提前赎回按实际秒数计毛收益。
 /// 通用赎回费按本金+毛收益计；到期收益费只在到期后按毛收益计；提前费按配置对本金或毛收益计。
-/// 各中间费用与收益统一保留 18 位，净到账最低为零；产品后续修改不影响结果，本函数不写钱包。
+/// 各中间费用与收益先按 18 位账本口径计算，再统一向零量化到资产 precision_scale，
+/// 使入账金额与钱包余额增量精确相等，不受资产自身小数位限制而残留尾差。
+/// 产品后续修改不影响结果，本函数不写钱包。
 pub(crate) fn redemption_amounts_for_subscription(
     subscription: &EarnSubscriptionResponse,
     now: DateTime<Utc>,
+    asset_precision_scale: i32,
 ) -> EarnRedemptionAmounts {
-    calculate_earn_redemption_amounts(
-        EarnRedemptionTerms {
-            amount: &subscription.amount,
-            apr_rate: &subscription.apr_rate,
-            term_days: subscription.term_days,
-            subscribed_at: subscription.subscribed_at,
-            matures_at: subscription.matures_at,
-            redemption_fee_rate: &subscription.redemption_fee_rate,
-            maturity_profit_fee_rate: &subscription.maturity_profit_fee_rate,
-            early_redeem_fee_basis: &subscription.early_redeem_fee_basis,
-            early_redeem_fee_rate: &subscription.early_redeem_fee_rate,
-        },
-        now,
+    quantize_earn_redemption_amounts(
+        calculate_earn_redemption_amounts(
+            EarnRedemptionTerms {
+                amount: &subscription.amount,
+                apr_rate: &subscription.apr_rate,
+                term_days: subscription.term_days,
+                subscribed_at: subscription.subscribed_at,
+                matures_at: subscription.matures_at,
+                redemption_fee_rate: &subscription.redemption_fee_rate,
+                maturity_profit_fee_rate: &subscription.maturity_profit_fee_rate,
+                early_redeem_fee_basis: &subscription.early_redeem_fee_basis,
+                early_redeem_fee_rate: &subscription.early_redeem_fee_rate,
+            },
+            now,
+        ),
+        asset_precision_scale,
     )
 }
 
@@ -927,3 +950,7 @@ pub(crate) fn ensure_existing_subscription_matches_request(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_earn_service_tests.rs"]
+mod tests;

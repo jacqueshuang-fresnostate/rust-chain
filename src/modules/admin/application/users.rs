@@ -7,7 +7,10 @@
 //! KYC 相关用例只做跨上下文转发，审核规则与状态机由 kyc 上下文负责，后台仅补写自己的审计。
 
 use super::*;
-use crate::modules::events::{infrastructure::insert_event_in_tx, user_created_outbox_event};
+use crate::modules::events::{
+    infrastructure::{create_wallet_accounts_for_user_in_tx, insert_event_in_tx},
+    user_created_outbox_event,
+};
 use crate::modules::wallet::{MAX_ASSET_PRECISION_SCALE, amount_fits_asset_precision};
 use chrono::Utc;
 
@@ -47,8 +50,8 @@ pub(crate) async fn get_admin_user(
     load_admin_user_from_store(&pool, user_id).await
 }
 
-/// 校验管理员创建用户的联系方式、密码、状态和实名等级，并生成邀请码及用户创建 outbox 事件。
-/// 用户、邀请码、outbox 与后台审计共用事务；重复联系方式或任一步失败整体回滚，事件仅在提交后可投递。
+/// 校验管理员创建用户的联系方式、密码、状态和实名等级，并生成邀请码、零余额钱包及用户创建 outbox 事件。
+/// 用户、邀请码、钱包账户、outbox 与后台审计共用事务；重复联系方式或任一步失败整体回滚，事件仅在提交后可投递。
 pub(crate) async fn create_admin_user(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -68,7 +71,7 @@ pub(crate) async fn create_admin_user(
     let password_hash = hash_admin_user_password(&request.password)?;
     let pool = admin_mysql_pool(pool)?;
 
-    // 用户创建、邀请码生成和后台审计同事务提交，避免出现无邀请码或无审计的新用户。
+    // 用户创建、邀请码、零余额钱包、outbox 和后台审计同事务提交，避免出现无钱包或无审计的新用户。
     let mut tx = pool.begin().await?;
     let user_id = insert_admin_user_in_tx(
         &mut tx,
@@ -82,6 +85,7 @@ pub(crate) async fn create_admin_user(
     )
     .await?;
     create_user_invite_code_in_tx(&mut tx, user_id).await?;
+    create_wallet_accounts_for_user_in_tx(&mut tx, user_id).await?;
     insert_event_in_tx(&mut tx, &user_created_outbox_event(user_id, Utc::now())).await?;
     let user = load_admin_user_in_tx(&mut tx, user_id).await?;
     insert_admin_audit_log_entry_in_tx(

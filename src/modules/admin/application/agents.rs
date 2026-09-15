@@ -539,6 +539,7 @@ pub(crate) async fn update_admin_agent_commission_statuses(
 }
 
 /// 锁定待处理代理佣金并执行结算或拒绝；结算时把佣金金额记入代理用户钱包并更新状态。
+/// 结算前必须确认来源单据已到可打款终态，未结算、退款或缺失来源一律冲突并保持 pending。
 /// 钱包余额、流水、状态与可选审计共用同一事务；仅允许从 pending 转移，重放不会二次入账。
 /// 这是单笔与批量两条入口共用的实现，行锁与状态前置判断构成防重复入账的唯一屏障：
 /// 并发请求中只有一个能拿到锁并看到 pending，另一个在锁释放后读到终态并返回冲突。
@@ -560,6 +561,7 @@ pub(crate) async fn apply_admin_agent_commission_status(
         ));
     }
     if status == "settled" {
+        ensure_agent_commission_source_is_payable_in_tx(&mut tx, &before).await?;
         settle_agent_commission_payout_in_tx(&mut tx, &before).await?;
     }
     update_agent_commission_status_in_tx(&mut tx, commission_id, status).await?;
@@ -581,6 +583,39 @@ pub(crate) async fn apply_admin_agent_commission_status(
     }
     tx.commit().await?;
     Ok(after)
+}
+
+/// 在调用方事务内核验佣金来源单据已到可打款终态。
+/// 秒合约与预测必须已结算，闪兑必须已完成；现货成交和杠杆仓位须仍存在。
+/// 来源缺失或永久不可打款返回无 payout 支持冲突；仍在持仓/待确认则返回等待终态冲突，佣金保持 pending。
+async fn ensure_agent_commission_source_is_payable_in_tx(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    commission: &AdminAgentCommissionResponse,
+) -> AppResult<()> {
+    let source_status = load_agent_commission_source_status_in_tx(
+        tx,
+        &commission.source_type,
+        &commission.source_id,
+    )
+    .await
+    .map_err(|error| match error {
+        AppError::NotFound => AppError::Conflict(AGENT_COMMISSION_SOURCE_UNPAYABLE.to_owned()),
+        other => other,
+    })?;
+    if agent_commission_source_is_payable(&commission.source_type, Some(&source_status)) {
+        return Ok(());
+    }
+    if matches!(
+        agent_commission_source_payout_readiness(&commission.source_type, Some(&source_status)),
+        AgentCommissionSourcePayoutReadiness::Waiting
+    ) {
+        return Err(AppError::Conflict(
+            AGENT_COMMISSION_SOURCE_NOT_TERMINAL.to_owned(),
+        ));
+    }
+    Err(AppError::Conflict(
+        AGENT_COMMISSION_SOURCE_UNPAYABLE.to_owned(),
+    ))
 }
 
 /// 在调用方事务内把一笔佣金真正打给代理所属用户的钱包可用余额，并写出同额流水。

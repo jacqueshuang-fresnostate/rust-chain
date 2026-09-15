@@ -18,6 +18,7 @@
 - User-submitted source amounts must fit the source asset `precision_scale`; trailing zeros do not count as extra precision.
 - Generated target amounts must be truncated toward zero to the target asset `precision_scale` before they are returned to the user, cached, inserted into order/quote tables, and written to wallet balances.
 - Fee amounts denominated in the source asset must be truncated toward zero to the source asset `precision_scale`.
+- Confirmed chain deposits credit `available` with `deposit_net_credit_amount(gross, snapshot_fee, precision_scale)`. The snapshot fee is stored on the event; reorg reversal must reverse that same net amount. A non-positive net credit is a validation error and must not credit the wallet.
 - Tiered agent commission must quantize cumulative payout amounts to the stored `payout_asset_id` precision before deriving each level's differential amount; do not quantize independently calculated differential rates.
 - Wallet ledger `amount`, `balance_after`, and account snapshot fields must match the quantized wallet account values for the affected asset.
 

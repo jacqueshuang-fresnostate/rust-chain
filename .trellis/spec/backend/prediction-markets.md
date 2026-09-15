@@ -67,6 +67,7 @@
 - Settlement results are `yes`, `no`, or `invalid`. Win/loss/invalid settlement must use one wallet path so manual settlement and auto settlement are idempotent and consistent.
 - Settlement mode defaults to global `prediction_settings.default_settlement_mode` and may be overridden per market by `prediction_markets.settlement_mode_override`.
 - Invalid market refund behavior defaults to `prediction_settings.default_invalid_refund_policy`; the concrete policy used must be copied to order/market fields such as `invalid_refund_policy_used`.
+- Invalid refunds must reject still-pending `prediction_order` agent commissions in the same settlement transaction so refunded stakes cannot age into a payout.
 - `prediction_settings.default_settlement_mode`,
   `default_invalid_refund_policy`, `last_sync_status`, and `last_sync_error`
   are application text. Their MySQL columns must use explicit `utf8mb4`

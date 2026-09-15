@@ -170,6 +170,7 @@ pub(super) struct WalletDepositEventResponse {
     tx_hash: String,
     event_index: u32,
     amount: String,
+    fee_amount: String,
     block_height: Option<u64>,
     confirmations: u32,
     required_confirmations: u32,

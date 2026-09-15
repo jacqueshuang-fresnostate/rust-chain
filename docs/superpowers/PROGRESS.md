@@ -1,3 +1,59 @@
+## 2026-09-16 00:40 - 落地理财资产精度量化与平台对手腿
+
+- 完成内容：理财申购金额新增资产口径校验 `validate_amount_asset_precision`，超过 `assets.precision_scale` 一律拒绝而非隐式截断，超精度输入不落订阅、不扣款。赎回新增 `quantize_earn_redemption_amounts`，把 18 位账本口径的费用与收益向零截断到资产精度后重新相减得出净到账额，保证 `redeem_amount = principal + gross_yield - fee_amount` 精确成立、`wallet_ledger.amount` 与 available 增量一致。新增 `earn/journal.rs` 构造平台对手腿：申购写 `platform_earn_cash_received`/`earn_principal_payable_open`，赎回写 `earn_principal_payable_close`/`platform_earn_redemption_cash`，并按需补 `earn_yield_expense`/`platform_earn_fee_income`；同 `transaction_key` 腿内和为零、零额腿在构造阶段省略。三项费率叠加超过本金加毛收益时用户实收兜底为零，费用腿按可收上限截断以保证分录仍然闭合；写入前再复核一次腿总和，不闭合按内部错误中止。手工赎回（`earn/application.rs`）与自动赎回（`workers/earn_auto_redemption.rs`）共用同一量化与同一对手腿构造，均在同一事务写入。
+- 修改文件：`src/modules/earn/{mod,journal(新),redemption,service,infrastructure,application}.rs`、`src/workers/earn_auto_redemption.rs`、`tests/unit_src/src_modules_earn_{journal(新),service(新),application(新),redemption}_tests.rs`、`tests/unit_src/src_workers_earn_auto_redemption_tests.rs`、`.trellis/spec/backend/earn-products.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib` 400/400 通过，其中理财相关 12 项（平台腿零和/科目顺序/零腿省略/费用封顶仍闭合、精度向零截断与净额恒等、超精度拒绝、手工与自动接线）全通过。未跑 MySQL 集成：本机 3306 可达但 `.env`、`docker-compose.yml`、`docker-compose.1panel.yml` 三套凭据均被拒（1045 Access denied），`tests/earn_routes.rs`、`tests/earn_auto_redemption_worker.rs` 未执行。
+- 后续事项：逐仓坏账、Admin 现货 fill UI、客户端幂等、UserAuth 状态、理财 worker 重试（CUR-P1-08）。秒合约输单/人工审核的 pending 佣金仍可能在订单 `settled` 后按账龄打款。
+
+## 2026-09-15 23:55 - 落地借贷到期回收
+
+- 完成内容：用户还款与逾期扫描共用 `settle_locked_loan_order_repayment_in_tx`：锁钱包后按现有计息口径扣本息、写 `loan_repayment` 流水、释放抵押并置 `repaid`。逾期 worker 先把到期 `disbursed` 标为 `overdue`；可用余额覆盖本息则同事务结清，余额不足保持 `overdue` 且不造罚息、不做部分扣款。已逾期单会继续扫描，足额后补收，不足记 skip。不新增罚息费率。
+- 修改文件：`src/modules/loan/{application,infrastructure}.rs`、`src/workers/loan_overdue.rs`、`tests/unit_src/src_modules_loan_tests.rs`、`tests/unit_src/src_workers_loan_overdue_tests.rs`、`.trellis/spec/backend/loan-products.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib -- overdue_scan_collects_due_orders_with_the_shared_repayment_path user_repay_and_overdue_collection_share_the_same_locked_settlement loan_overdue_limits_are_bounded` 3/3 通过。未跑 MySQL 集成 `tests/loan_overdue_worker.rs`。
+- 后续事项：理财精度/平台总账、逐仓坏账、Admin 现货 fill UI、客户端幂等、UserAuth 状态。秒合约输单/人工审核的 pending 佣金仍可能在订单 `settled` 后按账龄打款。
+
+## 2026-09-15 23:10 - 落地预测退款拒佣、充值净入账、注册同步开钱包与 PC 充值 Abort
+
+- 完成内容：预测市场 `invalid` 退款在同一结算事务把该单仍为 `pending` 的代理佣金标为 `rejected`，已 settled 佣金不回冲。链上充值按资产快照手续费计算净额入账：新增 `deposit_net_credit_amount`、事件表 `fee_amount`（0126），观察时快照费用、入账与冲正都用同一净额，净额非正拒绝入账。邮件码注册与后台创建用户在写 outbox 前同事务 `INSERT IGNORE` 预建全部资产零余额钱包，inbox 重放仍幂等。PC 充值切币/切网用 `AbortController` + `addressRequestGeneration` 取消过期请求，地址 API 透传 `signal`；自动选网复用同一代请求，避免二次 abort。
+- 修改文件：`migrations/0126_wallet_deposit_event_fee.sql`、`src/modules/wallet/{domain,mod,presentation,infrastructure/deposits}.rs`、`src/openapi/wallet.rs`、`src/modules/agent/infrastructure.rs`、`src/modules/prediction/infrastructure.rs`、`src/modules/auth/application.rs`、`src/modules/admin/application/users.rs`、`pc/src/api/wallet.ts`、`pc/src/views/User/Recharge.vue`、`tests/unit_src/src_modules_{wallet_mod,agent_mod,auth_application,prediction}_tests.rs`、`tests/wallet_routes.rs`、`.trellis/spec/backend/{agent-hierarchy,prediction-markets,wallet-amount-precision}.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib -- deposit_net_credit_subtracts_fee_and_rejects_non_positive_credit pending_commissions_are_rejected_by_source_identity email_registration_creates_wallet_accounts_in_the_same_transaction invalid_prediction_refund_rejects_pending_agent_commissions` 4/4 通过；PC `backendAdapters.test.ts` 安全端点/充值 Abort 1/1 通过。未跑 MySQL 集成（`wallet_routes` 入账冲正需 0126）与 PC 全量。
+- 后续事项：理财精度/平台总账、逐仓坏账、Admin 现货 fill UI、客户端幂等、UserAuth 状态。秒合约输单/人工审核的 pending 佣金仍可能在订单 `settled` 后按账龄打款。
+
+## 2026-09-15 09:43 - 落地秒合约 default 源、佣金终态与 PC 提现 quote
+
+- 完成内容：秒合约结算白名单接受已归档 `default` tick，与开仓能力检查对齐，结算时仍不现造价格。代理佣金结算前核验来源单据：秒合约/预测须 `settled`，闪兑须 `completed`，现货成交与杠杆仓位须仍存在；未终态返回等待冲突且 worker 不进失败集合，退款/人工审核/未知来源保持不可打款。PC 提现先取服务端 quote，提交 `quote_id`、权威费用和 `networkKey`；秒合约历史映射结算价，赢单净收益优先用服务端 `payout_amount`。
+- 修改文件：`src/modules/seconds_contract/{service,presentation}.rs`、`src/modules/admin/{service,application,infrastructure}/agents.rs`、`src/modules/admin/application.rs`、`src/workers/agent_commission_settlement.rs`、`pc/src/api/{backendAdapters,wallet}.ts`、`pc/src/views/User/Withdraw.vue`、`pc/src/i18n/index.ts`、`pc/tests/backendAdapters.test.ts`、`tests/unit_src/src_modules_{seconds_contract,admin_service}_tests.rs`、`.trellis/spec/backend/seconds-contracts.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib -- settlement_snapshot_validates_all_provenance_and_window_boundaries agent_commission_payout_requires_source_terminal_state agent_commission_settlement` 6/6 通过；PC `backendAdapters.test.ts` 提现 quote/秒合约映射/安全端点/残留模块 4/4 通过。未跑 MySQL 集成（`admin_routes` 佣金结算）与 PC 全量。
+- 后续事项：预测退款佣金反冲、充值手续费净入账、注册同步开钱包、借贷到期回收、PC 充值 generation/Abort、Admin 现货 fill UI。
+
+## 2026-09-11 13:05 - 补核秒合约 default 源与佣金终态
+
+- 完成内容：独立复核确认两条新增可达缺口。① `ensure_settlement_history_capability` 允许 default 生成器开仓，但 `validate_settlement_price_snapshot` 只接受 `bitget|htx|coinbase|strategy`；窗口内只有 `default` tick 时 `select_settlement_price_snapshot` 返回 Validation，worker `?` 失败重试，不进 `manual_review`，本金已扣订单卡在 `opened`。② `apply_admin_agent_commission_status` 打款不复核来源订单终态；秒合约/预测开仓即写 pending，输单/退款后仍可按账龄打款。Admin 无 `/spot/fills` 录入页，现货自动撮合仍不存在。PC 充值已改用 `networkKey`，乱序 generation 仍缺。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：对照 `seconds_contract/{service,infrastructure,application}.rs`、`seconds_contract_settlement.rs`、`admin/application/agents.rs`、`web/src/admin/access.tsx`；未改生产代码。
+- 后续事项：实施时优先 default 源结算白名单或开仓禁止、佣金来源终态、PC 提现 quote、Admin 现货 fill。
+
+## 2026-09-11 12:30 - 从业务闭环角度复审当前代码完善度
+
+- 完成内容：对照 8-24/8-30 审计与当前 HEAD 源码，按资金、产品生命周期、客户端契约三条线复核仍未闭环项。确认历史 P0（提现歧义解冻、新币客户端定价、解禁费假缴、秒合约处理时价、全仓转出无风险、闪兑 TOCTOU、合成 tick 不归档）在代码侧已关闭；仍开放的是充值手续费未入账、注册钱包异步缺口、PC 提现缺 quote、PC 充值乱序错配、借贷到期无回收、预测退款不反冲佣金、理财精度/平台总账、杠杆计息与逐仓坏账、人工成交无操作者原因等业务闭环。本轮只审查，不改生产代码。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：静态核对 `credit_deposit_event_in_tx`、`register_user_with_email_code`、`mapPcWithdrawalRequest`、`loan_overdue`、`settle_market_in_tx`、`accrue_position_interest`、`UserAuth`、`Recharge.vue::selectCoin` 等当前符号；未跑全量测试、未连生产库。
+- 后续事项：按审查优先级实施时另开切片；优先 PC 充值乱序、PC 提现 quote、充值费入账、注册钱包同步创建、借贷到期处置与佣金反冲。
+
+## 2026-09-11 04:55 - 解读 GET_LOCK 等 35s 后仍因 dirty 124 失败
+
+- 完成内容：补齐 20:49:04–20:49:40 日志：sqlx `GET_LOCK(?, -1)` 阻塞 35.42s 后拿到锁，立刻报 124 partially applied；0.7s 后第二次 migrate 秒失败。根因仍是 dirty 124，不是连接失败。35s 锁等待说明当时另有 migrate 会话占着 sqlx 库级锁（常见于上一轮未退出的 migrate，或卡在 ticks ALTER 的会话）。处理顺序改为：停 API/migrate → PROCESSLIST/KILL 残留 GET_LOCK 与 ALTER → 核验 schema → UPDATE 124 success → 只跑一次 migrate 出 0125。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：对照 `sqlx-mysql 0.8.6` `GET_LOCK(generate_lock_id(database), -1)` 与 `src/bin/exchange-migrate.rs` 失败路径；未在生产执行 KILL/UPDATE。
+- 后续事项：用户执行无 ALTER 恢复并回报 `_sqlx_migrations` 123/124/125。
+
+## 2026-09-11 04:50 - 确认 dirty 124 未恢复，ticks 全历史 MAX 扫 20s
+
+- 完成内容：对照 20:49:40Z 再次失败的 migrate 日志，确认仍是 `_sqlx_migrations.version=124 success=0`，1Panel 更新只是重跑同一脏行。20:45:26Z 的 20.15s `SELECT symbol, MAX(observed_at), MAX(ingested_at) FROM market_price_ticks WHERE symbol IN (?, ?) AND source IN (?) GROUP BY symbol` 来自 `load_admin_market_feed_health_data`（后台行情状态页），2 个交易对、1 个 provider、无时间窗；现有索引 `(symbol, observed_at, source, id)` 不能把 `source` 过滤提前，且 `MAX(ingested_at)` 不在索引上。该扫描证明 ticks 很大，也解释了 `ALTER TABLE market_price_ticks ... CHECK` 会卡住。恢复路径仍禁止 ticks ALTER / 回放 0124：先停 API 并 KILL 挂起 DDL，核验三张 0124 表和 CHECK 已含 `default` 后，仅把 124 标 success，再跑 0125。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：对照仓库 SQL 与 `src/modules/admin/infrastructure/market_feed.rs`、`src/modules/admin/application/market_feed.rs` 定位查询；未在生产执行 UPDATE/KILL，未改业务代码。
+- 后续事项：用户在库上执行无 ALTER 恢复；健康查询改写（加 `observed_at` 时间窗）另开切片，禁止现在给 ticks 加索引。
+
 ## 2026-09-10 02:56 - 完成资金、行情、新币、后台权限与 CI 五项业务治理
 
 - 完成内容：补齐只读资金/结算幂等审计、行情健康快照与独立 K 线断线补偿、新币派发/退款批次对账、后台精确权限/审计入口和中文展示，以及发布前真实 MySQL/Redis/Mongo 依赖 smoke。资金审计按业务范围统计重复/空白幂等键、孤儿流水和逾期未结算，待审贷款与待派发新币只作队列信息不单独告警。行情状态以上游事件时间为断流权威，策略检查点滞后与补偿失败记为 degraded；自动补偿只写闭合 1m 及完整聚合窗口，Mongo 幂等且不覆盖普通/手动 K 线，不写 Redis/WebSocket。新币对账校验申购/项目/用户/资产身份后再汇总差额。后台新增资金审计页与项目对账页，动态 ID 失败关闭到 unmapped，CI 在 publish 前跑迁移和真实依赖读写。
@@ -8759,3 +8815,24 @@
 - 修改文件：`docs/superpowers/PROGRESS.md`（仅本记录；四路调查均为只读）。
 - 验证结果：本切片为只读调查，无代码改动；引用事实来自工作流四个调查代理（exit-paths / runbook / image-chain / migration-risk）对源码、文档、git 历史与 GitHub Actions 工作流的核对，migration-risk 代理另跑通 `docker_image_contract` 8/8 与迁移单测 8/8。无法在本机验证服务器实际镜像 digest 与容器日志（本地 Docker daemon 未运行，目标在远程 1Panel），已明确标注为待服务器侧取证。
 - 后续事项：等用户提供 1Panel 服务器上 `docker logs --tail=200 hippo-exchange-migrate`、`docker inspect`（含 StartedAt/FinishedAt/Image）输出后按日志特征表定位根因；建议生产改用固定 semver/sha tag 并按「拉取→停 api→只重建 migrate→确认退出 0→重建 api」顺序更新。
+
+## 2026-09-11 02:45 - 确认 1Panel migrate exit 1 为 dirty 124
+
+- 完成内容：用服务器 `hippo-exchange-migrate` 日志钉死根因：`migration 124 is partially applied`，诊断摘要 `server_version=8.4.9`、`migration_count=121`、`latest_version=124`、`dirty_versions=[124]`（唯一 dirty）。1Panel 回滚再次跑同一镜像，命中同一 dirty 行故包装层报错不变。0124（`CREATE TABLE` 三张默认行情表 + `market_price_ticks` source CHECK 增加 `default`）无 `IF NOT EXISTS`，MySQL DDL 隐式提交后不可直接重放。0125 不依赖 0124 表，124 清 dirty 并成功后会自动继续。未改迁移文件、未改 `_sqlx_migrations`、未对生产库执行 DDL。
+- 修改文件：`docs/superpowers/PROGRESS.md`（仅本记录）。
+- 验证结果：对照 `migrations/0124_default_market_generators.sql`、`0114` 原 CHECK、`0125_seconds_contract_net_payout_rates.sql` 与 `docs/deployment/docker.md` dirty 恢复边界；日志特征与 `exchange-migrate` dirty 退出路径一致。未在生产执行备份/DELETE/重跑（待维护窗口）。
+- 后续事项：维护窗口内停 API → 全库备份并验证 → 只读审计三张表与 CHECK → 按对象状态清理 0124 部分对象 → `DELETE` 唯一 dirty 行 → 同一镜像只跑 migrate 至退出 0 → 再启动 API。禁止 `UPDATE success=1`、禁止改已发布 0124、禁止手写全库逆向 DDL。
+
+## 2026-09-11 03:05 - 0124 dirty 审计结果归类为 DDL 已完成
+
+- 完成内容：生产审计确认 `_sqlx_migrations` 仅 124 为 `success=0`（installed_on=2026-09-08 22:22:10），123 成功、125 未开始。三张 0124 表均已存在，`chk_market_price_ticks_source` 已含 `default`，即 0124 四步 DDL 已全部提交，失败点在 sqlx 写入 success 之前（典型为容器在最后一条 ALTER 提交后被打断）。恢复路径仍禁止 `UPDATE success=1`：表为空时丢 0124 对象并删 dirty 行后用同一镜像重放；表有数据则停手。
+- 修改文件：`docs/superpowers/PROGRESS.md`（仅本记录）。
+- 验证结果：对照用户提供的四段 SELECT 与 `migrations/0124_default_market_generators.sql` 语句顺序；尚未拿到三张表 `COUNT(*)`，未授权执行 DROP/DELETE。
+- 后续事项：用户先查三张表行数；全 0 且备份已验证后执行 DROP + 可选 CHECK 回退 + `DELETE` dirty 124 + 只跑 migrate。
+
+## 2026-09-11 03:20 - 0124 恢复改为禁止重放 market_price_ticks ALTER
+
+- 完成内容：用户指出 `ALTER TABLE market_price_ticks DROP/ADD CHECK` 会卡住。审计已证明该 CHECK 已含 `default`、三张 0124 表已存在，故原「丢对象 + 同一镜像重放 0124」会被第 4 步 ALTER 再次挡住。恢复改为：不碰 `market_price_ticks`；若该 ALTER 已挂起则杀线程；核验三张表结构后把唯一 dirty 124 标为成功，再只跑 migrate 应用 125。
+- 修改文件：`docs/superpowers/PROGRESS.md`（仅本记录）。
+- 验证结果：未在生产执行 KILL/UPDATE/migrate；以用户审计结果与 0124 语句顺序为判断依据。
+- 后续事项：先处理可能卡住的 ALTER 会话；`SHOW CREATE TABLE` 对照 0124 后执行 `UPDATE ... success=1` 仅限 version=124 AND success=FALSE；再单独跑 migrate 吃 125。

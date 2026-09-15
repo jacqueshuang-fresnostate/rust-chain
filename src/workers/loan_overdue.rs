@@ -1,11 +1,15 @@
 use crate::{
     error::{AppError, AppResult},
-    modules::loan::domain::STATUS_DISBURSED,
+    modules::loan::{
+        application::settle_locked_loan_order_repayment_in_tx,
+        domain::{STATUS_DISBURSED, STATUS_OVERDUE, STATUS_REPAID},
+        infrastructure::lock_loan_order,
+    },
     workers::loan_health,
 };
 use chrono::{DateTime, Utc};
 use redis::{Client, aio::ConnectionManager};
-use sqlx::{MySql, Pool, Transaction};
+use sqlx::{MySql, Pool};
 use std::env;
 use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
@@ -32,6 +36,7 @@ impl LoanOverdueWorkerConfig {
 pub struct LoanOverdueSummary {
     pub scanned: u32,
     pub marked: u32,
+    pub collected: u32,
     pub skipped: u32,
     pub failed: u32,
 }
@@ -41,22 +46,16 @@ struct LoanOverdueCandidate {
     order_id: u64,
 }
 
-#[derive(Debug, sqlx::FromRow)]
-struct LockedLoanOrder {
-    id: u64,
-    status: String,
-    due_at: Option<DateTime<Utc>>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoanOverdueOutcome {
     Marked,
+    Collected,
     Skipped,
 }
 
 /// 单轮按到期时间和 ID 扫描已放款订单：成功上限为 `limit` 收敛到 1..=200，候选最多放大十倍且不超过 1,000。
-/// 每个订单在独立事务内 `FOR UPDATE` 后由 `disbursed` 推进为 `overdue`；状态/到期时间已变化时幂等跳过，单项 SQL 失败计数后继续，已提交项不回滚。
-/// 本 worker 不计提罚息、不改钱包、不写账本或发布事件，避免在产品未配置费率时制造资金副作用。
+/// 每个订单在独立事务内 `FOR UPDATE` 后由 `disbursed` 推进为 `overdue`；可用余额覆盖本息时再走共用还款路径结清。
+/// 余额不足保持 overdue，不造罚息、不做部分扣款；状态已变化时幂等跳过，单项失败计数后继续，已提交项不回滚。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -72,6 +71,10 @@ pub async fn run_once_with_dependencies(
         summary.scanned += 1;
         match mark_order_overdue(pool, candidate.order_id, now).await {
             Ok(LoanOverdueOutcome::Marked) => summary.marked += 1,
+            Ok(LoanOverdueOutcome::Collected) => {
+                summary.marked += 1;
+                summary.collected += 1;
+            }
             Ok(LoanOverdueOutcome::Skipped) => summary.skipped += 1,
             Err(error) => {
                 summary.failed += 1;
@@ -102,6 +105,7 @@ pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> A
             Ok(summary) => info!(
                 scanned = summary.scanned,
                 marked = summary.marked,
+                collected = summary.collected,
                 skipped = summary.skipped,
                 failed = summary.failed,
                 "贷款逾期扫描周期完成"
@@ -151,7 +155,7 @@ async fn fetch_overdue_candidates(
     sqlx::query_as::<_, LoanOverdueCandidate>(
         r#"SELECT id AS order_id
            FROM loan_orders
-           WHERE status = 'disbursed'
+           WHERE status IN ('disbursed', 'overdue')
              AND due_at IS NOT NULL
              AND due_at <= ?
            ORDER BY due_at ASC, id ASC
@@ -164,18 +168,27 @@ async fn fetch_overdue_candidates(
     .map_err(AppError::from)
 }
 
-/// 只做状态推进：产品未配置逾期罚息，这里不额外计息，避免凭空造出运营无法配置的费率。
+/// 先把到期已放款单标为 overdue；余额足够时再按用户还款同一口径扣本息结清。
+/// 产品未配置逾期罚息，这里不额外计息。余额不足保持 overdue，本轮不写部分流水。
 async fn mark_order_overdue(
     pool: &Pool<MySql>,
     order_id: u64,
     now: DateTime<Utc>,
 ) -> AppResult<LoanOverdueOutcome> {
     let mut tx = pool.begin().await?;
-    let Some(order) = lock_loan_order(&mut tx, order_id).await? else {
+    let order = match lock_loan_order(&mut tx, order_id).await {
+        Ok(order) => order,
+        Err(AppError::NotFound) => {
+            tx.rollback().await?;
+            return Ok(LoanOverdueOutcome::Skipped);
+        }
+        Err(error) => return Err(error),
+    };
+    if order.status == STATUS_REPAID {
         tx.rollback().await?;
         return Ok(LoanOverdueOutcome::Skipped);
-    };
-    if order.status != STATUS_DISBURSED {
+    }
+    if order.status != STATUS_DISBURSED && order.status != STATUS_OVERDUE {
         tx.rollback().await?;
         return Ok(LoanOverdueOutcome::Skipped);
     }
@@ -183,39 +196,44 @@ async fn mark_order_overdue(
         tx.rollback().await?;
         return Ok(LoanOverdueOutcome::Skipped);
     };
-    let update = sqlx::query(
-        r#"UPDATE loan_orders
-           SET status = 'overdue', overdue_at = ?
-           WHERE id = ? AND status = 'disbursed'"#,
-    )
-    .bind(now.naive_utc())
-    .bind(order.id)
-    .execute(&mut *tx)
-    .await?;
-    if update.rows_affected() != 1 {
-        tx.rollback().await?;
-        return Ok(LoanOverdueOutcome::Skipped);
+    let newly_marked = order.status == STATUS_DISBURSED;
+    if newly_marked {
+        let update = sqlx::query(
+            r#"UPDATE loan_orders
+               SET status = 'overdue', overdue_at = ?
+               WHERE id = ? AND status = 'disbursed'"#,
+        )
+        .bind(now.naive_utc())
+        .bind(order.id)
+        .execute(&mut *tx)
+        .await?;
+        if update.rows_affected() != 1 {
+            tx.rollback().await?;
+            return Ok(LoanOverdueOutcome::Skipped);
+        }
     }
-    tx.commit().await?;
-    info!(order_id = order.id, %due_at, "贷款订单已标记逾期");
-    Ok(LoanOverdueOutcome::Marked)
-}
-
-async fn lock_loan_order(
-    tx: &mut Transaction<'_, MySql>,
-    order_id: u64,
-) -> AppResult<Option<LockedLoanOrder>> {
-    sqlx::query_as::<_, LockedLoanOrder>(
-        r#"SELECT id, status, due_at
-           FROM loan_orders
-           WHERE id = ?
-           LIMIT 1
-           FOR UPDATE"#,
-    )
-    .bind(order_id)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(AppError::from)
+    match settle_locked_loan_order_repayment_in_tx(&mut tx, &order, now).await {
+        Ok(()) => {
+            tx.commit().await?;
+            info!(order_id = order.id, %due_at, "贷款订单已到期回收");
+            Ok(LoanOverdueOutcome::Collected)
+        }
+        Err(AppError::Validation(message))
+            if message.contains("insufficient available balance for loan repayment") =>
+        {
+            tx.commit().await?;
+            if newly_marked {
+                info!(order_id = order.id, %due_at, "贷款订单已标记逾期，可用余额不足尚未回收");
+                Ok(LoanOverdueOutcome::Marked)
+            } else {
+                Ok(LoanOverdueOutcome::Skipped)
+            }
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
 }
 
 fn loan_overdue_limit(limit: u32) -> u32 {

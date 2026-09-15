@@ -33,7 +33,8 @@ use std::collections::HashSet;
 pub(crate) const SETTLEMENT_PRICE_WINDOW_SECONDS: i64 = 5;
 
 /// 对选中的结算行情做完整证据校验，防止损坏的历史行进入资金结算。
-/// 交易对去除常见分隔符后比较；价格必须为正，来源必须是已知 provider，
+/// 交易对去除常见分隔符后比较；价格必须为正，来源必须是已知归档 provider，
+/// 含外部行情、策略以及开仓能力检查已认可的 `default` 生成器快照；
 /// generation 和 source_version 必须可追溯，observed_at 必须落在左闭右开窗口。
 /// 任一字段不合法都 fail closed，调用方不得跳过该行回退到其他价格。
 pub(crate) fn validate_settlement_price_snapshot(
@@ -62,7 +63,7 @@ pub(crate) fn validate_settlement_price_snapshot(
     }
     if !matches!(
         snapshot.source.as_str(),
-        "bitget" | "htx" | "coinbase" | "strategy"
+        "bitget" | "htx" | "coinbase" | "strategy" | "default"
     ) {
         return Err(AppError::Validation(
             "seconds contract settlement price source is invalid".to_owned(),

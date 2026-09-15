@@ -157,3 +157,86 @@ let amounts = calculate_earn_redemption_amounts(EarnRedemptionTerms {
 ```
 
 Settlement uses the subscription snapshot and stays stable for the user.
+
+## Scenario: Asset Precision And Platform Counter-Legs
+
+### 1. Scope / Trigger
+
+- Trigger: earn subscription or redemption amount enters, or leaves, a user wallet; or earn settlement starts writing the platform book.
+- Applies to `earn/service.rs` validation, `earn/redemption.rs` quantization, `earn/journal.rs` leg construction, `earn/application.rs`, and the earn auto-redemption worker.
+
+### 2. Signatures
+
+- `validate_amount_asset_precision(amount, precision_scale) -> AppResult<()>` rejects amounts a lower-precision asset cannot express.
+- `redemption_amounts_for_subscription(subscription, now, asset_precision_scale) -> EarnRedemptionAmounts`.
+- `earn_subscription_journal_legs(principal) -> Vec<EarnPlatformJournalLeg>`.
+- `earn_redemption_journal_legs(principal, gross_yield, fee_amount, redeem_amount) -> Vec<EarnPlatformJournalLeg>`.
+- `insert_earn_platform_journal_legs_in_tx(tx, transaction_key, asset_id, subscription_id, legs)`.
+
+### 3. Contracts
+
+- Subscription time: the user-supplied amount must fit `assets.precision_scale` in full. Over-precision input is rejected, never silently truncated, so the submitted amount equals the debited amount.
+- Redemption time: calculated amounts are truncated toward zero to `assets.precision_scale` before they reach the wallet, so `wallet_ledger.amount` always equals the real `available` delta.
+- Quantized fields keep `redeem_amount == principal_amount + gross_yield_amount - fee_amount` exactly; the zero-floor clamp is the only exception.
+- `yield_amount` is display-only and may differ from the fee breakdown in the last digit.
+- Every subscription writes `platform_earn_cash_received` (`+principal`) and `earn_principal_payable_open` (`-principal`).
+- Every redemption writes `earn_principal_payable_close` (`+principal`), `platform_earn_redemption_cash` (`-redeem_amount`), plus `earn_yield_expense` (`+gross_yield`) and `platform_earn_fee_income` (`-fee_amount`) when non-zero.
+- Legs inside one `transaction_key` must sum to zero; zero-amount legs are omitted because the journal table rejects zero amounts.
+- `transaction_key` is `earn_subscribe:{subscription_id}` or `earn_redeem:{subscription_id}`.
+- Manual redemption and auto redemption must apply the same quantization and write the same legs.
+- The fee income leg is capped at `principal + gross_yield`. Stacked fee rates can exceed the whole position, in which case the wallet credit floors at zero and the platform can only recognize fee income up to the value of the position.
+
+### 4. Validation & Error Matrix
+
+- Amount needs more decimals than the asset `precision_scale` -> validation error, no subscription row, no debit.
+- `assets` row missing -> not found, transaction aborts.
+- Platform leg insert conflict on `(transaction_key, account_code, asset_id)` -> whole transaction rolls back; no user leg is committed alone.
+- Zero-amount leg requested -> filtered out before insert, never sent to SQL.
+- Legs that do not sum to zero at insert time -> internal error, transaction aborts.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a two-decimal asset redeems `100` principal with `3.333` gross yield and `0.103333` fee; quantized values become `100.00`, `3.33`, `0.10`, and the wallet receives `103.23`.
+- Base: zero yield and zero fee produce only the payable-close and cash legs, which still sum to zero.
+- Bad: crediting the 18-decimal value to a two-decimal wallet, or writing only the user ledger row without the platform counter-legs.
+- Edge: fees of `1200` against `100` principal plus `1000` yield floor the wallet credit at zero, and the capped fee leg still leaves the entry balanced.
+
+### 6. Tests Required
+
+- Unit tests assert leg composition, ordering, zero-leg omission, and a zero sum for both directions.
+- Unit test asserts the capped fee keeps the entry balanced when fees exceed the whole position.
+- Unit test asserts quantization truncates toward zero and preserves the redeem identity.
+- Unit test asserts over-precision subscription amounts are rejected at `precision_scale` 0 and 2.
+- Source assertions keep both the application and the auto-redemption worker wired to quantization and platform legs.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let amounts = calculate_earn_redemption_amounts(terms, now);
+credit_wallet_for_redemption_in_tx(&mut tx, &subscription, &wallet, &amounts.redeem_amount).await?;
+```
+
+This credits an 18-decimal figure to an asset that may only express two, and leaves the platform book without a counter-leg.
+
+#### Correct
+
+```rust
+let precision = load_asset_precision_in_tx(&mut tx, subscription.asset_id).await?;
+let amounts = redemption_amounts_for_subscription(&subscription, now, precision);
+credit_wallet_for_redemption_in_tx(&mut tx, &subscription, &wallet, &amounts.redeem_amount).await?;
+insert_earn_platform_journal_legs_in_tx(
+    &mut tx,
+    &format!("earn_redeem:{}", subscription.id),
+    subscription.asset_id,
+    subscription.id,
+    &earn_redemption_journal_legs(
+        &amounts.principal_amount,
+        &amounts.gross_yield_amount,
+        &amounts.fee_amount,
+        &amounts.redeem_amount,
+    ),
+)
+.await?;
+```
