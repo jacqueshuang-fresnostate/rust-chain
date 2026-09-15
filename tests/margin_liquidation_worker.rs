@@ -320,15 +320,18 @@ async fn margin_interest_worker_accrues_elapsed_full_hours_idempotently()
         .bind(pending_limit.product_id)
         .execute(&pool)
         .await?;
+    // 计息只读仓位上的利率快照，因此这里必须显式写入；产品表的实时值不再参与存量仓位的计费。
     sqlx::query(
         r#"UPDATE margin_positions
-           SET opened_at = ?, borrowed_amount = ?, interest_amount = ?, interest_accrued_at = ?
+           SET opened_at = ?, borrowed_amount = ?, interest_amount = ?, interest_accrued_at = ?,
+               hourly_interest_rate = ?
            WHERE id = ?"#,
     )
     .bind(opened_at.naive_utc())
     .bind(decimal("80.000000000000000000"))
     .bind(decimal("0.000000000000000000"))
     .bind(opened_at.naive_utc())
+    .bind(decimal("0.00100000"))
     .bind(fixture.position_id)
     .execute(&pool)
     .await?;

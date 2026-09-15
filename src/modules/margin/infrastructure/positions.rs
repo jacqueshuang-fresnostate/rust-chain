@@ -211,6 +211,7 @@ pub(crate) async fn lock_pending_margin_limit_position_by_id(
 /// 把已加锁的未成交限价单原子改为真实持仓，入场价只接受当次权威 ticker 价。
 /// 同时把 `opened_at` 与 `interest_accrued_at` 重置为数据库当前时间：前者记录真实成交时刻，
 /// 后者确保等待挂单期间不被计入借款时长；委托创建时刻仍由不可变的 `created_at` 保留。
+/// 小时利率在同一语句里按成交时刻的产品配置重新快照：借款从成交才开始，此前下达委托时的利率不该生效。
 /// WHERE 再次约束 `opened + limit + entry_price IS NULL`，即使上层未持有预期锁也不会覆盖已成交或已撤单记录。
 /// 影响行数不是一则返回 false，调用方必须回滚并且不得写佣金、全仓账户或发送成交事件。
 pub(crate) async fn mark_margin_limit_position_filled(
@@ -219,12 +220,14 @@ pub(crate) async fn mark_margin_limit_position_filled(
     market_price: &BigDecimal,
 ) -> AppResult<bool> {
     let result = sqlx::query(
-        r#"UPDATE margin_positions
-           SET entry_price = ?, opened_at = CURRENT_TIMESTAMP(6),
-               interest_accrued_at = CURRENT_TIMESTAMP(6),
-               next_liquidation_attempt_at = NULL
-           WHERE id = ? AND status = 'opened' AND order_type = 'limit'
-             AND entry_price IS NULL"#,
+        r#"UPDATE margin_positions positions
+           INNER JOIN margin_products products ON products.id = positions.product_id
+           SET positions.entry_price = ?, positions.opened_at = CURRENT_TIMESTAMP(6),
+               positions.interest_accrued_at = CURRENT_TIMESTAMP(6),
+               positions.hourly_interest_rate = products.hourly_interest_rate,
+               positions.next_liquidation_attempt_at = NULL
+           WHERE positions.id = ? AND positions.status = 'opened' AND positions.order_type = 'limit'
+             AND positions.entry_price IS NULL"#,
     )
     .bind(market_price)
     .bind(position_id)
@@ -324,6 +327,7 @@ pub(crate) async fn lock_active_open_product(
 /// 状态硬编码为 opened，累计利息初始化为十八位精度的零；已成交订单的计提起点
 /// `interest_accrued_at` 取数据库当前时间，未成交限价单则保持 NULL，等待触发成交事务重置。
 /// 这样既避免多实例时钟漂移，也不会把挂单等待时间误算成借款时长。
+/// 小时利率在此按当时的产品配置固化到持仓上，此后管理员改配不再影响这一笔借款的计费口径。
 /// `wallet_scope` 不在这里写入，因为实际扣款账户要等结算适配器选完才知道，由后续语句回填。
 /// 返回类型保留原始 `sqlx::Error`，调用方据此区分唯一键冲突与真实数据库故障。
 /// 该插入必须先于任何钱包扣款执行，先占键后扣钱是防止同键并发重复扣抵押的核心顺序。
@@ -345,9 +349,9 @@ pub(crate) async fn insert_margin_position(
     sqlx::query(
         r#"INSERT INTO margin_positions
            (user_id, product_id, pair_id, margin_asset, margin_mode, direction, order_type, margin_amount,
-            leverage, notional_amount, borrowed_amount, interest_amount, interest_accrued_at,
-            entry_price, limit_price, status, idempotency_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            leverage, notional_amount, borrowed_amount, hourly_interest_rate, interest_amount,
+            interest_accrued_at, entry_price, limit_price, status, idempotency_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                    IF(? = TRUE, CURRENT_TIMESTAMP(6), NULL), ?, ?, 'opened', ?)"#,
     )
     .bind(user_id)
@@ -361,6 +365,7 @@ pub(crate) async fn insert_margin_position(
     .bind(leverage)
     .bind(notional_amount)
     .bind(borrowed_amount)
+    .bind(&product.hourly_interest_rate)
     .bind(zero_amount())
     .bind(entry_price.is_some())
     .bind(entry_price)
@@ -421,3 +426,7 @@ pub(crate) async fn lock_user_position_by_id(
     .await
     .map_err(AppError::from)
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit_src/src_modules_margin_positions_tests.rs"]
+mod tests;

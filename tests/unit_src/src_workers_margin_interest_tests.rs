@@ -47,3 +47,19 @@ fn margin_interest_delta_charges_only_the_billed_full_hours() {
 
     assert_eq!(delta, decimal("0.030000000000000000"));
 }
+
+/// 计提只读持仓上固化的利率快照；一旦联产品表取实时值，管理员改配就会追溯未计费窗口。
+#[test]
+fn accrual_reads_the_position_snapshot_rate_and_ignores_live_product_changes() {
+    let worker = include_str!("../../src/workers/margin_interest.rs");
+
+    assert!(worker.contains("positions.hourly_interest_rate"));
+    assert!(
+        !worker.contains("products.hourly_interest_rate"),
+        "accrual must not read the live product rate"
+    );
+    assert!(
+        !worker.contains("INNER JOIN margin_products"),
+        "accrual must not join the product table for the rate"
+    );
+}

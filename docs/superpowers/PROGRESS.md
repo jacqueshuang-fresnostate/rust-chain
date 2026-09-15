@@ -1,3 +1,10 @@
+## 2026-09-16 02:30 - 杠杆计息改用持仓利率快照
+
+- 完成内容：`accrue_position_interest` 此前通过 `INNER JOIN margin_products` 取产品实时利率，管理员改配会追溯改写存量仓位整个未计费窗口。新增 migration 0128 给 `margin_positions` 加 `hourly_interest_rate` 快照列并按当前产品利率回填存量行；开仓时 `insert_margin_position` 写入快照；限价单在成交（借款真正开始）时按成交时刻的产品配置重新快照；计提侧 `lock_position` 与候选查询都改读仓位自身快照，不再联产品表，因此改配只影响之后新开的仓位。口径与借贷、理财的费率快照一致。
+- 修改文件：`migrations/0128_margin_position_interest_rate_snapshot.sql(新)`、`src/modules/margin/infrastructure/positions.rs`、`src/workers/margin_interest.rs`、`tests/unit_src/src_modules_margin_positions_tests.rs(新)`、`tests/unit_src/src_workers_margin_interest_tests.rs`、`tests/margin_liquidation_worker.rs`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib` 410/410 通过（新增 4 项：开仓写快照、限价成交按产品重新快照、0128 含回填、计提只读快照且不再联产品表）。`tests/margin_liquidation_worker.rs` 的 fixture 补写 `hourly_interest_rate`（该用例在建仓后才改产品利率，快照必须显式写入），`tests/margin_routes.rs` 两处在建仓前改产品利率，无需改动。未跑 MySQL 集成，0128 未实际执行。
+- 后续事项：Admin 现货 fill UI、客户端幂等、UserAuth 状态、理财 worker 重试（CUR-P1-08）、借贷敞口锁（CUR-P1-06 剩余）。
+
 ## 2026-09-16 01:55 - 修复杠杆计息丢弃小时零头
 
 - 完成内容：`accrue_position_interest` 此前只按完整小时计费，却把 `interest_accrued_at` 直接写成 `now`，导致每轮不足一小时的零头被永久丢掉（下个窗口从 `now` 重新起算），调用次数越多累计少收越多。新增 `billed_window_end`：时间戳推进到「上次计息点 + 已计费整小时数」而不是当前时刻，零头顺延到下一轮，多轮累计计费小时数与真实经过时长一致。全仓账户级聚合与状态闸门逻辑不变；顺带给该 worker 补上单元测试挂载点（此前完全没有单测）。

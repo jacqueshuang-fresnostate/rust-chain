@@ -165,8 +165,9 @@ pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> A
     }
 }
 
-/// 挑选本轮待计息的候选仓位主键，条件是已有入场价、状态 opened、借款额为正且产品小时利率为正。
+/// 挑选本轮待计息的候选仓位主键，条件是已有入场价、状态 opened、借款额为正且快照小时利率为正。
 /// `entry_price IS NOT NULL` 是挂单与真实持仓的资金边界；其余条件把免息产品和一倍杠杆仓位挡在事务之外。
+/// 利率取自仓位自身在借款开始时固化的快照，不再联产品表，因此管理员改配产品不会改变存量仓位的计费口径。
 /// 排序以 `interest_accrued_at` 升序打头，让最久未计息的仓位优先处理，形成天然的公平轮转；
 /// 再以开仓时间和主键兜底，保证排序完全确定，不会因并列值导致某些仓位长期排在后面被饿死。
 /// 上限在这里再夹一次到 1 到 500，即便调用方传入异常值也不会拉出超大结果集。
@@ -179,11 +180,10 @@ async fn fetch_interest_candidates(
         r#"SELECT positions.id AS position_id, positions.user_id,
                   positions.margin_asset, positions.margin_mode
            FROM margin_positions positions
-           INNER JOIN margin_products products ON products.id = positions.product_id
            WHERE positions.status = 'opened'
              AND positions.entry_price IS NOT NULL
              AND positions.borrowed_amount > 0
-             AND products.hourly_interest_rate > 0
+             AND positions.hourly_interest_rate > 0
            ORDER BY positions.interest_accrued_at ASC, positions.opened_at ASC, positions.id ASC
            LIMIT ?"#,
     )
@@ -301,10 +301,11 @@ async fn accrue_position_interest(
     Ok(MarginInterestOutcome::Accrued)
 }
 
-/// 对目标仓位加 FOR UPDATE 行锁并联表取出产品的当前小时利率，是计提事务里唯一的一把锁。
+/// 对目标仓位加 FOR UPDATE 行锁并读出该笔借款固化的小时利率，是计提事务里唯一的一把锁。
 /// 只按主键定位、不带状态条件，因此已平仓的仓位也能被读到，状态判定交给调用方处理。
 /// 加锁把余额、上次计息点和状态固定在同一版本上，防止与并发的平仓或强平交叉写入。
-/// 利率从产品表实时联出，管理员改配后下一轮计提立即生效，不使用开仓时的历史值。
+/// 利率取仓位在借款开始时写入的快照，不再联产品表：管理员改配只影响之后新开的仓位，
+/// 不会追溯改写存量仓位已经发生或尚未计提的窗口，与借贷、理财的费率快照口径一致。
 /// 仓位不存在时返回 None，调用方回滚后按跳过计数。
 async fn lock_position(
     tx: &mut Transaction<'_, MySql>,
@@ -314,9 +315,8 @@ async fn lock_position(
         r#"SELECT positions.id, positions.user_id, positions.margin_asset, positions.margin_mode,
                   positions.borrowed_amount, positions.interest_amount,
                   positions.interest_accrued_at, positions.opened_at, positions.entry_price, positions.status,
-                  products.hourly_interest_rate
+                  positions.hourly_interest_rate
            FROM margin_positions positions
-           INNER JOIN margin_products products ON products.id = positions.product_id
            WHERE positions.id = ?
            LIMIT 1
            FOR UPDATE"#,
