@@ -360,7 +360,12 @@ async fn margin_interest_worker_accrues_elapsed_full_hours_idempotently()
         .fetch_one(&pool)
         .await?;
     assert_eq!(interest_amount, decimal("0.240000000000000000"));
-    assert_eq!(interest_accrued_at, Some(first_accrual_at));
+    // 3.5 小时只收满 3 小时，时间戳推进到「起点 + 3 小时」而不是调用时刻 03:30，
+    // 这样 30 分钟零头会顺延到下一轮，不会被永久丢掉。
+    assert_eq!(
+        interest_accrued_at,
+        Some(opened_at + chrono::TimeDelta::hours(3))
+    );
     let pending_interest: (BigDecimal, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
         "SELECT interest_amount, interest_accrued_at FROM margin_positions WHERE id = ?",
     )
@@ -396,7 +401,12 @@ async fn margin_interest_worker_accrues_elapsed_full_hours_idempotently()
     .fetch_one(&pool)
     .await?;
     assert_eq!(interest_after_second, decimal("0.400000000000000000"));
-    assert_eq!(interest_accrued_after_second, Some(second_accrual_at));
+    // 第二轮从上一轮真实结点 03:00 起算到 05:45，收满 2 小时，时间戳推进到 05:00；
+    // 两轮合计 5 小时覆盖 00:00 到 05:00，剩余 45 分钟零头继续顺延。
+    assert_eq!(
+        interest_accrued_after_second,
+        Some(opened_at + chrono::TimeDelta::hours(5))
+    );
 
     Ok(())
 }

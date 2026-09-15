@@ -2,6 +2,7 @@
 //!
 //! 周期性扫描已成交且有借款的持仓，按「上次计息点到当前时刻的完整小时数」累加利息债务。
 //! 计息口径是单利：借款额乘小时利率再乘完整小时数，结果按十八位小数落库，不足一小时不计不预扣。
+//! 计息时间戳只推进到「上次计息点 + 已计费整小时数」，因此不足一小时的零头会顺延到下个窗口而不是被丢掉。
 //! `interest_accrued_at` 既是计息起点也是跨重启检查点，与利息增量在同一事务内提交，
 //! 因此进程崩溃重启后只会补上尚未计提的完整小时，不会重复收费也不会漏收。
 //! 本 worker 只增加仓位上的债务数字，不扣任何钱包余额、不写资金流水、不发布 WebSocket 事件；
@@ -199,8 +200,8 @@ async fn fetch_interest_candidates(
 /// 计算出的增量非正、带 `status = 'opened'` 条件的更新影响行数不为一。
 /// 最后一道尤为关键，它把状态检查与写入合成一条语句，即使并发平仓抢在加锁之后提交也不会误记利息。
 /// 每道闸门都显式 rollback 后返回 Skipped，因此跳过路径在数据库上不留任何痕迹。
-/// `interest_accrued_at` 直接写成 `now` 而不是「起点加完整小时数」，因此不足一小时的零头会被并入下个窗口，
-/// 长期看利息按实际调用时刻对齐而非严格的整点累积，这是当前实现的既定口径。
+/// `interest_accrued_at` 写成「上次计息点加已计费整小时数」而不是 now，因此不足一小时的零头会顺延到下个窗口，
+/// 多轮累计下来计费小时数与真实经过时长一致；若写成 now 则每轮都会丢掉零头，长期系统性少收利息。
 /// 全仓仓位在同一事务内额外重算账户级利息聚合并递增版本号，让风险快照和强平读到一致的账户视图。
 async fn accrue_position_interest(
     pool: &Pool<MySql>,
@@ -261,7 +262,7 @@ async fn accrue_position_interest(
            WHERE id = ? AND status = 'opened' AND entry_price IS NOT NULL"#,
     )
     .bind(&interest_after)
-    .bind(now.naive_utc())
+    .bind(billed_window_end(accrued_from, elapsed_hours).naive_utc())
     .bind(position.id)
     .execute(&mut *tx)
     .await?;
@@ -341,12 +342,31 @@ fn margin_interest_delta(
 
 /// 计算从上次计息点到当前时刻之间的完整小时数，不足一小时的部分一律舍去，只向下取整。
 /// 当前时刻不晚于起点时直接返回零，这样时钟回拨或起点位于未来都不会算出负数或异常大的小时数。
-/// 舍去零头意味着用户不会被预收未满一小时的利息，代价是计息时点会随调用时刻略有漂移。
+/// 舍去零头意味着用户不会被预收未满一小时的利息；零头由 `billed_window_end` 顺延到下次计提，不会丢失。
+/// 本函数只做时间差换算，不读数据库、不改仓位，也不决定计息时间戳如何推进。
 fn full_elapsed_hours(from: DateTime<Utc>, now: DateTime<Utc>) -> u64 {
     if now <= from {
         return 0;
     }
     (now - from).num_hours().max(0) as u64
+}
+
+/// 单次计提窗口允许推进的最大小时数，约合 114 年，用于兜住损坏时间戳造成的极端跨度。
+/// 取值远大于任何真实持仓寿命，只作为防 panic 的上界，不影响正常计息。
+const MAX_BILLED_WINDOW_HOURS: i64 = 1_000_000;
+
+/// 计算本次计息窗口的结束时刻：上次计息点加上已计费的完整小时数，而不是当前时刻。
+/// 若把 `interest_accrued_at` 直接写成 now，不足一小时的零头会被永久丢掉，因为下个窗口会从 now 重新起算，
+/// 长期看每一轮都少收最多 59 分钟，累计误差随调用次数线性放大。
+/// 返回「起点 + 整小时」把零头顺延到下一次计提，使多轮累计计费小时数与真实经过时长完全一致。
+/// 结果不可能晚于当前时刻，因此时间戳只会落后或持平，绝不提前预收未满一小时的利息。
+fn billed_window_end(accrued_from: DateTime<Utc>, elapsed_hours: u64) -> DateTime<Utc> {
+    let hours = i64::try_from(elapsed_hours)
+        .unwrap_or(MAX_BILLED_WINDOW_HOURS)
+        .min(MAX_BILLED_WINDOW_HOURS);
+    accrued_from
+        .checked_add_signed(chrono::TimeDelta::hours(hours))
+        .unwrap_or(accrued_from)
 }
 
 /// 把单轮成功计提数上限夹到 1 到 100，即便配置传入零或极大值也保证每轮至少推进一笔、至多一百笔。
@@ -390,3 +410,7 @@ fn env_u32(key: &str, default: u32) -> u32 {
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(default)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit_src/src_workers_margin_interest_tests.rs"]
+mod tests;

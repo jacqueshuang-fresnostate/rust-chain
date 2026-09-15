@@ -1,3 +1,10 @@
+## 2026-09-16 01:55 - 修复杠杆计息丢弃小时零头
+
+- 完成内容：`accrue_position_interest` 此前只按完整小时计费，却把 `interest_accrued_at` 直接写成 `now`，导致每轮不足一小时的零头被永久丢掉（下个窗口从 `now` 重新起算），调用次数越多累计少收越多。新增 `billed_window_end`：时间戳推进到「上次计息点 + 已计费整小时数」而不是当前时刻，零头顺延到下一轮，多轮累计计费小时数与真实经过时长一致。全仓账户级聚合与状态闸门逻辑不变；顺带给该 worker 补上单元测试挂载点（此前完全没有单测）。
+- 修改文件：`src/workers/margin_interest.rs`、`tests/unit_src/src_workers_margin_interest_tests.rs(新)`、`tests/margin_liquidation_worker.rs`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib` 406/406 通过（新增 3 项：两轮窗口累计覆盖真实时长、窗口结束不越过当前时刻、单利金额口径）。`tests/margin_liquidation_worker.rs` 的两处时间戳断言已按新语义更新为「起点 + 整小时」（该 fixture 利息数不变，仍是 3.5h 收 3 小时、累计 0.40）。未跑 MySQL 集成，该用例未实际执行。
+- 后续事项：杠杆计息「用当前利率」尚未处理（`lock_position` 联 `margin_products.hourly_interest_rate` 实时值，管理员改配会追溯整个未计费窗口，需在持仓上做利率快照）；Admin 现货 fill UI、客户端幂等、UserAuth 状态、理财 worker 重试（CUR-P1-08）。
+
 ## 2026-09-16 01:20 - 落地逐仓强平坏账登记
 
 - 完成内容：逐仓强平此前把负权益直接截零、缺口在库内无处可查，报表口径与全仓账户级 `last_bad_debt` 也对不上。新增 `isolated_liquidation_bad_debt_amount`（负权益取绝对值，否则为零），与 `non_negative_amount` 互补：返还额取权益正部、坏账取权益负部，两者之差恒等于权益，强平不会凭空多出或少掉金额。新增 migration 0127 给 `margin_liquidation_records` 加 `bad_debt_amount` 列（含 `>= 0` 约束），逐仓强平写审计时落库该缺口。全仓逐仓行显式写零，账户级坏账仍留在 `margin_cross_accounts.last_bad_debt`，避免两边累加重复计数。后台强平列表与详情查询、`AdminMarginLiquidationResponse` 增加该字段，web 后台「强平记录」表新增「穿仓坏账」列。
