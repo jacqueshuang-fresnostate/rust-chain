@@ -1,3 +1,10 @@
+## 2026-09-16 03:50 - 提现确认补平台对手腿
+
+- 完成内容：`confirm_withdrawal_in_tx` 从 frozen 永久核销 `total_reserved` 时只写用户腿，平台实际付出的链上金额与留存手续费在平台账上无处可查。新增 `withdrawal_confirm_journal_legs`：`user_withdrawal_liability_close`（+预留额）、`platform_withdrawal_cash_paid`（−本金）、`platform_withdrawal_fee_income`（−手续费），因 `total_reserved = 本金 + 手续费` 故三腿和恒为零。申请冻结、审批与失败释放都只是平台内部 available/frozen 桶迁移，不产生平台侧资金移动，因此不写分录；只有链上确认这一步写，且与 frozen 扣除同一事务、靠 `confirmed` 状态早返回保证幂等。顺带把 `deposit_journal` 模块提升为 `platform_journal`（共享腿类型与零和助手），`insert_wallet_platform_journal_legs_in_tx` 改为按业务传入 context/ref_type，避免充值提现各写一份。
+- 修改文件：`src/modules/wallet/platform_journal.rs(由 deposit_journal.rs 改名)`、`src/modules/wallet/mod.rs`、`src/modules/wallet/infrastructure/{shared,deposits,withdrawals}.rs`、`tests/unit_src/src_modules_wallet_platform_journal_tests.rs(改名并新增用例)`、`.trellis/spec/backend/wallet-amount-precision.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib` 416/416 通过（新增 2 项：提现三腿科目与金额、提现确认接线）。未跑 MySQL 集成：本机凭据不匹配，平台腿未实际落库验证。
+- 后续事项：现货/杠杆/闪兑/秒合约/预测/佣金的对手腿、Admin 现货 fill UI、客户端幂等、理财 worker 重试（CUR-P1-08）、UserAuth/AgentAuth 会话代际（需先给 `users`/`agent_admin_users` 加代际列并改签发与撤销链路）。
+
 ## 2026-09-16 03:15 - 链上充值补平台对手腿
 
 - 完成内容：链上充值此前只写用户钱包腿，平台托管到的毛额、对用户的负债与留存手续费在平台账上无处可查。新增 `wallet/deposit_journal.rs` 构造零和分录：入账写 `platform_deposit_cash_received`（+毛额）、`user_deposit_liability_open`（−净额）、`platform_deposit_fee_income`（−(毛额−净额)）；冲正是入账三腿的严格取反。手续费由毛额减净额在构造器内现算而非外部传入，因此腿内和必然为零；零额腿在构造阶段省略。新增 `insert_wallet_platform_journal_legs_in_tx`（shared.rs），写入前复核腿总和，不闭合按内部错误中止。入账与冲正分别用 `wallet_deposit:{id}:credit`/`:reverse` 独立键，均与钱包余额、流水、事件状态同一事务提交。钱包入账口径未改动。

@@ -79,3 +79,35 @@ fn deposit_credit_and_reversal_both_write_platform_legs() {
     assert!(source.contains("wallet_deposit:{}:credit"));
     assert!(source.contains("wallet_deposit:{}:reverse"));
 }
+
+#[test]
+fn withdrawal_confirmation_legs_balance_payout_and_retained_fee() {
+    let legs = withdrawal_confirm_journal_legs(
+        &decimal("10.000000000000000000"),
+        &decimal("0.500000000000000000"),
+        &decimal("10.500000000000000000"),
+    );
+
+    assert_eq!(
+        account_codes(&legs),
+        vec![
+            "user_withdrawal_liability_close",
+            "platform_withdrawal_cash_paid",
+            "platform_withdrawal_fee_income",
+        ]
+    );
+    assert_eq!(legs[0].amount, decimal("10.500000000000000000"));
+    assert_eq!(legs[1].amount, decimal("-10.000000000000000000"));
+    assert_eq!(legs[2].amount, decimal("-0.500000000000000000"));
+    assert_eq!(legs_total(&legs), decimal("0"));
+}
+
+/// 只有链上确认这一步资金真正离开平台，平台腿必须与那次 frozen 扣除写在同一事务。
+#[test]
+fn withdrawal_confirmation_writes_platform_legs() {
+    let source = include_str!("../../src/modules/wallet/infrastructure/withdrawals.rs");
+
+    assert!(source.contains("withdrawal_confirm_journal_legs"));
+    assert!(source.contains("WALLET_WITHDRAWAL_JOURNAL_CONTEXT"));
+    assert!(source.contains("wallet_withdrawal:{}:confirm"));
+}

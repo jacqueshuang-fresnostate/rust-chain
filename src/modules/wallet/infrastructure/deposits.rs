@@ -10,8 +10,11 @@ use crate::{
     error::{AppError, AppResult},
     modules::wallet::{
         MAX_ASSET_PRECISION_SCALE, WithdrawFeeTier, amount_fits_asset_precision,
-        deposit_journal::{deposit_credit_journal_legs, deposit_reversal_journal_legs},
         deposit_net_credit_amount,
+        platform_journal::{
+            WALLET_DEPOSIT_JOURNAL_CONTEXT, deposit_credit_journal_legs,
+            deposit_reversal_journal_legs,
+        },
         presentation::{
             DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
             ObserveDepositRequest, WalletDepositEventResponse,
@@ -561,8 +564,10 @@ pub(crate) async fn reverse_deposit_event(
     .await?;
     insert_wallet_platform_journal_legs_in_tx(
         &mut tx,
+        WALLET_DEPOSIT_JOURNAL_CONTEXT,
         &format!("wallet_deposit:{}:reverse", event.id),
         event.asset_id,
+        WALLET_DEPOSIT_JOURNAL_CONTEXT,
         event.id,
         &deposit_reversal_journal_legs(&deposit_journal_gross_amount(&event), &credit_amount),
     )
@@ -752,8 +757,10 @@ async fn credit_deposit_event_in_tx(
     .await?;
     insert_wallet_platform_journal_legs_in_tx(
         tx,
+        WALLET_DEPOSIT_JOURNAL_CONTEXT,
         &format!("wallet_deposit:{}:credit", event.id),
         event.asset_id,
+        WALLET_DEPOSIT_JOURNAL_CONTEXT,
         event.id,
         &deposit_credit_journal_legs(&deposit_journal_gross_amount(event), &credit_amount),
     )

@@ -4,7 +4,7 @@
 
 use crate::{
     error::{AppError, AppResult},
-    modules::wallet::deposit_journal::{WALLET_DEPOSIT_JOURNAL_CONTEXT, WalletPlatformJournalLeg},
+    modules::wallet::platform_journal::WalletPlatformJournalLeg,
 };
 use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction};
@@ -152,14 +152,17 @@ pub(super) async fn insert_wallet_ledger_in_tx(
 }
 
 /// 在调用方事务中写入钱包业务的平台对手腿，是用户腿之外平台一侧记账的唯一出口。
+/// 上下文与业务引用类型由调用方按业务传入，两者必须指向同一业务，否则对账时无法回溯到来源单据。
 /// 同一 transaction_key 下的腿由纯函数保证求和为零；写入前再复核一次总和，
 /// 不闭合的分录直接按内部错误中止，避免把不平的账提交进对账表。
 /// 冲突时沿用唯一键 `(transaction_key, account_code, asset_id)` 语义拒绝重复分录，
 /// 由调用方事务回滚，绝不静默跳过，避免出现只有用户腿而没有平台腿的半截账。
 pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
     tx: &mut Transaction<'_, MySql>,
+    context: &str,
     transaction_key: &str,
     asset_id: u64,
+    ref_type: &str,
     ref_id: u64,
     legs: &[WalletPlatformJournalLeg],
 ) -> AppResult<()> {
@@ -176,13 +179,14 @@ pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
             r#"INSERT INTO platform_financial_journal
                (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id,
                 metadata_json)
-               VALUES (?, ?, ?, ?, ?, 'wallet_deposit_event', ?, JSON_OBJECT('deposit_event_id', ?))"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, JSON_OBJECT('ref_id', ?))"#,
         )
         .bind(transaction_key)
-        .bind(WALLET_DEPOSIT_JOURNAL_CONTEXT)
+        .bind(context)
         .bind(leg.account_code)
         .bind(asset_id)
         .bind(&leg.amount)
+        .bind(ref_type)
         .bind(ref_id.to_string())
         .bind(ref_id)
         .execute(&mut **tx)

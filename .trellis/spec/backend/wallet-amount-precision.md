@@ -304,7 +304,7 @@ if !(0..=18).contains(&precision_scale) {
 }
 ```
 
-## Scenario: Deposit Platform Counter-Legs
+## Scenario: Wallet Platform Counter-Legs
 
 ### 1. Scope / Trigger
 
@@ -343,3 +343,10 @@ if !(0..=18).contains(&precision_scale) {
 
 - Unit tests assert leg composition and ordering, a zero sum for both directions, reversal being the exact negation, and zero-leg omission for fee-free deposits.
 - Source assertion keeps both the credit and reversal paths wired to the leg constructors with distinct transaction keys.
+
+### 7. Withdrawal Confirmation
+
+- `withdrawal_confirm_journal_legs(amount, fee_amount, total_reserved)` writes `user_withdrawal_liability_close` (`+total_reserved`), `platform_withdrawal_cash_paid` (`-amount`), `platform_withdrawal_fee_income` (`-fee_amount`); the three legs sum to zero because `total_reserved = amount + fee`.
+- Only on-chain confirmation moves funds out of the platform, so only that step writes legs. Reserving (`available` to `frozen`), approval, and failure release are internal bucket moves and write no platform legs.
+- `transaction_key` is `wallet_withdrawal:{request_id}:confirm`.
+- The confirm path is idempotent through the `confirmed` status early return, so legs are never written twice.

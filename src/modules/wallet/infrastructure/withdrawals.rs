@@ -1,14 +1,17 @@
 //! 提现网关适配与提现申请状态机持久化。
 //!
 //! 资金不变量：申请金额与手续费统一冻结为 total_reserved；拒绝/失败等额释放，链上确认仅从 frozen 永久扣除，所有状态与流水同事务推进。
+//! 只有链上确认这一步资金真正离开平台，因此平台对手腿也只在该步写入；申请、审批与释放都是平台内部的桶迁移。
 
 use super::shared::{
-    fetch_admin_page, insert_wallet_ledger_in_tx, lock_wallet_balance, update_wallet_balance,
+    fetch_admin_page, insert_wallet_ledger_in_tx, insert_wallet_platform_journal_legs_in_tx,
+    lock_wallet_balance, update_wallet_balance,
 };
 use crate::{
     error::{AppError, AppResult},
     modules::wallet::{
         WithdrawFeeTier, calculate_withdraw_fee, normalize_withdraw_fee_tiers,
+        platform_journal::{WALLET_WITHDRAWAL_JOURNAL_CONTEXT, withdrawal_confirm_journal_legs},
         presentation::{WalletWithdrawalResponse, WithdrawalQuoteResponse},
         repository::{
             WalletChainBroadcastCommand, WalletChainBroadcastResult, WalletChainGateway,
@@ -1193,6 +1196,20 @@ pub(crate) async fn confirm_withdrawal_in_tx(
         &wallet.locked,
         "wallet_withdrawal_request",
         &withdrawal.id.to_string(),
+    )
+    .await?;
+    insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        WALLET_WITHDRAWAL_JOURNAL_CONTEXT,
+        &format!("wallet_withdrawal:{}:confirm", withdrawal.id),
+        withdrawal.asset_id,
+        WALLET_WITHDRAWAL_JOURNAL_CONTEXT,
+        withdrawal.id,
+        &withdrawal_confirm_journal_legs(
+            &withdrawal.amount,
+            &withdrawal.fee,
+            &withdrawal.total_reserved,
+        ),
     )
     .await?;
     sqlx::query(
