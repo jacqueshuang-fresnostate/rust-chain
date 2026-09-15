@@ -2,7 +2,10 @@
 //!
 //! 资金不变量：锁账户后才允许更新三桶余额；任何桶不得变负；余额更新与对应流水必须在调用方持有的同一事务中执行。
 
-use crate::error::{AppError, AppResult};
+use crate::{
+    error::{AppError, AppResult},
+    modules::wallet::deposit_journal::{WALLET_DEPOSIT_JOURNAL_CONTEXT, WalletPlatformJournalLeg},
+};
 use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction};
 
@@ -145,5 +148,45 @@ pub(super) async fn insert_wallet_ledger_in_tx(
     .bind(ref_id)
     .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+/// 在调用方事务中写入钱包业务的平台对手腿，是用户腿之外平台一侧记账的唯一出口。
+/// 同一 transaction_key 下的腿由纯函数保证求和为零；写入前再复核一次总和，
+/// 不闭合的分录直接按内部错误中止，避免把不平的账提交进对账表。
+/// 冲突时沿用唯一键 `(transaction_key, account_code, asset_id)` 语义拒绝重复分录，
+/// 由调用方事务回滚，绝不静默跳过，避免出现只有用户腿而没有平台腿的半截账。
+pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    transaction_key: &str,
+    asset_id: u64,
+    ref_id: u64,
+    legs: &[WalletPlatformJournalLeg],
+) -> AppResult<()> {
+    let total = legs
+        .iter()
+        .fold(BigDecimal::from(0), |total, leg| total + leg.amount.clone());
+    if total != 0 {
+        return Err(AppError::Internal(format!(
+            "wallet platform journal legs for {transaction_key} do not balance"
+        )));
+    }
+    for leg in legs {
+        sqlx::query(
+            r#"INSERT INTO platform_financial_journal
+               (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id,
+                metadata_json)
+               VALUES (?, ?, ?, ?, ?, 'wallet_deposit_event', ?, JSON_OBJECT('deposit_event_id', ?))"#,
+        )
+        .bind(transaction_key)
+        .bind(WALLET_DEPOSIT_JOURNAL_CONTEXT)
+        .bind(leg.account_code)
+        .bind(asset_id)
+        .bind(&leg.amount)
+        .bind(ref_id.to_string())
+        .bind(ref_id)
+        .execute(&mut **tx)
+        .await?;
+    }
     Ok(())
 }

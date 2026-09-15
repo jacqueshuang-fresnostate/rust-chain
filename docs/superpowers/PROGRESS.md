@@ -1,3 +1,10 @@
+## 2026-09-16 03:15 - 链上充值补平台对手腿
+
+- 完成内容：链上充值此前只写用户钱包腿，平台托管到的毛额、对用户的负债与留存手续费在平台账上无处可查。新增 `wallet/deposit_journal.rs` 构造零和分录：入账写 `platform_deposit_cash_received`（+毛额）、`user_deposit_liability_open`（−净额）、`platform_deposit_fee_income`（−(毛额−净额)）；冲正是入账三腿的严格取反。手续费由毛额减净额在构造器内现算而非外部传入，因此腿内和必然为零；零额腿在构造阶段省略。新增 `insert_wallet_platform_journal_legs_in_tx`（shared.rs），写入前复核腿总和，不闭合按内部错误中止。入账与冲正分别用 `wallet_deposit:{id}:credit`/`:reverse` 独立键，均与钱包余额、流水、事件状态同一事务提交。钱包入账口径未改动。
+- 修改文件：`src/modules/wallet/deposit_journal.rs(新)`、`src/modules/wallet/mod.rs`、`src/modules/wallet/infrastructure/{shared,deposits}.rs`、`src/modules/wallet/domain.rs`、`tests/unit_src/src_modules_wallet_deposit_journal_tests.rs(新)`、`.trellis/spec/backend/wallet-amount-precision.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo test --lib` 414/414 通过（新增 4 项：入账三腿科目与金额、冲正为精确取反、零手续费省略腿、入账与冲正接线）。未跑 MySQL 集成：本机凭据不匹配，平台腿未实际落库验证。
+- 后续事项：提现侧对手腿、Admin 现货 fill UI、客户端幂等、理财 worker 重试（CUR-P1-08）、UserAuth/AgentAuth 会话代际（需先给 `users`/`agent_admin_users` 加代际列并改签发与撤销链路）。
+
 ## 2026-09-16 02:30 - 杠杆计息改用持仓利率快照
 
 - 完成内容：`accrue_position_interest` 此前通过 `INNER JOIN margin_products` 取产品实时利率，管理员改配会追溯改写存量仓位整个未计费窗口。新增 migration 0128 给 `margin_positions` 加 `hourly_interest_rate` 快照列并按当前产品利率回填存量行；开仓时 `insert_margin_position` 写入快照；限价单在成交（借款真正开始）时按成交时刻的产品配置重新快照；计提侧 `lock_position` 与候选查询都改读仓位自身快照，不再联产品表，因此改配只影响之后新开的仓位。口径与借贷、理财的费率快照一致。

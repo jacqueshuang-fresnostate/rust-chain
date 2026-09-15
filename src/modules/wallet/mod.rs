@@ -3,6 +3,7 @@
 //! 按 DDD 结构划分：domain、repository、service、application、infrastructure、presentation、routes。
 
 pub mod application;
+pub(crate) mod deposit_journal;
 pub mod domain;
 pub mod infrastructure;
 pub mod presentation;

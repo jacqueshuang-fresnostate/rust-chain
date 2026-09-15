@@ -131,7 +131,8 @@ pub fn truncate_amount_to_asset_precision(amount: &BigDecimal, precision_scale: 
 
 /// 计算链上充值应记入用户 available 的净额：毛额减去快照手续费，再按资产精度向零截断。
 /// 手续费不得为负；净额必须为正，否则拒绝入账，避免零入账或把费用记成用户负债。
-/// 本函数不写钱包、不入账手续费到平台账户；调用方须用同一净额写余额、流水和冲正。
+/// 本函数不写钱包、也不自行入账；调用方须用同一净额写余额、流水和冲正，
+/// 并按同一毛额与净额写平台对手腿，使手续费收入在平台账上可对。
 pub fn deposit_net_credit_amount(
     gross_amount: &BigDecimal,
     deposit_fee: &BigDecimal,

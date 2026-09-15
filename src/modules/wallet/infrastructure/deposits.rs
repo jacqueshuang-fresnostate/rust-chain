@@ -3,12 +3,14 @@
 //! 资金不变量：地址分配在事务中唯一；链事件以 network/tx_hash/event_index 幂等，确认入账或重组冲正必须与钱包及流水原子提交。
 
 use super::shared::{
-    fetch_admin_page, insert_wallet_ledger_in_tx, lock_wallet_balance, update_wallet_balance,
+    fetch_admin_page, insert_wallet_ledger_in_tx, insert_wallet_platform_journal_legs_in_tx,
+    lock_wallet_balance, update_wallet_balance,
 };
 use crate::{
     error::{AppError, AppResult},
     modules::wallet::{
         MAX_ASSET_PRECISION_SCALE, WithdrawFeeTier, amount_fits_asset_precision,
+        deposit_journal::{deposit_credit_journal_legs, deposit_reversal_journal_legs},
         deposit_net_credit_amount,
         presentation::{
             DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
@@ -557,6 +559,14 @@ pub(crate) async fn reverse_deposit_event(
         &event.id.to_string(),
     )
     .await?;
+    insert_wallet_platform_journal_legs_in_tx(
+        &mut tx,
+        &format!("wallet_deposit:{}:reverse", event.id),
+        event.asset_id,
+        event.id,
+        &deposit_reversal_journal_legs(&deposit_journal_gross_amount(&event), &credit_amount),
+    )
+    .await?;
     sqlx::query(
         r#"UPDATE wallet_deposit_events
            SET status = 'reversed', failure_reason = ?, reversed_at = CURRENT_TIMESTAMP(6)
@@ -740,6 +750,14 @@ async fn credit_deposit_event_in_tx(
         &event.id.to_string(),
     )
     .await?;
+    insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        &format!("wallet_deposit:{}:credit", event.id),
+        event.asset_id,
+        event.id,
+        &deposit_credit_journal_legs(&deposit_journal_gross_amount(event), &credit_amount),
+    )
+    .await?;
     let update = sqlx::query(
         r#"UPDATE wallet_deposit_events
            SET status = 'credited', credited_at = CURRENT_TIMESTAMP(6)
@@ -760,6 +778,13 @@ async fn credit_deposit_event_in_tx(
 fn deposit_credit_amount(event: &WalletDepositEventResponse) -> AppResult<BigDecimal> {
     deposit_net_credit_amount(&event.amount, &event.fee_amount, MAX_ASSET_PRECISION_SCALE)
         .map_err(AppError::Validation)
+}
+
+/// 平台分录使用的托管毛额：与钱包入账同一口径，把链上原始金额定点化到账本最大精度。
+/// 它减去净额正好等于入账时使用的快照手续费，因此平台分录与用户入账描述的是同一笔钱。
+/// 纯换算，不读数据库也不写钱包；调用方须与净额同源，避免两条腿落在不同精度上。
+fn deposit_journal_gross_amount(event: &WalletDepositEventResponse) -> BigDecimal {
+    truncate_amount_to_asset_precision(&event.amount, MAX_ASSET_PRECISION_SCALE)
 }
 
 /// 把资产配置行搬运为充提资产响应项，同时带出充值与提现两侧开关供前端判断可用动作。

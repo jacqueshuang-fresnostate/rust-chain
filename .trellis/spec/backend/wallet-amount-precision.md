@@ -303,3 +303,43 @@ if !(0..=18).contains(&precision_scale) {
     return Err(AppError::Internal("invalid asset precision".into()));
 }
 ```
+
+## Scenario: Deposit Platform Counter-Legs
+
+### 1. Scope / Trigger
+
+- Trigger: a confirmed on-chain deposit is credited to a user wallet, or a reorg reversal debits it back.
+- Applies to `wallet/deposit_journal.rs`, `wallet/infrastructure/shared.rs`, and `wallet/infrastructure/deposits.rs`.
+
+### 2. Signatures
+
+- `deposit_credit_journal_legs(gross_amount, net_amount) -> Vec<WalletPlatformJournalLeg>`.
+- `deposit_reversal_journal_legs(gross_amount, net_amount) -> Vec<WalletPlatformJournalLeg>`.
+- `insert_wallet_platform_journal_legs_in_tx(tx, transaction_key, asset_id, ref_id, legs)`.
+
+### 3. Contracts
+
+- Credit legs: `platform_deposit_cash_received` (`+gross`), `user_deposit_liability_open` (`-net`), `platform_deposit_fee_income` (`-(gross - net)`).
+- The fee is derived as `gross - net` inside the constructor, never passed in, so the three legs always sum to zero.
+- Reversal legs are the exact negation of the credit legs, in the same account order.
+- Zero-amount legs are omitted; the journal table rejects zero amounts.
+- `transaction_key` is `wallet_deposit:{event_id}:credit` or `wallet_deposit:{event_id}:reverse`, so credit and reversal never collide on the unique key.
+- Both directions are written in the same transaction as the wallet balance, ledger row, and event status.
+- Gross and net must come from the same asset-precision source; the ledger credit amount is reused as `net`.
+
+### 4. Validation & Error Matrix
+
+- Legs that do not sum to zero at insert time -> internal error, whole transaction aborts.
+- Journal insert conflict on `(transaction_key, account_code, asset_id)` -> transaction rolls back; no user-only half entry is committed.
+- Reversal requested while the wallet cannot cover the credited amount -> `manual_review` path, no journal legs written.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `3.00` gross with `0.01` fee credits `2.99` and writes `+3.00`, `-2.99`, `-0.01`.
+- Base: a fee-free deposit writes only the custody and liability legs, which still sum to zero.
+- Bad: writing the user ledger row without the platform counter-legs, or booking the fee as a positive income leg.
+
+### 6. Tests Required
+
+- Unit tests assert leg composition and ordering, a zero sum for both directions, reversal being the exact negation, and zero-leg omission for fee-free deposits.
+- Source assertion keeps both the credit and reversal paths wired to the leg constructors with distinct transaction keys.
