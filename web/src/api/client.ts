@@ -1,6 +1,7 @@
 import { authStore, type AuthScope, type AuthSession } from '../auth/authStore';
 import { buildApiUrl } from '../config/backend';
 import type { ApiErrorPayload } from './types';
+import { assertSafeJsonNumbers } from '../shared/integer';
 
 export const DEFAULT_API_TIMEOUT_MS = 15_000;
 
@@ -209,7 +210,11 @@ function refreshSession(authScope: AuthScope, captured: AuthSession, timeoutMs: 
 async function parseResponse<T>(path: string, response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   try {
-    return (await response.json()) as T;
+    const value: unknown = await response.json();
+    assertSafeJsonNumbers(value, () => {
+      throw new ContractError('服务端返回了非有限数或不安全整数', { path, requestId: requestId(response), status: response.status });
+    });
+    return value as T;
   } catch (error) {
     // 语法错误是 DTO/媒体合约问题；响应体断流则交给请求生命周期分类为网络或超时。
     if (!(error instanceof SyntaxError)) throw error;
@@ -229,7 +234,7 @@ export async function apiRequest<T = unknown>(path: string, init: ApiRequestInit
     timeoutMs = DEFAULT_API_TIMEOUT_MS,
     ...requestInit
   } = init;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('timeoutMs 必须为正数');
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) throw new Error('timeoutMs 必须为有效的正整数毫秒');
 
   const capturedSession = auth === 'required' ? authStore.getSession(authScope) : null;
   const response = await sendRequest<T>(path, authScope, auth, requestInit, timeoutMs);

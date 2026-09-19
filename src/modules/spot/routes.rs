@@ -63,7 +63,7 @@ pub fn routes() -> Router<AppState> {
 /// 装配后台现货路由，包含跨用户订单与成交检索、订单详情、强制撤单和撮合成交录入。
 /// 强制撤单用 POST `/spot/orders/:id/cancel` 而非 DELETE，因为它需要请求体携带审计原因。
 /// `/spot/fills` 是唯一会真正结算双边资金的后台入口，其余四个都是只读或仅退款。
-/// 全部 handler 走 `AdminAuth`，其中只有强制撤单需要把管理员标识透传给用例用于审计归属。
+/// 全部 handler 走 `AdminAuth`，强制撤单和手工成交把管理员标识透传给用例用于原子审计。
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/spot/orders", get(list_admin_orders))
@@ -205,12 +205,13 @@ async fn list_admin_trades(
 }
 
 async fn fill_orders(
-    AdminAuth(_claims): AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<FillSpotOrdersRequest>,
 ) -> AppResult<Json<SpotFillResponse>> {
     let response = fill_spot_orders_with_events_with_request_use_case(
         &mysql_pool(&state)?,
+        admin_id_from_subject(&claims.sub)?,
         request,
         state.event_broadcast_hub.as_ref(),
     )

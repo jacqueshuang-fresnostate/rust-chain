@@ -6,6 +6,7 @@
 //! 本层不触碰任何用户钱包，闪兑成交本身由 convert 上下文负责。
 
 use super::*;
+use crate::modules::convert::inventory;
 
 /// 分页读取全部闪兑交易对及其源/目标资产展示信息，并返回匹配总数。
 /// 当前查询对象不提供业务筛选，只裁剪 limit/offset；读取不加锁，连接池缺失或 SQL 映射失败返回错误。
@@ -110,6 +111,20 @@ pub(crate) async fn create_admin_convert_pair(
         },
     )
     .await?;
+    if let Some(config) = request.inventory {
+        inventory::configure_inventory_in_tx(
+            &mut tx,
+            pair_id,
+            request.to_asset_id,
+            admin_id,
+            config.revision,
+            config.enabled,
+            &config.funded_amount,
+            &config.funding_reference,
+            &reason,
+        )
+        .await?;
+    }
     let pair = load_admin_convert_pair_in_tx(&mut tx, pair_id).await?;
     insert_admin_audit_log_entry_in_tx(
         &mut tx,
@@ -146,6 +161,7 @@ pub(crate) async fn update_admin_convert_pair(
     let before = lock_admin_convert_pair_in_tx(&mut tx, pair_id).await?;
     let from_asset_id = request.from_asset_id.unwrap_or(before.from_asset_id);
     let to_asset_id = request.to_asset_id.unwrap_or(before.to_asset_id);
+    inventory::ensure_inventory_asset_in_tx(&mut tx, pair_id, to_asset_id).await?;
     let mut pricing_mode = request
         .pricing_mode
         .as_deref()
@@ -185,7 +201,8 @@ pub(crate) async fn update_admin_convert_pair(
         || request.min_amount.is_some()
         || request.max_amount.is_some()
         || request.target_min_amount.is_some()
-        || request.target_max_amount.is_some();
+        || request.target_max_amount.is_some()
+        || request.inventory.is_some();
 
     // 历史坏配置必须仍可关闭；该例外只允许显式纯停用，不允许顺便更新或重新启用。
     if request.enabled == Some(false) && !updates_config {
@@ -221,6 +238,20 @@ pub(crate) async fn update_admin_convert_pair(
         },
     )
     .await?;
+    if let Some(config) = request.inventory {
+        inventory::configure_inventory_in_tx(
+            &mut tx,
+            pair_id,
+            to_asset_id,
+            admin_id,
+            config.revision,
+            config.enabled,
+            &config.funded_amount,
+            &config.funding_reference,
+            &reason,
+        )
+        .await?;
+    }
     let after = load_admin_convert_pair_in_tx(&mut tx, pair_id).await?;
     insert_admin_audit_log_entry_in_tx(
         &mut tx,
@@ -265,6 +296,11 @@ pub(crate) async fn delete_admin_convert_pair(
         ));
     }
     ensure_convert_pair_has_no_references_in_tx(&mut tx, pair_id).await?;
+    if before.inventory_revision.is_some() {
+        return Err(AppError::Conflict(
+            "cannot delete convert pair with inventory history".into(),
+        ));
+    }
     delete_admin_convert_pair_in_tx(&mut tx, pair_id).await?;
     insert_admin_audit_log_entry_in_tx(
         &mut tx,

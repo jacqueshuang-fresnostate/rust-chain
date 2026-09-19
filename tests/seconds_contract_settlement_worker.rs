@@ -252,6 +252,14 @@ async fn timely_delayed_and_replay_use_the_same_event_price_snapshot() -> Result
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count, 2);
+    let journal: (i64, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE context = 'seconds_contract' AND ref_id IN (?, ?)",
+    )
+    .bind(timely_order.to_string())
+    .bind(delayed_order.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(journal, (6, decimal("0")));
     Ok(())
 }
 

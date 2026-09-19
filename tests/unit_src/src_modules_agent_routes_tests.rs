@@ -144,6 +144,8 @@ async fn agent_financial_routes_require_agent_scope_and_validate_status_before_m
     for path in [
         "/users/9/assets",
         "/users/9/margin-positions",
+        "/users/9/margin-orders",
+        "/users/9/spot-orders",
         "/users/9/seconds-contract-orders",
     ] {
         let response = app
@@ -182,6 +184,8 @@ async fn agent_financial_routes_require_agent_scope_and_validate_status_before_m
 
     for path in [
         "/users/9/margin-positions?status=unknown",
+        "/users/9/margin-orders?status=filled",
+        "/users/9/spot-orders?status=opened",
         "/users/9/seconds-contract-orders?status=closed",
     ] {
         let response = app
@@ -202,8 +206,9 @@ async fn agent_financial_routes_require_agent_scope_and_validate_status_before_m
 #[test]
 fn agent_financial_filters_and_pagination_are_bounded() {
     use crate::modules::agent::service::{
-        agent_financial_list_page, normalized_agent_margin_position_status,
-        normalized_agent_seconds_order_status,
+        agent_financial_list_page, normalized_agent_margin_order_status,
+        normalized_agent_margin_position_status, normalized_agent_seconds_order_status,
+        normalized_agent_spot_order_status,
     };
 
     let page = agent_financial_list_page(Some(1_000), Some(u32::MAX));
@@ -218,9 +223,39 @@ fn agent_financial_filters_and_pagination_are_bounded() {
         Some("opened".to_owned())
     );
     assert!(normalized_agent_margin_position_status(Some("settled".to_owned())).is_err());
+    assert!(normalized_agent_margin_position_status(Some("pending".to_owned())).is_err());
+    for status in ["pending", "opened", "closed", "canceled", "liquidated"] {
+        assert_eq!(
+            normalized_agent_margin_order_status(Some(status.to_owned())).unwrap(),
+            Some(status.to_owned())
+        );
+    }
+    for status in [
+        "pending",
+        "open",
+        "partially_filled",
+        "filled",
+        "cancelled",
+        "rejected",
+    ] {
+        assert_eq!(
+            normalized_agent_spot_order_status(Some(status.to_owned())).unwrap(),
+            Some(status.to_owned())
+        );
+    }
+    assert!(normalized_agent_spot_order_status(Some("opened".to_owned())).is_err());
+    assert_eq!(normalized_agent_margin_order_status(None).unwrap(), None);
+    assert_eq!(
+        normalized_agent_spot_order_status(Some(" ".to_owned())).unwrap(),
+        None
+    );
     assert_eq!(
         normalized_agent_seconds_order_status(Some("manual_review".to_owned())).unwrap(),
         Some("manual_review".to_owned())
+    );
+    assert_eq!(
+        normalized_agent_seconds_order_status(Some("refunded".to_owned())).unwrap(),
+        Some("refunded".to_owned())
     );
     assert_eq!(
         normalized_agent_seconds_order_status(Some("  ".to_owned())).unwrap(),

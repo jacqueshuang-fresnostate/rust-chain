@@ -11,7 +11,6 @@ use crate::{
 };
 use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool};
-use std::str::FromStr;
 /// 统一从应用状态中取得 Margin 用例所需的 MySQL 连接池。
 /// 路由只负责传入状态；缺少连接池时在开启事务或产生任何资金副作用前失败。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
@@ -125,8 +124,14 @@ pub(super) fn normalized_position_status(value: &str) -> AppResult<String> {
 /// 用 `BigDecimal` 相等而非浮点近似，所以 "10" 与 "10.0" 视为同一档位，而 10.01 不会被放行。
 /// 解析失败时返回不匹配而不是报错，让调用方继续尝试后续档位，最终由「无任何档位命中」统一报错。
 pub(super) fn decimal_matches_string(value: &BigDecimal, expected: &str) -> bool {
-    BigDecimal::from_str(expected)
-        .map(|level| &level == value)
+    if crate::numeric::ensure_decimal_storage(value, 18, 8, "margin leverage").is_err() {
+        return false;
+    }
+    crate::numeric::parse_decimal_input(expected)
+        .map(|level| {
+            crate::numeric::ensure_decimal_storage(&level, 18, 8, "margin leverage level").is_ok()
+                && &level == value
+        })
         .unwrap_or(false)
 }
 

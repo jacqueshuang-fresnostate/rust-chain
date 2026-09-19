@@ -207,6 +207,8 @@ fn spot_cancel_is_idempotent_and_unfreezes_remaining_balance_once() {
         order_type: OrderType::Limit,
         price: Some(dec("10")),
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity: dec("2"),
         filled_quantity: dec("0"),
         status: OrderStatus::Open,
@@ -220,6 +222,7 @@ fn spot_cancel_is_idempotent_and_unfreezes_remaining_balance_once() {
             order_id: "order-1".to_owned(),
             base_asset_id: "BTC".to_owned(),
             quote_asset_id: "USDT".to_owned(),
+            remaining_reserved_amount: dec("20"),
             wallet_ledger: ledger("spot_unfreeze", "spot_order", "order-1"),
         })
         .unwrap();
@@ -228,6 +231,7 @@ fn spot_cancel_is_idempotent_and_unfreezes_remaining_balance_once() {
             order_id: "order-1".to_owned(),
             base_asset_id: "BTC".to_owned(),
             quote_asset_id: "USDT".to_owned(),
+            remaining_reserved_amount: dec("0"),
             wallet_ledger: ledger("spot_unfreeze", "spot_order", "order-1"),
         })
         .unwrap();
@@ -252,6 +256,8 @@ fn spot_fill_settles_frozen_quote_and_credits_base_for_buy_order() {
         order_type: OrderType::Limit,
         price: Some(dec("10")),
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity: dec("2"),
         filled_quantity: dec("0"),
         status: OrderStatus::Open,
@@ -266,6 +272,9 @@ fn spot_fill_settles_frozen_quote_and_credits_base_for_buy_order() {
             order_id: "order-1".to_owned(),
             base_asset_id: "BTC".to_owned(),
             quote_asset_id: "USDT".to_owned(),
+            base_asset_precision: 8,
+            quote_asset_precision: 8,
+            remaining_reserved_amount: dec("20"),
             fill_price: dec("10"),
             fill_quantity: dec("1"),
             wallet_ledger: ledger("spot_fill", "spot_trade", "trade-1"),
@@ -277,4 +286,55 @@ fn spot_fill_settles_frozen_quote_and_credits_base_for_buy_order() {
     assert_eq!(wallet_repo.account("user-1", "USDT").frozen, dec("10"));
     assert_eq!(wallet_repo.account("user-1", "BTC").available, dec("1"));
     assert_eq!(wallet_repo.ledger.len(), 2);
+}
+
+#[test]
+fn spot_generic_fill_uses_asset_quantization_and_returns_exact_surplus() {
+    let spot_repo = FakeSpotRepository::new().with_order(SpotOrder {
+        id: "order-1".to_owned(),
+        user_id: "user-1".to_owned(),
+        pair_id: "BTC-USDT".to_owned(),
+        side: OrderSide::Buy,
+        order_type: OrderType::Limit,
+        price: Some(dec("1.1")),
+        trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
+        quantity: dec("1.00000001"),
+        filled_quantity: dec("0"),
+        status: OrderStatus::Open,
+    });
+    let wallet_repo = FakeWalletRepository::default()
+        .with_account(account("user-1", "USDT", "8.89999999", "1.10000001"))
+        .with_account(account("user-1", "BTC", "0", "0"));
+    let mut service = SpotService::new(spot_repo, wallet_repo);
+    let command = FillSpotOrderCommand {
+        order_id: "order-1".to_owned(),
+        base_asset_id: "BTC".to_owned(),
+        quote_asset_id: "USDT".to_owned(),
+        base_asset_precision: 8,
+        quote_asset_precision: 8,
+        remaining_reserved_amount: dec("1.10000001"),
+        fill_price: dec("1.00000001"),
+        fill_quantity: dec("1.000000001"),
+        wallet_ledger: ledger("spot_fill", "spot_trade", "trade-1"),
+    };
+    assert!(service.fill_order(command.clone()).is_err());
+    let order = service
+        .fill_order(FillSpotOrderCommand {
+            fill_quantity: dec("1.00000001"),
+            ..command
+        })
+        .unwrap();
+    assert_eq!(order.status, OrderStatus::Filled);
+    let (_, wallet_repo) = service.into_repositories();
+    assert_eq!(
+        wallet_repo.account("user-1", "USDT").available,
+        dec("8.99999998")
+    );
+    assert_eq!(wallet_repo.account("user-1", "USDT").frozen, dec("0"));
+    assert_eq!(
+        wallet_repo.account("user-1", "BTC").available,
+        dec("1.00000001")
+    );
 }

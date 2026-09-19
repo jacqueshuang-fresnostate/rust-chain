@@ -4,10 +4,13 @@ import { useI18n } from 'vue-i18n'
 import { ChartNoAxesCombined, ChevronDown, ListFilter, LoaderCircle } from 'lucide-vue-next'
 import { formatAmount, formatPrice } from '@/core/format'
 import type { OrderBookLevel } from '@/core/types'
+import type { MarketProvenance } from '@/core/marketProvenance'
+import MarketProvenanceLabel from './MarketProvenanceLabel.vue'
 
 const props = withDefaults(defineProps<{
   bids: OrderBookLevel[]
   asks: OrderBookLevel[]
+  provenance?: MarketProvenance
   currentPrice: number
   baseAsset?: string
   quoteAsset?: string
@@ -88,6 +91,7 @@ function matrixWidth(quantity: number): string {
     :aria-label="t('orderBook.title')"
     :aria-busy="loading"
   >
+    <MarketProvenanceLabel :provenance="provenance" />
     <template v-if="layout === 'mini'">
       <div class="order-book__mini" role="table" :aria-label="t('orderBook.title')">
         <div class="order-book__mini-header" role="row">

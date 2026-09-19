@@ -15,6 +15,7 @@ use crate::{
                 AgentInviteCodeResponse, AgentMeResponse, AgentSubAgentResponse,
                 AgentTeamTreeNodeResponse, AgentTeamUserResponse, AgentUserAssetResponse,
                 AgentUserMarginPositionResponse, AgentUserSecondsContractOrderResponse,
+                AgentUserSpotOrderResponse,
             },
             repository::{
                 AgentAccessScope, AgentAdminCredentialRecord, AgentBusinessCommissionWrite,
@@ -71,6 +72,7 @@ pub(crate) async fn insert_agent_business_commission_in_tx(
     if rules.is_empty() {
         return Ok(());
     }
+    crate::numeric::ensure_amount_storage(input.source_amount, "commission source amount")?;
 
     let (precision_scale,): (i32,) = sqlx::query_as(
         "SELECT precision_scale FROM assets WHERE id = ? AND status = 'active' LIMIT 1",
@@ -79,6 +81,11 @@ pub(crate) async fn insert_agent_business_commission_in_tx(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)?;
+    if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&precision_scale) {
+        return Err(AppError::Internal(
+            "invalid commission asset precision".to_owned(),
+        ));
+    }
     let tiers = rules
         .into_iter()
         .map(|rule| AgentCommissionRateTier {
@@ -90,6 +97,13 @@ pub(crate) async fn insert_agent_business_commission_in_tx(
         allocate_differential_agent_commissions(&tiers, input.source_amount, precision_scale);
 
     for allocation in allocations {
+        crate::numeric::ensure_amount_storage(&allocation.commission_amount, "commission amount")?;
+        crate::numeric::ensure_decimal_storage(
+            &allocation.commission_rate,
+            18,
+            8,
+            "commission rate",
+        )?;
         // 每一级都使用同一业务来源幂等，重放不能重复生成任何层级的返佣。
         sqlx::query(
             r#"INSERT INTO agent_commission_records
@@ -195,7 +209,7 @@ pub(crate) async fn update_agent_admin_password_in_tx(
     agent_admin_id: u64,
     password_hash: &str,
 ) -> AppResult<()> {
-    sqlx::query("UPDATE agent_admin_users SET password_hash = ? WHERE id = ?")
+    sqlx::query("UPDATE agent_admin_users SET password_hash = ?, auth_session_version = auth_session_version + 1 WHERE id = ?")
         .bind(password_hash)
         .bind(agent_admin_id)
         .execute(&mut **tx)
@@ -452,12 +466,14 @@ pub(crate) async fn list_agent_user_assets(
 /// 每条 SQL 均通过用户归属代理的 `agents.path` 重复限定当前子树，目标 ID 本身不能绕过该谓词。
 /// 查询只返回落库金额、价格、PnL 与时间，不读取行情、不重算风险、不触发计息、平仓或强平。
 /// 排序为创建时间和主键双倒序，相同时刻也能稳定翻页。
+/// include_orders 仅由应用层指定；关闭时排除未成交记录，开启时允许 pending 筛选空入场价委托。
 pub(crate) async fn list_agent_user_margin_positions(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
     user_id: u64,
     status: Option<&str>,
     page: AgentListPage,
+    include_orders: bool,
 ) -> AppResult<(Vec<AgentUserMarginPositionResponse>, i64)> {
     let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
@@ -484,7 +500,12 @@ pub(crate) async fn list_agent_user_margin_positions(
     );
     for builder in [&mut rows, &mut total] {
         push_scoped_financial_user_predicate(builder, "positions.user_id", scope, user_id);
-        if let Some(status) = status {
+        if !include_orders || status == Some("opened") {
+            builder.push(" AND positions.entry_price IS NOT NULL");
+        }
+        if status == Some("pending") {
+            builder.push(" AND positions.status = 'opened' AND positions.entry_price IS NULL");
+        } else if let Some(status) = status {
             builder.push(" AND positions.status = ");
             builder.push_bind(status.to_owned());
         }
@@ -502,7 +523,48 @@ pub(crate) async fn list_agent_user_margin_positions(
     Ok((positions, total))
 }
 
-/// 分页读取团队用户秒合约订单，未筛选时保留 opened、settled 和 manual_review 全部状态。
+/// 按代理子树分页读取现货委托，列表和总数各自重新关联当前用户归属。
+/// 金额与时间只取持久化快照，不撮合、不取消委托、不冻结或释放资金。
+/// 状态参数已由服务层校验，所有外部值均绑定；创建时间与主键双倒序稳定分页。
+pub(crate) async fn list_agent_user_spot_orders(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+    user_id: u64,
+    status: Option<&str>,
+    page: AgentListPage,
+) -> AppResult<(Vec<AgentUserSpotOrderResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
+        "SELECT orders.id, orders.user_id, orders.pair_id, pairs.symbol, orders.side, \
+         orders.order_type, orders.price, orders.trigger_price, orders.quantity, \
+         orders.filled_quantity, orders.status, orders.created_at, orders.updated_at",
+    );
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*)");
+    for builder in [&mut rows, &mut total] {
+        builder.push(
+            " FROM spot_orders orders \
+             INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id \
+             INNER JOIN user_referrals referrals ON referrals.user_id = orders.user_id \
+             INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id",
+        );
+        push_scoped_financial_user_predicate(builder, "orders.user_id", scope, user_id);
+        if let Some(status) = status {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status.to_owned());
+        }
+    }
+    rows.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
+    rows.push_bind(page.limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(page.offset as i64);
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+    let orders = rows
+        .build_query_as::<AgentUserSpotOrderResponse>()
+        .fetch_all(pool)
+        .await?;
+    Ok((orders, total))
+}
+
+/// 分页读取团队用户秒合约订单，未筛选时保留 opened、settled、manual_review 和 refunded 全部状态。
 /// 行查询与 COUNT 共用目标用户、状态和物化路径谓词，且两条 SQL 各自联接服务端归属，不依赖之前的成员检查结果。
 /// 返回值只是已持久化的本金、周期、赔率、开结算价、输赢与时间；不扫描到期单、不查行情历史、不结算或写钱包。
 /// 结果按创建时间和主键双倒序，使翻页与移动端历史订单口径一致。

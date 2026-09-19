@@ -275,6 +275,37 @@ pub(crate) async fn ensure_trading_pair_asset_in_tx(
     Ok(())
 }
 
+/// 在交易对配置事务内按资产编号顺序锁定两侧精度，防止校验后资产元数据被并发改写。
+/// 只校验新配置，不重写订单或阻断既有订单重放；停用资产仍可维护配置，启用规则由调用方单独负责。
+pub(crate) async fn ensure_trading_pair_precision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    base_asset_id: u64,
+    quote_asset_id: u64,
+    qty_precision: i32,
+    min_order_value: &BigDecimal,
+) -> AppResult<()> {
+    let mut precisions = std::collections::BTreeMap::new();
+    for asset_id in [
+        base_asset_id.min(quote_asset_id),
+        base_asset_id.max(quote_asset_id),
+    ] {
+        let precision = sqlx::query_scalar::<_, i32>(
+            "SELECT precision_scale FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
+        )
+        .bind(asset_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)?;
+        precisions.insert(asset_id, precision);
+    }
+    crate::modules::admin::service::validate_trading_pair_asset_precisions(
+        precisions[&base_asset_id],
+        precisions[&quote_asset_id],
+        qty_precision,
+        min_order_value,
+    )
+}
+
 /// 分页查询行情策略，返回符合调用方筛选条件的记录及相同谓词下的总数。
 /// 行情策略列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_market_strategies(

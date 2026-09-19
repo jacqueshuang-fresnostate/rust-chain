@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/business-governance-audits.md", "reason": "Readonly governance, audit, and permission parity"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Architecture, documentation and scoped verification gates"}
+{"file": ".trellis/spec/backend/financial-journals.md", "reason": "Atomic per-asset accounting and honest partial coverage"}
+{"file": ".trellis/spec/backend/market-provenance.md", "reason": "Source identity, stale observations and client race tests"}
+{"file": ".trellis/spec/backend/financial-worker-retries.md", "reason": "Worker leases and audited operational actions"}
+{"file": ".trellis/tasks/09-18-exchange-business-gap-review/research/exchange-business-review.md", "reason": "Approved eight-priority review and external operational boundaries"}

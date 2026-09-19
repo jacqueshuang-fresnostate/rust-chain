@@ -19,7 +19,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { confirmConvertQuote, fetchConvertOrders, fetchConvertPairs, requestConvertQuote, type ConvertOrder, type ConvertPair, type ConvertQuote } from '@/api/swap'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { formatExactAmount as formatAmount, formatDateTime, formatExactAmount as formatPrice, formatRatePercent } from '@/core/format'
 import {
   decimalCompare,
   decimalTextFromBoundary,
@@ -68,12 +68,12 @@ const { trapFocus: trapPickerFocus } = useModalDialog(pickerOpen, pickerDialog, 
 const selectedPair = computed(() => resolveSelectedSwapPair(pairs.value, pairSelectionKey.value))
 const availableBySymbol = computed(() => buildSwapAvailableBalanceMap(accounts.value))
 const availableBalance = (symbol: string): number => availableBySymbol.value.get(symbol.trim().toUpperCase()) || 0
-const available = computed(() => selectedPair.value ? availableBalance(selectedPair.value.fromAssetSymbol) : 0)
+const available = computed(() => availableText.value)
 const selectedAccount = computed(() => accounts.value.find((account) => (
   account.symbol === selectedPair.value?.fromAssetSymbol
 )))
 const availableText = computed(() => decimalTextFromBoundary(
-  selectedAccount.value?.availableText ?? selectedAccount.value?.available,
+  selectedAccount.value?.availableText,
   { allowNegative: false },
 ))
 const amountText = computed(() => positiveDecimalInput(amount.value))
@@ -294,7 +294,7 @@ onMounted(() => { void load() })
               <dt>{{ t('swap.referenceRate') }}</dt>
               <dd class="pencil-numeric">{{ quote ? `1 ${selectedPair.fromAssetSymbol} = ${formatPrice(quote.rate)} ${selectedPair.toAssetSymbol}` : t('swap.afterQuote') }}</dd>
             </div>
-            <div><dt>{{ t('swap.feeRate') }}</dt><dd class="pencil-numeric">{{ formatPrice(selectedPair.feeRate * 100) }}%</dd></div>
+            <div><dt>{{ t('swap.feeRate') }}</dt><dd class="pencil-numeric">{{ formatRatePercent(selectedPair.feeRate) }}%</dd></div>
             <div>
               <dt>{{ t(quote ? 'swap.validUntil' : 'swap.minimum') }}</dt>
               <dd class="pencil-numeric">{{ quote ? formatDateTime(quote.expiresAt) : `${formatAmount(selectedPair.minAmount)} ${selectedPair.fromAssetSymbol}` }}</dd>
@@ -552,11 +552,11 @@ onMounted(() => { void load() })
 }
 
 .swap-receive-value {
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .swap-direction-pencil {
@@ -623,10 +623,9 @@ onMounted(() => { void load() })
   font-weight: 600;
   margin: 0;
   max-width: 72%;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .swap-submit-pencil {
@@ -675,6 +674,9 @@ onMounted(() => { void load() })
   align-items: end;
   display: grid;
   gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .swap-history-row .pencil-row__value small {
@@ -808,6 +810,7 @@ onMounted(() => { void load() })
 }
 
 .swap-review h2 {
+  overflow-wrap: anywhere;
   font-size: 18px;
   margin: 0;
 }
@@ -831,6 +834,8 @@ onMounted(() => { void load() })
 
 .swap-review__summary dd {
   margin: 0;
+  max-width: 76%;
+  overflow-wrap: anywhere;
   text-align: right;
 }
 

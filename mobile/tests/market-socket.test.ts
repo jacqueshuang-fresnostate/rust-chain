@@ -165,6 +165,7 @@ test('trade frames map the verified direct payload shape to a normalized trade p
       symbol: 'BTCUSDT',
       trade: {
         id: 'trade-42',
+        provider: 'binance',
         side: 'sell',
         price: 61234.5,
         quantity: 0.125,
@@ -199,6 +200,8 @@ test('kline frames strictly map the verified direct payload shape with milliseco
         low: 60900,
         close: 61234.5,
         volume: 0,
+        provider: 'binance',
+        observedAt: 1_720_000_001_000,
       },
       observedAt: 1_720_000_001_000,
     },

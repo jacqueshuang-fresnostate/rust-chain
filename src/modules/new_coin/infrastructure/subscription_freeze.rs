@@ -18,6 +18,8 @@ pub(super) async fn freeze_subscription_quote_in_tx(
     }
     let available = &wallet.available - amount;
     let frozen = &wallet.frozen + amount;
+    crate::numeric::ensure_amount_storage(&available, "new coin available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen, "new coin frozen balance")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )

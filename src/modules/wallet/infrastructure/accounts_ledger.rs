@@ -454,6 +454,22 @@ pub(crate) async fn save_account_with_ledger_async(
     account: WalletAccount,
     ledger: LedgerBatch,
 ) -> Result<(), WalletServiceError> {
+    for value in [&account.available, &account.frozen, &account.locked] {
+        crate::numeric::ensure_amount_storage(value, "wallet balance")
+            .map_err(|error| WalletServiceError::Repository(error.to_string()))?;
+    }
+    for entry in ledger.entries() {
+        for value in [
+            &entry.amount,
+            &entry.balance_after,
+            &entry.available_after,
+            &entry.frozen_after,
+            &entry.locked_after,
+        ] {
+            crate::numeric::ensure_amount_storage(value, "wallet ledger")
+                .map_err(|error| WalletServiceError::Repository(error.to_string()))?;
+        }
+    }
     let user_id = parse_u64_identifier("user_id", &account.user_id)?;
     let asset_id = parse_u64_identifier("asset_id", &account.asset_id)?;
     let mut tx = pool.begin().await.map_err(map_wallet_sqlx_error)?;
@@ -798,7 +814,9 @@ pub(crate) async fn list_wallet_ledger(
     let total_pages = if total == 0 {
         1
     } else {
-        total.div_ceil(filter.limit as u64) as u32
+        u32::try_from(total.div_ceil(u64::from(filter.limit))).map_err(|_| {
+            AppError::Internal("wallet ledger page count exceeds supported range".to_owned())
+        })?
     };
 
     Ok(WalletLedgerResponse {

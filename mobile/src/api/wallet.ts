@@ -6,6 +6,7 @@ import {
   type ReferenceRequestOptions,
 } from './requestCache'
 import { asNumber } from '@/core/format'
+import { requiredId, normalizeTimestamp } from '@/core/numeric'
 import {
   mapTodayReturn,
   type BackendTodayReturn,
@@ -541,7 +542,7 @@ export async function fetchWithdrawalRecords(limit = 50): Promise<WithdrawalReco
     const amountText = walletDecimal(record.amount, 'withdrawal amount')
     const feeText = walletDecimal(record.fee, 'withdrawal fee')
     return {
-      id: record.id,
+      id: requiredId(record.id),
       assetSymbol: record.asset_symbol.toUpperCase(),
       network: record.network || undefined,
       address: record.address,
@@ -553,7 +554,7 @@ export async function fetchWithdrawalRecords(limit = 50): Promise<WithdrawalReco
       txHash: record.tx_hash || undefined,
       failureReason: record.failure_reason || undefined,
       reviewReason: record.review_reason || undefined,
-      createdAt: record.created_at > 0 && record.created_at < 1_000_000_000_000 ? record.created_at * 1000 : record.created_at,
+      createdAt: normalizeTimestamp(record.created_at),
     }
   })
 }
@@ -651,11 +652,11 @@ function mapTransferWallet(wallet: BackendWalletTransferAccount, symbol: string)
 }
 
 function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeOrder {
-  const createdAt = asNumber(order.created_at)
+  const createdAt = normalizeTimestamp(order.created_at)
   const fiatAmountText = walletDecimal(order.fiat_amount, 'quick-recharge fiat_amount')
   const actualAmountText = nullableWalletDecimal(order.actual_amount, 'quick-recharge actual_amount')
   return {
-    id: order.id,
+    id: requiredId(order.id),
     orderId: order.order_id,
     assetSymbol: String(order.asset_symbol || order.token || '').toUpperCase(),
     currency: order.currency.toUpperCase(),
@@ -668,7 +669,7 @@ function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeO
     paymentUrl: order.payment_url || undefined,
     redirectUrl: order.redirect_url || undefined,
     status: order.status,
-    createdAt: createdAt > 0 && createdAt < 1_000_000_000_000 ? createdAt * 1000 : createdAt || undefined,
+    createdAt: createdAt || undefined,
   }
 }
 

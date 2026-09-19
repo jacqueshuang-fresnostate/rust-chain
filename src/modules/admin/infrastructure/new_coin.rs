@@ -756,6 +756,7 @@ pub(crate) async fn apply_admin_new_coin_distribution_allocation_in_tx(
 
     let wallet = lock_or_create_admin_wallet_row_in_tx(tx, user_id, asset_id).await?;
     let locked_after = wallet.locked.clone() + quantity.clone();
+    crate::numeric::ensure_amount_storage(&locked_after, "new coin locked balance")?;
     sqlx::query("UPDATE wallet_accounts SET locked = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&locked_after)
         .bind(user_id)

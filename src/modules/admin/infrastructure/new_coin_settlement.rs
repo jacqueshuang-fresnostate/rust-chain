@@ -85,6 +85,8 @@ pub(crate) async fn settle_manual_new_coin_subscription_in_tx(
     let frozen_after_payment = &wallet.frozen - &payment;
     let frozen_after = &wallet.frozen - &order.frozen_quote_amount;
     let available_after = &wallet.available + &refund;
+    crate::numeric::ensure_amount_storage(&available_after, "new coin refund available")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "new coin refund frozen")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )

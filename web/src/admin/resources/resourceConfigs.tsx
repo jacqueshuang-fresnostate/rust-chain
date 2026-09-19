@@ -35,6 +35,7 @@ const MarginProductRowActions = lazy(async () => ({ default: (await import('./ac
 const CreateSpotPairAction = lazy(async () => ({ default: (await import('./actions/market')).CreateSpotPairAction }));
 const MarketPairRowActions = lazy(async () => ({ default: (await import('./actions/market')).MarketPairRowActions }));
 const SpotOrderRowActions = lazy(async () => ({ default: (await import('./actions/market')).SpotOrderRowActions }));
+const SpotFillAction = lazy(async () => ({ default: (await import('./actions/spotFill')).SpotFillAction }));
 const CreateMarketStrategyAction = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).CreateMarketStrategyAction }));
 
 const MarketStrategyRowActions = lazy(async () => ({ default: (await import('./actions/marketStrategy/actions')).MarketStrategyRowActions }));
@@ -154,7 +155,8 @@ const spotOrderSideLabels = {
 };
 const spotOrderTypeLabels = {
   limit: '限价单',
-  market: '市价单'
+  market: '市价单',
+  stop_limit: '条件限价单'
 };
 const spotOrderStatusLabels = {
   pending: '待处理',
@@ -301,6 +303,7 @@ const agentCommissionStatusFilter: FilterField = {
   options: [
     { label: '待结算', value: 'pending' },
     { label: '已结算', value: 'settled' },
+    { label: '已冲正', value: 'reversed' },
     { label: '已拒绝', value: 'rejected' }
   ]
 };
@@ -649,6 +652,8 @@ export const resourceConfigs = {
       { key: 'status', title: '状态', valueMap: walletWithdrawalStatusLabels },
       { key: 'tx_hash', title: '交易哈希' },
       { key: 'review_reason', title: '审核原因' },
+      { key: 'required_approvals', title: '所需复核人数' },
+      { key: 'approval_count', title: '已复核人数' },
       { key: 'failure_reason', title: '失败原因' },
       { key: 'created_at', title: '申请时间', type: 'timestamp' }
     ]
@@ -714,6 +719,11 @@ export const resourceConfigs = {
       { key: 'min_kyc_level', title: '最低KYC等级' },
       { key: 'min_amount', title: '最小借款金额', type: 'amount' },
       { key: 'max_amount', title: '最大借款金额', type: 'amount' },
+      { key: 'user_principal_limit', title: '用户同币种本金上限', type: 'amount' },
+      { key: 'product_principal_capacity', title: '产品本金容量', type: 'amount' },
+      { key: 'reserved_principal', title: '待审预留本金', type: 'amount' },
+      { key: 'outstanding_principal', title: '已放款未结本金', type: 'amount' },
+      { key: 'deny_borrowing_while_overdue', title: '逾期禁止新增', render: (record) => record.deny_borrowing_while_overdue === true ? '是' : '否' },
       { key: 'status', title: '状态', type: 'status' },
       { key: 'updated_at', title: '更新时间', type: 'timestamp' }
     ]
@@ -858,9 +868,7 @@ export const resourceConfigs = {
       render: (helpers) => <AgentCommissionBatchActions helpers={helpers} />
     },
     rowActions: (record, helpers) => (
-      <AdminRequestActionBoundary endpoint={`/admin/api/v1/agent-commissions/${String(record.id ?? '')}/status`} method="PATCH">
-        <AgentCommissionRowActions helpers={helpers} record={record} />
-      </AdminRequestActionBoundary>
+      <AgentCommissionRowActions helpers={helpers} record={record} />
     ),
     columns: [
       { key: 'id', title: 'ID' },
@@ -980,7 +988,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/spot/orders',
     responseKey: 'orders',
     filters: [userFilter, emailFilter, spotOrderPairFilter, spotOrderStatusFilter, limitFilter],
-    rowActions: (record, helpers) => <SpotOrderRowActions helpers={helpers} record={record} />,
+    rowActions: (record, helpers) => <><SpotOrderRowActions helpers={helpers} record={record} /><SpotFillAction helpers={helpers} record={record} /></>,
     toolbarFilters: [spotOrderInternalFilter],
     columns: [
       orderNoColumn('SP'),
@@ -988,6 +996,9 @@ export const resourceConfigs = {
       { key: 'pair_id', title: '交易对' },
       { key: 'side', title: '方向', valueMap: spotOrderSideLabels },
       { key: 'order_type', title: '订单类型', valueMap: spotOrderTypeLabels },
+      { key: 'trigger_price', title: '触发价', type: 'amount' },
+      { key: 'trigger_direction', title: '触发方向', render: record => record.order_type !== 'stop_limit' ? '-' : record.trigger_direction === 'rising' ? '上涨至触发价' : record.trigger_direction === 'falling' ? '下跌至触发价' : record.trigger_direction == null ? '旧版条件' : '未知方向' },
+      { key: 'triggered_at', title: '触发时间', type: 'timestamp' },
       { key: 'price', title: '价格', type: 'amount' },
       { key: 'average_price', title: '成交价', type: 'amount' },
       { key: 'quantity', title: '数量', type: 'amount' },
@@ -1144,6 +1155,10 @@ export const resourceConfigs = {
       { key: 'max_amount', title: '源资产最大金额', type: 'amount' },
       { key: 'target_min_amount', title: '目标资产最小金额', type: 'amount' },
       { key: 'target_max_amount', title: '目标资产最大金额', type: 'amount' },
+      { key: 'inventory_enabled', title: '输出库存保护', type: 'status' },
+      { key: 'inventory_funded_amount', title: '库存资金总额', type: 'amount' },
+      { key: 'inventory_consumed_amount', title: '库存已消耗', type: 'amount' },
+      { key: 'inventory_revision', title: '库存配置版本' },
       { key: 'enabled', title: '启用', type: 'status' }
     ]
   },
@@ -1199,6 +1214,7 @@ export const resourceConfigs = {
       { key: 'logo_url', title: 'Logo', render: (record) => <AdminImageCell alt="秒合约交易对 Logo" value={record.logo_url} /> },
       { key: 'stake_asset_symbol', title: '押注资产' },
       { key: 'cycles', title: '周期 / 净收益率 / 押注范围', render: (record) => <SecondsProductCyclesText record={record} /> },
+      { key: 'open_payout_capacity', title: '未结毛兑付容量', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' }
     ]
   },
@@ -1330,6 +1346,8 @@ export const resourceConfigs = {
       { key: 'early_redeem_fee_basis', title: '提前赎回扣费基准', valueMap: earnEarlyRedeemFeeBasisLabels },
       { key: 'early_redeem_fee_rate', title: '提前赎回扣费率', type: 'amount' },
       { key: 'min_subscribe', title: '最小申购', type: 'amount' },
+      { key: 'principal_capacity', title: '产品本金容量', type: 'amount' },
+      { key: 'liability_capacity', title: '产品毛兑付义务上限', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' }
     ]
   },

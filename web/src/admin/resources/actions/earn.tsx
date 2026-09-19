@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { listAdminResource } from '../../../api/adminResources';
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { compareDecimalText, decimalFitsPrecision, decimalFitsStorage, requiredDecimalText } from '../../../shared/decimal';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
@@ -22,11 +23,13 @@ import {
   includeCurrentCountrySelectOption,
   includeCurrentOption,
   isNonNegativeIntegerInput,
+  isNonNegativeDecimalInput,
   nextToggleStatus,
   openRecordDetail,
   optionalString,
   recordString,
   requiredNonNegativeInteger,
+  requiredNonNegativeDecimal,
   requiredPositiveInteger,
   requiredString,
   submitAction,
@@ -54,6 +57,8 @@ type EarnProductValues = {
   introductions: EarnIntroductionItemValues[];
   maturityProfitFeeRate: string;
   maxSubscribe: string;
+  principalCapacity: string;
+  liabilityCapacity: string;
   minSubscribe: string;
   name: string;
   redemptionFeeRate: string;
@@ -88,6 +93,8 @@ const initialEarnProduct: EarnProductValues = {
   earlyRedeemFeeRate: '0',
   minSubscribe: '',
   maxSubscribe: '',
+  principalCapacity: '',
+  liabilityCapacity: '',
   smallLogoUrl: '',
   status: 'active',
   introductions: [{ locale: 'zh-CN', country: 'CN', title: '', content: emptyRichTextValue }]
@@ -124,18 +131,33 @@ function recordCategoryFallbackLabel(category: string): string {
   return category.trim() ? category : 'fixed_term';
 }
 
-function isEarnProductCreatable(values: EarnProductValues): boolean {
+function isEarnCapacityValid(value: string, precision?: number): boolean {
+  return !value.trim() || (
+    isNonNegativeDecimalInput(value) &&
+    decimalFitsPrecision(value, precision) &&
+    compareDecimalText(value, '100000000000000000000') === -1
+  );
+}
+
+function isEarnProductCreatable(values: EarnProductValues, assets: AssetOption[]): boolean {
+  const precision = assets.find((asset) => asset.id === values.assetId)?.precisionScale;
   return Boolean(
     values.assetId.trim() &&
       values.name.trim() &&
       values.category.trim() &&
       isNonNegativeIntegerInput(values.termDays) &&
       values.aprRate.trim() &&
+      [values.aprRate, values.redemptionFeeRate, values.maturityProfitFeeRate,
+        ...(values.earlyRedeemFeeBasis === 'none' ? [] : [values.earlyRedeemFeeRate])].every((value) => decimalFitsStorage(value, 18, 8) && isNonNegativeDecimalInput(value)) &&
+      decimalFitsStorage(values.minSubscribe) &&
+      (!values.maxSubscribe.trim() || decimalFitsStorage(values.maxSubscribe)) &&
       values.redemptionFeeRate.trim() &&
       values.maturityProfitFeeRate.trim() &&
       values.earlyRedeemFeeBasis.trim() &&
       (values.earlyRedeemFeeBasis === 'none' || values.earlyRedeemFeeRate.trim()) &&
       values.minSubscribe.trim() &&
+      isEarnCapacityValid(values.principalCapacity, precision) &&
+      isEarnCapacityValid(values.liabilityCapacity, precision) &&
       values.status.trim() &&
       values.introductions.length > 0 &&
       values.introductions.every((item) => item.locale.trim() && item.country.trim() && item.title.trim())
@@ -304,7 +326,11 @@ function earnCategoryFromRecord(record: ApiRecord): EarnCategoryValues {
   };
 }
 
-function earnProductRequestBody(values: EarnProductValues, reason: string) {
+export function earnProductRequestBody(values: EarnProductValues, reason: string) {
+  if (![values.aprRate, values.redemptionFeeRate, values.maturityProfitFeeRate,
+    ...(values.earlyRedeemFeeBasis === 'none' ? [] : [values.earlyRedeemFeeRate])].every(isNonNegativeDecimalInput)) {
+    throw new Error('理财费率必须为非负精确数值');
+  }
   return {
     asset_id: requiredPositiveInteger(values.assetId, '理财资产'),
     name: requiredString(values.name, '产品名称'),
@@ -321,14 +347,16 @@ function earnProductRequestBody(values: EarnProductValues, reason: string) {
         content: item.content
       }))
     },
-    term_days: requiredPositiveInteger(values.termDays, '期限天数'),
-    apr_rate: requiredString(values.aprRate, '年化利率'),
-    redemption_fee_rate: requiredString(values.redemptionFeeRate, '提现赎回手续费率'),
-    maturity_profit_fee_rate: requiredString(values.maturityProfitFeeRate, '到期获利手续费率'),
+    term_days: requiredPositiveInteger(values.termDays, '期限天数', 2_147_483_647),
+    apr_rate: requiredDecimalText(values.aprRate, '年化利率', 18, 8),
+    redemption_fee_rate: requiredDecimalText(values.redemptionFeeRate, '提现赎回手续费率', 18, 8),
+    maturity_profit_fee_rate: requiredDecimalText(values.maturityProfitFeeRate, '到期获利手续费率', 18, 8),
     early_redeem_fee_basis: requiredString(values.earlyRedeemFeeBasis, '提前赎回扣费基准'),
-    early_redeem_fee_rate: values.earlyRedeemFeeBasis === 'none' ? '0' : requiredString(values.earlyRedeemFeeRate, '提前赎回扣费率'),
-    min_subscribe: requiredString(values.minSubscribe, '最小申购'),
-    max_subscribe: optionalString(values.maxSubscribe),
+    early_redeem_fee_rate: values.earlyRedeemFeeBasis === 'none' ? '0' : requiredDecimalText(values.earlyRedeemFeeRate, '提前赎回扣费率', 18, 8),
+    min_subscribe: requiredDecimalText(values.minSubscribe, '最小申购'),
+    max_subscribe: values.maxSubscribe.trim() ? requiredDecimalText(values.maxSubscribe, '最大申购') : undefined,
+    principal_capacity: values.principalCapacity.trim() ? requiredNonNegativeDecimal(values.principalCapacity, '产品本金容量') : null,
+    liability_capacity: values.liabilityCapacity.trim() ? requiredNonNegativeDecimal(values.liabilityCapacity, '产品毛兑付义务上限') : null,
     status: requiredString(values.status, '状态'),
     reason
   };
@@ -362,6 +390,8 @@ function earnProductFromRecord(record: ApiRecord): EarnProductValues {
     earlyRedeemFeeRate: recordString(record, 'early_redeem_fee_rate') || '0',
     minSubscribe: recordString(record, 'min_subscribe'),
     maxSubscribe: recordString(record, 'max_subscribe'),
+    principalCapacity: recordString(record, 'principal_capacity'),
+    liabilityCapacity: recordString(record, 'liability_capacity'),
     smallLogoUrl: recordString(record, 'small_logo_url'),
     status: recordString(record, 'status') || 'active',
     introductions: introductions.length > 0 ? introductions : initialEarnProduct.introductions
@@ -634,6 +664,8 @@ function EarnProductForm({
           <label>年化利率<AdminTextInput ariaLabel="年化利率" value={values.aprRate} onChange={(aprRate) => onChange({ ...values, aprRate })} /></label>
           <label>最小申购<AdminTextInput ariaLabel="最小申购" value={values.minSubscribe} onChange={(minSubscribe) => onChange({ ...values, minSubscribe })} /></label>
           <label>最大申购<AdminTextInput ariaLabel="最大申购" value={values.maxSubscribe} onChange={(maxSubscribe) => onChange({ ...values, maxSubscribe })} /></label>
+          <label>产品本金容量<AdminTextInput ariaLabel="产品本金容量" value={values.principalCapacity} onChange={(principalCapacity) => onChange({ ...values, principalCapacity })} /></label>
+          <label>产品毛兑付义务上限<AdminTextInput ariaLabel="产品毛兑付义务上限" value={values.liabilityCapacity} onChange={(liabilityCapacity) => onChange({ ...values, liabilityCapacity })} /></label>
         </div>
       </section>
       <section className="admin-earn-product-section" aria-labelledby="earn-product-fee-title">
@@ -744,7 +776,7 @@ export function CreateEarnProductAction({ onCreated }: { onCreated?: () => void 
             <div className="admin-earn-product-footer">
               <ConfirmAction
                 actionText="提交添加理财产品"
-                disabled={!isEarnProductCreatable(product)}
+                disabled={!isEarnProductCreatable(product, assetOptions)}
                 title="确认添加理财产品"
                 onConfirm={async (reason) => {
                   await submitAction('添加理财产品', () =>
@@ -767,6 +799,9 @@ export function CreateEarnProductAction({ onCreated }: { onCreated?: () => void 
 }
 
 function EarnProductEditAction({ helpers, productId, record }: { helpers: RowActionHelpers; productId: string; record: ApiRecord }) {
+  const validCapacityRecord = ['principal_capacity', 'liability_capacity'].every((field) =>
+    record[field] === null || (typeof record[field] === 'string' && isEarnCapacityValid(record[field], 18))
+  );
   const [product, setProduct] = useState(() => earnProductFromRecord(record));
   const [visible, setVisible] = useState(false);
   const { assetLoading, assetOptions } = useAssetOptions(visible);
@@ -786,7 +821,7 @@ function EarnProductEditAction({ helpers, productId, record }: { helpers: RowAct
 
   return (
     <>
-      <Button disabled={!productId} onClick={() => setVisible(true)} size="small" theme="borderless">
+      <Button disabled={!productId || !validCapacityRecord} onClick={() => setVisible(true)} size="small" theme="borderless">
         修改
       </Button>
       <SideSheet onCancel={() => setVisible(false)} title="修改理财产品" visible={visible} {...createModalProps('extra-wide')}>
@@ -806,7 +841,7 @@ function EarnProductEditAction({ helpers, productId, record }: { helpers: RowAct
             <div className="admin-earn-product-footer">
               <ConfirmAction
                 actionText="提交修改"
-                disabled={!isEarnProductCreatable(product)}
+                disabled={!isEarnProductCreatable(product, assetOptions) || !validCapacityRecord}
                 title="确认修改理财产品"
                 onConfirm={async (reason) => {
                   await submitAction('修改理财产品', () =>

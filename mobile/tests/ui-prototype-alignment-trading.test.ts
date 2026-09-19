@@ -36,7 +36,7 @@ test('现货和合约工作台保留真实数据链路并提供完整下单面',
   assert.match(tradeSource, /fetchRecentTrades\(symbol\)/)
   assert.match(tradeSource, /createMarketDetailStreamSession\(\{/)
   assert.match(tradeSource, /detailStreamSession\.stop\(\)/)
-  assert.match(tradeSource, /<MobileMarketChart :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :ticker="ticker" :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
   assert.match(tradeSource, /class="chart-panel trade-chart-panel"/)
   assert.match(tradeSource, /v-model="price"/)
   assert.match(tradeSource, /v-model="quantity"/)

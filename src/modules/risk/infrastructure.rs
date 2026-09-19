@@ -73,7 +73,7 @@ pub fn user_request_count_key(operation: &str, scope: &str, user_id: u64) -> Str
 }
 
 /// 通过 Redis Lua 原子递增固定窗口计数并仅在缺失时设置 TTL，避免并发续期窗口。
-/// Redis 故障返回错误，由应用层按既有放行策略处理；本函数不访问数据库或资金账户。
+/// Redis 故障返回错误，由上层按操作决定降级或拒绝；本函数不访问数据库或资金账户。
 /// 返回自增后的最新计数，超出 u32 上界时饱和到最大值，使极端刷量场景必然判为超限而不会回绕成小数值。
 pub async fn bump_user_request_count(
     redis: &ConnectionManager,

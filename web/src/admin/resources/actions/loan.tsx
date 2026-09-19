@@ -5,8 +5,8 @@ import { ApiError, apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
-import { compareDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
-import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
+import { compareDecimalText, decimalFitsPrecision, decimalFitsStorage, isPositiveDecimalText } from '../../../shared/decimal';
+import { AdminModalTriggerButton, AdminSelect, AdminSwitch, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import {
   type AdminNewsCountryOption,
   type AssetOption,
@@ -55,6 +55,9 @@ type LoanProductValues = {
   interestRate: string;
   loanType: string;
   maxAmount: string;
+  userPrincipalLimit: string;
+  productPrincipalCapacity: string;
+  denyBorrowingWhileOverdue: boolean;
   minAmount: string;
   minKycLevel: string;
   name: string;
@@ -69,6 +72,9 @@ const initialLoanProduct: LoanProductValues = {
   interestRate: '',
   loanType: 'credit',
   maxAmount: '',
+  userPrincipalLimit: '',
+  productPrincipalCapacity: '',
+  denyBorrowingWhileOverdue: false,
   minAmount: '',
   minKycLevel: '0',
   name: '',
@@ -143,8 +149,17 @@ function loanProductNameJson(values: LoanProductValues) {
   };
 }
 
-function isLoanProductSubmittable(values: LoanProductValues): boolean {
+function isLoanExposureLimitValid(value: string, precision?: number): boolean {
+  return !value.trim() || (
+    isNonNegativeDecimalInput(value) &&
+    decimalFitsPrecision(value, precision) &&
+    compareDecimalText(value, '100000000000000000000') === -1
+  );
+}
+
+function isLoanProductSubmittable(values: LoanProductValues, assets: AssetOption[]): boolean {
   const maximumComparison = values.maxAmount.trim() ? compareDecimalText(values.maxAmount, values.minAmount) : null;
+  const precision = assets.find((asset) => asset.id === values.assetId)?.precisionScale;
   return Boolean(
     values.names.length > 0 &&
       values.names.every((item) => item.locale.trim() && item.country.trim() && item.title.trim()) &&
@@ -156,12 +171,17 @@ function isLoanProductSubmittable(values: LoanProductValues): boolean {
       isNonNegativeIntegerInput(values.termDays) &&
       Number(values.termDays) > 0 &&
       isNonNegativeDecimalInput(values.interestRate) &&
+      decimalFitsStorage(values.interestRate, 18, 8) &&
+      decimalFitsStorage(values.minAmount) &&
+      (!values.maxAmount.trim() || decimalFitsStorage(values.maxAmount)) &&
       isPositiveDecimalText(values.minAmount) &&
+      isLoanExposureLimitValid(values.userPrincipalLimit, precision) &&
+      isLoanExposureLimitValid(values.productPrincipalCapacity, precision) &&
       (!values.maxAmount.trim() || maximumComparison === 0 || maximumComparison === 1)
   );
 }
 
-function loanProductRequestBody(values: LoanProductValues, reason: string, revision?: number) {
+export function loanProductRequestBody(values: LoanProductValues, reason: string, revision?: number, record?: ApiRecord) {
   const nameJson = loanProductNameJson(values);
   const defaultName = values.names[0]?.title.trim() || values.name.trim();
   return {
@@ -169,12 +189,21 @@ function loanProductRequestBody(values: LoanProductValues, reason: string, revis
     asset_id: requiredPositiveInteger(values.assetId, '放款资产'),
     name: requiredString(defaultName, '产品名称'),
     name_json: nameJson,
-    term_days: requiredPositiveInteger(values.termDays, '期限天数'),
-    interest_rate: requiredNonNegativeDecimal(values.interestRate, '期限利率'),
+    term_days: requiredPositiveInteger(values.termDays, '期限天数', 2_147_483_647),
+    interest_rate: requiredNonNegativeDecimal(values.interestRate, '期限利率', 18, 8),
     interest_calculation_mode: requiredString(values.interestCalculationMode, '计息方式'),
     min_kyc_level: requiredNonNegativeInteger(values.minKycLevel, '最低KYC等级'),
     min_amount: requiredNonNegativeDecimal(values.minAmount, '最小借款金额'),
     max_amount: values.maxAmount.trim() ? requiredNonNegativeDecimal(values.maxAmount, '最大借款金额') : null,
+    user_principal_limit: values.userPrincipalLimit.trim() ? requiredNonNegativeDecimal(values.userPrincipalLimit, '用户同币种本金上限') : null,
+    product_principal_capacity: values.productPrincipalCapacity.trim() ? requiredNonNegativeDecimal(values.productPrincipalCapacity, '产品本金容量') : null,
+    deny_borrowing_while_overdue: values.denyBorrowingWhileOverdue,
+    ...(record && values.loanType === 'collateralized' ? {
+      initial_ltv: record.initial_ltv,
+      maintenance_ltv: record.maintenance_ltv,
+      liquidation_ltv: record.liquidation_ltv,
+      collateral_assets: record.collateral_assets
+    } : {}),
     status: requiredString(values.status, '状态'),
     reason,
     ...(revision === undefined ? {} : { revision })
@@ -184,6 +213,13 @@ function loanProductRequestBody(values: LoanProductValues, reason: string, revis
 function loanProductRevision(record: ApiRecord): number | null {
   const revision = Number(recordString(record, 'revision'));
   return Number.isSafeInteger(revision) && revision > 0 ? revision : null;
+}
+
+function hasLoanExposureConfiguration(record: ApiRecord): boolean {
+  return typeof record.deny_borrowing_while_overdue === 'boolean' &&
+    ['user_principal_limit', 'product_principal_capacity'].every((field) =>
+      record[field] === null || (typeof record[field] === 'string' && isLoanExposureLimitValid(record[field], 18))
+    );
 }
 
 async function submitLoanProductMutation(label: string, request: () => Promise<unknown>, onConflict: () => void): Promise<boolean> {
@@ -229,6 +265,9 @@ function loanProductFromRecord(record: ApiRecord): LoanProductValues {
     interestRate: recordString(record, 'interest_rate'),
     loanType: recordString(record, 'loan_type') || 'credit',
     maxAmount: recordString(record, 'max_amount'),
+    userPrincipalLimit: recordString(record, 'user_principal_limit'),
+    productPrincipalCapacity: recordString(record, 'product_principal_capacity'),
+    denyBorrowingWhileOverdue: record.deny_borrowing_while_overdue === true,
     minAmount: recordString(record, 'min_amount'),
     minKycLevel: recordString(record, 'min_kyc_level') || '0',
     name: fallbackName,
@@ -283,6 +322,9 @@ function LoanProductForm({
           <label>最低KYC等级<AdminTextInput ariaLabel="最低KYC等级" value={values.minKycLevel} onChange={(minKycLevel) => onChange({ ...values, minKycLevel })} /></label>
           <label>最小借款金额<AdminTextInput ariaLabel="最小借款金额" value={values.minAmount} onChange={(minAmount) => onChange({ ...values, minAmount })} /></label>
           <label>最大借款金额<AdminTextInput ariaLabel="最大借款金额" placeholder="留空表示无上限" value={values.maxAmount} onChange={(maxAmount) => onChange({ ...values, maxAmount })} /></label>
+          <label>用户同币种本金上限<AdminTextInput ariaLabel="用户同币种本金上限" placeholder="留空不限制，0 禁止新增" value={values.userPrincipalLimit} onChange={(userPrincipalLimit) => onChange({ ...values, userPrincipalLimit })} /></label>
+          <label>产品本金容量<AdminTextInput ariaLabel="产品本金容量" placeholder="含待审预留；留空不限制" value={values.productPrincipalCapacity} onChange={(productPrincipalCapacity) => onChange({ ...values, productPrincipalCapacity })} /></label>
+          <AdminSwitch label="逾期未结禁止新增借款" checked={values.denyBorrowingWhileOverdue} onChange={(denyBorrowingWhileOverdue) => onChange({ ...values, denyBorrowingWhileOverdue })} />
           <label>
             {statusLabel}
             <AdminSelect ariaLabel={statusLabel} onChange={(status) => onChange({ ...values, status })} optionList={activeStatusOptions} value={values.status} />
@@ -372,7 +414,7 @@ export function CreateLoanProductAction({ onCreated }: { onCreated?: () => void 
             />
             <ConfirmAction
               actionText="提交添加贷款产品"
-              disabled={!isLoanProductSubmittable(product)}
+              disabled={!isLoanProductSubmittable(product, assetOptions)}
               title="确认添加贷款产品"
               onConfirm={async (reason) => {
                 await submitAction('添加贷款产品', () =>
@@ -409,7 +451,7 @@ function LoanProductEditAction({ helpers, productId, record }: { helpers: RowAct
   return (
     <>
       <Button
-        disabled={!productId || revision === null}
+        disabled={!productId || revision === null || !hasLoanExposureConfiguration(record)}
         onClick={() => {
           setProduct(loanProductFromRecord(record));
           setVisible(true);
@@ -433,7 +475,7 @@ function LoanProductEditAction({ helpers, productId, record }: { helpers: RowAct
             />
             <ConfirmAction
               actionText="提交修改"
-              disabled={!isLoanProductSubmittable(product) || revision === null}
+              disabled={!isLoanProductSubmittable(product, assetOptions) || revision === null}
               title="确认修改贷款产品"
               onConfirm={async (reason) => {
                 if (revision === null) return;
@@ -442,7 +484,7 @@ function LoanProductEditAction({ helpers, productId, record }: { helpers: RowAct
                   () =>
                     apiRequest(`/admin/api/v1/loan/products/${productId}`, {
                       method: 'PATCH',
-                      body: JSON.stringify(loanProductRequestBody(product, reason, revision))
+                      body: JSON.stringify(loanProductRequestBody(product, reason, revision, record))
                     }),
                   () => {
                     setVisible(false);

@@ -198,6 +198,7 @@ pub(crate) fn required_admin_reason(reason: Option<String>) -> AppResult<String>
 /// 这是下注路径的第一道守卫，必须在开启事务与加锁之前调用，避免为无效请求占用行锁。
 /// 只判正负不判精度，小数位是否超出资产限制由 `ensure_amount_precision` 单独把关。
 pub(crate) fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, field)?;
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(format!("{field} must be positive")));
     }
@@ -209,6 +210,7 @@ pub(crate) fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppRes
 /// 两者都是有效配置，因此不能沿用「必须为正」的判定。
 /// 该校验只保证符号，不校验费率是否小于一，也不校验上限与投注额的相对关系。
 pub(crate) fn ensure_non_negative_decimal(value: &BigDecimal, field: &str) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(value, field)?;
     if value < &BigDecimal::from(0) {
         return Err(AppError::Validation(format!(
             "{field} must not be negative"
@@ -229,6 +231,7 @@ pub(crate) fn ensure_amount_precision(
 ) -> AppResult<()> {
     use crate::modules::wallet::amount_fits_asset_precision;
 
+    crate::numeric::ensure_amount_storage(amount, field)?;
     if !amount_fits_asset_precision(amount, precision_scale) {
         return Err(AppError::Validation(format!(
             "{field} exceeds asset precision scale {precision_scale}"
@@ -242,6 +245,7 @@ pub(crate) fn ensure_amount_precision(
 /// 与 `clamp_probability` 的取舍不同，此处面向用户输入选择直接拒绝而非收敛，
 /// 因为静默改价会让用户按未同意的赔率成交；收敛只用于容忍上游同步来的异常值。
 pub(crate) fn ensure_probability_price(price: &BigDecimal) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(price, 18, 8, "prediction probability price")?;
     if price <= &BigDecimal::from(0) || price >= &BigDecimal::from(1) {
         return Err(AppError::Validation(
             "prediction probability price must be between 0 and 1".to_owned(),
@@ -434,11 +438,43 @@ pub(crate) fn json_decimal_array(value: &Value) -> Vec<BigDecimal> {
 /// 这是本文件所有金额与概率解析的底层入口，保持「解析不了就返回空」而非抛错，
 /// 由上层决定是跳过该元素还是回退到业务默认值。
 pub(crate) fn decimal_from_json(value: &Value) -> Option<BigDecimal> {
-    match value {
-        Value::Number(number) => BigDecimal::from_str(&number.to_string()).ok(),
-        Value::String(text) => BigDecimal::from_str(text.trim()).ok(),
-        _ => None,
+    let text = match value {
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text.trim().to_owned(),
+        _ => return None,
+    };
+    if text.len() > crate::numeric::MAX_DECIMAL_INPUT_LENGTH {
+        return None;
     }
+    if let Some((_, exponent)) = text.split_once(['e', 'E']) {
+        let exponent = exponent.parse::<i64>().ok()?;
+        if !(-crate::numeric::MAX_DECIMAL_INPUT_EXPONENT
+            ..=crate::numeric::MAX_DECIMAL_INPUT_EXPONENT)
+            .contains(&exponent)
+        {
+            return None;
+        }
+    }
+    BigDecimal::from_str(&text).ok()
+}
+
+/// 按资产键验证 JSON 赔付上限；无效值不得在运行时回退成不限额，也不修改原始配置。
+pub(crate) fn validate_payout_cap_overrides(overrides: Option<&Value>) -> AppResult<()> {
+    let Some(overrides) = overrides else {
+        return Ok(());
+    };
+    let object = overrides
+        .as_object()
+        .ok_or_else(|| AppError::Validation("payout_cap_overrides must be an object".to_owned()))?;
+    for (asset, value) in object {
+        asset.parse::<u64>().map_err(|_| {
+            AppError::Validation("payout cap asset id must be an unsigned integer".to_owned())
+        })?;
+        let amount = decimal_from_json(value)
+            .ok_or_else(|| AppError::Validation("payout cap must be a valid decimal".to_owned()))?;
+        ensure_non_negative_decimal(&amount, "payout cap")?;
+    }
+    Ok(())
 }
 
 /// 按候选字段顺序返回首个存在的值，统一兼容 Polymarket 多版本字段名。

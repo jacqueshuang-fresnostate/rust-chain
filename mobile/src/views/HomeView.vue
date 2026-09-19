@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '@/styles/home-numeric.css'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -41,7 +42,8 @@ import {
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { buildHomeMarketBrief } from '@/core/homeMarketBrief'
 import { buildReturnHistoryGeometry } from '@/core/returnHistoryGeometry'
-import { decimalSign, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { decimalAdd, decimalMultiply, decimalSign, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { walletTotal } from '@/core/walletAmounts'
 import { formatFinancialAmount } from '@/core/financialDisplay'
 import { resolveTodayReturnPresentation } from '@/core/todayReturnPresentation'
 import { useMarketStore } from '@/stores/market'
@@ -118,18 +120,19 @@ const marketBriefActionLabel = computed(() => marketBrief.value
 const guestHeroImage = computed(() => theme.isDark ? guestHeroDark : guestHeroLight)
 
 const totalAssetEstimate = computed(() => [...spotAccounts.value, ...marginAccounts.value].reduce((total, account) => {
-  const accountAmount = account.available + account.frozen + account.locked
-  if (account.symbol === 'USDT' || account.symbol === 'USDC' || account.symbol === 'USD') return total + accountAmount
-  return total + accountAmount * (marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPrice || 0)
-}, 0))
+  const accountAmount = walletTotal(account)
+  if (account.symbol === 'USDT' || account.symbol === 'USDC' || account.symbol === 'USD') return decimalAdd(total, accountAmount)
+  const price = marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPriceText
+  return price ? decimalAdd(total, decimalMultiply(accountAmount, price)) : total
+}, normalizeDecimalText('0')))
 
 const assetEstimateComplete = computed(() => [...spotAccounts.value, ...marginAccounts.value].every((account) => {
-  const accountAmount = account.available + account.frozen + account.locked
-  return accountAmount === 0
+  const accountAmount = walletTotal(account)
+  return decimalSign(accountAmount) === 0
     || account.symbol === 'USDT'
     || account.symbol === 'USDC'
     || account.symbol === 'USD'
-    || Boolean(marketStore.tickerFor(`${account.symbol}/USDT`))
+    || Boolean(marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPriceText)
 }))
 
 const displayedAssetAmount = computed(() => (
@@ -399,6 +402,7 @@ watch(() => session.token, () => {
       v-else
       class="portfolio-overview home-portfolio home-portfolio--member"
       data-portfolio-source="realized-return-history"
+      :data-long-amount="assetVisible && displayedAssetAmount.length > 14"
       :aria-busy="!assetEstimateReady"
     >
         <div class="portfolio-heading">

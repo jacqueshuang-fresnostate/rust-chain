@@ -6,6 +6,10 @@
 //! 全部发生在 application 与 service 层，产生的 `AppError` 按既有映射原样传播到 HTTP 边界。
 
 use super::*;
+use crate::modules::admin::{
+    application::reverse_admin_agent_commission,
+    presentation::{AdminAgentCommissionReversalResponse, ReverseAgentCommissionRequest},
+};
 
 /// 构建用户、KYC、代理层级及代理佣金的后台传输路由。
 ///
@@ -38,6 +42,10 @@ pub(super) fn routes() -> Router<AppState> {
         )
         .route("/agent-commissions", get(list_agent_commissions))
         .route(
+            "/agent-commissions/:id/reversal",
+            post(reverse_agent_commission),
+        )
+        .route(
             "/agent-commissions/:id/status",
             patch(update_agent_commission_status),
         )
@@ -45,6 +53,24 @@ pub(super) fn routes() -> Router<AppState> {
             "/agent-commissions/batch-status",
             post(update_agent_commission_statuses),
         )
+}
+
+/// 管理员显式冲回已付佣金；主体来自已授权会话，金额和收款对象只能由原付款证据确定。
+async fn reverse_agent_commission(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(commission_id): Path<u64>,
+    Json(request): Json<ReverseAgentCommissionRequest>,
+) -> AppResult<Json<AdminAgentCommissionReversalResponse>> {
+    Ok(Json(
+        reverse_admin_agent_commission(
+            state.mysql.clone(),
+            admin_id_from_subject(&claims.sub)?,
+            commission_id,
+            request,
+        )
+        .await?,
+    ))
 }
 
 /// 处理 GET /agents，把代理编号、所属用户、父级、根代理、层级、代理码、邮箱与状态等条件交给列表用例。

@@ -30,15 +30,18 @@ use super::{
     service::{
         NormalizedSecondsContractProductCycle, SETTLEMENT_PRICE_WINDOW_SECONDS,
         ensure_existing_order_matches_request, ensure_existing_settlement_matches,
-        normalize_direction, normalize_idempotency_key, normalize_settlement_result,
-        normalized_product_status, optional_image_url, optional_string, order_audit_json,
-        product_audit_json, publish_seconds_contract_order_opened_event_if_needed,
+        ensure_manual_settlement_allowed, normalize_direction, normalize_idempotency_key,
+        normalize_settlement_result, normalized_product_status, optional_image_url,
+        optional_string, order_audit_json, product_audit_json,
+        publish_seconds_contract_order_opened_event_if_needed,
         publish_seconds_contract_order_settled_event_if_needed, required_reason, route_limit,
         route_offset, settlement_payout_amount, settlement_result_from_prices,
         validate_create_product_request, validate_product_stake, validate_stake_amount,
         validate_update_product_request,
     },
 };
+pub(crate) mod refund;
+
 use crate::{
     error::{AppError, AppResult},
     modules::{
@@ -173,6 +176,7 @@ pub(crate) async fn create_product(
         logo_url,
         status,
         default_cycle,
+        request.open_payout_capacity,
     );
 
     let pool = require_mysql_pool(pool)?;
@@ -180,6 +184,13 @@ pub(crate) async fn create_product(
     // 产品主表、周期配置和后台审计必须同事务提交，避免配置生效后缺少可追溯记录。
     infrastructure::ensure_pair_exists(&mut tx, write.pair_id).await?;
     infrastructure::ensure_asset_exists(&mut tx, write.stake_asset).await?;
+    infrastructure::exposure::validate_capacity_config(
+        &mut tx,
+        None,
+        write.stake_asset,
+        write.open_payout_capacity.as_ref(),
+    )
+    .await?;
     if write.status == "active" {
         ensure_settlement_history_capability(&mut tx, write.pair_id).await?;
     }
@@ -225,6 +236,7 @@ pub(crate) async fn update_product(
         logo_url,
         status,
         default_cycle,
+        request.open_payout_capacity,
     );
 
     let pool = require_mysql_pool(pool)?;
@@ -233,6 +245,13 @@ pub(crate) async fn update_product(
     let before = infrastructure::lock_product_by_id(&mut tx, product_id).await?;
     infrastructure::ensure_pair_exists(&mut tx, write.pair_id).await?;
     infrastructure::ensure_asset_exists(&mut tx, write.stake_asset).await?;
+    infrastructure::exposure::validate_capacity_config(
+        &mut tx,
+        Some(product_id),
+        write.stake_asset,
+        write.open_payout_capacity.as_ref(),
+    )
+    .await?;
     if write.status == "active" {
         ensure_settlement_history_capability(&mut tx, write.pair_id).await?;
     }
@@ -312,6 +331,7 @@ pub(crate) async fn delete_product(
         ));
     }
     infrastructure::ensure_product_has_no_orders(&mut tx, product_id).await?;
+    infrastructure::refund::ensure_policy_history_preserved(&mut tx, product_id).await?;
     infrastructure::delete_product_by_id(&mut tx, product_id).await?;
     infrastructure::insert_admin_audit_log_in_tx(
         &mut tx,
@@ -385,12 +405,34 @@ pub(crate) async fn open_order(
         }
         Err(error) => return Err(error),
     };
+    if let Some(existing) =
+        infrastructure::exposure::replay_after_product_lock(&mut tx, user_id, &idempotency_key)
+            .await?
+    {
+        ensure_existing_order_matches_request(
+            &existing,
+            request.product_id,
+            request.duration_seconds,
+            &direction,
+            &request.stake_amount,
+        )?;
+        tx.commit().await?;
+        return Ok((OpenSecondsContractOrderResponse { order: existing }, false));
+    }
     validate_product_stake(&request.stake_amount, &product)?;
+    infrastructure::exposure::ensure_open_capacity(&mut tx, &product, &request.stake_amount)
+        .await?;
     ensure_settlement_history_capability(&mut tx, product.pair_id).await?;
     let entry_price =
         infrastructure::cached_entry_price(redis, product.pair_id, product.symbol.as_str()).await?;
-    let expires_at = infrastructure::database_now(&mut tx).await?
-        + chrono::TimeDelta::seconds(product.duration_seconds as i64);
+    crate::numeric::ensure_amount_storage(&entry_price, "seconds entry_price")?;
+    let expires_at = infrastructure::database_now(&mut tx)
+        .await?
+        .checked_add_signed(chrono::TimeDelta::seconds(i64::from(
+            product.duration_seconds,
+        )))
+        .ok_or_else(|| AppError::Validation("seconds expiry exceeds timestamp range".to_owned()))?;
+    crate::time::ensure_timestamp_storage(&expires_at, "seconds expires_at")?;
     let order = SecondsContractOrderInsert {
         user_id,
         product_id: product.id,
@@ -425,6 +467,7 @@ pub(crate) async fn open_order(
         Err(error) => return Err(AppError::Database(error)),
     };
 
+    infrastructure::refund::snapshot_refund_policy_in_tx(&mut tx, product.id, order_id).await?;
     let wallet = infrastructure::lock_wallet_row(&mut tx, user_id, product.stake_asset).await?;
     if wallet.available < request.stake_amount {
         return Err(AppError::Validation(format!(
@@ -456,6 +499,14 @@ pub(crate) async fn open_order(
     )
     .await?;
 
+    infrastructure::insert_seconds_journal_in_tx(
+        &mut tx,
+        order_id,
+        product.stake_asset,
+        &request.stake_amount,
+        None,
+    )
+    .await?;
     let commission_source_id = order_id.to_string();
     insert_agent_business_commission_in_tx(
         &mut tx,
@@ -494,7 +545,8 @@ pub(crate) async fn open_order_with_events(
 /// 管理员请求结算秒合约订单；实际结果必须由事件时间窗口中的 MySQL 历史价格推导并与请求一致。
 /// 事务先锁订单，再以数据库时间确认窗口已关闭并选择不可变快照；胜单随后锁共享现货钱包，
 /// 入账与流水、价格证据、订单终态及管理员审计原子提交。
-/// 负单不入账；已 settled 且结果一致时返回原结算并不重复派奖，结果冲突或非 opened 状态拒绝处理。
+/// 人工审核单仅接受 result=auto，由历史证据判定后同事务恢复结算；原异常记录不删除。
+/// 负单不入账；已 settled 重放读原结果，指定结果冲突仍拒绝且不重复派奖。
 /// 成功提交后仅事件包装层对首次结算发布通知，重放与失败路径均不得产生外部副作用。
 pub(crate) async fn settle_order(
     pool: Option<&Pool<MySql>>,
@@ -502,17 +554,29 @@ pub(crate) async fn settle_order(
     order_id: u64,
     request: SettleSecondsContractOrderRequest,
 ) -> AppResult<(SettleSecondsContractOrderResponse, bool)> {
-    let requested_result = normalize_settlement_result(&request.result)?;
+    let automatic = request.result.trim().eq_ignore_ascii_case("auto");
+    let requested_result = if automatic {
+        None
+    } else {
+        Some(normalize_settlement_result(&request.result)?)
+    };
     let reason = required_reason(request.reason.clone())?;
     let pool = require_mysql_pool(pool)?;
     let mut tx = pool.begin().await?;
     let order = infrastructure::lock_order_by_id(&mut tx, order_id).await?;
+    ensure_manual_settlement_allowed(&order.status, automatic)?;
     let stake_asset_precision =
         infrastructure::load_asset_precision_scale(&mut tx, order.stake_asset).await?;
     if order.status == "settled" {
-        ensure_existing_settlement_matches(&order, &requested_result)?;
+        if let Some(requested_result) = requested_result.as_deref() {
+            ensure_existing_settlement_matches(&order, requested_result)?;
+        }
+        let existing_result =
+            normalize_settlement_result(order.result.as_deref().ok_or_else(|| {
+                AppError::Internal("settled seconds contract result is missing".to_owned())
+            })?)?;
         let payout_amount =
-            settlement_payout_amount(&order, &requested_result, stake_asset_precision);
+            settlement_payout_amount(&order, &existing_result, stake_asset_precision);
         tx.commit().await?;
         return Ok((
             SettleSecondsContractOrderResponse {
@@ -522,12 +586,6 @@ pub(crate) async fn settle_order(
             false,
         ));
     }
-    if order.status != "opened" {
-        return Err(AppError::Conflict(
-            "seconds contract order is not open for settlement".to_owned(),
-        ));
-    }
-
     let database_now = infrastructure::database_now(&mut tx).await?;
     let settlement_window_closes_at =
         order.expires_at + chrono::TimeDelta::seconds(SETTLEMENT_PRICE_WINDOW_SECONDS);
@@ -549,7 +607,10 @@ pub(crate) async fn settle_order(
         AppError::Validation("seconds contract entry price is required for settlement".to_owned())
     })?;
     let result = settlement_result_from_prices(&order.direction, entry_price, &snapshot.price)?;
-    if result != requested_result {
+    if requested_result
+        .as_deref()
+        .is_some_and(|expected| expected != result)
+    {
         return Err(AppError::Conflict(
             "requested seconds contract result does not match the event-time price".to_owned(),
         ));
@@ -558,6 +619,9 @@ pub(crate) async fn settle_order(
     let before_json = Some(order_audit_json(&order, BigDecimal::from(0)));
     let payout_amount = settlement_payout_amount(&order, result, stake_asset_precision);
 
+    if order.status == "manual_review" {
+        infrastructure::restore_reviewed_order_for_settlement(&mut tx, order.id).await?;
+    }
     if payout_amount > 0 {
         let wallet =
             infrastructure::lock_wallet_row(&mut tx, order.user_id, order.stake_asset).await?;
@@ -586,12 +650,24 @@ pub(crate) async fn settle_order(
         .await?;
     }
 
+    infrastructure::insert_seconds_journal_in_tx(
+        &mut tx,
+        order.id,
+        order.stake_asset,
+        &order.stake_amount,
+        Some(&payout_amount),
+    )
+    .await?;
     infrastructure::mark_order_settled(&mut tx, order.id, result, &snapshot).await?;
     let settled_order = infrastructure::load_order_by_id(&mut tx, order.id).await?;
     infrastructure::insert_admin_audit_log_in_tx(
         &mut tx,
         admin_id,
-        "seconds_contract_order.settle",
+        if order.status == "manual_review" {
+            "seconds_contract_order.recover"
+        } else {
+            "seconds_contract_order.settle"
+        },
         "seconds_contract_order",
         order.id,
         before_json,
@@ -758,8 +834,10 @@ fn product_write_from_cycle(
     logo_url: Option<String>,
     status: String,
     cycle: &NormalizedSecondsContractProductCycle,
+    open_payout_capacity: Option<BigDecimal>,
 ) -> SecondsContractProductWrite {
     SecondsContractProductWrite {
+        open_payout_capacity,
         pair_id,
         stake_asset,
         logo_url,

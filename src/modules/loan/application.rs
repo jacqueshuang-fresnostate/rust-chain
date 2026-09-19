@@ -7,7 +7,7 @@
 //! 四个状态迁移用例都遵循同一套骨架：开启事务、FOR UPDATE 锁订单、
 //! 命中终态则提交并以 `changed=false` 返回实现幂等、状态不符则返回冲突、
 //! 其余情况在同一事务内完成资金移动与状态写入，最后提交并回读响应。
-//! 锁序固定为订单在前、钱包在后；还款场景再按贷款资产、抵押资产的顺序依次锁钱包。
+//! 申请与审批先锁借贷专用用户行和产品，再锁订单、资产与钱包；还款/拒绝/清算不获取准入锁。
 //! 产品配置类用例把写入、revision 递增、回读与管理员审计放在同一事务；更新先锁产品行，
 //! 再同时校验客户端版本并执行带 revision 条件的 UPDATE，旧页面只能收到冲突而不能覆盖新配置。
 
@@ -29,17 +29,21 @@ use crate::{
                 LoanOrderReplayRow, LoanProductCollateralWrite, LoanProductWrite,
                 apply_loan_wallet_credit, apply_loan_wallet_debit, apply_loan_wallet_freeze,
                 ensure_loan_collateral_frozen_in_tx, ensure_loan_user_kyc_level,
+                exposure::{
+                    ensure_loan_product_exposure_asset, load_loan_exposure_identity,
+                    load_loan_principal_exposure, lock_loan_exposure_user,
+                },
                 insert_loan_disbursement_journal_in_tx, insert_loan_order_in_tx,
                 insert_loan_product_audit_log_in_tx, insert_loan_product_in_tx,
                 insert_loan_repayment_journal_in_tx, is_duplicate_key_error,
                 list_admin_loan_orders, list_admin_loan_products, list_loan_products,
                 list_user_loan_orders, load_active_asset_meta, load_asset_precision,
-                load_loan_order_by_idempotency, load_loan_order_replay, load_loan_order_response,
-                load_loan_product_response, load_loan_product_response_in_tx,
-                load_user_loan_order_response, load_user_loan_risk_order,
-                lock_active_loan_asset_metas_in_order, lock_active_loan_product_terms,
+                load_loan_order_by_idempotency, load_loan_order_replay,
+                load_loan_order_replay_in_tx, load_loan_order_response, load_loan_product_response,
+                load_loan_product_response_in_tx, load_user_loan_order_response,
+                load_user_loan_risk_order, lock_active_loan_asset_metas_in_order,
                 lock_loan_asset_precisions_in_order, lock_loan_collateral_rule_in_tx,
-                lock_loan_order, lock_loan_order_replay_in_tx, lock_loan_product_response_in_tx,
+                lock_loan_order, lock_loan_product_response_in_tx, lock_loan_product_terms,
                 lock_loan_wallets_in_order, lock_user_loan_order, mark_loan_order_cancelled_in_tx,
                 mark_loan_order_disbursed_in_tx, mark_loan_order_rejected_in_tx,
                 mark_loan_order_repaid_in_tx, release_loan_collateral_if_needed,
@@ -55,7 +59,8 @@ use crate::{
             },
             service::{
                 calculate_interest_amount, calculate_loan_ltv, ensure_loan_ltv_within_initial,
-                loan_order_request_fingerprint, loan_risk_state, validate_loan_ltv_thresholds,
+                ensure_loan_principal_exposure, loan_order_request_fingerprint, loan_risk_state,
+                validate_loan_ltv_thresholds, validate_loan_principal_limit,
             },
         },
         market::ValidatedMarketSymbol,
@@ -228,6 +233,7 @@ pub(crate) async fn update_loan_product_use_case(
     let mut tx = pool.begin().await?;
     let before = lock_loan_product_response_in_tx(&mut tx, product_id).await?;
     ensure_current_product_revision(before.revision(), expected_revision)?;
+    ensure_loan_product_exposure_asset(&mut tx, product_id, write.asset_id).await?;
     update_loan_product_in_tx(&mut tx, product_id, expected_revision, &write).await?;
     let after = load_loan_product_response_in_tx(&mut tx, product_id).await?;
     insert_loan_product_audit_log_in_tx(
@@ -288,7 +294,7 @@ fn ensure_current_product_revision(current_revision: u64, expected_revision: u64
 
 /// 按当前产品条款创建用户借贷订单，并在抵押贷场景同步冻结抵押资产。
 /// 用户须满足 KYC、金额及资产精度要求；抵押贷必须提供正数且精度合法的抵押资产数量。
-/// 事务先锁定启用产品，再校验条款、插入订单，随后锁定钱包并完成可用额到冻结额的双流水迁移。
+/// 事务先锁借贷用户和产品，再读取幂等订单及敞口；pending 本金即容量预留，成功后同事务冻结抵押。
 /// 订单、抵押余额和账本必须原子提交，任何失败都不得留下未足额抵押的有效订单。
 /// 用户级幂等键唯一；同参重放返回原订单且不再次冻结，异参复用同键稳定冲突。
 /// 抵押贷在任何写入前校验新鲜权威 ticker 与初始 LTV，并把风险配置及价格固化进订单。
@@ -312,8 +318,25 @@ pub(crate) async fn create_loan_order_use_case(
         requested_collateral_amount.as_ref(),
     );
 
+    match load_loan_order_replay(pool, user_id, &idempotency_key).await {
+        Ok(replay) => {
+            ensure_loan_order_replay_matches(
+                &replay,
+                product_id,
+                &amount,
+                requested_collateral_asset_id,
+                requested_collateral_amount.as_ref(),
+                &request_fingerprint,
+            )?;
+            return Ok((load_loan_order_response(pool, replay.id).await?, false));
+        }
+        Err(AppError::NotFound) => {}
+        Err(error) => return Err(error),
+    }
     let mut tx = pool.begin().await?;
-    if let Some(replay) = lock_loan_order_replay_in_tx(&mut tx, user_id, &idempotency_key).await? {
+    lock_loan_exposure_user(&mut tx, user_id).await?;
+    let product = lock_loan_product_terms(&mut tx, product_id).await?;
+    if let Some(replay) = load_loan_order_replay_in_tx(&mut tx, user_id, &idempotency_key).await? {
         ensure_loan_order_replay_matches(
             &replay,
             product_id,
@@ -327,7 +350,21 @@ pub(crate) async fn create_loan_order_use_case(
         return Ok((load_loan_order_response(pool, order_id).await?, false));
     }
 
-    let product = lock_active_loan_product_terms(&mut tx, product_id).await?;
+    if product.status != STATUS_ACTIVE {
+        return Err(AppError::Validation(
+            "loan product is not active".to_owned(),
+        ));
+    }
+    let (user_total, product_total, overdue) =
+        load_loan_principal_exposure(&mut tx, user_id, &product, None).await?;
+    ensure_loan_principal_exposure(
+        &amount,
+        &user_total,
+        &product_total,
+        product.user_principal_limit.as_ref(),
+        product.product_principal_capacity.as_ref(),
+        overdue,
+    )?;
     let assets = lock_active_loan_asset_metas_in_order(
         &mut tx,
         std::iter::once(product.asset_id).chain(
@@ -555,6 +592,9 @@ async fn validate_create_product_request(
         request.min_kyc_level,
         request.min_amount,
         request.max_amount,
+        request.user_principal_limit,
+        request.product_principal_capacity,
+        request.deny_borrowing_while_overdue,
         request.initial_ltv,
         request.maintenance_ltv,
         request.liquidation_ltv,
@@ -585,6 +625,9 @@ async fn validate_update_product_request(
         request.min_kyc_level,
         request.min_amount,
         request.max_amount,
+        request.user_principal_limit,
+        request.product_principal_capacity,
+        request.deny_borrowing_while_overdue,
         request.initial_ltv,
         request.maintenance_ltv,
         request.liquidation_ltv,
@@ -610,6 +653,9 @@ struct NormalizedLoanProductRequest {
     min_amount: BigDecimal,
     /// 可为空表示该产品不设借款上限。
     max_amount: Option<BigDecimal>,
+    user_principal_limit: Option<BigDecimal>,
+    product_principal_capacity: Option<BigDecimal>,
+    deny_borrowing_while_overdue: bool,
     initial_ltv: Option<BigDecimal>,
     maintenance_ltv: Option<BigDecimal>,
     liquidation_ltv: Option<BigDecimal>,
@@ -632,6 +678,9 @@ impl NormalizedLoanProductRequest {
             min_kyc_level: self.min_kyc_level,
             min_amount: self.min_amount,
             max_amount: self.max_amount,
+            user_principal_limit: self.user_principal_limit,
+            product_principal_capacity: self.product_principal_capacity,
+            deny_borrowing_while_overdue: self.deny_borrowing_while_overdue,
             initial_ltv: self.initial_ltv,
             maintenance_ltv: self.maintenance_ltv,
             liquidation_ltv: self.liquidation_ltv,
@@ -661,6 +710,9 @@ async fn normalize_product_request(
     min_kyc_level: i32,
     min_amount: BigDecimal,
     max_amount: Option<BigDecimal>,
+    user_principal_limit: Option<BigDecimal>,
+    product_principal_capacity: Option<BigDecimal>,
+    deny_borrowing_while_overdue: bool,
     initial_ltv: Option<BigDecimal>,
     maintenance_ltv: Option<BigDecimal>,
     liquidation_ltv: Option<BigDecimal>,
@@ -681,6 +733,7 @@ async fn normalize_product_request(
     }
     ensure_non_negative_amount(&interest_rate, "interest_rate")?;
     ensure_amount_precision(&interest_rate, 8, "interest_rate")?;
+    crate::numeric::ensure_decimal_storage(&interest_rate, 18, 8, "interest_rate")?;
     if min_kyc_level < 0 {
         return Err(AppError::Validation(
             "min_kyc_level must be non-negative".to_owned(),
@@ -696,6 +749,16 @@ async fn normalize_product_request(
         }
     }
     let asset = load_active_asset_meta(pool, asset_id).await?;
+    validate_loan_principal_limit(
+        user_principal_limit.as_ref(),
+        asset.precision_scale,
+        "user_principal_limit",
+    )?;
+    validate_loan_principal_limit(
+        product_principal_capacity.as_ref(),
+        asset.precision_scale,
+        "product_principal_capacity",
+    )?;
     ensure_amount_precision(&min_amount, asset.precision_scale, "min_amount")?;
     if let Some(max_amount) = max_amount.as_ref() {
         ensure_amount_precision(max_amount, asset.precision_scale, "max_amount")?;
@@ -722,6 +785,9 @@ async fn normalize_product_request(
         min_kyc_level,
         min_amount,
         max_amount,
+        user_principal_limit,
+        product_principal_capacity,
+        deny_borrowing_while_overdue,
         initial_ltv,
         maintenance_ltv,
         liquidation_ltv,
@@ -845,7 +911,7 @@ pub(crate) async fn cancel_loan_order_use_case(
 }
 
 /// 锁定 pending 订单后把订单本金增加到贷款资产 available，并以审核时刻加 term_days 记录到期时间。
-/// 锁序为订单→贷款资产钱包；只写一条正向 `loan_disbursement` available 流水，frozen/locked 保持原值。
+/// 锁序为借贷用户→产品→订单→资产→钱包；按最新限额重检且排除候选后加回一次本金。
 /// 余额、流水与 disbursed 状态同事务提交；已放款或已还款重放返回 `changed=false`，不二次入账。
 pub(crate) async fn approve_loan_order_use_case(
     pool: &Pool<MySql>,
@@ -853,7 +919,10 @@ pub(crate) async fn approve_loan_order_use_case(
     admin_id: u64,
     order_id: u64,
 ) -> AppResult<(LoanOrderResponse, bool)> {
+    let (user_id, product_id) = load_loan_exposure_identity(pool, order_id).await?;
     let mut tx = pool.begin().await?;
+    lock_loan_exposure_user(&mut tx, user_id).await?;
+    let product = lock_loan_product_terms(&mut tx, product_id).await?;
     let order = lock_loan_order(&mut tx, order_id).await?;
     if matches!(
         order.status.as_str(),
@@ -872,6 +941,21 @@ pub(crate) async fn approve_loan_order_use_case(
             "loan order term_days must be positive".to_owned(),
         ));
     }
+    if product.asset_id != order.asset_id {
+        return Err(AppError::Conflict(
+            "loan product asset differs from pending order".to_owned(),
+        ));
+    }
+    let (user_total, product_total, overdue) =
+        load_loan_principal_exposure(&mut tx, user_id, &product, Some(order_id)).await?;
+    ensure_loan_principal_exposure(
+        &order.amount,
+        &user_total,
+        &product_total,
+        product.user_principal_limit.as_ref(),
+        product.product_principal_capacity.as_ref(),
+        overdue,
+    )?;
     let assets = lock_active_loan_asset_metas_in_order(
         &mut tx,
         std::iter::once(order.asset_id).chain(order.collateral_asset_id),

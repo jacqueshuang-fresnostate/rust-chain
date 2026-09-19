@@ -2,7 +2,8 @@ import type { ApiRecord } from '../../../../api/types';
 import type { SemiSelectOption } from '../../../../shared/SemiFormControls';
 import type { MarketStrategyNodeDraft } from '../../../components/MarketStrategyNodeEditor';
 import type { MarketPairOption } from '../shared';
-import { compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText, multiplyDecimalText } from '../../../../shared/decimal';
+import { compareDecimalText, decimalFitsStorage, isNonNegativeDecimalText, isPositiveDecimalText, multiplyDecimalText } from '../../../../shared/decimal';
+import { parseSafeInteger } from '../../../../shared/integer';
 import { optionalString, recordString, requiredString } from '../shared';
 import type {
   MarketStrategyGeneratorRecord,
@@ -114,6 +115,11 @@ function unixMillisFromInputDateTime(value: string, label: string): number {
   return timestamp;
 }
 
+function decimalDraft(value: unknown, absentValue = ''): string {
+  if (value === undefined) return absentValue;
+  return typeof value === 'string' ? value : '无效数值，请重新填写';
+}
+
 function marketStrategyNodesFromRecord(record: ApiRecord): MarketStrategyNodeDraft[] {
   if (!Array.isArray(record.nodes)) return [];
   return (record.nodes as MarketStrategyNodeRecord[])
@@ -123,12 +129,12 @@ function marketStrategyNodesFromRecord(record: ApiRecord): MarketStrategyNodeDra
       clientId: `strategy-record-node-${Number(node.sequence_no ?? index)}-${index}`,
       targetTime: inputDateTimeFromUnknown(node.target_time),
       targetType: String(node.target_type ?? 'absolute_price') as MarketStrategyNodeDraft['targetType'],
-      targetValue: String(node.target_value ?? ''),
+      targetValue: decimalDraft(node.target_value),
       executionMode: String(node.execution_mode ?? 'hard') as MarketStrategyNodeDraft['executionMode'],
-      tolerance: String(node.tolerance ?? '0'),
-      volatility: String(node.volatility ?? '0'),
-      volumeMin: node.volume_min == null ? '' : String(node.volume_min),
-      volumeMax: node.volume_max == null ? '' : String(node.volume_max)
+      tolerance: decimalDraft(node.tolerance, '0'),
+      volatility: decimalDraft(node.volatility, '0'),
+      volumeMin: node.volume_min == null ? '' : decimalDraft(node.volume_min),
+      volumeMax: node.volume_max == null ? '' : decimalDraft(node.volume_max)
     }));
 }
 
@@ -141,22 +147,22 @@ export function marketStrategyFromRecord(record: ApiRecord): MarketStrategyValue
   return {
     pairId: recordString(record, 'pair_id'),
     strategyType: recordString(record, 'strategy_type') || 'price_path',
-    startPrice: recordString(record, 'start_price'),
-    targetPrice: recordString(record, 'target_price'),
+    startPrice: decimalDraft(record.start_price),
+    targetPrice: decimalDraft(record.target_price),
     startTime: inputDateTimeFromUnknown(record.start_time),
     endTime: inputDateTimeFromUnknown(record.end_time),
-    volatility: recordString(record, 'volatility') || '0',
-    volumeMin: recordString(record, 'volume_min') || '0',
-    volumeMax: recordString(record, 'volume_max') || '0',
+    volatility: decimalDraft(record.volatility, '0'),
+    volumeMin: decimalDraft(record.volume_min, '0'),
+    volumeMax: decimalDraft(record.volume_max, '0'),
     nodes: marketStrategyNodesFromRecord(record),
     status: recordString(record, 'status') || 'draft',
     scenario: String(generator.scenario ?? 'custom_path'),
     seedMode: String(generator.seed_mode ?? 'auto'),
     seed: String(generator.seed ?? ''),
     regenerateSeed: false,
-    meanReversionStrength: String(generator.mean_reversion_strength ?? '0.55'),
-    noiseScale: String(generator.noise_scale ?? '1'),
-    wickScale: String(generator.wick_scale ?? '0.75'),
+    meanReversionStrength: decimalDraft(generator.mean_reversion_strength, '0.55'),
+    noiseScale: decimalDraft(generator.noise_scale, '1'),
+    wickScale: decimalDraft(generator.wick_scale, '0.75'),
     volumeShape: String(generator.volume_shape ?? 'uniform')
   };
 }
@@ -205,7 +211,7 @@ function marketStrategyNodeValidationError(node: MarketStrategyNodeDraft, index:
 
 /** 预览、保存按钮和请求序列化共用同一校验，返回首个可操作的中文错误。 */
 export function marketStrategyValidationError(values: MarketStrategyValues, includePairId: boolean): string | null {
-  if (includePairId && (!values.pairId.trim() || !Number.isSafeInteger(Number(values.pairId)) || Number(values.pairId) <= 0)) {
+  if (includePairId && parseSafeInteger(values.pairId, 1) === null) {
     return '请选择有效的交易对';
   }
   if (!values.strategyType.trim()) return '请选择策略类型';
@@ -241,6 +247,11 @@ export function marketStrategyValidationError(values: MarketStrategyValues, incl
   if (!isDecimalInRange(values.wickScale, '0', '5')) return '影线强度须在 0～5 之间';
   if (!volumeShapeOptions.some((option) => option.value === values.volumeShape)) return '请选择有效的成交量形态';
   if (includePairId && !['draft', 'active', 'paused', 'disabled'].includes(values.status)) return '请选择有效的策略状态';
+  if (![values.startPrice, values.targetPrice, values.volumeMin, values.volumeMax,
+    ...values.nodes.flatMap((node) => [node.targetValue, ...[node.volumeMin, node.volumeMax].filter((value) => value.trim())])]
+    .every((value) => decimalFitsStorage(value))) return '价格、目标值或成交量超出存储范围或精度';
+  if (![values.volatility, ...values.nodes.flatMap((node) => [node.tolerance, node.volatility])]
+    .every((value) => decimalFitsStorage(value, 18, 8))) return '波动率或容差超出 8 位小数的存储精度';
   return null;
 }
 
@@ -316,12 +327,12 @@ function presetNodes(
       clientId: `strategy-preset-${preset.code}-${minuteOffset}-${index}`,
       targetTime: inputDateTimeFromUnixMillis(start + minuteOffset * 60_000),
       targetType: node.target_type as MarketStrategyNodeDraft['targetType'],
-      targetValue: String(node.target_value),
+      targetValue: decimalDraft(node.target_value),
       executionMode: node.execution_mode as MarketStrategyNodeDraft['executionMode'],
-      tolerance: String(node.tolerance),
-      volatility: String(node.volatility),
-      volumeMin: node.volume_min == null ? '' : String(node.volume_min),
-      volumeMax: node.volume_max == null ? '' : String(node.volume_max)
+      tolerance: decimalDraft(node.tolerance),
+      volatility: decimalDraft(node.volatility),
+      volumeMin: node.volume_min == null ? '' : decimalDraft(node.volume_min),
+      volumeMax: node.volume_max == null ? '' : decimalDraft(node.volume_max)
     });
   }
   return nodes;
@@ -336,9 +347,9 @@ export function applyPreset(
   return {
     ...values,
     scenario: String(preset.generator.scenario ?? preset.code),
-    meanReversionStrength: String(preset.generator.mean_reversion_strength ?? '0.55'),
-    noiseScale: String(preset.generator.noise_scale ?? '1'),
-    wickScale: String(preset.generator.wick_scale ?? '0.75'),
+    meanReversionStrength: decimalDraft(preset.generator.mean_reversion_strength, '0.55'),
+    noiseScale: decimalDraft(preset.generator.noise_scale, '1'),
+    wickScale: decimalDraft(preset.generator.wick_scale, '0.75'),
     volumeShape: String(preset.generator.volume_shape ?? 'uniform'),
     nodes
   };

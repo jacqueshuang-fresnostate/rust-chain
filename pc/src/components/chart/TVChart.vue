@@ -14,6 +14,7 @@ import {
   parseRealtimeKline,
   resolveKlineTopic,
   type KlineFetcher,
+  type KlineBar,
   type KlineModule
 } from './klineData'
 import { resolveKlineHistoryFetcher } from './klineDataSource'
@@ -43,6 +44,7 @@ const props = withDefaults(defineProps<{
 })
 
 const chartContainer = ref<HTMLElement | null>(null)
+const emit = defineEmits<{ provenance: [bars: KlineBar[], series: string] }>()
 let chart: any = null
 const subscriptions = new Map<string, any>()
 
@@ -76,7 +78,9 @@ onMounted(() => {
           const periodText = String(period?.text || props.period)
           const fetcher = resolveKlineHistoryFetcher(props.module, props.fetchKLine)
           const res = await fetcher(chartSymbolValue(symbol, props.symbol), periodText, from, to)
-          return historyKlineBars(res.data)
+          const bars = historyKlineBars(res.data)
+          if (chartSymbolValue(symbol, props.symbol) === props.symbol) emit('provenance', bars, `${props.symbol}:${periodText}`)
+          return bars
         } catch (e) {
           console.error('Failed to fetch KLine data:', e)
         }
@@ -93,6 +97,7 @@ onMounted(() => {
         stompService.subscribe(wsModule, topic, (msg) => {
           try {
             const klineData = parseRealtimeKline(JSON.parse(msg.body))
+            if (klineData && symbol === props.symbol) emit('provenance', [klineData], `${symbol}:${periodText}`)
             if (klineData && callback && typeof callback === 'function') callback(klineData)
           } catch (e) {
             console.error('Failed to parse KLine message', e)

@@ -910,6 +910,8 @@ pub(crate) async fn credit_admin_wallet_available_in_tx(
 ) -> AppResult<()> {
     let wallet = lock_or_create_admin_wallet_row_in_tx(tx, user_id, asset_id).await?;
     let available_after = wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(amount, "admin wallet credit")?;
+    crate::numeric::ensure_amount_storage(&available_after, "admin wallet available")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -969,6 +971,15 @@ pub(crate) async fn insert_admin_wallet_ledger_in_tx(
     ref_type: &str,
     ref_id: &str,
 ) -> AppResult<()> {
+    for value in [
+        &amount,
+        balance_after,
+        available_after,
+        frozen_after,
+        locked_after,
+    ] {
+        crate::numeric::ensure_amount_storage(value, "admin wallet ledger")?;
+    }
     sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,

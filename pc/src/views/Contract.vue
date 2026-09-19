@@ -102,7 +102,7 @@
     <div class="flex-1 flex overflow-hidden">
       <!-- Left: Order Book -->
       <div class="w-[320px] border-r border-border flex flex-col bg-card shrink-0">
-        <OrderBook :bids="orderBookBids" :asks="orderBookAsks" :currentPrice="currentPrice" class="flex-1" :symbol="activeSymbol" />
+        <OrderBook :bids="orderBookBids" :asks="orderBookAsks" :provenance="depthProvenance" :currentPrice="currentPrice" class="flex-1" :symbol="activeSymbol" />
       </div>
 
       <!-- Center: Chart & Order History -->
@@ -160,6 +160,7 @@ import { useContractStore } from '@/stores/contract'
 import { useSettingStore } from '@/stores/setting'
 import type { ContractCoin } from '@/stores/contract'
 import { fetchExchangePlate } from '@/api/contract'
+import { mapMarketProvenance, type MarketProvenance } from '@/api/marketProvenance'
 import { stompService } from '@/api/stomp'
 import { useAuthRequired } from '@/composables/useAuthRequired'
 
@@ -178,6 +179,9 @@ const currentPrice = computed(() => currentThumb.value?.last || 0)
 // Data Refs
 const orderBookBids = ref<any[]>([])
 const orderBookAsks = ref<any[]>([])
+const depthProvenance = ref<MarketProvenance>()
+let depthGeneration = 0
+let liveDepthReceived = false
 const chartData = ref<any[]>([])
 const showPairDropdown = ref(false)
 const dropdownPos = ref({ top: 0, left: 0 })
@@ -236,6 +240,9 @@ const clearMarketDataSubscriptions = () => {
 }
 
 const clearContractMarketData = () => {
+    depthGeneration += 1
+    liveDepthReceived = false
+    depthProvenance.value = undefined
     clearMarketDataSubscriptions()
     orderBookBids.value = []
     orderBookAsks.value = []
@@ -302,10 +309,12 @@ const switchPair = (symbol: string) => {
 // Fetch Order Book
 const refreshOrderBook = async () => {
     if (!activeSymbol.value) return
+    const generation = depthGeneration
     try {
         const res = await fetchExchangePlate(activeSymbol.value)
-        if (res.data?.data) {
+        if (generation === depthGeneration && !liveDepthReceived && res.data?.data) {
             const data = res.data.data
+            depthProvenance.value = mapMarketProvenance(data)
             if (data.bids) orderBookBids.value = mapItems(data.bids)
             if (data.asks) orderBookAsks.value = mapItems(data.asks)
         }
@@ -321,15 +330,21 @@ const subscribeToData = async () => {
     clearMarketDataSubscriptions()
 
     const depthTopic = `margin:depth:${activeSymbol.value}`
-    plateSub = await stompService.subscribe('margin', depthTopic, (msg) => {
+    const generation = depthGeneration
+    const subscription = await stompService.subscribe('margin', depthTopic, (msg) => {
+        if (generation !== depthGeneration) return
         try {
             const data = JSON.parse(msg.body)
+            liveDepthReceived = true
+            depthProvenance.value = mapMarketProvenance(data)
             if (data.bids) orderBookBids.value = mapItems(data.bids)
             if (data.asks) orderBookAsks.value = mapItems(data.asks)
         } catch (e) {
             console.error(e)
         }
     })
+    if (generation !== depthGeneration) { subscription.unsubscribe(); return }
+    plateSub = subscription
 
     const tickerTopic = `margin:ticker:${activeSymbol.value}`
     thumbSub = await stompService.subscribe('margin', tickerTopic, (msg) => {
@@ -342,6 +357,7 @@ const subscribeToData = async () => {
 }
 
 watch(activeSymbol, (newSymbol) => {
+    clearContractMarketData()
     if (!contractProductsReady.value || !newSymbol) return
     refreshOrderBook()
     subscribeToData()

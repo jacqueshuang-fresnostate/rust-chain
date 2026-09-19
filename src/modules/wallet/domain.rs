@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 
+pub mod withdrawal_policy;
+
 /// 钱包资产允许的最大小数位（数据库与链上金额展示统一约束）。
 pub const MAX_ASSET_PRECISION_SCALE: i32 = 18;
 
@@ -20,9 +22,15 @@ pub const MAX_WITHDRAW_FEE_TIER_COUNT: usize = 50;
 /// 提现手续费阶梯。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithdrawFeeTier {
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub min_amount: BigDecimal,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub max_amount: Option<BigDecimal>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub fee_rate_percent: BigDecimal,
 }
 
@@ -154,8 +162,14 @@ pub fn deposit_net_credit_amount(
 /// 先做规范化再取指数，因此形如一点一零零的金额只计一位，避免因存储标度不同而误判精度越界。
 /// 该纯函数仅用于精度判定，不修改入参，也不承担金额是否为正或是否符合业务限额的检查。
 pub fn asset_amount_fractional_scale(amount: &BigDecimal) -> u32 {
-    let (_, scale) = amount.normalized().as_bigint_and_exponent();
-    scale.max(0) as u32
+    let (coefficient, scale) = amount.as_bigint_and_exponent();
+    let digits = coefficient.to_str_radix(10);
+    let significant = digits.trim_end_matches('0');
+    if significant.is_empty() {
+        return 0;
+    }
+    let effective_scale = i128::from(scale) - (digits.len() - significant.len()) as i128;
+    u32::try_from(effective_scale.max(0)).unwrap_or(u32::MAX)
 }
 
 /// 检查并规范提现阶梯。

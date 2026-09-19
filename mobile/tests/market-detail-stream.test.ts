@@ -115,6 +115,25 @@ class FakeScheduler {
   }
 }
 
+test('coalesced depth publication retains provenance including empty books', () => {
+  const socket = new FakeSocket()
+  const scheduler = new FakeScheduler()
+  const published: Parameters<MarketDetailStreamOptions['onDepth']>[0][] = []
+  const stop = startMarketDetailStream({
+    symbol: 'BTCUSDT', interval: '1m', url: 'ws://example.test',
+    createSocket: () => socket, scheduler,
+    onDepth: (book) => published.push(book), onTrade: () => undefined, onKline: () => undefined,
+  })
+  socket.emit('open')
+  for (const source of ['strategy', 'default']) {
+    socket.emit('message', JSON.stringify({ symbol: 'BTCUSDT', bids: [], asks: [], source, provider: 'strategy' }))
+  }
+  scheduler.runFrames()
+  assert.equal(published.length, 1)
+  assert.deepEqual(published[0], { bids: [], asks: [], provenance: { source: 'default', provider: 'strategy' } })
+  stop()
+})
+
 function deferred<Value>(): {
   promise: Promise<Value>
   resolve(value: Value): void

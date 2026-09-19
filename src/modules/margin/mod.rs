@@ -6,9 +6,11 @@
 //! `infrastructure` 承担 MySQL 与 Redis 适配，`presentation` 定义传输 DTO，`routes` 只做参数转发。
 //! 利息计提与强平由 `crate::workers` 下的独立后台任务驱动，不在本上下文的请求路径内执行。
 
+pub(crate) mod amounts;
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
+pub(crate) mod journal;
 pub mod presentation;
 pub mod routes;
 pub mod service;

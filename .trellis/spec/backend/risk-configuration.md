@@ -4,7 +4,7 @@
 
 Apply when changing Admin risk create/status commands, risk JSON parsing or spot
 guard scopes. This contract does not change rule priority, operation amount units,
-legacy runtime reads or withdrawal rate-limit infrastructure.
+legacy runtime reads. Withdrawal rate-limit behavior is specified below.
 
 ## 2. Signatures
 
@@ -67,3 +67,13 @@ let scopes = vec![RiskScope::new("pair", canonical_symbol)];
 let scopes = vec![RiskScope::new("pair", canonical_symbol),
                   RiskScope::new("pair", pair_db_id.to_string())];
 ```
+
+## Withdrawal Rate-Limit Enforcement
+
+- The withdrawal route passes the actual optional Redis connection into its application use case.
+- Exact successful request replay returns before risk evaluation and does not consume a new count.
+- New withdrawals evaluate `wallet.withdrawal.create` against the existing scoped rules before security verification or any wallet mutation.
+- A configured `max_requests` requires a usable counter. Missing Redis or a failed increment rejects with `403 risk_rate_limit_unavailable`, and records a risk rejection when audit storage is available.
+- No configured rate limit preserves existing behavior. Non-withdrawal operations retain their existing failure policy.
+- The limit counts new attempts, including attempts later rejected by security or another rule. This is not a cumulative monetary allowance.
+- Tests cover missing Redis, failed Redis increment, exact replay, boundary/over-limit requests, unchanged balances on rejection, and absence of rate rules. Real route validation uses isolated MySQL and Redis.

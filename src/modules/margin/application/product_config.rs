@@ -113,6 +113,12 @@ pub(crate) async fn create_margin_product(
     let mut tx = pool.begin().await?;
     ensure_pair_exists(&mut tx, request.pair_id).await?;
     ensure_asset_exists(&mut tx, request.margin_asset).await?;
+    let precision = crate::modules::margin::infrastructure::load_margin_asset_precision(
+        &mut tx,
+        request.margin_asset,
+    )
+    .await?;
+    validate_asset_margin_bounds(values.min_margin, values.max_margin, precision)?;
     // 产品配置和后台审计必须同事务提交，避免配置已生效但没有审计原因。
     let product_id = insert_margin_product(&mut tx, &values).await?;
     let product = load_product_by_id(&mut tx, product_id).await?;
@@ -163,6 +169,12 @@ pub(crate) async fn update_margin_product_config(
     let before = lock_product_by_id(&mut tx, product_id).await?;
     ensure_pair_exists(&mut tx, request.pair_id).await?;
     ensure_asset_exists(&mut tx, request.margin_asset).await?;
+    let precision = crate::modules::margin::infrastructure::load_margin_asset_precision(
+        &mut tx,
+        request.margin_asset,
+    )
+    .await?;
+    validate_asset_margin_bounds(values.min_margin, values.max_margin, precision)?;
     update_margin_product(&mut tx, product_id, &values).await?;
     let after = load_product_by_id(&mut tx, product_id).await?;
     insert_admin_audit_log(
@@ -524,6 +536,27 @@ fn validate_margin_amount(amount: &BigDecimal) -> AppResult<()> {
     )
 }
 
+/// 新产品阈值须能由保证金资产精确表达；只校验新配置，不改写存量产品或仓位。
+fn validate_asset_margin_bounds(
+    minimum: &BigDecimal,
+    maximum: Option<&BigDecimal>,
+    precision: i32,
+) -> AppResult<()> {
+    crate::modules::margin::amounts::validate_input_amount(
+        minimum,
+        precision,
+        "margin product minimum",
+    )?;
+    if let Some(maximum) = maximum {
+        crate::modules::margin::amounts::validate_input_amount(
+            maximum,
+            precision,
+            "margin product maximum",
+        )?;
+    }
+    Ok(())
+}
+
 /// 生成小时利率缺省值，标度固定为八位以匹配费率列定义，避免入库时被隐式补零或截断。
 /// 用它兜底后该列始终非空，利息 worker 可以对所有产品统一走同一套计提公式，只是结果为零。
 fn zero_rate() -> BigDecimal {
@@ -568,9 +601,7 @@ pub(super) fn validate_hourly_interest_rate(rate: &BigDecimal) -> AppResult<()> 
 }
 
 /// 确认十进制值能被目标 `DECIMAL` 列无损存下，分别检查小数位数和整数位数两个上限。
-/// 小数位直接取指数与 `max_scale` 比较，超过即报错，杜绝入库时被数据库静默四舍五入。
-/// 整数位由有效数字个数减去标度推出，负标度按加法处理以覆盖 1E+3 这类科学计数形式；
-/// 计算前剥掉符号和前导零，因此 0.5 的整数位算作零，不会被误判为占用一位。
+/// 共享边界按有效小数位与整数容量判定，尾随零不算超精度；这里仅保留产品原有错误文案。
 /// 纯函数只做容量判定，不关心取值区间，正负号与业务上下限由各字段的专用校验负责。
 fn validate_decimal_storage(
     value: &BigDecimal,
@@ -578,29 +609,21 @@ fn validate_decimal_storage(
     max_integer_digits: usize,
     label: &str,
 ) -> AppResult<()> {
-    let (digits, scale) = value.as_bigint_and_exponent();
-    if scale > max_scale {
-        return Err(AppError::Validation(format!(
-            "{label} supports at most {max_scale} decimal places"
-        )));
-    }
-
-    let significant_digits = digits
-        .to_str_radix(10)
-        .trim_start_matches('-')
-        .trim_start_matches('0')
-        .len();
-    let integer_digits = if scale >= 0 {
-        significant_digits.saturating_sub(scale as usize)
-    } else {
-        significant_digits.saturating_add(scale.unsigned_abs() as usize)
-    };
-    if integer_digits > max_integer_digits {
-        return Err(AppError::Validation(format!(
-            "{label} exceeds decimal storage precision"
-        )));
-    }
-    Ok(())
+    let scale = u64::try_from(max_scale)
+        .map_err(|_| AppError::Internal("invalid margin decimal scale".to_owned()))?;
+    let integer_digits = u64::try_from(max_integer_digits)
+        .map_err(|_| AppError::Internal("invalid margin decimal precision".to_owned()))?;
+    crate::numeric::ensure_decimal_storage(value, integer_digits + scale, max_scale, label).map_err(
+        |_| {
+            let (_, effective_scale) = value.normalized().as_bigint_and_exponent();
+            let message = if effective_scale > max_scale {
+                format!("{label} supports at most {max_scale} decimal places")
+            } else {
+                format!("{label} exceeds decimal storage precision")
+            };
+            AppError::Validation(message)
+        },
+    )
 }
 
 /// 返回后端在杠杆上下文中真实实现的能力集：订单类型支持市价和限价，保证金模式支持逐仓和全仓。

@@ -5,6 +5,7 @@
 //! 本层不调整 SQL、锁序、流水字段或幂等语义。
 
 mod common;
+mod fill_journal;
 mod market_prices;
 mod order_repository;
 mod read_models;
@@ -12,6 +13,7 @@ mod trade_settlement;
 mod wallet_accounts;
 
 pub(crate) use common::is_duplicate_key_error;
+pub(crate) use fill_journal::insert_spot_fill_journal_in_tx;
 pub(crate) use market_prices::{
     latest_spot_market_price, triggered_limit_buy_order_ids, triggered_limit_sell_order_ids,
     triggered_stop_limit_buy_order_ids, triggered_stop_limit_sell_order_ids,
@@ -20,7 +22,7 @@ pub(crate) use order_repository::{
     SqlxSpotOrderCancelRepository, insert_spot_liquidity_buy_order_in_tx,
     insert_spot_liquidity_sell_order_in_tx, insert_spot_order_in_tx,
     load_spot_order_by_idempotency_key, lock_spot_fill_orders_in_order, lock_spot_order_by_db_id,
-    store_spot_order_idempotency_response_in_tx,
+    mark_spot_order_triggered_in_tx, store_spot_order_idempotency_response_in_tx,
 };
 pub use read_models::MySqlSpotRepository;
 pub(crate) use read_models::{
@@ -29,9 +31,10 @@ pub(crate) use read_models::{
     list_user_cancellable_spot_order_ids, load_spot_order_by_id, load_spot_pair_db_id_by_symbol,
 };
 pub(crate) use trade_settlement::{
-    insert_spot_trade, load_existing_spot_trade_by_idempotency_key, load_spot_pair_db_id,
-    pair_assets_in_tx, remaining_spot_fill_reservation_before_trade_in_tx,
-    save_spot_order_fill_state, spot_order_reservation_in_tx,
+    ensure_manual_spot_fill_audit_matches_in_tx, insert_spot_trade,
+    load_existing_spot_trade_by_idempotency_key, load_spot_pair_db_id, pair_assets_in_tx,
+    remaining_spot_fill_reservation_before_trade_in_tx, save_spot_order_fill_state,
+    spot_order_reservation_in_tx,
 };
 pub(crate) use wallet_accounts::{
     SpotLedgerMetadata, ensure_spot_liquidity_inventory_in_tx, ensure_spot_liquidity_user_in_tx,

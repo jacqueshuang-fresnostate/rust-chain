@@ -54,6 +54,7 @@ const props = withDefaults(defineProps<{
 })
 
 const chartContainer = ref<HTMLElement | null>(null)
+const emit = defineEmits<{ provenance: [bars: KlineBar[], series: string] }>()
 let chart: IChartApi | null = null
 let candleSeries: ISeriesApi<'Candlestick'> | null = null
 let volumeSeries: ISeriesApi<'Histogram'> | null = null
@@ -119,6 +120,7 @@ async function loadKlineHistory() {
     if (!mounted || requestVersion !== historyRequestVersion || !candleSeries) return
 
     const bars = historyKlineBars(response.data)
+    emit('provenance', bars, `${props.symbol}:${props.period}`)
     candleSeries.setData(bars.map(candleData))
     volumeSeries?.setData(bars.map(volumeData))
     if (bars.length > 0) chart?.timeScale().fitContent()
@@ -140,7 +142,8 @@ async function replaceRealtimeSubscription() {
   const nextSubscription = await stompService.subscribe(wsModule, topic, (message) => {
     try {
       const bar = parseRealtimeKline(JSON.parse(message.body))
-      if (!bar || !mounted) return
+      if (!bar || !mounted || currentVersion !== subscriptionVersion) return
+      emit('provenance', [bar], `${props.symbol}:${props.period}`)
       candleSeries?.update(candleData(bar))
       volumeSeries?.update(volumeData(bar))
     } catch (error) {

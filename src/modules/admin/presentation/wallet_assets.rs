@@ -24,8 +24,20 @@ pub(crate) struct CreateAssetRequest {
     pub(crate) deposit_enabled: Option<bool>,
     pub(crate) withdraw_enabled: Option<bool>,
     pub(crate) margin_transfer_enabled: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) min_deposit_amount: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) deposit_fee: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) withdraw_fee: Option<BigDecimal>,
     pub(crate) withdraw_fee_tiers: Option<Vec<WithdrawFeeTier>>,
     pub(crate) reason: Option<String>,
@@ -44,8 +56,20 @@ pub(crate) struct UpdateAssetRequest {
     pub(crate) deposit_enabled: Option<bool>,
     pub(crate) withdraw_enabled: Option<bool>,
     pub(crate) margin_transfer_enabled: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) min_deposit_amount: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) deposit_fee: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) withdraw_fee: Option<BigDecimal>,
     pub(crate) withdraw_fee_tiers: Option<Vec<WithdrawFeeTier>>,
     pub(crate) reason: Option<String>,

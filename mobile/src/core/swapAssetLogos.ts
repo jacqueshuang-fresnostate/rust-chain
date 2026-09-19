@@ -1,8 +1,8 @@
 import {
-  decimalTextFromBoundary,
-  normalizeDecimalText,
+  requiredDecimalText,
   type DecimalText,
 } from './decimal.ts'
+import { requiredId } from './numeric.ts'
 
 export type SwapPickerSide = 'from' | 'to'
 
@@ -34,11 +34,11 @@ export interface ConvertPair {
   toAssetId: number
   toAssetSymbol: string
   toAssetLogoUrl?: string
-  minAmount: number
-  maxAmount?: number
+  minAmount: DecimalText
+  maxAmount?: DecimalText
   minAmountText?: DecimalText
   maxAmountText?: DecimalText
-  feeRate: number
+  feeRate: DecimalText
   enabled: boolean
 }
 
@@ -74,23 +74,22 @@ export function normalizeSwapAssetSymbol(value: unknown): string {
 
 export function mapConvertPair(pair: BackendConvertPair): ConvertPair {
   return {
-    id: pair.id,
-    fromAssetId: pair.from_asset_id,
+    id: requiredId(pair.id),
+    fromAssetId: requiredId(pair.from_asset_id),
     fromAssetSymbol: normalizeSwapAssetSymbol(pair.from_asset_symbol),
     fromAssetLogoUrl: normalizeConvertPairLogoUrl(pair.from_asset_logo_url),
-    toAssetId: pair.to_asset_id,
+    toAssetId: requiredId(pair.to_asset_id),
     toAssetSymbol: normalizeSwapAssetSymbol(pair.to_asset_symbol),
     toAssetLogoUrl: normalizeConvertPairLogoUrl(pair.to_asset_logo_url),
-    minAmount: toFiniteNumber(pair.min_amount),
+    minAmount: pairDecimal(pair.min_amount),
     maxAmount: pair.max_amount === null || pair.max_amount === undefined
       ? undefined
-      : toFiniteNumber(pair.max_amount),
-    minAmountText: decimalTextFromBoundary(pair.min_amount, { allowNegative: false })
-      || normalizeDecimalText('0'),
+      : pairDecimal(pair.max_amount),
+    minAmountText: pairDecimal(pair.min_amount),
     maxAmountText: pair.max_amount === null || pair.max_amount === undefined
       ? undefined
-      : decimalTextFromBoundary(pair.max_amount, { allowNegative: false }) || undefined,
-    feeRate: toFiniteNumber(pair.fee_rate),
+      : pairDecimal(pair.max_amount),
+    feeRate: pairDecimal(pair.fee_rate),
     enabled: pair.enabled !== false,
   }
 }
@@ -200,9 +199,8 @@ export function resolveSwapPickerPair(
     || pairs.find(matchesSelectedSide)
 }
 
-function toFiniteNumber(value: unknown): number {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
+function pairDecimal(value: unknown): DecimalText {
+  return requiredDecimalText(value, 'decimal', 'convert pair', { allowNegative: false, maxIntegerDigits: 20, maxScale: 18 })
 }
 
 function mapReverseConvertPair(source: BackendConvertPair, forward: ConvertPair): ConvertPair {
@@ -217,16 +215,14 @@ function mapReverseConvertPair(source: BackendConvertPair, forward: ConvertPair)
     toAssetId: forward.fromAssetId,
     toAssetSymbol: forward.fromAssetSymbol,
     toAssetLogoUrl: forward.fromAssetLogoUrl,
-    minAmount: toFiniteNumber(source.target_min_amount ?? source.min_amount),
+    minAmount: pairDecimal(source.target_min_amount ?? source.min_amount),
     maxAmount: reverseMaximum === null || reverseMaximum === undefined
       ? undefined
-      : toFiniteNumber(reverseMaximum),
-    minAmountText: decimalTextFromBoundary(source.target_min_amount ?? source.min_amount, {
-      allowNegative: false,
-    }) || normalizeDecimalText('0'),
+      : pairDecimal(reverseMaximum),
+    minAmountText: pairDecimal(source.target_min_amount ?? source.min_amount),
     maxAmountText: reverseMaximum === null || reverseMaximum === undefined
       ? undefined
-      : decimalTextFromBoundary(reverseMaximum, { allowNegative: false }) || undefined,
+      : pairDecimal(reverseMaximum),
     feeRate: forward.feeRate,
     enabled: forward.enabled,
   }

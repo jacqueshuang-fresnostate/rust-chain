@@ -33,6 +33,8 @@ import { AdminPasswordInput, AdminTextInput } from '../shared/SemiFormControls';
 import { StatusTag } from '../shared/StatusTag';
 import { TimestampText } from '../shared/TimestampText';
 import { formatAdminNumber } from '../shared/numberFormat';
+import { addDecimalText, decimalFitsStorage, formatDecimalText } from '../shared/decimal';
+import { parseSafeInteger } from '../shared/integer';
 import { OnlineSupportWorkbench } from '../support/OnlineSupportWorkbench';
 
 const { Text, Title } = Typography;
@@ -54,7 +56,19 @@ function errorMessage(error: unknown) {
 }
 
 function displayNumber(value: string | number | null | undefined) {
-  return formatAdminNumber(value) ?? '0';
+  return formatAdminNumber(value) ?? '-';
+}
+
+export function commissionPageTotals(rows: AgentCommission[]): Array<{ assetId: number; amount: string | null }> {
+  const totals = new Map<number, string | null>();
+  for (const row of rows) {
+    if (parseSafeInteger(row.payout_asset_id, 1) === null) continue;
+    const assetId = row.payout_asset_id as number;
+    const previous = totals.has(assetId) ? totals.get(assetId)! : '0';
+    totals.set(assetId, previous === null || !decimalFitsStorage(row.commission_amount)
+      ? null : addDecimalText(previous, row.commission_amount));
+  }
+  return [...totals].sort(([a], [b]) => a - b).map(([assetId, amount]) => ({ assetId, amount }));
 }
 
 function useLoader<T>(load: () => Promise<T>, initialReload = 0): LoadState<T> {
@@ -160,12 +174,12 @@ export function AgentDashboardPage() {
       {
         label: '佣金记录',
         value: displayNumber(data.dashboard.commission_record_count),
-        description: `总佣金 ${displayNumber(data.dashboard.total_commission_amount)}`
+        description: '按发放资产分别核对'
       },
       {
         label: '待结算佣金',
-        value: displayNumber(data.dashboard.pending_commission_amount),
-        description: `已结算 ${displayNumber(data.dashboard.settled_commission_amount)}`
+        value: '按资产查看',
+        description: '不同资产金额不合计'
       },
       {
         label: '闪兑订单',
@@ -200,9 +214,11 @@ export function AgentDashboardPage() {
           <section className="admin-dashboard-detail-grid">
             <Card bordered={false} shadows="always">
               <Space align="start" spacing={12} vertical>
-                <Title heading={4}>闪兑累计</Title>
-                <Text>转出金额：<AmountText value={data.convertStats.total_from_amount} /></Text>
-                <Text>转入金额：<AmountText value={data.convertStats.total_to_amount} /></Text>
+                <Title heading={4}>佣金资产汇总</Title>
+                {data.dashboard.commission_assets?.map((row, index) => <div key={row.payout_asset_id ?? `unknown-${index}`}>
+                  <Text>{row.payout_asset_id === null ? '发放资产未确认' : `资产 ID ${row.payout_asset_id}`}：</Text>
+                  {row.payout_asset_id === null ? <Text>暂不合计</Text> : <Text>待结算 <AmountText value={row.pending_commission_amount} />；已结算 <AmountText value={row.settled_commission_amount} />；累计 <AmountText value={row.total_commission_amount} /></Text>}
+                </div>) ?? <Text>暂缺按资产统计</Text>}
               </Space>
             </Card>
             <AgentPasswordChangeCard />
@@ -267,9 +283,9 @@ export function AgentInviteCodesPage() {
 
   async function createInviteCode() {
     const trimmed = usageLimit.trim();
-    const limit = trimmed ? Number(trimmed) : undefined;
-    if (trimmed && (!Number.isInteger(limit) || Number(limit) <= 0)) {
-      Toast.error('使用上限必须为正整数');
+    const limit = trimmed ? parseSafeInteger(trimmed, 1, 2_147_483_647) : undefined;
+    if (limit === null) {
+      Toast.error('使用上限必须为 1 至 2147483647 的安全整数');
       return;
     }
 
@@ -349,6 +365,7 @@ export function AgentCommissionsPage() {
       { dataIndex: 'source_id', key: 'source_id', title: '来源ID' },
       { dataIndex: 'source_amount', key: 'source_amount', render: (value) => <AmountText value={typeof value === 'string' || typeof value === 'number' ? value : null} />, title: '来源金额' },
       { dataIndex: 'commission_amount', key: 'commission_amount', render: (value) => <AmountText value={typeof value === 'string' || typeof value === 'number' ? value : null} />, title: '佣金金额' },
+      { dataIndex: 'payout_asset_id', key: 'payout_asset_id', title: '发放资产ID', render: (value) => value ?? '未确认' },
       { dataIndex: 'status', key: 'status', render: (value) => <StatusTag value={typeof value === 'string' ? value : null} />, title: '状态' },
       { dataIndex: 'depth', key: 'depth', title: '层级深度' },
       { dataIndex: 'payout_ledger_id', key: 'payout_ledger_id', title: '结算流水ID' },
@@ -364,9 +381,13 @@ export function AgentCommissionsPage() {
       <PageHeader title="佣金记录" />
       {data ? (
         <Card bordered={false} shadows="always" style={{ marginBottom: 16 }}>
-          <Space>
-            <Text>记录数：{displayNumber(data.total_records)}</Text>
-            <Text>总佣金：<AmountText value={data.total_commission_amount} /></Text>
+          <Space wrap>
+            <Text>已加载记录数：{data.commissions.length}</Text>
+            {commissionPageTotals(data.commissions).map(({ assetId, amount }) =>
+              <Text key={assetId}>已加载佣金（资产 ID {assetId}）：{amount === null ? '数值无效' : formatDecimalText(amount, { minimumFractionDigits: 0, maximumFractionDigits: 18 })}</Text>
+            )}
+            {data.commissions.some((row) => row.payout_asset_id == null) ? <Text>发放资产未确认的记录不计入汇总</Text> : null}
+            <Text type="tertiary">仅当前已加载记录，非全量；不同资产不合计</Text>
           </Space>
         </Card>
       ) : null}
@@ -382,7 +403,7 @@ export function AgentConvertStatsPage() {
         { label: '总订单', value: displayNumber(data.total_orders), description: `代理ID ${data.agent_id}` },
         { label: '待处理订单', value: displayNumber(data.pending_orders), description: '当前仍待处理的闪兑订单' },
         { label: '已完成订单', value: displayNumber(data.completed_orders), description: '已完成的闪兑订单' },
-        { label: '累计转出', value: displayNumber(data.total_from_amount), description: `累计转入 ${displayNumber(data.total_to_amount)}` }
+        { label: '金额统计', value: '暂缺按资产统计', description: '不同转出与转入资产的金额不合计' }
       ]
     : [];
 

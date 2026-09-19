@@ -39,9 +39,10 @@ pub(crate) struct MarginCloseExecutionWrite<'a> {
     pub(crate) fully_closed: bool,
 }
 
-/// 在平仓事务内按用户级幂等键加锁读取既有执行，用于同键重放与异参冲突判断。
-/// 查询必须发生在钱包写入之前；命中后调用方只回读仓位并提交只读事务，不得再次结算。
-pub(crate) async fn lock_margin_close_execution_by_key(
+/// 在账户/仓位锁之后以本事务首次一致性读查询不可变执行，避免缺失唯一键的间隙锁互阻插入。
+/// 调用方此前只能执行当前读或写入；REPEATABLE READ 快照因此包含等待仓位锁期间提交的同键执行。
+/// 未命中仍由用户级唯一键在钱包写入前裁决竞争；命中只重放或报异参冲突，不修改执行记录。
+pub(crate) async fn load_margin_close_execution_by_key_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     idempotency_key: &str,
@@ -53,8 +54,7 @@ pub(crate) async fn lock_margin_close_execution_by_key(
                   fully_closed, created_at
            FROM margin_position_close_executions
            WHERE user_id = ? AND idempotency_key = ?
-           LIMIT 1
-           FOR UPDATE"#,
+           LIMIT 1"#,
     )
     .bind(user_id)
     .bind(idempotency_key)
@@ -160,3 +160,7 @@ pub(crate) async fn load_margin_close_execution_by_id(
     .await?
     .ok_or(AppError::NotFound)
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit_src/src_modules_margin_close_execution_concurrency_tests.rs"]
+mod tests;

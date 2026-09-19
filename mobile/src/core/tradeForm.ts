@@ -61,8 +61,9 @@ export function validateMarginLimitPrice(input: {
 }): MarginLimitPriceValidation {
   const draft = input.price.trim()
   const pricePrecision = typeof input.pricePrecision === 'number'
-    && Number.isInteger(input.pricePrecision)
+    && Number.isSafeInteger(input.pricePrecision)
     && input.pricePrecision >= 0
+    && input.pricePrecision <= 18
     ? input.pricePrecision
     : null
   if (!draft) return { isValid: false, error: 'required', value: null, normalized: null, pricePrecision }
@@ -102,6 +103,7 @@ export function marginShortcutAvailable(
   const availableText = positiveBoundary(available)
   if (!availableText) return normalizeDecimalText('0')
   const maximumText = positiveBoundary(maximum)
+  if (maximum != null && !maximumText) return normalizeDecimalText('0')
   return maximumText ? decimalMinimum(availableText, maximumText) || availableText : availableText
 }
 
@@ -125,6 +127,8 @@ export function validateMarginAmount(input: {
   const amount = positiveDecimalInput(input.amount)
   const minMargin = positiveBoundary(input.minMargin) || normalizeDecimalText('0')
   const maxMargin = positiveBoundary(input.maxMargin)
+  if ((input.minMargin != null && !decimalTextFromBoundary(input.minMargin, { allowNegative: false }))
+    || (input.maxMargin != null && !maxMargin)) return { isValid: false, error: 'invalid', minMargin, maxMargin }
   if (!amount) return { isValid: false, error: 'invalid', minMargin, maxMargin }
   if (decimalCompare(amount, minMargin) < 0) {
     return { isValid: false, error: 'below-minimum', minMargin, maxMargin }

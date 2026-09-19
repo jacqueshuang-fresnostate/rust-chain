@@ -30,7 +30,6 @@ use crate::{
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-use std::str::FromStr;
 
 pub struct BitgetMarketAdapter;
 pub struct HtxMarketAdapter;
@@ -1041,7 +1040,7 @@ fn coinbase_optional_percent_field(
             let value = value_as_string(value).ok_or_else(|| {
                 AppError::Validation("coinbase percent value is required".to_owned())
             })?;
-            BigDecimal::from_str(value.trim_end_matches('%')).map_err(|error| {
+            crate::numeric::parse_decimal_input(value.trim_end_matches('%')).map_err(|error| {
                 AppError::Validation(format!("coinbase percent value is invalid: {error}"))
             })
         })
@@ -1329,7 +1328,7 @@ fn decimal_value(value: Option<&Value>) -> AppResult<BigDecimal> {
         .and_then(value_as_string)
         .ok_or_else(|| AppError::Validation("market decimal value is required".to_owned()))
         .and_then(|value| {
-            BigDecimal::from_str(&value).map_err(|error| {
+            crate::numeric::parse_decimal_input(&value).map_err(|error| {
                 AppError::Validation(format!("market decimal is invalid: {error}"))
             })
         })

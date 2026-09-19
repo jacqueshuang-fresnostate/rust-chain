@@ -42,7 +42,7 @@ export function normalizeRealizedReturnTimestamp(
     throw new Error(`invalid ${contract} ${field}`)
   }
   const normalized = parsed < 1_000_000_000_000 ? parsed * 1000 : parsed
-  if (!Number.isSafeInteger(normalized)) throw new Error(`invalid ${contract} ${field}`)
+  if (!Number.isSafeInteger(normalized) || normalized > 8_640_000_000_000_000) throw new Error(`invalid ${contract} ${field}`)
   return normalized
 }
 

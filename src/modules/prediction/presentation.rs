@@ -67,6 +67,7 @@ pub(crate) struct SavePredictionSettingsRequest {
     pub(crate) sync_interval_seconds: u32,
     pub(crate) sync_tags: Vec<String>,
     pub(crate) allowed_asset_ids: Vec<u64>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) default_fee_rate: BigDecimal,
     pub(crate) default_settlement_mode: String,
     pub(crate) default_invalid_refund_policy: String,
@@ -79,6 +80,7 @@ pub(crate) struct SavePredictionSettingsRequest {
 pub(crate) struct UpsertPredictionAssetConfigRequest {
     pub(crate) asset_id: u64,
     pub(crate) enabled: bool,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) max_payout_amount: BigDecimal,
     pub(crate) revision: u64,
     pub(crate) reason: Option<String>,
@@ -87,6 +89,7 @@ pub(crate) struct UpsertPredictionAssetConfigRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdatePredictionAssetConfigRequest {
     pub(crate) enabled: bool,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) max_payout_amount: BigDecimal,
     pub(crate) revision: u64,
     pub(crate) reason: Option<String>,
@@ -98,6 +101,10 @@ pub(crate) struct UpdatePredictionMarketRequest {
     pub(crate) settlement_mode_override: Option<String>,
     pub(crate) allowed_asset_ids_override: Option<Vec<u64>>,
     pub(crate) payout_cap_overrides: Option<Value>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) fee_rate_override: Option<BigDecimal>,
 }
 
@@ -106,6 +113,7 @@ pub(crate) struct CreatePredictionQuoteRequest {
     pub(crate) market_id: u64,
     pub(crate) outcome: String,
     pub(crate) asset_id: u64,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) stake_amount: BigDecimal,
 }
 

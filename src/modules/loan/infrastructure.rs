@@ -19,6 +19,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 
+pub(crate) mod exposure;
+
 /// 资产与产品共用的启用状态字面量，本层用它判定资产可用性与产品可下单性。
 const STATUS_ACTIVE: &str = "active";
 /// 钱包流水的引用类型，借贷产生的所有流水都用该值加订单编号回溯来源。
@@ -36,6 +38,9 @@ pub(crate) struct LoanProductTermsRow {
     pub(crate) min_kyc_level: i32,
     pub(crate) min_amount: BigDecimal,
     pub(crate) max_amount: Option<BigDecimal>,
+    pub(crate) user_principal_limit: Option<BigDecimal>,
+    pub(crate) product_principal_capacity: Option<BigDecimal>,
+    pub(crate) deny_borrowing_while_overdue: bool,
     pub(crate) initial_ltv: Option<BigDecimal>,
     pub(crate) maintenance_ltv: Option<BigDecimal>,
     pub(crate) liquidation_ltv: Option<BigDecimal>,
@@ -123,6 +128,9 @@ pub(crate) struct LoanProductWrite {
     pub(crate) min_kyc_level: i32,
     pub(crate) min_amount: BigDecimal,
     pub(crate) max_amount: Option<BigDecimal>,
+    pub(crate) user_principal_limit: Option<BigDecimal>,
+    pub(crate) product_principal_capacity: Option<BigDecimal>,
+    pub(crate) deny_borrowing_while_overdue: bool,
     pub(crate) initial_ltv: Option<BigDecimal>,
     pub(crate) maintenance_ltv: Option<BigDecimal>,
     pub(crate) liquidation_ltv: Option<BigDecimal>,
@@ -205,8 +213,8 @@ pub(crate) async fn insert_loan_product_in_tx(
         r#"INSERT INTO loan_products
            (loan_type, asset_id, name, name_json, term_days, interest_rate, interest_calculation_mode,
             min_kyc_level, min_amount, max_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
-            status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            status, user_principal_limit, product_principal_capacity, deny_borrowing_while_overdue)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&product.loan_type)
     .bind(product.asset_id)
@@ -222,6 +230,9 @@ pub(crate) async fn insert_loan_product_in_tx(
     .bind(&product.maintenance_ltv)
     .bind(&product.liquidation_ltv)
     .bind(&product.status)
+    .bind(&product.user_principal_limit)
+    .bind(&product.product_principal_capacity)
+    .bind(product.deny_borrowing_while_overdue)
     .execute(&mut **tx)
     .await?;
     let product_id = result.last_insert_id();
@@ -244,7 +255,8 @@ pub(crate) async fn update_loan_product_in_tx(
            SET loan_type = ?, asset_id = ?, name_json = ?, name = ?, term_days = ?, interest_rate = ?,
                interest_calculation_mode = ?, min_kyc_level = ?, min_amount = ?,
                max_amount = ?, initial_ltv = ?, maintenance_ltv = ?, liquidation_ltv = ?,
-               status = ?, revision = revision + 1
+               status = ?, user_principal_limit = ?, product_principal_capacity = ?,
+               deny_borrowing_while_overdue = ?, revision = revision + 1
            WHERE id = ? AND revision = ?"#,
     )
     .bind(&product.loan_type)
@@ -261,6 +273,9 @@ pub(crate) async fn update_loan_product_in_tx(
     .bind(&product.maintenance_ltv)
     .bind(&product.liquidation_ltv)
     .bind(&product.status)
+    .bind(&product.user_principal_limit)
+    .bind(&product.product_principal_capacity)
+    .bind(product.deny_borrowing_while_overdue)
     .bind(product_id)
     .bind(expected_revision)
     .execute(&mut **tx)
@@ -383,6 +398,14 @@ fn loan_product_query_builder() -> QueryBuilder<'static, MySql> {
                   products.name, products.name_json, products.term_days, products.interest_rate,
                   products.interest_calculation_mode, products.min_kyc_level,
                   products.min_amount, products.max_amount, products.initial_ltv,
+                  products.user_principal_limit, products.product_principal_capacity,
+                  products.deny_borrowing_while_overdue,
+                  (SELECT COALESCE(SUM(exposure.amount), 0) FROM loan_orders exposure
+                   WHERE exposure.product_id = products.id AND exposure.asset_id = products.asset_id
+                     AND exposure.status = 'pending') AS reserved_principal,
+                  (SELECT COALESCE(SUM(exposure.amount), 0) FROM loan_orders exposure
+                   WHERE exposure.product_id = products.id AND exposure.asset_id = products.asset_id
+                     AND exposure.status IN ('disbursed', 'overdue')) AS outstanding_principal,
                   products.maintenance_ltv, products.liquidation_ltv,
                   (SELECT COALESCE(
                        JSON_ARRAYAGG(JSON_OBJECT(
@@ -676,17 +699,18 @@ pub(crate) async fn load_loan_order_replay(
 
 /// 在调用方事务中以 FOR UPDATE 锁定产品行，并取回订单需要快照的条款。
 /// 加锁的目的是让条款读取与订单插入之间不被管理端的产品改配置插入，保证同一笔订单条款自洽。
-/// 锁定后才检查状态：产品不存在返回 NotFound，存在但非 active 返回参数错误。
-/// 这一步是下单事务的第一环，后续依次是插入订单和锁钱包，锁序固定不可调换。
+/// 产品不存在返回 NotFound；调用方先获取借贷用户锁，再锁产品，最后锁订单、资产及钱包。
+/// 不检查上下架：创建在幂等回放之后检查，审批仍允许已下架产品的历史申请。
 /// 本函数不校验金额、KYC 或抵押，也不产生任何写入。
-pub(crate) async fn lock_active_loan_product_terms(
+pub(crate) async fn lock_loan_product_terms(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
 ) -> AppResult<LoanProductTermsRow> {
     let product = sqlx::query_as::<_, LoanProductTermsRow>(
         r#"SELECT id, loan_type, asset_id, term_days, interest_rate,
                   interest_calculation_mode, min_kyc_level, min_amount, max_amount,
-                  initial_ltv, maintenance_ltv, liquidation_ltv, status
+                  initial_ltv, maintenance_ltv, liquidation_ltv, status,
+                  user_principal_limit, product_principal_capacity, deny_borrowing_while_overdue
            FROM loan_products
            WHERE id = ?
            LIMIT 1
@@ -696,11 +720,6 @@ pub(crate) async fn lock_active_loan_product_terms(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)?;
-    if product.status != STATUS_ACTIVE {
-        return Err(AppError::Validation(
-            "loan product is not active".to_owned(),
-        ));
-    }
     Ok(product)
 }
 
@@ -726,8 +745,9 @@ pub(crate) async fn lock_loan_collateral_rule_in_tx(
     })
 }
 
-/// 在创建资金副作用前锁定同用户幂等键的既有订单，供应用层核对规范化请求指纹。
-pub(crate) async fn lock_loan_order_replay_in_tx(
+/// 调用方持有借贷用户和产品锁后读取幂等订单；不加间隙锁，避免不同用户首次申请互锁。
+/// 必须在全部准入串行锁取得后建立一致性快照，同用户创建已由独立锁行串行化。
+pub(crate) async fn load_loan_order_replay_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     idempotency_key: &str,
@@ -737,8 +757,7 @@ pub(crate) async fn lock_loan_order_replay_in_tx(
                   request_fingerprint
            FROM loan_orders
            WHERE user_id = ? AND idempotency_key = ?
-           LIMIT 1
-           FOR UPDATE"#,
+           LIMIT 1"#,
     )
     .bind(user_id)
     .bind(idempotency_key)
@@ -893,7 +912,7 @@ pub(crate) async fn mark_loan_order_cancelled_in_tx(
 
 /// 在调用方事务中把订单置为 disbursed，并一次性写入审批人、审批时刻、放款时刻和到期时刻。
 /// 审批与放款共用同一个数据库时间戳，因此这两个时间在数据上总是相等。
-/// due_at 与 disbursed_at 使用同一个数据库时钟并在 SQL 内加期限天数，避免锁等待缩短实际借款期限。
+/// 锁定后读取数据库时钟，受检计算 due_at 并校验 TIMESTAMP 容量；不采用应用机时钟或截断期限。
 /// disbursed_at 是实际天数计息的起点，缺失会导致还款阶段直接被拒绝。
 /// 本金入账流水必须在同一事务内先写成功，否则回滚后订单仍保持待审核状态。
 pub(crate) async fn mark_loan_order_disbursed_in_tx(
@@ -903,6 +922,11 @@ pub(crate) async fn mark_loan_order_disbursed_in_tx(
     term_days: u32,
     risk_snapshot: Option<LoanApprovalRiskSnapshot<'_>>,
 ) -> AppResult<()> {
+    let disbursed_at: DateTime<Utc> = sqlx::query_scalar("SELECT CURRENT_TIMESTAMP(6)")
+        .fetch_one(&mut **tx)
+        .await?;
+    let due_at =
+        crate::time::checked_expiry(disbursed_at, u64::from(term_days) * 86_400, "loan due_at")?;
     let (collateral_price, price_observed_at, ltv) = match risk_snapshot {
         Some(snapshot) => (
             Some(snapshot.collateral_price),
@@ -915,16 +939,18 @@ pub(crate) async fn mark_loan_order_disbursed_in_tx(
         r#"UPDATE loan_orders
            SET status = 'disbursed',
                approved_by = ?,
-               approved_at = CURRENT_TIMESTAMP(6),
-               disbursed_at = CURRENT_TIMESTAMP(6),
-               due_at = TIMESTAMPADD(DAY, ?, CURRENT_TIMESTAMP(6)),
+               approved_at = ?,
+               disbursed_at = ?,
+               due_at = ?,
                approval_collateral_price = ?,
                approval_price_observed_at = ?,
                approval_ltv = ?
            WHERE id = ?"#,
     )
     .bind(admin_id)
-    .bind(i64::from(term_days))
+    .bind(disbursed_at)
+    .bind(disbursed_at)
+    .bind(due_at)
     .bind(collateral_price)
     .bind(price_observed_at)
     .bind(ltv)
@@ -1197,6 +1223,8 @@ pub(crate) async fn apply_loan_wallet_freeze(
     }
     let available_after = wallet.available.clone() - amount.clone();
     let frozen_after = wallet.frozen.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "loan available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "loan frozen balance")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -1249,6 +1277,7 @@ pub(crate) async fn apply_loan_wallet_credit(
 ) -> AppResult<()> {
     let wallet = lock_or_create_wallet_row(tx, user_id, asset_id).await?;
     let available_after = wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "loan available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -1290,6 +1319,7 @@ pub(crate) async fn apply_loan_wallet_debit(
         )));
     }
     let available_after = wallet.available.clone() - amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "loan available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -1336,6 +1366,8 @@ async fn apply_loan_wallet_unfreeze(
     }
     let available_after = wallet.available.clone() + amount.clone();
     let frozen_after = wallet.frozen.clone() - amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "loan available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "loan frozen balance")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -1529,6 +1561,7 @@ async fn insert_loan_platform_journal_leg(
     order_id: u64,
     user_id: u64,
 ) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(&amount, "loan journal amount")?;
     sqlx::query(
         r#"INSERT INTO platform_financial_journal
            (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id,
@@ -1567,6 +1600,15 @@ async fn insert_wallet_ledger(
     change_type: &str,
     order_id: u64,
 ) -> AppResult<()> {
+    for value in [
+        &amount,
+        balance_after,
+        available_after,
+        frozen_after,
+        locked_after,
+    ] {
+        crate::numeric::ensure_amount_storage(value, "loan wallet ledger")?;
+    }
     sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,

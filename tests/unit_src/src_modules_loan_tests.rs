@@ -16,6 +16,44 @@ fn decimal(value: &str) -> BigDecimal {
 }
 
 #[test]
+fn numeric_safety_loan_rejects_overflow_but_quantizes_high_precision_interest() {
+    let now = Utc::now();
+    assert!(service::ensure_amount_precision(&decimal("1e20"), 18, "principal").is_err());
+    for (principal, rate) in [
+        ("99999999999999999999", "0.1"),
+        ("100000000000", "9999999999"),
+        ("1", "10000000000"),
+    ] {
+        assert!(
+            calculate_interest_amount(
+                &decimal(principal),
+                &decimal(rate),
+                INTEREST_MODE_FULL_TERM,
+                30,
+                now,
+                now,
+                18,
+            )
+            .is_err(),
+            "{principal} at {rate}"
+        );
+    }
+    assert_eq!(
+        calculate_interest_amount(
+            &decimal("1.000000000000000001"),
+            &decimal("0.00000001"),
+            INTEREST_MODE_FULL_TERM,
+            30,
+            now,
+            now,
+            18,
+        )
+        .unwrap(),
+        decimal("0.00000001")
+    );
+}
+
+#[test]
 fn full_term_interest_is_truncated_to_asset_precision() {
     let interest = calculate_interest_amount(
         &decimal("100"),
@@ -330,4 +368,51 @@ fn user_repay_and_overdue_collection_share_the_same_locked_settlement() {
     assert!(repay.contains("settle_locked_loan_order_repayment_in_tx"));
     assert!(source.contains("pub(crate) async fn settle_locked_loan_order_repayment_in_tx"));
     assert!(source.contains("\"loan_repayment\""));
+}
+
+#[test]
+fn loan_principal_policy_uses_exact_boundaries_and_optional_limits() {
+    use super::service::ensure_loan_principal_exposure;
+    let amount = decimal("0.000000000000000001");
+    let total = decimal("9007199254740993");
+    let exact = &total + &amount;
+    ensure_loan_principal_exposure(&amount, &total, &total, Some(&exact), Some(&exact), false)
+        .unwrap();
+    assert!(
+        ensure_loan_principal_exposure(&amount, &total, &total, Some(&total), None, false).is_err()
+    );
+    assert!(
+        ensure_loan_principal_exposure(&amount, &total, &total, None, Some(&total), false).is_err()
+    );
+    ensure_loan_principal_exposure(&amount, &total, &total, None, None, false).unwrap();
+    assert!(ensure_loan_principal_exposure(&amount, &total, &total, None, None, true).is_err());
+}
+
+#[test]
+fn loan_principal_limits_reject_rounding_overflow_and_invalid_precision() {
+    use super::service::validate_loan_principal_limit;
+    for (precision, valid, invalid) in [
+        (0, "123.000", "0.1"),
+        (2, "1.23000", "1.001"),
+        (18, "0.000000000000000001", "0.0000000000000000001"),
+    ] {
+        validate_loan_principal_limit(None, precision, "limit").unwrap();
+        validate_loan_principal_limit(Some(&decimal("0")), precision, "limit").unwrap();
+        validate_loan_principal_limit(Some(&decimal(valid)), precision, "limit").unwrap();
+        assert!(
+            validate_loan_principal_limit(Some(&decimal(invalid)), precision, "limit").is_err()
+        );
+        assert!(validate_loan_principal_limit(Some(&decimal("-1")), precision, "limit").is_err());
+    }
+    validate_loan_principal_limit(
+        Some(&decimal("99999999999999999999.999999999999999999")),
+        18,
+        "limit",
+    )
+    .unwrap();
+    assert!(
+        validate_loan_principal_limit(Some(&decimal("100000000000000000000")), 18, "limit")
+            .is_err()
+    );
+    assert!(validate_loan_principal_limit(Some(&decimal("1")), 19, "limit").is_err());
 }

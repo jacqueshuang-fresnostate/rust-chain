@@ -10,7 +10,8 @@ import type { DetailDrawerData } from '../../../shared/DetailDrawer';
 import type { RichTextValue } from '../../../shared/QuillRichTextEditor';
 import { AdminModalTriggerButton, AdminSelect, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import { useSharedAdminOptionQuery } from '../../sharedOptionQuery';
-import { canonicalDecimalText, isNonNegativeDecimalText } from '../../../shared/decimal';
+import { canonicalDecimalText, decimalFitsStorage, isNonNegativeDecimalText } from '../../../shared/decimal';
+import { parseSafeInteger, requiredSafeInteger } from '../../../shared/integer';
 
 export type AssetOption = {
   id: string;
@@ -76,24 +77,16 @@ export function errorMessage(error: unknown) {
   return adminErrorMessage(error, '操作失败');
 }
 
-export function requiredPositiveInteger(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${label}必须为正整数`);
-  }
-  return parsed;
+export function requiredPositiveInteger(value: string, label: string, maximum = Number.MAX_SAFE_INTEGER): number {
+  return requiredSafeInteger(value, label, 1, maximum);
 }
 
-export function requiredNonNegativeInteger(value: string, label: string): number {
+export function requiredNonNegativeInteger(value: string, label: string, maximum = Number.MAX_SAFE_INTEGER): number {
   const trimmed = value.trim();
   if (!trimmed) {
     throw new Error(`${label}不能为空`);
   }
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(`${label}必须为非负整数`);
-  }
-  return parsed;
+  return requiredSafeInteger(trimmed, label, 0, maximum);
 }
 
 export function isNonNegativeIntegerInput(value: string): boolean {
@@ -101,18 +94,17 @@ export function isNonNegativeIntegerInput(value: string): boolean {
   if (!trimmed) {
     return false;
   }
-  const parsed = Number(trimmed);
-  return Number.isInteger(parsed) && parsed >= 0;
+  return parseSafeInteger(trimmed) !== null;
 }
 
-export function requiredNonNegativeDecimal(value: string, label: string): string {
+export function requiredNonNegativeDecimal(value: string, label: string, precision = 38, scale = 18): string {
   const trimmed = value.trim();
   if (!trimmed) {
     throw new Error(`${label}不能为空`);
   }
   const canonical = canonicalDecimalText(trimmed);
-  if (canonical === null || !isNonNegativeDecimalText(canonical)) {
-    throw new Error(`${label}必须为非负数`);
+  if (canonical === null || !isNonNegativeDecimalText(canonical) || !decimalFitsStorage(trimmed, precision, scale)) {
+    throw new Error(`${label}必须为非负数且不超出 ${precision - scale} 位整数、${scale} 位小数，不会自动舍入`);
   }
   return canonical;
 }
@@ -122,7 +114,7 @@ export function isNonNegativeDecimalInput(value: string): boolean {
   if (!trimmed) {
     return false;
   }
-  return canonicalDecimalText(trimmed) !== null && isNonNegativeDecimalText(trimmed);
+  return decimalFitsStorage(trimmed) && isNonNegativeDecimalText(trimmed);
 }
 
 export function requiredString(value: string, label: string): string {
@@ -314,6 +306,7 @@ export function MarketPairSelect({
 
 export function recordString(record: ApiRecord, key: string): string {
   const value = record[key];
+  if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) return '';
   return typeof value === 'number' || typeof value === 'string' ? String(value) : '';
 }
 

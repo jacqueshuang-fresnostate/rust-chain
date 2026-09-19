@@ -1,5 +1,62 @@
 # Spot Order Contracts
 
+## Scenario: Exact Numeric Reservation And Settlement
+
+- Source quantities must be positive and exactly fit both pair quantity
+  precision and the actual base asset `precision_scale`. Source prices,
+  reference prices and triggers must be exactly representable, never rounded.
+  Pair precision is bounded to `0..=18`; quantity precision cannot exceed the
+  base asset precision. Amount storage is `DECIMAL(38,18)`.
+- Read actual base/quote asset metadata in the financial transaction and hold
+  shared configuration locks while using it. Pair minimum configuration must
+  be positive, storage-safe and representable at quote asset precision.
+- Generated quote reserve and each actual fill quote amount are truncated
+  toward zero to quote asset precision. A positive product that quantizes to
+  zero is rejected, as is a result exceeding storage capacity. Do not insert
+  zero-value trades or silently round a user's source quantity.
+- Buy reservation uses the whole order quantity and limit/reference price;
+  market-buy uses the existing maximum reference/execution protection. A fill
+  uses its actual price and slice quantity. Sum of per-fill truncations does
+  not exceed the truncated whole-order reserve at the limit. This is explicitly
+  a **per-execution** contract, not partition-independent cumulative rounding.
+- Buyer frozen debit, seller available credit, commission base and platform
+  journal all reuse the same generated quote amount. Base debit/credit reuse
+  the exact admitted quantity. Never round wallet available/frozen/locked
+  separately. Validate the delta and every resulting bucket before SQL writes.
+- Partial fills keep all unused reserve frozen. Full fill and cancellation
+  release exactly stored reserve minus actual frozen settlement debits and
+  prior releases, including dust and price improvement. Do not reconstruct
+  actual spent quote using `SUM(price * quantity)` or reprice remaining quantity.
+- Existing positive `spot_freeze` frozen ledger evidence takes precedence over
+  reservation snapshots. NULL or zero historical snapshots can use this
+  evidence without any backfill. Ledger reads are scoped by user, asset and
+  numeric order reference. Never claim an entire wallet's frozen bucket as one
+  order's reservation.
+- Historical release preserves its actual stored precision, even if today's
+  asset precision is lower. No migration, balance rewrite or historical amount
+  quantization is performed. Without positive reserve evidence, or when partial
+  quantity and actual debit/base-credit evidence disagree, fail closed and leave
+  order/balances unchanged for investigation. New metadata absence alone is not
+  grounds to reject an evidenced historical refund.
+- Stable order locks and existing idempotency keys still arbitrate concurrent
+  fills/cancel/replay. Remaining-reserve reads occur after trade placeholder
+  insertion but before current wallet legs, so the current trade has no debit
+  evidence yet and cannot be counted twice.
+- The synchronous `SpotService` adapter requires explicit actual asset
+  precisions and a transaction-owned remaining-reserve snapshot in its command.
+  It must not recompute cancellation reserve from price; production financial
+  routes continue to use the atomic asynchronous application path.
+
+### Required Regressions
+
+Cover 8+8 and 10+10 fractional products, `1e-18`, 19 fractional digits,
+20/21 integer digits, huge exponents, trailing zeros, invalid asset/pair
+precision and generated zero. Real isolated MySQL tests must exercise both
+automatic directions, multiple partial fills/full-fill dust release, partial
+cancel, concurrent exact fill replay, rollback, per-asset journal zero sums,
+legacy NULL/zero snapshots with evidence, stored historical dust and missing
+evidence rejection. Environment-skipped database tests are not verification.
+
 ## Scenario: Market Order Reference Price Protection
 
 ### 1. Scope / Trigger
@@ -153,26 +210,81 @@ for order_id in order_ids {
 - `side: "buy" | "sell"`
 - `order_type: "stop_limit"`
 - `trigger_price: decimal string`
+- `trigger_direction: "rising" | "falling"` (required for new stop-limit orders)
 - `price: decimal string`
 - `quantity: decimal string`
 - `idempotency_key?: string`
 
 ### 3. Contracts
 
-- Stop-limit orders must include both `trigger_price` and `price`.
-- Store `trigger_price` in `spot_orders.trigger_price`; include it in user/admin order responses.
+- New stop-limit orders must include `trigger_price`, `price` and an explicit
+  `trigger_direction`; direction is independent of buy/sell and never inferred
+  by a client. Other order types reject a supplied direction.
+- Store and return nullable `trigger_price`, `trigger_direction`, and
+  `triggered_at` (Unix milliseconds in API responses). Only the server sets
+  `triggered_at`; activation is not part of client request identity.
 - Freeze wallet balances at order creation using the limit `price`, the same reserve asset rules as normal limit orders.
-- Do not execute a stop-limit order immediately unless the cached market price already satisfies both trigger and limit conditions.
-- Buy condition: execute only when `market_price <= trigger_price` and `market_price <= price`.
-- Sell condition: execute only when `market_price >= trigger_price` and `market_price >= price`.
-- Idempotency comparison must include `trigger_price`.
-- Once triggered, reuse the existing triggered spot execution path and settlement accounting.
+- Explicit rising activates at `market_price >= trigger_price`; falling at
+  `market_price <= trigger_price`. Equality activates either direction.
+- Commit activation under an order lock in its own transaction before attempting
+  later settlement. An unmet limit or inventory/settlement failure must not erase
+  activation. Re-lock and recheck status before settlement so cancellation and
+  terminal states cannot be bypassed.
+- After activation, only the usual limit remains: buy `market_price <= price`,
+  sell `market_price >= price`. Recrossing the trigger does not deactivate.
+- At creation, a fresh cached threshold observation saves activation with the
+  order even when the limit is unmet. If both threshold and limit are met,
+  creation can use existing atomic immediate settlement; an unsuccessful
+  creation transaction creates no order or reservation.
+- Legacy NULL direction retains its historical conjunction without persistence
+  changes: buy `market_price <= trigger_price && market_price <= price`; sell
+  `market_price >= trigger_price && market_price >= price`. Migration 0132 adds
+  nullable columns and constraints only, with no backfill or comparison flip.
+- Idempotency includes trigger price and explicit direction. NULL-direction
+  fingerprints retain their original v1 bytes. Existing exact requests replay
+  before new-request direction validation, returning the first stored response
+  without a second financial effect; live readback exposes later activation.
+- Manual fills cannot bypass an unactivated explicit stop-limit order. Legacy
+  manual behavior and ordinary automatic fill rules remain unchanged.
 
 ### 4. Tests Required
 
-- Unit tests for buy/sell trigger predicates requiring both trigger and limit prices.
-- Adapter tests confirming PC `STOP_LIMIT` maps to backend `stop_limit` with `trigger_price`.
+- Unit tests cover both directions for both sides, equality, durable activation,
+  terminal status and original legacy fingerprints/comparisons.
+- Real MySQL/Redis tests cover migration preservation, independent activation,
+  inventory failure, new-pool readback, price recrossing, concurrent execution,
+  cancellation, cached activation, immediate fill, exact replay and direction conflict.
+- PC adapters and retry tests include direction in intent; the existing
+  stop-limit form requires a selection. Admin/PC/Mobile readback distinguishes
+  legacy NULL and explicit activation. Mobile does not gain a new order type.
 - Existing limit and market order tests must continue to pass.
+
+## Scenario: Controlled Manual Fills And Actual Fill Journals
+
+- `POST /admin/api/v1/spot/fills` requires the existing spot fill permission,
+  authenticated admin ID, bounded nonblank `reason` and stable client
+  `idempotency_key`. A body-supplied actor is never trusted.
+- Use the shared Admin audit helper within the same transaction as trade,
+  order state, wallet changes, ledger, commissions and platform journal.
+  Audit or journal failure must roll back the entire fill.
+- Exact replay requires the original actor, reason, canonical order IDs, price,
+  quantity and key. It produces no duplicate audit, journal, wallet or event
+  effect; conflicting reuse is rejected, including concurrent duplicate keys.
+  Historical unaudited fills cannot be claimed as a new manual operation.
+- Admin exposes a permission-gated action on the existing spot resource, with
+  readonly preview of both orders and explicit confirmation. Preview never
+  mutates a wallet; uncertain responses preserve the original request identity.
+- Journal each actual fill separately per asset using context `spot`, key
+  `spot:{trade_id}:fill`, reference type `spot_trade` and the real trade ID.
+  Source/target user liability amounts are opposite actual wallet changes.
+  The existing prepaid system liquidity account, not an upstream ticker, is
+  the `platform_spot_inventory` counterparty. Every asset balances independently.
+- Current fills charge exactly zero fees. Do not invent fee income or add a
+  debit. A future nonzero fee requires an explicit charged-asset and net-wallet
+  settlement contract; the journal fails closed until that contract exists.
+- Tests include missing actor/reason, parameter/actor conflicts, concurrent
+  replay, audit/journal failure injection, both inventory directions and
+  unchanged financial/journal counts after replay.
 
 ## Scenario: Client-scoped Order Idempotency
 

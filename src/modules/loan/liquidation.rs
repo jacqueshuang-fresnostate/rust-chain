@@ -421,6 +421,8 @@ async fn apply_collateral_liquidation_wallet_in_tx(
     }
     let available_after = wallet.available + collateral_returned.clone();
     let frozen_after = wallet.frozen - collateral_amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "liquidation available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "liquidation frozen balance")?;
     sqlx::query(
         r#"UPDATE wallet_accounts
            SET available = ?, frozen = ?

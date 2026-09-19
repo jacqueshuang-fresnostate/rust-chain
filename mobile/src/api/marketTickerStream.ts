@@ -6,6 +6,7 @@ import {
 } from './marketSocketProtocol.ts'
 import { createInboundSilenceWatchdog } from './webSocketLiveness.ts'
 import type { DecimalText } from '../core/decimal.ts'
+import { mapMarketProvenance, type MarketProvenance } from '../core/marketProvenance.ts'
 
 const SOCKET_CONNECTING = 0
 const SOCKET_OPEN = 1
@@ -14,7 +15,7 @@ const RECONNECT_MAX_MS = 30_000
 const HEARTBEAT_MS = 25_000
 const INBOUND_IDLE_TIMEOUT_MS = 65_000
 
-export interface TickerUpdate {
+export interface TickerUpdate extends MarketProvenance {
   symbol: string
   lastPrice: number
   lastPriceText?: DecimalText
@@ -238,6 +239,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
       const frame = parseMarketSocketFrame(event.data)
       if (!frame || frame.type !== 'ticker') return
       const update: TickerUpdate = {
+        ...mapMarketProvenance(frame),
         symbol: normalizeMarketSocketSymbol(frame.symbol),
         lastPrice: frame.lastPrice,
         ...(frame.lastPriceText === undefined ? {} : { lastPriceText: frame.lastPriceText }),

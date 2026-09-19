@@ -9,7 +9,6 @@ import {
   decimalDivide,
   decimalMultiply,
   decimalTextFromBoundary,
-  decimalTextFromFiniteNumber,
   normalizeDecimalText,
   positiveDecimalInput,
   type DecimalBoundary,
@@ -75,9 +74,7 @@ export function createMarginOrderReview(input: MarginOrderReviewInput): MarginOr
     input.referencePriceText ?? input.referencePrice,
     { allowNegative: false, allowZero: false },
   )
-  const leverageText = Number.isFinite(input.leverage) && input.leverage > 0
-    ? decimalTextFromFiniteNumber(input.leverage)
-    : null
+  const leverageText = decimalTextFromBoundary(input.leverage, { allowNegative: false, allowZero: false })
   const estimatedNotionalText = marginAmountText && leverageText
     ? decimalMultiply(marginAmountText, leverageText)
     : normalizeDecimalText('0')
@@ -100,7 +97,7 @@ export function createMarginOrderReview(input: MarginOrderReviewInput): MarginOr
   const estimatedQuantity = displayNumber(estimatedQuantityText)
 
   return {
-    isValid: Number.isFinite(input.productId)
+    isValid: Number.isSafeInteger(input.productId)
       && input.productId > 0
       && marginAmountText !== null
       && input.orderType !== null

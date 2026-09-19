@@ -346,6 +346,19 @@ fn decimal_field(config: &Value, key: &str) -> Option<BigDecimal> {
         Value::Number(number) => number.to_string(),
         _ => return None,
     };
+    // JSON 限额不写 DECIMAL 列，保留原精度/范围政策，只限制解析和运算资源。
+    if text.len() > crate::numeric::MAX_DECIMAL_INPUT_LENGTH {
+        return None;
+    }
+    if let Some((_, exponent)) = text.split_once(['e', 'E']) {
+        let exponent = exponent.parse::<i64>().ok()?;
+        if !(-crate::numeric::MAX_DECIMAL_INPUT_EXPONENT
+            ..=crate::numeric::MAX_DECIMAL_INPUT_EXPONENT)
+            .contains(&exponent)
+        {
+            return None;
+        }
+    }
     BigDecimal::from_str(&text)
         .ok()
         .filter(|amount| amount >= &BigDecimal::from(0))

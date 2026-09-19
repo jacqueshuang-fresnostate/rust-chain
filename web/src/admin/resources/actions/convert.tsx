@@ -1,11 +1,11 @@
-import { Button, Card, SideSheet, Space } from '@douyinfe/semi-ui';
+import { Button, Card, SideSheet, Space, Switch } from '@douyinfe/semi-ui';
 import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
-import { compareDecimalText, decimalFitsPrecision, isNonNegativeDecimalText } from '../../../shared/decimal';
+import { compareDecimalText, decimalFitsPrecision, decimalFitsStorage, isNonNegativeDecimalText } from '../../../shared/decimal';
 import { AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
   type AssetOption,
@@ -38,6 +38,11 @@ export type ConvertPairValues = {
   targetMinAmount: string;
   targetMaxAmount: string;
   enabled: string;
+  inventoryEnabled?: boolean;
+  inventoryFundedAmount?: string;
+  inventoryRevision?: string;
+  inventoryReference?: string;
+  inventoryChanged?: boolean;
 };
 
 const initialConvertPair: ConvertPairValues = {
@@ -53,8 +58,9 @@ const initialConvertPair: ConvertPairValues = {
   enabled: 'true'
 };
 
-function isConvertPairCreatable(values: ConvertPairValues): boolean {
-  return convertPairValidationError(values) === null;
+function isConvertPairCreatable(values: ConvertPairValues, assets: AssetOption[]): boolean {
+  return convertPairValidationError(values) === null && (!values.inventoryChanged ||
+    decimalFitsPrecision(values.inventoryFundedAmount ?? '', assets.find((asset) => asset.id === values.toAssetId)?.precisionScale));
 }
 
 export function convertPairValidationError(values: ConvertPairValues): string | null {
@@ -76,10 +82,18 @@ export function convertPairValidationError(values: ConvertPairValues): string | 
     ['源资产', values.minAmount, values.maxAmount],
     ['目标资产', values.targetMinAmount, values.targetMaxAmount]
   ]) {
-    if (!isNonNegativeDecimalText(minimum)) return `${label}最小金额必须大于等于 0`;
-    if (maximum.trim() && (!isNonNegativeDecimalText(maximum) || compareDecimalText(maximum, minimum) === -1)) {
+    if (!decimalFitsStorage(minimum) || !isNonNegativeDecimalText(minimum)) return `${label}最小金额必须大于等于 0 且不超出存储精度`;
+    if (maximum.trim() && (!decimalFitsStorage(maximum) || !isNonNegativeDecimalText(maximum) || compareDecimalText(maximum, minimum) === -1)) {
       return `${label}最大金额必须大于等于最小金额，留空表示不限`;
     }
+  }
+  if (values.inventoryChanged) {
+    const funded = values.inventoryFundedAmount ?? '';
+    if (!isNonNegativeDecimalText(funded) || !decimalFitsPrecision(funded, 18) ||
+      compareDecimalText(funded, '100000000000000000000') !== -1) return '库存资金总额必须是有效的非负精确金额';
+    if (!values.inventoryReference?.trim() || values.inventoryReference.trim().length > 255) return '请填写资金凭据';
+    if (!/^(0|[1-9]\d*)$/.test(values.inventoryRevision ?? '0') ||
+      !Number.isSafeInteger(Number(values.inventoryRevision ?? '0'))) return '库存配置版本无效，请刷新';
   }
   return null;
 }
@@ -95,11 +109,16 @@ function convertPairFromRecord(record: ApiRecord): ConvertPairValues {
     maxAmount: recordString(record, 'max_amount'),
     targetMinAmount: recordString(record, 'target_min_amount'),
     targetMaxAmount: recordString(record, 'target_max_amount'),
-    enabled: record.enabled === false ? 'false' : 'true'
+    enabled: record.enabled === false ? 'false' : 'true',
+    inventoryEnabled: record.inventory_enabled === true,
+    inventoryFundedAmount: recordString(record, 'inventory_funded_amount'),
+    inventoryRevision: recordString(record, 'inventory_revision') || '0',
+    inventoryReference: '',
+    inventoryChanged: false
   };
 }
 
-function convertPairRequestBody(values: ConvertPairValues, reason: string) {
+export function convertPairRequestBody(values: ConvertPairValues, reason: string) {
   const error = convertPairValidationError(values);
   if (error) throw new Error(error);
   return {
@@ -113,6 +132,12 @@ function convertPairRequestBody(values: ConvertPairValues, reason: string) {
     target_min_amount: requiredString(values.targetMinAmount, '目标资产最小金额'),
     target_max_amount: optionalString(values.targetMaxAmount),
     enabled: booleanFromSelect(values.enabled),
+    ...(values.inventoryChanged ? { inventory: {
+      enabled: values.inventoryEnabled === true,
+      funded_amount: requiredString(values.inventoryFundedAmount ?? '', '库存资金总额'),
+      revision: Number(values.inventoryRevision || '0'),
+      funding_reference: requiredString(values.inventoryReference ?? '', '资金凭据')
+    } } : {}),
     reason
   };
 }
@@ -146,7 +171,7 @@ function ConvertPairEditAction({ helpers, pairId, record }: { helpers: RowAction
             <ConvertPairFields assetLoading={assetLoading} assetOptions={assetOptionsWithCurrent} values={config} onChange={setConfig} />
             <ConfirmAction
               actionText="提交修改"
-              disabled={!isConvertPairCreatable(config)}
+              disabled={!isConvertPairCreatable(config, assetOptions)}
               title="确认修改闪兑交易对"
               onConfirm={async (reason) => {
                 await submitAction('修改闪兑交易对', () =>
@@ -263,6 +288,11 @@ function ConvertPairFields({
       <label>目标资产最小金额<AdminTextInput ariaLabel="目标资产最小金额" value={values.targetMinAmount} onChange={(targetMinAmount) => patch({ targetMinAmount })} /></label>
       <label>目标资产最大金额<AdminTextInput ariaLabel="目标资产最大金额" value={values.targetMaxAmount} onChange={(targetMaxAmount) => patch({ targetMaxAmount })} /></label>
       <label>启用<BooleanSelect label="启用" value={values.enabled} onChange={(enabled) => patch({ enabled })} /></label>
+      <label>输出库存保护<Switch aria-label="输出库存保护" checked={values.inventoryEnabled === true} onChange={(inventoryEnabled) => patch({ inventoryEnabled, inventoryChanged: true })} /></label>
+      <span className="admin-form-hint" role="note">库存资金为显式配置预算，不代表已核验的托管余额。</span>
+      {values.inventoryEnabled ? <span className="admin-reference-field__error" role="note">保护启用期间仅支持正向输出资产，反向兑换确认将被拒绝。</span> : null}
+      <label>库存资金总额<AdminTextInput ariaLabel="库存资金总额" value={values.inventoryFundedAmount ?? ''} onChange={(inventoryFundedAmount) => patch({ inventoryFundedAmount, inventoryChanged: true })} /></label>
+      <label>资金凭据<AdminTextInput ariaLabel="资金凭据" value={values.inventoryReference ?? ''} onChange={(inventoryReference) => patch({ inventoryReference, inventoryChanged: true })} /></label>
       {values.fromAssetId && values.toAssetId && convertPairValidationError(values) ? (
         <span className="admin-reference-field__error" role="alert">{convertPairValidationError(values)}</span>
       ) : null}
@@ -282,7 +312,7 @@ export function CreateConvertPairAction({ onCreated }: CreateActionProps = {}) {
           <ConvertPairFields assetLoading={assetLoading} assetOptions={assetOptions} values={convertPair} onChange={setConvertPair} />
           <ConfirmAction
             actionText="提交添加闪兑交易对"
-            disabled={!isConvertPairCreatable(convertPair)}
+            disabled={!isConvertPairCreatable(convertPair, assetOptions)}
             title="确认添加闪兑交易对"
             onConfirm={async (reason) => {
               await submitAction('添加闪兑交易对', async () => {

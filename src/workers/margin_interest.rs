@@ -1,7 +1,8 @@
 //! 杠杆借款利息计提后台任务。
 //!
 //! 周期性扫描已成交且有借款的持仓，按「上次计息点到当前时刻的完整小时数」累加利息债务。
-//! 计息口径是单利：借款额乘小时利率再乘完整小时数，结果按十八位小数落库，不足一小时不计不预扣。
+//! 计息口径是单利：借款额乘小时利率再乘完整小时数，新增利息按保证金资产精度向零量化。
+//! 26 位前向余数与检查点同事务保存，即使本批新增资产单位为零也推进，不足一小时不计不预扣。
 //! 计息时间戳只推进到「上次计息点 + 已计费整小时数」，因此不足一小时的零头会顺延到下个窗口而不是被丢掉。
 //! `interest_accrued_at` 既是计息起点也是跨重启检查点，与利息增量在同一事务内提交，
 //! 因此进程崩溃重启后只会补上尚未计提的完整小时，不会重复收费也不会漏收。
@@ -65,7 +66,7 @@ impl MarginInterestWorker {
 pub struct MarginInterestSummary {
     /// 本轮实际尝试处理的仓位数。
     pub scanned: u32,
-    /// 真正写入了利息增量的仓位数，达到该值的上限即停止本轮。
+    /// 写入计息检查点的仓位数，包含只积累余数的零单位增量，达到上限停止本轮。
     pub accrued: u32,
     /// 因状态变化、无借款或不足一小时而幂等跳过的仓位数。
     pub skipped: u32,
@@ -95,18 +96,10 @@ struct LockedMarginPosition {
     margin_mode: String,
     /// 借款额，是计息基数，非正时直接跳过。
     borrowed_amount: BigDecimal,
-    /// 当前已累计的利息，本次增量在其基础上累加。
-    interest_amount: BigDecimal,
-    /// 上次计息时间点，为 NULL 表示尚未计过息，此时回落到开仓时间。
-    interest_accrued_at: Option<DateTime<Utc>>,
-    /// 开仓时间，作为首次计息的起点。
-    opened_at: DateTime<Utc>,
     /// 服务端权威入场价，为 NULL 表示限价挂单尚未成交，严禁计息。
     entry_price: Option<BigDecimal>,
     /// 加锁瞬间的仓位状态，非 opened 则放弃本次计提。
     status: String,
-    /// 产品当前的小时利率，实时联表取值，因此改配后立即影响后续计提。
-    hourly_interest_rate: BigDecimal,
 }
 
 /// 单个仓位的计提结果，只区分「写入了利息」和「幂等跳过」，错误走 Err 分支不在此枚举内。
@@ -148,7 +141,13 @@ pub async fn run_once_with_dependencies(
 /// 以至少 1 秒间隔持续计提利息；候选查询等周期故障只记录并进入下一轮，单项失败不会终止循环。
 /// `interest_accrued_at` 是跨重启检查点，确保恢复后只补尚未计提的完整小时；循环不发布提交后事件。
 pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> AppResult<()> {
-    let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
+    let duration = Duration::from_secs(interval_seconds.max(1));
+    if std::time::Instant::now().checked_add(duration).is_none() {
+        return Err(AppError::Validation(
+            "margin interest interval overflow".to_owned(),
+        ));
+    }
+    let mut ticker = interval(duration);
 
     loop {
         ticker.tick().await;
@@ -187,7 +186,7 @@ async fn fetch_interest_candidates(
            ORDER BY positions.interest_accrued_at ASC, positions.opened_at ASC, positions.id ASC
            LIMIT ?"#,
     )
-    .bind(limit.clamp(1, 500) as i64)
+    .bind(i64::from(limit.clamp(1, 500)))
     .fetch_all(pool)
     .await
     .map_err(AppError::from)
@@ -196,10 +195,8 @@ async fn fetch_interest_candidates(
 /// 在独立事务中锁定一个 opened 仓位，按上次计息点到 `now` 的完整小时数累加借款利息。
 /// 不足完整小时、状态变化或无借款仓位幂等跳过；利息余额与计息时间戳同事务提交，避免崩溃重放重复收费。
 ///
-/// 一共有五道跳过闸门，依次是：仓位已不存在、未成交/状态非 opened/无借款、不足一小时或利率为零、
-/// 计算出的增量非正、带 `status = 'opened'` 条件的更新影响行数不为一。
-/// 最后一道尤为关键，它把状态检查与写入合成一条语句，即使并发平仓抢在加锁之后提交也不会误记利息。
-/// 每道闸门都显式 rollback 后返回 Skipped，因此跳过路径在数据库上不留任何痕迹。
+/// 仓位不存在、未成交、无借款或未满完整小时都会回滚并跳过；新增资产单位为零时仍提交余数。
+/// 状态和利息检查点写入由共享适配器再次在锁内核对，容量失败回滚且不推进时间，不能隐式舍入。
 /// `interest_accrued_at` 写成「上次计息点加已计费整小时数」而不是 now，因此不足一小时的零头会顺延到下个窗口，
 /// 多轮累计下来计费小时数与真实经过时长一致；若写成 now 则每轮都会丢掉零头，长期系统性少收利息。
 /// 全仓仓位在同一事务内额外重算账户级利息聚合并递增版本号，让风险快照和强平读到一致的账户视图。
@@ -240,33 +237,14 @@ async fn accrue_position_interest(
         tx.rollback().await?;
         return Ok(MarginInterestOutcome::Skipped);
     }
-    let accrued_from = position.interest_accrued_at.unwrap_or(position.opened_at);
-    let elapsed_hours = full_elapsed_hours(accrued_from, now);
-    if elapsed_hours == 0 || position.hourly_interest_rate <= 0 {
-        tx.rollback().await?;
-        return Ok(MarginInterestOutcome::Skipped);
-    }
-    let interest_delta = margin_interest_delta(
-        &position.borrowed_amount,
-        &position.hourly_interest_rate,
-        elapsed_hours,
-    );
-    if interest_delta <= 0 {
-        tx.rollback().await?;
-        return Ok(MarginInterestOutcome::Skipped);
-    }
-    let interest_after = (position.interest_amount + interest_delta).with_scale(18);
-    let update = sqlx::query(
-        r#"UPDATE margin_positions
-           SET interest_amount = ?, interest_accrued_at = ?
-           WHERE id = ? AND status = 'opened' AND entry_price IS NOT NULL"#,
+    if crate::modules::margin::infrastructure::accrue_locked_position_interest(
+        &mut tx,
+        position.id,
+        now,
     )
-    .bind(&interest_after)
-    .bind(billed_window_end(accrued_from, elapsed_hours).naive_utc())
-    .bind(position.id)
-    .execute(&mut *tx)
-    .await?;
-    if update.rows_affected() != 1 {
+    .await?
+    .is_none()
+    {
         tx.rollback().await?;
         return Ok(MarginInterestOutcome::Skipped);
     }
@@ -275,17 +253,26 @@ async fn accrue_position_interest(
         let account = cross_account.as_ref().ok_or_else(|| {
             AppError::Conflict("cross margin account lock is required for interest".to_owned())
         })?;
-        let account_update = sqlx::query(
-            r#"UPDATE margin_cross_accounts
-               SET last_interest_amount = COALESCE(
-                     (SELECT SUM(interest_amount) FROM margin_positions
-                      WHERE user_id = ? AND margin_asset = ? AND margin_mode = 'cross'
-                        AND status = 'opened' AND entry_price IS NOT NULL), 0),
-                   version = version + 1
-               WHERE user_id = ? AND margin_asset = ? AND version = ?"#,
+        account.version.checked_add(1).ok_or_else(|| {
+            AppError::Conflict("cross margin interest version exhausted".to_owned())
+        })?;
+        let total_interest = sqlx::query_scalar::<_, BigDecimal>(
+            r#"SELECT COALESCE(SUM(interest_amount), 0) FROM margin_positions
+               WHERE user_id = ? AND margin_asset = ? AND margin_mode = 'cross'
+                 AND status = 'opened' AND entry_price IS NOT NULL"#,
         )
         .bind(position.user_id)
         .bind(position.margin_asset)
+        .fetch_one(&mut *tx)
+        .await?;
+        crate::numeric::ensure_amount_storage(&total_interest, "cross margin accrued interest")?;
+        let account_update = sqlx::query(
+            r#"UPDATE margin_cross_accounts
+               SET last_interest_amount = ?,
+                   version = version + 1
+               WHERE user_id = ? AND margin_asset = ? AND version = ?"#,
+        )
+        .bind(&total_interest)
         .bind(position.user_id)
         .bind(position.margin_asset)
         .bind(account.version)
@@ -301,7 +288,7 @@ async fn accrue_position_interest(
     Ok(MarginInterestOutcome::Accrued)
 }
 
-/// 对目标仓位加 FOR UPDATE 行锁并读出该笔借款固化的小时利率，是计提事务里唯一的一把锁。
+/// 对目标仓位加 FOR UPDATE 行锁并复核候选账户归属；利率和余数由后续共享适配器在同一锁下读取。
 /// 只按主键定位、不带状态条件，因此已平仓的仓位也能被读到，状态判定交给调用方处理。
 /// 加锁把余额、上次计息点和状态固定在同一版本上，防止与并发的平仓或强平交叉写入。
 /// 利率取仓位在借款开始时写入的快照，不再联产品表：管理员改配只影响之后新开的仓位，
@@ -313,9 +300,7 @@ async fn lock_position(
 ) -> AppResult<Option<LockedMarginPosition>> {
     sqlx::query_as::<_, LockedMarginPosition>(
         r#"SELECT positions.id, positions.user_id, positions.margin_asset, positions.margin_mode,
-                  positions.borrowed_amount, positions.interest_amount,
-                  positions.interest_accrued_at, positions.opened_at, positions.entry_price, positions.status,
-                  positions.hourly_interest_rate
+                  positions.borrowed_amount, positions.entry_price, positions.status
            FROM margin_positions positions
            WHERE positions.id = ?
            LIMIT 1
@@ -325,48 +310,6 @@ async fn lock_position(
     .fetch_optional(&mut **tx)
     .await
     .map_err(AppError::from)
-}
-
-/// 按单利公式计算本次应累加的利息：借款额乘小时利率再乘完整小时数，结果归一到十八位小数。
-/// 不做复利，也不把已计提利息计入基数，因此长期持仓的利息随时间线性增长而非指数增长。
-/// 三个乘数都非负，结果必然非负；十八位截断意味着极小的借款乘极低利率可能算出零，
-/// 调用方会把零增量当作跳过处理，不写入也不推进计息时间戳，零头留到下次累积。
-fn margin_interest_delta(
-    borrowed_amount: &BigDecimal,
-    hourly_interest_rate: &BigDecimal,
-    elapsed_hours: u64,
-) -> BigDecimal {
-    (borrowed_amount.clone() * hourly_interest_rate.clone() * BigDecimal::from(elapsed_hours))
-        .with_scale(18)
-}
-
-/// 计算从上次计息点到当前时刻之间的完整小时数，不足一小时的部分一律舍去，只向下取整。
-/// 当前时刻不晚于起点时直接返回零，这样时钟回拨或起点位于未来都不会算出负数或异常大的小时数。
-/// 舍去零头意味着用户不会被预收未满一小时的利息；零头由 `billed_window_end` 顺延到下次计提，不会丢失。
-/// 本函数只做时间差换算，不读数据库、不改仓位，也不决定计息时间戳如何推进。
-fn full_elapsed_hours(from: DateTime<Utc>, now: DateTime<Utc>) -> u64 {
-    if now <= from {
-        return 0;
-    }
-    (now - from).num_hours().max(0) as u64
-}
-
-/// 单次计提窗口允许推进的最大小时数，约合 114 年，用于兜住损坏时间戳造成的极端跨度。
-/// 取值远大于任何真实持仓寿命，只作为防 panic 的上界，不影响正常计息。
-const MAX_BILLED_WINDOW_HOURS: i64 = 1_000_000;
-
-/// 计算本次计息窗口的结束时刻：上次计息点加上已计费的完整小时数，而不是当前时刻。
-/// 若把 `interest_accrued_at` 直接写成 now，不足一小时的零头会被永久丢掉，因为下个窗口会从 now 重新起算，
-/// 长期看每一轮都少收最多 59 分钟，累计误差随调用次数线性放大。
-/// 返回「起点 + 整小时」把零头顺延到下一次计提，使多轮累计计费小时数与真实经过时长完全一致。
-/// 结果不可能晚于当前时刻，因此时间戳只会落后或持平，绝不提前预收未满一小时的利息。
-fn billed_window_end(accrued_from: DateTime<Utc>, elapsed_hours: u64) -> DateTime<Utc> {
-    let hours = i64::try_from(elapsed_hours)
-        .unwrap_or(MAX_BILLED_WINDOW_HOURS)
-        .min(MAX_BILLED_WINDOW_HOURS);
-    accrued_from
-        .checked_add_signed(chrono::TimeDelta::hours(hours))
-        .unwrap_or(accrued_from)
 }
 
 /// 把单轮成功计提数上限夹到 1 到 100，即便配置传入零或极大值也保证每轮至少推进一笔、至多一百笔。
@@ -394,11 +337,20 @@ fn env_bool(key: &str, default: bool) -> bool {
 }
 
 /// 读取无符号 64 位整型环境变量，用于计提周期秒数，负值和非数字都会解析失败并回落默认。
-/// 这里不做范围约束，过小的周期由运行循环用 `max(1)` 兜底为至少一秒。
+/// 超出有符号时长或单调时钟范围的配置回落默认；零值仍由运行循环兼容为至少一秒。
 fn env_u64(key: &str, default: u64) -> u64 {
     env::var(key)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| {
+            i64::try_from(*seconds)
+                .ok()
+                .and_then(chrono::TimeDelta::try_seconds)
+                .is_some()
+                && std::time::Instant::now()
+                    .checked_add(Duration::from_secs(*seconds))
+                    .is_some()
+        })
         .unwrap_or(default)
 }
 

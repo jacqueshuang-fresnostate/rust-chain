@@ -1,4 +1,4 @@
-import { canonicalDecimalText, compareDecimalText, decimalFitsPrecision, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../../shared/decimal';
+import { compareDecimalText, decimalFitsPrecision, decimalFitsStorage, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../../shared/decimal';
 import type { DefaultMarketDraft, DefaultMarketResponse } from './types';
 
 export function defaultMarketDraft(value: DefaultMarketResponse): DefaultMarketDraft {
@@ -29,9 +29,8 @@ export function defaultMarketPayload(draft: DefaultMarketDraft, version: number)
 }
 
 function exact(value: string, precision: number, positive: boolean): boolean {
-  const normalized = canonicalDecimalText(value);
-  return normalized !== null && (positive ? isPositiveDecimalText(value) : isNonNegativeDecimalText(value))
-    && normalized.split('.')[0].replace('-', '').length <= 20 && decimalFitsPrecision(value, precision);
+  return decimalFitsStorage(value) && (positive ? isPositiveDecimalText(value) : isNonNegativeDecimalText(value))
+    && decimalFitsPrecision(value, precision);
 }
 
 export function validateDefaultMarketDraft(draft: DefaultMarketDraft, pricePrecision: number, qtyPrecision: number): string {

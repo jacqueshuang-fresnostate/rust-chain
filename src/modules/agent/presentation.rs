@@ -80,6 +80,40 @@ pub(crate) struct AgentUserMarginPositionsResponse {
     pub(crate) total: i64,
 }
 
+/// 杠杆委托及历史订单与仓位共用持久化记录，但未成交委托只在订单列表出现。
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentUserMarginOrdersResponse {
+    pub(crate) orders: Vec<AgentUserMarginPositionResponse>,
+    pub(crate) total: i64,
+}
+
+/// 团队用户现货订单分页，只读落库委托及累计成交数量。
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentUserSpotOrdersResponse {
+    pub(crate) orders: Vec<AgentUserSpotOrderResponse>,
+    pub(crate) total: i64,
+}
+
+/// 现货委托快照保留可空市价/触发价，不读取盘口或推算成交价格。
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct AgentUserSpotOrderResponse {
+    pub(crate) id: u64,
+    pub(crate) user_id: u64,
+    pub(crate) pair_id: u64,
+    pub(crate) symbol: String,
+    pub(crate) side: String,
+    pub(crate) order_type: String,
+    pub(crate) price: Option<BigDecimal>,
+    pub(crate) trigger_price: Option<BigDecimal>,
+    pub(crate) quantity: BigDecimal,
+    pub(crate) filled_quantity: BigDecimal,
+    pub(crate) status: String,
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
 /// 代理端只读杠杆仓位快照，不包含任何需要行情回填才能计算的派生值。
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub(crate) struct AgentUserMarginPositionResponse {
@@ -153,6 +187,14 @@ pub(crate) struct AgentListQuery {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentUserMarginPositionsQuery {
+    pub(crate) status: Option<String>,
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+/// 订单分页仅接受状态与分页参数；代理范围不由请求提供。
+#[derive(Debug, Deserialize)]
+pub(crate) struct AgentUserOrdersQuery {
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,

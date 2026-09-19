@@ -71,6 +71,7 @@ pub enum NewCoinDomainError {
     PostListingPurchaseDisabled,
     NonPositiveUnlockAmount,
     NonPositiveRelativePeriod,
+    RelativePeriodOutOfRange,
     NegativeUnlockFeeRate,
     NegativeUnlockPrice,
     NegativePurchaseCost,
@@ -335,10 +336,14 @@ pub fn apply_unlock_rule(
             let lock_sources = sources
                 .into_iter()
                 .map(|source| {
-                    let unlock_at = source.source_time + Duration::seconds(*seconds_after_source);
-                    to_lock_source(source, unlock_at)
+                    let unlock_at = Duration::try_seconds(*seconds_after_source)
+                        .and_then(|duration| source.source_time.checked_add_signed(duration))
+                        .ok_or(NewCoinDomainError::RelativePeriodOutOfRange)?;
+                    crate::time::ensure_timestamp_storage(&unlock_at, "new coin unlock_at")
+                        .map_err(|_| NewCoinDomainError::RelativePeriodOutOfRange)?;
+                    Ok(to_lock_source(source, unlock_at))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, NewCoinDomainError>>()?;
             let user_id = lock_sources[0].user_id.clone();
             let asset_id = lock_sources[0].asset_id.clone();
             let wallet_sources = to_wallet_sources(lock_sources);

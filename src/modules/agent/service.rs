@@ -141,15 +141,15 @@ pub(crate) fn normalized_agent_margin_position_status(
 }
 
 /// 归一化代理端秒合约状态筛选，缺省或空白表示全部状态并显式包含 `opened`。
-/// 仅允许 `opened | settled | manual_review`，因此进行中订单不会被默认终态筛选隐藏。
+/// 仅允许 `opened | settled | manual_review | refunded`，退款终态不会被误写为胜负。
 /// 校验为纯函数，失败时无数据库、结算、钱包或行情副作用。
 pub(crate) fn normalized_agent_seconds_order_status(
     value: Option<String>,
 ) -> AppResult<Option<String>> {
     normalize_agent_financial_status(
         value,
-        &["opened", "settled", "manual_review"],
-        "seconds contract order status must be opened, settled, or manual_review",
+        &["opened", "settled", "manual_review", "refunded"],
+        "seconds contract order status must be opened, settled, manual_review, or refunded",
     )
 }
 
@@ -170,6 +170,37 @@ fn normalize_agent_financial_status(
     } else {
         Err(AppError::Validation(error_message.to_owned()))
     }
+}
+
+/// 杠杆订单额外允许 pending，表示 opened 且尚无 entry_price 的未成交委托。
+/// 其他状态保持仓位存储枚举；筛选含义由只读查询收敛，不写入新的订单状态。
+pub(crate) fn normalized_agent_margin_order_status(
+    value: Option<String>,
+) -> AppResult<Option<String>> {
+    normalize_agent_financial_status(
+        value,
+        &["pending", "opened", "closed", "canceled", "liquidated"],
+        "margin order status must be pending, opened, closed, canceled, or liquidated",
+    )
+}
+
+/// 现货订单只接受现有交易状态，空值表示包含进行中和历史订单。
+/// 参数校验在查库前完成，不复用带撮合副作用的用户交易查询。
+pub(crate) fn normalized_agent_spot_order_status(
+    value: Option<String>,
+) -> AppResult<Option<String>> {
+    normalize_agent_financial_status(
+        value,
+        &[
+            "pending",
+            "open",
+            "partially_filled",
+            "filled",
+            "cancelled",
+            "rejected",
+        ],
+        "spot order status must be pending, open, partially_filled, filled, cancelled, or rejected",
+    )
 }
 
 /// 将 SQL 聚合记录映射为代理兑换统计，计数字段无法转为整数时返回内部错误。

@@ -1,0 +1,20 @@
+CREATE TABLE agent_commission_reversals (
+    commission_id BIGINT UNSIGNED PRIMARY KEY,
+    admin_id BIGINT UNSIGNED NOT NULL,
+    idempotency_key VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    payout_ledger_id BIGINT UNSIGNED NOT NULL,
+    agent_user_id BIGINT UNSIGNED NOT NULL,
+    asset_id BIGINT UNSIGNED NOT NULL,
+    amount DECIMAL(38,18) NOT NULL,
+    original_commission JSON NOT NULL,
+    reason VARCHAR(512) NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_commission_reversal_request (admin_id, idempotency_key),
+    UNIQUE KEY uk_commission_reversal_payout (payout_ledger_id),
+    CONSTRAINT chk_commission_reversal_amount CHECK (amount > 0),
+    CONSTRAINT fk_commission_reversal_record FOREIGN KEY (commission_id) REFERENCES agent_commission_records(id),
+    CONSTRAINT fk_commission_reversal_admin FOREIGN KEY (admin_id) REFERENCES admin_users(id),
+    CONSTRAINT fk_commission_reversal_ledger FOREIGN KEY (payout_ledger_id) REFERENCES wallet_ledger(id),
+    CONSTRAINT fk_commission_reversal_user FOREIGN KEY (agent_user_id) REFERENCES users(id),
+    CONSTRAINT fk_commission_reversal_asset FOREIGN KEY (asset_id) REFERENCES assets(id)
+);

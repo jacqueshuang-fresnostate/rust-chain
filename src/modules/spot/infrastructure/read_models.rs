@@ -49,9 +49,9 @@ where
 {
     rows.push(order_by);
     rows.push(" LIMIT ");
-    rows.push_bind(limit as i64);
+    rows.push_bind(i64::from(limit));
     rows.push(" OFFSET ");
-    rows.push_bind(offset as i64);
+    rows.push_bind(i64::from(offset));
 
     let items = rows.build_query_as::<T>().fetch_all(pool).await?;
     let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
@@ -88,6 +88,8 @@ pub(super) struct SpotOrderQueryRow {
     order_type: String,
     price: Option<BigDecimal>,
     trigger_price: Option<BigDecimal>,
+    trigger_direction: Option<crate::modules::spot::TriggerDirection>,
+    triggered_at: Option<chrono::DateTime<chrono::Utc>>,
     quantity: BigDecimal,
     filled_quantity: BigDecimal,
     average_price: Option<BigDecimal>,
@@ -147,28 +149,59 @@ impl MySqlSpotRepository {
         })?;
 
         let (_id, symbol, price_precision, quantity_precision, min_order_value, status) = row;
+        if !(0..=18).contains(&price_precision) || !(0..=18).contains(&quantity_precision) {
+            return Err(crate::modules::spot::SpotServiceError::Repository(
+                "invalid trading pair precision".to_owned(),
+            ));
+        }
         Ok(crate::modules::spot::TradingPairRule {
             pair_id: symbol,
-            price_precision: price_precision as u32,
-            quantity_precision: quantity_precision as u32,
+            price_precision: u32::try_from(price_precision).expect("validated precision"),
+            quantity_precision: u32::try_from(quantity_precision).expect("validated precision"),
             min_order_value,
             enabled: status == "active",
         })
     }
 
-    /// 通过仓储接口写入现货订单实体；唯一请求标识冲突必须返回错误供上层幂等处理。
-    /// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
+    /// 兼容仓储写入先锁定资产配置并验证源数量与价格；该短事务仅插订单，不冻结资金。
+    /// 金融建单必须使用应用层的订单、预留和钱包同事务入口，不能由本接口替代。
     pub async fn insert_order_async(
         &self,
         new_order: NewOrder,
         idempotency_key: Option<&str>,
     ) -> Result<SpotOrder, crate::modules::spot::SpotServiceError> {
+        let symbol = self.load_pair_rule_async(&new_order.pair_id).await?.pair_id;
+        let mut tx = self.pool.begin().await.map_err(map_spot_sqlx_error)?;
+        let assets = super::trade_settlement::pair_assets_in_tx(&mut tx, &symbol)
+            .await
+            .map_err(|error| {
+                crate::modules::spot::SpotServiceError::Repository(error.to_string())
+            })?;
+        assets
+            .ensure_quantity(&new_order.quantity)
+            .map_err(|error| {
+                crate::modules::spot::SpotServiceError::Repository(error.to_string())
+            })?;
+        for price in [&new_order.price, &new_order.trigger_price]
+            .into_iter()
+            .flatten()
+        {
+            assets
+                .ensure_fill(price, &new_order.quantity)
+                .map_err(|error| {
+                    crate::modules::spot::SpotServiceError::Repository(error.to_string())
+                })?;
+        }
+        crate::numeric::ensure_amount_storage(&new_order.filled_quantity, "filled_quantity")
+            .map_err(|error| {
+                crate::modules::spot::SpotServiceError::Repository(error.to_string())
+            })?;
         let user_id = parse_spot_u64_identifier("user_id", &new_order.user_id)?;
         let pair_db_id = resolve_pair_id(&self.pool, &new_order.pair_id).await?;
         let result = sqlx::query(
             r#"INSERT INTO spot_orders
-               (user_id, pair_id, side, order_type, price, trigger_price, quantity, filled_quantity, status, idempotency_key)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (user_id, pair_id, side, order_type, price, trigger_price, quantity, filled_quantity, status, idempotency_key, trigger_direction, triggered_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
         )
         .bind(user_id)
@@ -181,9 +214,12 @@ impl MySqlSpotRepository {
         .bind(&new_order.filled_quantity)
         .bind(order_status_as_str(new_order.status))
         .bind(idempotency_key)
-        .execute(&self.pool)
+        .bind(new_order.trigger_direction.map(|value| value.as_str()))
+        .bind(new_order.triggered_at)
+        .execute(&mut *tx)
         .await
         .map_err(map_spot_sqlx_error)?;
+        tx.commit().await.map_err(map_spot_sqlx_error)?;
         self.load_order_async(&result.last_insert_id().to_string())
             .await
     }
@@ -207,10 +243,13 @@ impl MySqlSpotRepository {
                 BigDecimal,
                 BigDecimal,
                 String,
+                Option<crate::modules::spot::TriggerDirection>,
+                Option<chrono::DateTime<chrono::Utc>>,
             ),
         >(
             r#"SELECT orders.id, orders.user_id, pairs.symbol, orders.side, orders.order_type,
-                      orders.price, orders.trigger_price, orders.quantity, orders.filled_quantity, orders.status
+                      orders.price, orders.trigger_price, orders.quantity, orders.filled_quantity, orders.status,
+                      orders.trigger_direction, orders.triggered_at
                FROM spot_orders orders
                INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
                WHERE orders.id = ?
@@ -232,6 +271,8 @@ impl MySqlSpotRepository {
             order_type: parse_order_type(&row.4),
             price: row.5,
             trigger_price: row.6,
+            trigger_direction: row.10,
+            triggered_at: row.11,
             quantity: row.7,
             filled_quantity: row.8,
             status: parse_order_status(&row.9),
@@ -244,6 +285,19 @@ impl MySqlSpotRepository {
         &self,
         order: SpotOrder,
     ) -> Result<(), crate::modules::spot::SpotServiceError> {
+        for value in [
+            Some(&order.quantity),
+            Some(&order.filled_quantity),
+            order.price.as_ref(),
+            order.trigger_price.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            crate::numeric::ensure_amount_storage(value, "spot order value").map_err(|error| {
+                crate::modules::spot::SpotServiceError::Repository(error.to_string())
+            })?;
+        }
         let order_db_id = order.id.parse::<u64>().map_err(|_| {
             crate::modules::spot::SpotServiceError::Repository("invalid spot order id".to_string())
         })?;
@@ -269,12 +323,23 @@ impl MySqlSpotRepository {
         Ok(())
     }
 
-    /// 写入现货逐笔成交记录；幂等键确保同一撮合结果不会重复落库。
-    /// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
+    /// 兼容仓储只保存成交事实，在资产配置共享锁内校验源价格、数量和费用存储容量。
+    /// 不触碰钱包或生成对手腿；实际结算必须走应用层完整资金事务与幂等入口。
     pub async fn insert_trade_async(
         &self,
         trade: NewSpotTrade,
     ) -> Result<SpotTrade, crate::modules::spot::SpotServiceError> {
+        let symbol = self.load_pair_rule_async(&trade.pair_id).await?.pair_id;
+        let mut tx = self.pool.begin().await.map_err(map_spot_sqlx_error)?;
+        super::trade_settlement::pair_assets_in_tx(&mut tx, &symbol)
+            .await
+            .and_then(|assets| assets.ensure_fill(&trade.price, &trade.quantity))
+            .map_err(|error| {
+                crate::modules::spot::SpotServiceError::Repository(error.to_string())
+            })?;
+        crate::numeric::ensure_amount_storage(&trade.fee, "spot trade fee").map_err(|error| {
+            crate::modules::spot::SpotServiceError::Repository(error.to_string())
+        })?;
         let pair_db_id = resolve_pair_id(&self.pool, &trade.pair_id).await?;
         let buy_order_id = parse_spot_u64_identifier("buy_order_id", &trade.buy_order_id)?;
         let sell_order_id = parse_spot_u64_identifier("sell_order_id", &trade.sell_order_id)?;
@@ -289,9 +354,10 @@ impl MySqlSpotRepository {
         .bind(&trade.price)
         .bind(&trade.quantity)
         .bind(&trade.fee)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_spot_sqlx_error)?;
+        tx.commit().await.map_err(map_spot_sqlx_error)?;
         load_trade_by_id_async(&self.pool, result.last_insert_id()).await
     }
 
@@ -495,7 +561,8 @@ pub(super) fn base_spot_orders_query(
 ) -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(format!(
         r#"SELECT orders.id, orders.user_id, users.email AS user_email, pairs.symbol AS pair_id, orders.side,
-                  orders.order_type, orders.price, orders.trigger_price, orders.quantity, orders.filled_quantity,
+                  orders.order_type, orders.price, orders.trigger_price, orders.trigger_direction, orders.triggered_at,
+                  orders.quantity, orders.filled_quantity,
                   orders.status, orders.created_at,
                   {} AS average_price
            FROM spot_orders orders
@@ -630,6 +697,8 @@ impl From<SpotOrderQueryRow> for SpotOrderResponse {
             order_type: parse_order_type(&order.order_type),
             price: order.price,
             trigger_price: order.trigger_price,
+            trigger_direction: order.trigger_direction,
+            triggered_at: order.triggered_at,
             quantity: order.quantity,
             filled_quantity: order.filled_quantity,
             average_price: order.average_price,

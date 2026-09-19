@@ -1,6 +1,7 @@
 import { apiRequest, ContractError } from './client';
 import type { ApiRecord } from './types';
-import { canonicalDecimalText } from '../shared/decimal';
+import { decimalFitsStorage } from '../shared/decimal';
+import { assertSafeJsonNumbers, requiredSafeInteger } from '../shared/integer';
 
 export type AdminResourceFilters = Record<string, string | number | boolean | null | undefined>;
 
@@ -25,7 +26,9 @@ function appendQuery(endpoint: string, filters: AdminResourceFilters) {
       return;
     }
 
-    params.set(key, String(value));
+    params.set(key, ['limit', 'offset'].includes(key)
+      ? String(requiredSafeInteger(value, key, key === 'limit' ? 1 : 0, 4_294_967_295))
+      : String(value));
   });
 
   const query = params.toString();
@@ -41,6 +44,9 @@ function isApiRecordArray(value: unknown): value is ApiRecord[] {
 }
 
 function validateRows(rows: ApiRecord[], endpoint: string, contract: AdminResourceRowContract | undefined): void {
+  assertSafeJsonNumbers(rows, () => {
+    throw new ContractError(`接口 ${endpoint} 包含非有限数或不安全整数`, { path: endpoint });
+  });
   if (!contract) return;
   rows.forEach((row, index) => {
     contract.requiredFields?.forEach((field) => {
@@ -51,7 +57,8 @@ function validateRows(rows: ApiRecord[], endpoint: string, contract: AdminResour
     contract.decimalFields?.forEach((field) => {
       const value = row[field];
       if (value === null || value === undefined) return;
-      if (typeof value !== 'string' || canonicalDecimalText(value) === null) {
+      // Read-side SQL sums may exceed the per-row storage envelope.
+      if (!decimalFitsStorage(value, 65, 18)) {
         throw new ContractError(`接口 ${endpoint} 的第 ${index + 1} 行字段 ${field} 必须是 Decimal text`, { path: endpoint });
       }
     });

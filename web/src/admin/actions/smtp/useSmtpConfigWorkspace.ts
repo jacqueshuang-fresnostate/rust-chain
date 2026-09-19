@@ -3,6 +3,7 @@ import { Toast } from '@douyinfe/semi-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
+import { requiredSafeInteger } from '../../../shared/integer';
 import {
   createDefaultConfigForm,
   createNewConfigForm,
@@ -150,7 +151,7 @@ export function useSmtpConfigWorkspace() {
     const body = {
       recipient: testRecipient.trim(),
       reason,
-      ...(testConfigChoice === 'strategy' ? {} : { config_id: Number(testConfigChoice) })
+      ...(testConfigChoice === 'strategy' ? {} : { config_id: requiredSafeInteger(testConfigChoice, 'SMTP 配置 ID', 1) })
     };
     const response = await apiRequest<{
       config_id: number;

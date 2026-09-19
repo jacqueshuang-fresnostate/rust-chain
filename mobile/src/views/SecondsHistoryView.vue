@@ -7,6 +7,8 @@ import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchSecondsOrdersPage, type SecondsOrder } from '@/api/seconds'
 import { formatAmount, formatPrice } from '@/core/format'
+import { decimalSign } from '@/core/decimal'
+import { normalizeTimestamp } from '@/core/numeric'
 import { goBackOr } from '@/core/navigation'
 import {
   createSecondsHistoryPaginationController,
@@ -127,9 +129,9 @@ function orderProfitLossTitle(order: SecondsOrder): string {
 
 function orderProfitLossAmount(order: SecondsOrder): string {
   const presentation = secondsOrderProfitLossPresentation(order)
-  if (presentation.amount === undefined) return '--'
-  const sign = presentation.amount > 0 ? '+' : ''
-  return `${sign}${formatAmount(presentation.amount)} ${order.stakeAssetSymbol}`
+  if (!presentation.amountText) return '--'
+  const sign = decimalSign(presentation.amountText) > 0 ? '+' : ''
+  return `${sign}${formatAmount(presentation.amountText)} ${order.stakeAssetSymbol}`
 }
 
 function orderProfitLossTone(order: SecondsOrder): string {
@@ -137,9 +139,9 @@ function orderProfitLossTone(order: SecondsOrder): string {
 }
 
 function formatHistoryTime(value: unknown): string {
-  const timestamp = Number(value)
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return '--'
-  const normalized = timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
+  let normalized: number
+  try { normalized = normalizeTimestamp(value) } catch { return '--' }
+  if (!normalized) return '--'
   const parts = new Intl.DateTimeFormat(currentIntlLocale(), {
     month: '2-digit',
     day: '2-digit',
@@ -287,22 +289,22 @@ onBeforeUnmount(() => {
             <footer class="seconds-history-order__summary">
               <span class="seconds-history-order__summary-item">
                 <span>{{ t('seconds.historyStake') }}</span>
-                <strong :title="`${formatAmount(order.stakeAmount)} ${order.stakeAssetSymbol}`">
-                  {{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }}
+                <strong :title="`${formatAmount(order.stakeAmountText)} ${order.stakeAssetSymbol}`">
+                  {{ formatAmount(order.stakeAmountText) }} {{ order.stakeAssetSymbol }}
                 </strong>
               </span>
               <i aria-hidden="true">·</i>
               <span class="seconds-history-order__summary-item">
                 <span>{{ t('seconds.historyEntryPrice') }}</span>
-                <strong :title="order.entryPrice !== undefined ? formatPrice(order.entryPrice) : '--'">
-                  {{ order.entryPrice !== undefined ? formatPrice(order.entryPrice) : '--' }}
+                <strong :title="order.entryPriceText ? formatPrice(order.entryPriceText) : '--'">
+                  {{ order.entryPriceText ? formatPrice(order.entryPriceText) : '--' }}
                 </strong>
               </span>
               <i aria-hidden="true">·</i>
               <span class="seconds-history-order__summary-item">
                 <span>{{ t('seconds.historySettlementPrice') }}</span>
-                <strong :title="order.settlementPrice !== undefined ? formatPrice(order.settlementPrice) : '--'">
-                  {{ order.settlementPrice !== undefined ? formatPrice(order.settlementPrice) : '--' }}
+                <strong :title="order.settlementPriceText ? formatPrice(order.settlementPriceText) : '--'">
+                  {{ order.settlementPriceText ? formatPrice(order.settlementPriceText) : '--' }}
                 </strong>
               </span>
             </footer>

@@ -6,17 +6,8 @@
 use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use sqlx::types::Json as SqlxJson;
-
-/// 保留 JSON 字段的“缺省”与“显式 null”差异，供二选一请求在应用层严格校验载荷形状。
-fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
-}
 
 /// margin 列表查询参数。
 #[derive(Debug, Deserialize)]
@@ -81,10 +72,20 @@ pub(crate) struct OpenMarginPositionRequest {
     pub(crate) direction: String,
     // 缺省为 market 以兼容历史 PC 调用；limit 必须同时携带正数 price。
     pub(crate) order_type: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) price: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) trigger_price: Option<BigDecimal>,
     pub(crate) margin_mode: Option<String>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) margin_amount: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) leverage: BigDecimal,
     pub(crate) idempotency_key: String,
 }
@@ -100,6 +101,7 @@ pub(crate) struct TransferMarginFundsRequest {
     pub(crate) asset_symbol: Option<String>,
     pub(crate) from: String,
     pub(crate) to: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
     pub(crate) idempotency_key: String,
 }
@@ -107,13 +109,22 @@ pub(crate) struct TransferMarginFundsRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateUserLeverageRequest {
     /// 历史单倍数字段；出现时方向字段必须全部缺省。
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_patch_decimal"
+    )]
     pub(crate) leverage: Option<Option<BigDecimal>>,
     /// 做多默认倍数；新格式中必须与 `short_leverage` 成对出现且非 null。
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_patch_decimal"
+    )]
     pub(crate) long_leverage: Option<Option<BigDecimal>>,
     /// 做空默认倍数；新格式中必须与 `long_leverage` 成对出现且非 null。
-    #[serde(default, deserialize_with = "double_option")]
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_patch_decimal"
+    )]
     pub(crate) short_leverage: Option<Option<BigDecimal>>,
 }
 
@@ -129,11 +140,26 @@ pub(crate) struct CreateMarginProductRequest {
     pub(crate) logo_url: Option<String>,
     pub(crate) margin_mode: Option<String>,
     pub(crate) margin_modes: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimals"
+    )]
     pub(crate) leverage_levels: Option<Vec<BigDecimal>>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) max_leverage: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_margin: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_margin: Option<BigDecimal>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) maintenance_margin_rate: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) hourly_interest_rate: Option<BigDecimal>,
     pub(crate) status: Option<String>,
     pub(crate) reason: Option<String>,
@@ -146,11 +172,26 @@ pub(crate) struct UpdateMarginProductRequest {
     pub(crate) logo_url: Option<String>,
     pub(crate) margin_mode: Option<String>,
     pub(crate) margin_modes: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimals"
+    )]
     pub(crate) leverage_levels: Option<Vec<BigDecimal>>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) max_leverage: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_margin: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_margin: Option<BigDecimal>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) maintenance_margin_rate: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) hourly_interest_rate: Option<BigDecimal>,
     pub(crate) status: String,
     pub(crate) reason: Option<String>,

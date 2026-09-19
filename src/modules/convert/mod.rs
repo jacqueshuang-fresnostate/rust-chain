@@ -5,6 +5,8 @@
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
+pub(crate) mod inventory;
+mod journal;
 pub mod presentation;
 pub mod repository;
 pub mod service;

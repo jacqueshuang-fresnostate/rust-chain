@@ -128,14 +128,15 @@ pub(crate) async fn ensure_admin_user_exists_in_tx(
     Ok(())
 }
 
-/// 在调用方事务中按用户 ID 仅覆盖账户状态。
+/// 在调用方事务中覆盖账户状态；停用同时递增会话代际，重新启用不恢复旧凭证。
 /// 更新不检查受影响行数或撤销会话；调用方须先锁定用户、校验目标状态，并与后台审计统一提交。
 pub(crate) async fn update_admin_user_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     status: &str,
 ) -> AppResult<()> {
-    sqlx::query("UPDATE users SET status = ? WHERE id = ?")
+    sqlx::query("UPDATE users SET auth_session_version = auth_session_version + IF(? <> 'active', 1, 0), status = ? WHERE id = ?")
+        .bind(status)
         .bind(status)
         .bind(user_id)
         .execute(&mut **tx)

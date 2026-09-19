@@ -77,6 +77,26 @@ async fn openapi_json() -> Value {
     request_json("/openapi.json").await
 }
 
+#[tokio::test]
+async fn openapi_documents_loan_exposure_policy_in_both_aliases() {
+    for path in ["/openapi.json", "/api/openapi.json"] {
+        let document = request_json(path).await;
+        assert!(operation_has_bearer_security(
+            &document,
+            "/admin/api/v1/loan/products",
+            "post"
+        ));
+        let schemas = document["components"]["schemas"].as_object().unwrap();
+        let policy = &schemas["LoanPrincipalExposurePolicy"]["properties"];
+        assert!(policy.get("user_principal_limit").is_some());
+        assert!(policy.get("product_principal_capacity").is_some());
+        assert_eq!(policy["deny_borrowing_while_overdue"]["default"], false);
+        let response = schemas["LoanProductResponse"].to_string();
+        assert!(response.contains("reserved_principal"));
+        assert!(response.contains("outstanding_principal"));
+    }
+}
+
 fn operation_has_bearer_security(openapi: &Value, path: &str, method: &str) -> bool {
     openapi["paths"][path][method]["security"]
         .as_array()
@@ -524,6 +544,14 @@ async fn openapi_json_documents_agent_portal_contract() {
         ("/agent/api/v1/users", ["get"].as_slice()),
         ("/agent/api/v1/users/{user_id}/assets", ["get"].as_slice()),
         (
+            "/agent/api/v1/users/{user_id}/margin-orders",
+            ["get"].as_slice(),
+        ),
+        (
+            "/agent/api/v1/users/{user_id}/spot-orders",
+            ["get"].as_slice(),
+        ),
+        (
             "/agent/api/v1/users/{user_id}/margin-positions",
             ["get"].as_slice(),
         ),
@@ -562,6 +590,9 @@ async fn openapi_json_documents_agent_portal_contract() {
         "AgentUserAssetsResponse",
         "AgentUserMarginPositionResponse",
         "AgentUserMarginPositionsResponse",
+        "AgentUserMarginOrdersResponse",
+        "AgentUserSpotOrderResponse",
+        "AgentUserSpotOrdersResponse",
         "AgentUserSecondsContractOrderResponse",
         "AgentUserSecondsContractOrdersResponse",
         "CreateAgentInviteCodeRequest",
@@ -724,6 +755,23 @@ async fn openapi_json_documents_agent_portal_contract() {
 
     let seconds_properties =
         &openapi["components"]["schemas"]["AgentUserSecondsContractOrderResponse"]["properties"];
+    let spot_properties =
+        &openapi["components"]["schemas"]["AgentUserSpotOrderResponse"]["properties"];
+    for field in ["price", "trigger_price", "quantity", "filled_quantity"] {
+        assert!(schema_has_type(&spot_properties[field], "string"));
+    }
+    for field in ["created_at", "updated_at"] {
+        assert!(schema_is_unix_millis(&spot_properties[field]));
+    }
+    for schema in [
+        "AgentUserMarginOrdersResponse",
+        "AgentUserSpotOrdersResponse",
+    ] {
+        assert_eq!(
+            openapi["components"]["schemas"][schema]["properties"]["total"]["minimum"],
+            0
+        );
+    }
     for decimal_field in [
         "stake_amount",
         "payout_rate",
@@ -759,6 +807,10 @@ async fn openapi_json_documents_agent_portal_contract() {
 
     for (schema_name, required_fields) in [
         ("AgentUserAssetResponse", ["logo_url"].as_slice()),
+        (
+            "AgentUserSpotOrderResponse",
+            ["price", "trigger_price"].as_slice(),
+        ),
         (
             "AgentUserMarginPositionResponse",
             [

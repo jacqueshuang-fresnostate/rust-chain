@@ -131,6 +131,7 @@ pub(crate) fn validate_agent_commission_rule_status(value: &str) -> AppResult<St
 /// 校验代理佣金率处于闭区间 0..=1；不在此处执行金额计算或资产精度截断。
 /// 费率以小数而非百分数表达，因此 1 代表全额返佣、0 代表不返佣，两个端点均视为合法配置。
 pub(crate) fn validate_agent_commission_rate(value: &BigDecimal) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(value, 18, 8, "commission_rate")?;
     if value < &BigDecimal::from(0) || value > &BigDecimal::from(1) {
         return Err(AppError::Validation(
             "commission_rate must be between 0 and 1".to_owned(),
@@ -149,11 +150,28 @@ pub(crate) fn agent_commission_audit_json(commission: &AdminAgentCommissionRespo
         "source_type": commission.source_type,
         "source_id": commission.source_id,
         "source_amount": commission.source_amount,
+        "payout_asset_id": commission.payout_asset_id,
         "commission_rate": commission.commission_rate,
         "commission_amount": commission.commission_amount,
         "status": commission.status,
         "created_at": commission.created_at.timestamp_millis(),
     })
+}
+
+/// 冲正幂等键按原字节保存，只接受 1 至 128 位 ASCII 字母、数字、连字符、下划线和冒号。
+/// 不截断或大小写折叠，防止不同请求在数据库键上被意外合并；审计原因独立使用必填原因规则。
+pub(crate) fn validate_commission_reversal_key(key: &str) -> AppResult<()> {
+    if key.is_empty()
+        || key.len() > 128
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_:".contains(&byte))
+    {
+        return Err(AppError::Validation(
+            "invalid commission reversal idempotency_key".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 将代理佣金规则的代理、产品类型、费率、状态和时间戳映射为审计快照。

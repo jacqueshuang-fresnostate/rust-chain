@@ -24,6 +24,8 @@ use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "margin/numeric.rs"]
+mod numeric;
 mod support;
 
 const INVALID_USER_LEVERAGE_PAYLOADS: [&str; 11] = [
@@ -465,14 +467,17 @@ async fn margin_open_requires_fresh_ticker_before_wallet_or_position_mutation()
 }
 
 #[tokio::test]
-async fn margin_directional_leverage_rejects_invalid_shapes_before_mysql()
+async fn margin_directional_leverage_rejects_invalid_shapes_without_setting_write()
 -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
     let settings = test_settings();
-    let token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
-    let unreachable_pool = MySqlPoolOptions::new()
-        .acquire_timeout(Duration::from_millis(25))
-        .connect_lazy("mysql://test:test@127.0.0.1:9/unreachable")?;
-    let app = user_routes().with_state(AppState::new(settings).with_mysql(unreachable_pool));
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    tx.commit().await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     for invalid_body in INVALID_USER_LEVERAGE_PAYLOADS {
         let rejected = app
@@ -496,6 +501,12 @@ async fn margin_directional_leverage_rejects_invalid_shapes_before_mysql()
         );
         assert_eq!(rejected_payload["code"], "VALIDATION_ERROR");
     }
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM margin_user_settings WHERE user_id=?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count, 0);
     Ok(())
 }
 
@@ -2104,10 +2115,25 @@ async fn admin_margin_product_create_rolls_back_when_audit_fails() -> Result<(),
     let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
     fixture_tx.commit().await?;
 
-    let admin_token = issue_token(&settings, "admin:999999999", TokenScope::Admin, 900).unwrap();
+    let admin_id = create_admin(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
     let body = format!(
         r#"{{"pair_id":{pair_id},"margin_asset":{quote_asset},"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"audit should fail"}}"#
     );
+    let trigger = format!("margin_create_audit_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON admin_audit_logs FOR EACH ROW \
+         BEGIN IF NEW.admin_id={admin_id} AND NEW.action='margin_product.create' \
+         THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test margin create audit failure'; \
+         END IF; END"
+    ))
+    .execute(&pool)
+    .await?;
     let response = admin_routes()
         .with_state(AppState::new(settings).with_mysql(pool.clone()))
         .oneshot(
@@ -2119,7 +2145,11 @@ async fn admin_margin_product_create_rolls_back_when_audit_fails() -> Result<(),
                 .body(Body::from(body))
                 .unwrap(),
         )
+        .await;
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
         .await?;
+    let response = response?;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
     let (product_count,): (i64,) = sqlx::query_as(
@@ -2841,7 +2871,7 @@ async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ti
         "pending limit order must not publish a filled event"
     );
 
-    let pending_row: (String, Option<BigDecimal>, Option<BigDecimal>, Option<chrono::NaiveDateTime>) =
+    let pending_row: (String, Option<BigDecimal>, Option<BigDecimal>, Option<chrono::DateTime<Utc>>) =
         sqlx::query_as(
             "SELECT order_type, limit_price, entry_price, interest_accrued_at FROM margin_positions WHERE id = ?",
         )
@@ -2915,7 +2945,7 @@ async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ti
             .await?;
     assert_eq!(available_after_replays, available_after_pending);
 
-    for invalid_body in [
+    for (index, invalid_body) in [
         format!(
             r#"{{"product_id":{product_id},"direction":"long","order_type":"market","price":"90","margin_amount":"20","leverage":"3","idempotency_key":"invalid-market-price-{}"}}"#,
             Uuid::now_v7().simple()
@@ -2932,7 +2962,7 @@ async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ti
             r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"90.0000000000000000001","margin_amount":"20","leverage":"3","idempotency_key":"invalid-limit-precision-{}"}}"#,
             Uuid::now_v7().simple()
         ),
-    ] {
+    ].into_iter().enumerate() {
         let invalid = app
             .clone()
             .oneshot(
@@ -2945,7 +2975,10 @@ async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ti
                     .unwrap(),
             )
             .await?;
-        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            invalid.status(),
+            if index == 3 { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::BAD_REQUEST },
+        );
     }
     let (available_after_invalid_requests,): (BigDecimal,) =
         sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
@@ -3002,9 +3035,9 @@ async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ti
     );
     let filled_row: (
         Option<BigDecimal>,
-        chrono::NaiveDateTime,
-        Option<chrono::NaiveDateTime>,
-        chrono::NaiveDateTime,
+        chrono::DateTime<Utc>,
+        Option<chrono::DateTime<Utc>>,
+        chrono::DateTime<Utc>,
     ) = sqlx::query_as(
         "SELECT entry_price, opened_at, interest_accrued_at, created_at FROM margin_positions WHERE id = ?",
     )
@@ -3100,7 +3133,7 @@ async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ti
         "an immediately triggered limit must fill at the trusted server ticker, not client price"
     );
     let immediate_position_id = immediate_payload["position"]["id"].as_u64().unwrap();
-    let (immediate_interest_started, immediate_commissions): (Option<chrono::NaiveDateTime>, i64) =
+    let (immediate_interest_started, immediate_commissions): (Option<chrono::DateTime<Utc>>, i64) =
         sqlx::query_as(
             r#"SELECT positions.interest_accrued_at,
                   (SELECT COUNT(*) FROM agent_commission_records commissions
@@ -3396,13 +3429,13 @@ async fn margin_position_execution_history_is_scoped_sorted_and_read_only()
     .await;
     fixture_tx.commit().await?;
 
-    let position_before: (BigDecimal, String, NaiveDateTime) = sqlx::query_as(
+    let position_before: (BigDecimal, String, chrono::DateTime<Utc>) = sqlx::query_as(
         "SELECT margin_amount, status, updated_at FROM margin_positions WHERE id = ?",
     )
     .bind(position_id)
     .fetch_one(&pool)
     .await?;
-    let spot_wallet_before: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+    let spot_wallet_before: (BigDecimal, BigDecimal, BigDecimal, chrono::DateTime<Utc>) =
         sqlx::query_as(
             "SELECT available, frozen, locked, updated_at FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
         )
@@ -3410,7 +3443,7 @@ async fn margin_position_execution_history_is_scoped_sorted_and_read_only()
         .bind(quote_asset)
         .fetch_one(&pool)
         .await?;
-    let margin_wallet_before: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+    let margin_wallet_before: (BigDecimal, BigDecimal, BigDecimal, chrono::DateTime<Utc>) =
         sqlx::query_as(
             "SELECT available, frozen, locked, updated_at FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
         )
@@ -3520,13 +3553,13 @@ async fn margin_position_execution_history_is_scoped_sorted_and_read_only()
     }
     assert_eq!(hidden_payloads[0], hidden_payloads[1]);
 
-    let position_after: (BigDecimal, String, NaiveDateTime) = sqlx::query_as(
+    let position_after: (BigDecimal, String, chrono::DateTime<Utc>) = sqlx::query_as(
         "SELECT margin_amount, status, updated_at FROM margin_positions WHERE id = ?",
     )
     .bind(position_id)
     .fetch_one(&pool)
     .await?;
-    let spot_wallet_after: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+    let spot_wallet_after: (BigDecimal, BigDecimal, BigDecimal, chrono::DateTime<Utc>) =
         sqlx::query_as(
             "SELECT available, frozen, locked, updated_at FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
         )
@@ -3534,7 +3567,7 @@ async fn margin_position_execution_history_is_scoped_sorted_and_read_only()
         .bind(quote_asset)
         .fetch_one(&pool)
         .await?;
-    let margin_wallet_after: (BigDecimal, BigDecimal, BigDecimal, NaiveDateTime) =
+    let margin_wallet_after: (BigDecimal, BigDecimal, BigDecimal, chrono::DateTime<Utc>) =
         sqlx::query_as(
             "SELECT available, frozen, locked, updated_at FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
         )
@@ -5330,6 +5363,10 @@ async fn margin_close_position_settles_realized_pnl_and_is_idempotent() -> Resul
     .fetch_one(&pool)
     .await?;
     assert_eq!(close_ledger_count_after_replay, 1);
+    let journal: (i64, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE transaction_key = ?",
+    ).bind(format!("margin:{position_id}:close")).fetch_one(&pool).await?;
+    assert_eq!(journal, (4, decimal("0")));
 
     Ok(())
 }
@@ -5593,6 +5630,10 @@ async fn margin_partial_close_settles_only_selected_slice_and_replays_exactly()
     .fetch_one(&pool)
     .await?;
     assert_eq!(final_available, decimal("113.750000000000000000"));
+    let journal: (i64, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT transaction_key), COALESCE(SUM(amount), 0), COALESCE(SUM(CASE WHEN account_code = 'platform_margin_collateral_liability' THEN amount ELSE 0 END), 0) FROM platform_financial_journal WHERE context = 'margin' AND ref_type = 'margin_position' AND ref_id = ? AND transaction_key NOT LIKE '%:open'",
+    ).bind(position_id.to_string()).fetch_one(&pool).await?;
+    assert_eq!(journal, (2, decimal("0"), decimal("20")));
     Ok(())
 }
 

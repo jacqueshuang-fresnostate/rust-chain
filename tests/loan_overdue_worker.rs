@@ -9,6 +9,52 @@ use uuid::Uuid;
 
 static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
+#[tokio::test]
+async fn loan_overdue_queue_moves_beyond_thousand_waiting_orders() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let now = Utc::now();
+    let user = create_user(&pool).await;
+    let asset = create_asset(&pool).await;
+    let product = create_product(&pool, asset).await;
+    for _ in 0..1001 {
+        seed_loan_order(
+            &pool,
+            user,
+            product,
+            asset,
+            "overdue",
+            now - TimeDelta::days(2),
+        )
+        .await?;
+    }
+    let target = seed_loan_order(
+        &pool,
+        user,
+        product,
+        asset,
+        "disbursed",
+        now - TimeDelta::days(1),
+    )
+    .await?;
+    let first = run_once_with_dependencies(&pool, now, 200).await?;
+    assert_eq!(first.waiting_balance, 1000);
+    assert_eq!(load_order_state(&pool, target).await?.0, "disbursed");
+    run_once_with_dependencies(&pool, now, 200).await?;
+    assert_eq!(load_order_state(&pool, target).await?.0, "overdue");
+    sqlx::query("DELETE r FROM financial_worker_retries r JOIN loan_orders o ON o.id = r.item_id WHERE r.task_kind = 'loan' AND o.user_id = ?")
+        .bind(user).execute(&pool).await?;
+    // 还款路径可能创建零余额钱包，清理该夹具的账户。
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ?")
+        .bind(user)
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(&pool, user, asset, product).await?;
+    Ok(())
+}
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -122,12 +168,18 @@ async fn cleanup_fixture(
     asset_id: u64,
     product_id: u64,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE r FROM financial_worker_retries r JOIN loan_orders o ON o.id = r.item_id WHERE r.task_kind = 'loan' AND o.user_id = ?")
+        .bind(user_id).execute(pool).await?;
     sqlx::query("DELETE FROM loan_orders WHERE user_id = ?")
         .bind(user_id)
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM loan_products WHERE id = ?")
         .bind(product_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ?")
+        .bind(user_id)
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM users WHERE id = ?")

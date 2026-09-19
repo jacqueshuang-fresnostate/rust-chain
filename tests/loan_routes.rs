@@ -20,6 +20,12 @@ use std::{error::Error, str::FromStr, time::Duration};
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "loan_routes/exposure.rs"]
+mod exposure;
+
+#[path = "../src/openapi/loan.rs"]
+mod loan_openapi;
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -292,8 +298,9 @@ async fn seed_loan_product_filter_fixture(
         product_ids[index] = sqlx::query(
             r#"INSERT INTO loan_products
                (loan_type, asset_id, name, name_json, term_days, interest_rate,
-                interest_calculation_mode, min_kyc_level, min_amount, max_amount, status)
-               VALUES (?, ?, ?, ?, 30, 0.02, 'full_term', 0, 1, NULL, ?)"#,
+                interest_calculation_mode, min_kyc_level, min_amount, max_amount, status,
+                initial_ltv, maintenance_ltv, liquidation_ltv)
+               VALUES (?, ?, ?, ?, 30, 0.02, 'full_term', 0, 1, NULL, ?, ?, ?, ?)"#,
         )
         .bind(loan_type)
         .bind(asset_id)
@@ -304,6 +311,9 @@ async fn seed_loan_product_filter_fixture(
             "items": [{ "locale": "zh-CN", "country": "CN", "title": name }]
         })))
         .bind(status)
+        .bind((loan_type == "collateralized").then(|| decimal("0.5")))
+        .bind((loan_type == "collateralized").then(|| decimal("0.7")))
+        .bind((loan_type == "collateralized").then(|| decimal("0.9")))
         .execute(pool)
         .await?
         .last_insert_id();
@@ -392,8 +402,9 @@ async fn seed_fixture(pool: &MySqlPool, status: &str) -> Result<LoanFixture, sql
     let product_id = sqlx::query(
         r#"INSERT INTO loan_products
            (loan_type, asset_id, name, name_json, term_days, interest_rate,
-            interest_calculation_mode, min_kyc_level, min_amount, max_amount, status)
-           VALUES ('collateralized', ?, ?, ?, 30, 0.02, 'full_term', 0, 1, NULL, 'active')"#,
+            interest_calculation_mode, min_kyc_level, min_amount, max_amount, status,
+            initial_ltv, maintenance_ltv, liquidation_ltv)
+           VALUES ('collateralized', ?, ?, ?, 30, 0.02, 'full_term', 0, 1, NULL, 'active', 0.5, 0.7, 0.9)"#,
     )
     .bind(asset_id)
     .bind(&name)
@@ -458,6 +469,12 @@ async fn seed_fixture(pool: &MySqlPool, status: &str) -> Result<LoanFixture, sql
 }
 
 async fn cleanup_fixture(pool: &MySqlPool, fixture: &LoanFixture) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM platform_financial_journal WHERE ref_type = 'loan_order' AND ref_id = ?",
+    )
+    .bind(fixture.order_id.to_string())
+    .execute(pool)
+    .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ?")
         .bind(fixture.user_id)
         .execute(pool)
@@ -549,7 +566,11 @@ async fn admin_loan_products_filter_rows_and_total_by_type_and_status() -> Resul
         return Ok(());
     };
     let fixture = seed_loan_product_filter_fixture(&pool).await?;
-    let app = build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+    // This test owns filter semantics; global Admin authentication is covered by governance routes.
+    let app = axum::Router::new()
+        .nest("/admin/api/v1", loan_admin_routes())
+        .nest("/api/v1", user_routes())
+        .with_state(AppState::new(test_settings()).with_mysql(pool.clone()));
 
     let outcome: Result<(), Box<dyn Error>> = async {
         let (status, credit_payload) =

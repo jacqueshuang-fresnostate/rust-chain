@@ -2,11 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight, ChevronsRight, X } from 'lucide-vue-next'
-import { formatAmount, formatPrice } from '@/core/format'
+import { formatExactAmount } from '@/core/format'
+import { decimalSign, type DecimalText } from '@/core/decimal'
 import {
   MARGIN_CLOSE_MAX_PERCENTAGE,
   MARGIN_CLOSE_MIN_PERCENTAGE,
-  marginClosePreviewAmount,
+  marginClosePreviewText,
   normalizeMarginClosePercentage,
 } from '@/core/marginClose'
 import { useModalDialog } from '@/core/modalDialog'
@@ -26,9 +27,9 @@ const props = defineProps<{
   leverage: number
   baseAsset: string
   quoteAsset: string
-  markPrice: number | null
-  positionQuantity: number | null
-  estimatedPnl: number | null
+  markPrice: DecimalText | null
+  positionQuantity: DecimalText | null
+  estimatedPnl: DecimalText | null
   error?: string
 }>()
 
@@ -48,27 +49,27 @@ let activePointerId: number | null = null
 
 const dialogOpen = computed(() => props.open)
 const compactSymbol = computed(() => props.symbol.replace(/[\/_-]/g, '').toUpperCase())
-const priceText = computed(() => validNumber(props.markPrice) ? formatPrice(props.markPrice!) : '--')
-const positionQuantityText = computed(() => validNumber(props.positionQuantity)
-  ? `${formatAmount(props.positionQuantity!)} ${props.baseAsset}`
+const priceText = computed(() => formatExactAmount(props.markPrice))
+const positionQuantityText = computed(() => props.positionQuantity !== null
+  ? `${formatExactAmount(props.positionQuantity)} ${props.baseAsset}`
   : '--')
 const closableQuantity = computed(() => (
-  marginClosePreviewAmount(props.positionQuantity, closePercentage.value)
+  marginClosePreviewText(props.positionQuantity, closePercentage.value)
 ))
-const closableQuantityText = computed(() => validNumber(closableQuantity.value)
-  ? `${formatAmount(closableQuantity.value)} ${props.baseAsset}`
+const closableQuantityText = computed(() => closableQuantity.value !== null
+  ? `${formatExactAmount(closableQuantity.value)} ${props.baseAsset}`
   : '--')
 const selectedEstimatedPnl = computed(() => (
-  marginClosePreviewAmount(props.estimatedPnl, closePercentage.value)
+  marginClosePreviewText(props.estimatedPnl, closePercentage.value)
 ))
 const pnlText = computed(() => {
-  if (!validNumber(selectedEstimatedPnl.value)) return '--'
+  if (selectedEstimatedPnl.value === null) return '--'
   const value = selectedEstimatedPnl.value
-  return `${value > 0 ? '+' : ''}${formatAmount(value)} ${props.quoteAsset}`
+  return `${decimalSign(value) > 0 ? '+' : ''}${formatExactAmount(value)} ${props.quoteAsset}`
 })
-const pnlTone = computed(() => !validNumber(selectedEstimatedPnl.value)
+const pnlTone = computed(() => selectedEstimatedPnl.value === null
   ? 'neutral'
-  : selectedEstimatedPnl.value >= 0 ? 'positive' : 'negative')
+  : decimalSign(selectedEstimatedPnl.value) >= 0 ? 'positive' : 'negative')
 const ratioStyle = computed(() => ({
   '--margin-close-ratio': `${closePercentage.value}%`,
 }))
@@ -104,10 +105,6 @@ watch(() => props.open, (open) => {
 watch(() => props.error, (error, previousError) => {
   if (error && error !== previousError) resetSlide()
 })
-
-function validNumber(value: number | null | undefined): value is number {
-  return value !== null && value !== undefined && Number.isFinite(value)
-}
 
 function requestClose(): void {
   if (!props.saving) emit('close')
@@ -225,6 +222,7 @@ function requestConfirm(): void {
         id="margin-close-dialog"
         ref="dialog"
         class="margin-close-sheet"
+        :data-long-values="priceText.length > 16 || positionQuantityText.length > 18 || pnlText.length > 18"
         role="dialog"
         aria-modal="true"
         aria-labelledby="margin-close-title"
@@ -338,7 +336,7 @@ function requestConfirm(): void {
           <span class="margin-close-slide__fill" :style="fillStyle" aria-hidden="true" />
           <span class="margin-close-slide__copy">
             <strong>{{ saving ? t('orders.processing') : t('trade.marginCloseSlideAction') }}</strong>
-            <small>{{ closableQuantityText === '--' ? t('trade.marginCloseSlideReady') : `≈ ${closableQuantityText}` }}</small>
+            <small :title="closableQuantityText">{{ closableQuantityText === '--' ? t('trade.marginCloseSlideReady') : `≈ ${closableQuantityText}` }}</small>
           </span>
           <span class="margin-close-slide__direction" aria-hidden="true"><ChevronsRight :size="18" /></span>
           <span class="margin-close-slide__handle" :style="handleStyle" aria-hidden="true">
@@ -447,6 +445,27 @@ function requestConfirm(): void {
 
 .margin-close-sheet::-webkit-scrollbar {
   display: none;
+}
+
+.margin-close-sheet[data-long-values='true'] {
+  grid-template-rows: 40px 38px minmax(58px, auto) auto 58px 24px auto minmax(0, 32px) 62px;
+  height: auto;
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top, 0px)));
+}
+
+.margin-close-sheet[data-long-values='true'] .margin-close-sheet__price > div {
+  grid-template-rows: 16px auto;
+}
+
+.margin-close-sheet[data-long-values='true'] :is(.margin-close-sheet__price strong, .margin-close-sheet__latest strong, .margin-close-sheet__stats dd) {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.margin-close-sheet[data-long-values='true'] .margin-close-sheet__stats > div {
+  align-items: start;
+  gap: 12px;
 }
 
 .margin-close-sheet__header {
@@ -814,6 +833,10 @@ function requestConfirm(): void {
   font-weight: 600;
   line-height: 15px;
   opacity: .9;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .margin-close-slide__direction {

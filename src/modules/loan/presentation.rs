@@ -77,20 +77,53 @@ pub(crate) struct CreateLoanProductRequest {
     /// 借款期限天数，必须为正，审批时用于推算 due_at。
     pub(crate) term_days: u32,
     /// 期内利率，允许为零表示免息，不得为负。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) interest_rate: BigDecimal,
     /// 计息模式，full_term 或 actual_days。
     pub(crate) interest_calculation_mode: String,
     /// 申请所需的最低 KYC 等级，不得为负，下单事务内与用户实际等级比对。
     pub(crate) min_kyc_level: i32,
     /// 单笔最低借款额，必须为正。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_amount: BigDecimal,
     /// 单笔最高借款额，省略表示不限；给出时须为正且不小于最低额。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_amount: Option<BigDecimal>,
+    /// 当前产品准入时用户所有同币种未结本金上限；null 关闭，零禁止新增。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) user_principal_limit: Option<BigDecimal>,
+    /// 产品同币种待审加未结本金容量；null 关闭，零禁止新增。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) product_principal_capacity: Option<BigDecimal>,
+    /// 有任何未结逾期借贷时拒绝新申请与审批；默认关闭。
+    #[serde(default)]
+    pub(crate) deny_borrowing_while_overdue: bool,
     /// 抵押贷申请与放款时允许的最大 LTV；信用贷必须为空。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) initial_ltv: Option<BigDecimal>,
     /// 进入保证金预警的 LTV 阈值，必须高于 initial_ltv。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) maintenance_ltv: Option<BigDecimal>,
     /// 强制清算 LTV 阈值，必须高于 maintenance_ltv 且不超过 1。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) liquidation_ltv: Option<BigDecimal>,
     /// 抵押资产白名单及其权威行情绑定；信用贷必须为空数组。
     #[serde(default)]
@@ -110,13 +143,43 @@ pub(crate) struct UpdateLoanProductRequest {
     pub(crate) name: String,
     pub(crate) name_json: Option<Value>,
     pub(crate) term_days: u32,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) interest_rate: BigDecimal,
     pub(crate) interest_calculation_mode: String,
     pub(crate) min_kyc_level: i32,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_amount: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_amount: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) user_principal_limit: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) product_principal_capacity: Option<BigDecimal>,
+    #[serde(default)]
+    pub(crate) deny_borrowing_while_overdue: bool,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) initial_ltv: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) maintenance_ltv: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) liquidation_ltv: Option<BigDecimal>,
     #[serde(default)]
     pub(crate) collateral_assets: Vec<LoanCollateralAssetRequest>,
@@ -168,10 +231,15 @@ pub(crate) struct CreateLoanOrderRequest {
     /// 目标产品编号，下单事务内会锁定该产品并快照其条款。
     pub(crate) product_id: u64,
     /// 申请借款金额，须为正、落在产品额度区间且小数位不超过放款资产精度。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
     /// 抵押资产编号，抵押类产品必填，信用类产品忽略。
     pub(crate) collateral_asset_id: Option<u64>,
     /// 抵押数量，抵押类产品必填且须为正，成功后即从 available 冻结到 frozen。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) collateral_amount: Option<BigDecimal>,
     /// 用户维度幂等键，裁剪后非空且不超过 255 字节；重放会回读旧订单而不重复冻结抵押。
     pub(crate) idempotency_key: String,
@@ -257,6 +325,12 @@ pub(crate) struct LoanProductResponse {
     min_kyc_level: i32,
     min_amount: BigDecimal,
     max_amount: Option<BigDecimal>,
+    user_principal_limit: Option<BigDecimal>,
+    product_principal_capacity: Option<BigDecimal>,
+    deny_borrowing_while_overdue: bool,
+    /// 当前产品币种的待审预留与已放款/逾期本金，不表示外部资金余额。
+    reserved_principal: BigDecimal,
+    outstanding_principal: BigDecimal,
     initial_ltv: Option<BigDecimal>,
     maintenance_ltv: Option<BigDecimal>,
     liquidation_ltv: Option<BigDecimal>,
@@ -293,6 +367,9 @@ impl LoanProductResponse {
             "min_kyc_level": self.min_kyc_level,
             "min_amount": self.min_amount,
             "max_amount": self.max_amount,
+            "user_principal_limit": self.user_principal_limit,
+            "product_principal_capacity": self.product_principal_capacity,
+            "deny_borrowing_while_overdue": self.deny_borrowing_while_overdue,
             "initial_ltv": self.initial_ltv,
             "maintenance_ltv": self.maintenance_ltv,
             "liquidation_ltv": self.liquidation_ltv,

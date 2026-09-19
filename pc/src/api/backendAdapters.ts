@@ -1,5 +1,6 @@
 import { APP_CONFIG } from '../config/app.ts'
 import { formatBusinessOrderNo } from '../utils/orderNo.ts'
+import { mapMarketProvenance, type MarketProvenance } from './marketProvenance.ts'
 
 export interface BackendAuthTokenResponse {
   access_token: string
@@ -223,7 +224,7 @@ export interface BackendMarket {
   market_type?: string
 }
 
-export interface BackendMarketTicker {
+export interface BackendMarketTicker extends MarketProvenance {
   symbol: string
   last_price: string | number
   high_24h?: string | number | null
@@ -235,7 +236,7 @@ export interface BackendMarketTicker {
   observed_at: number
 }
 
-export interface PcMarketTicker {
+export interface PcMarketTicker extends MarketProvenance {
   symbol: string
   icon: string
   open: number
@@ -249,7 +250,8 @@ export interface PcMarketTicker {
   zone: number
 }
 
-export interface BackendMarketKline {
+export interface BackendMarketKline extends MarketProvenance {
+  observed_at?: number | null
   symbol: string
   interval: string
   open_time: number
@@ -266,7 +268,7 @@ export interface BackendMarketDepthLevel {
   quantity?: string | number
 }
 
-export interface BackendMarketDepth {
+export interface BackendMarketDepth extends MarketProvenance {
   symbol: string
   bids: BackendMarketDepthLevel[]
   asks: BackendMarketDepthLevel[]
@@ -278,14 +280,14 @@ export interface PcMarketDepthLevel {
   amount: number
 }
 
-export interface PcMarketDepth {
+export interface PcMarketDepth extends MarketProvenance {
   symbol?: string
   bids: PcMarketDepthLevel[]
   asks: PcMarketDepthLevel[]
   time?: number
 }
 
-export interface BackendMarketTrade {
+export interface BackendMarketTrade extends MarketProvenance {
   id?: string | number
   symbol?: string
   side?: string
@@ -297,7 +299,7 @@ export interface BackendMarketTrade {
   time?: number
 }
 
-export interface PcMarketTrade {
+export interface PcMarketTrade extends MarketProvenance {
   id?: string | number
   symbol?: string
   direction: 'BUY' | 'SELL'
@@ -314,6 +316,8 @@ export interface BackendSpotOrder {
   order_type: 'limit' | 'market' | 'stop_limit'
   price?: string | number | null
   trigger_price?: string | number | null
+  trigger_direction?: 'rising' | 'falling' | null
+  triggered_at?: number | null
   quantity: string | number
   filled_quantity: string | number
   average_price?: string | number | null
@@ -332,6 +336,8 @@ export interface PcSpotOrderRow {
   type: 'LIMIT_PRICE' | 'MARKET_PRICE' | 'STOP_LIMIT'
   price: number
   triggerPrice?: number | null
+  triggerDirection?: 'rising' | 'falling' | null
+  triggeredAt?: number | null
   amount: number
   filledAmount: number
   filledPrice: number | null
@@ -343,6 +349,7 @@ export interface PcSpotOrderParams {
   symbol: string
   price?: number
   triggerPrice?: number
+  triggerDirection?: 'rising' | 'falling'
   amount: number
   direction: 'BUY' | 'SELL'
   type: 'LIMIT_PRICE' | 'MARKET_PRICE' | 'STOP_LIMIT'
@@ -354,6 +361,7 @@ export interface BackendCreateSpotOrderRequest {
   order_type: 'limit' | 'market' | 'stop_limit'
   price?: string
   trigger_price?: string
+  trigger_direction?: 'rising' | 'falling'
   quantity: string
   reference_price?: string
   idempotency_key: string
@@ -1048,6 +1056,7 @@ export function mapMarketsToPcTickers(
     const chg = resolveTickerChangePercent(ticker, close, open)
 
     return {
+      ...mapMarketProvenance(ticker ?? {}),
       symbol,
       icon,
       open,
@@ -1091,6 +1100,7 @@ export function mapSecondsProductsToPcTickers(
     const chg = resolveTickerChangePercent(ticker, close, open)
 
     tickers.push({
+      ...mapMarketProvenance(ticker ?? {}),
       symbol,
       icon,
       open,
@@ -1116,6 +1126,7 @@ export function mapMarketTickerToPcTicker(current: PcMarketTicker | undefined, t
   const low = resolveTickerLow(ticker, close, current)
   const chg = resolveTickerChangePercent(ticker, close, open)
   return {
+    ...mapMarketProvenance(ticker),
     symbol: current?.symbol || displaySymbolFromCompact(ticker.symbol),
     icon: current?.icon || '',
     open,
@@ -1155,18 +1166,19 @@ function resolveTickerChangePercent(ticker: BackendMarketTicker | undefined, clo
 }
 
 export function mapMarketKlinesToPcRows(rows: BackendMarketKline[]): number[][] {
-  return rows.map((row) => [
+  return rows.map((row) => Object.assign([
     row.open_time,
     toNumber(row.open),
     toNumber(row.high),
     toNumber(row.low),
     toNumber(row.close),
     toNumber(row.volume),
-  ])
+  ], mapMarketProvenance(row), row.observed_at ? { observedAt: row.observed_at } : {}))
 }
 
 export function mapMarketDepthToTradePlate(depth: BackendMarketDepth): PcMarketDepth {
   return {
+    ...mapMarketProvenance(depth),
     symbol: displaySymbolFromCompact(depth.symbol),
     bids: depth.bids.map(mapMarketDepthLevel),
     asks: depth.asks.map(mapMarketDepthLevel),
@@ -1177,6 +1189,7 @@ export function mapMarketDepthToTradePlate(depth: BackendMarketDepth): PcMarketD
 export function mapMarketTradeToPcTrade(trade: BackendMarketTrade): PcMarketTrade {
   const direction = String(trade.direction || trade.side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY'
   return {
+    ...mapMarketProvenance(trade),
     id: trade.id,
     symbol: trade.symbol,
     direction,
@@ -1223,8 +1236,12 @@ export function mapPcSpotOrderRequest(params: PcSpotOrderParams, idempotencyKey:
   if (orderType === 'limit') {
     request.price = String(params.price ?? 0)
   } else if (orderType === 'stop_limit') {
+    if (params.triggerDirection !== 'rising' && params.triggerDirection !== 'falling') {
+      throw new TypeError('Explicit spot trigger direction is required')
+    }
     request.price = String(params.price ?? 0)
     request.trigger_price = String(params.triggerPrice ?? 0)
+    request.trigger_direction = params.triggerDirection
   } else {
     request.reference_price = String(referencePrice)
   }
@@ -1836,6 +1853,8 @@ function newCoinStatusToPcStep(status: string): number {
 
 function secondsStatusToPc(status: string): string {
   const normalized = status.toLowerCase()
+  if (normalized === 'refunded') return 'REFUNDED'
+  if (normalized === 'manual_review') return 'MANUAL_REVIEW'
   if (normalized === 'open' || normalized === 'opened' || normalized === 'pending') return 'OPEN'
   if (normalized === 'cancelled' || normalized === 'canceled') return 'CANCELED'
   return 'CLOSE'
@@ -1936,6 +1955,12 @@ function displayMarketSymbol(market: BackendMarket): string {
 }
 
 function mapSpotOrderToPcRow(order: BackendSpotOrder): PcSpotOrderRow {
+  if (order.trigger_direction != null && order.trigger_direction !== 'rising' && order.trigger_direction !== 'falling') {
+    throw new TypeError('Invalid spot trigger direction')
+  }
+  if (order.triggered_at != null && (!Number.isSafeInteger(order.triggered_at) || order.triggered_at <= 0)) {
+    throw new TypeError('Invalid spot trigger timestamp')
+  }
   const type = order.order_type === 'market'
     ? 'MARKET_PRICE'
     : order.order_type === 'stop_limit'
@@ -1948,6 +1973,8 @@ function mapSpotOrderToPcRow(order: BackendSpotOrder): PcSpotOrderRow {
     type,
     price: toNumber(order.price ?? 0),
     triggerPrice: firstNumber(order.trigger_price) ?? null,
+    triggerDirection: order.trigger_direction ?? null,
+    triggeredAt: order.triggered_at ?? null,
     amount: toNumber(order.quantity),
     filledAmount: toNumber(order.filled_quantity),
     filledPrice: firstNumber(order.average_price) ?? null,

@@ -12,6 +12,21 @@ fn amount(value: i64) -> BigDecimal {
     BigDecimal::from(value)
 }
 
+#[test]
+fn numeric_safety_risk_json_bounds_do_not_narrow_aggregate_limit_policy() {
+    for value in ["1e1000000000", "1e-1000000000", "NaN", "Infinity"] {
+        assert!(
+            super::service::validate_risk_rule_config(&serde_json::json!({"max_amount":value}))
+                .is_err()
+        );
+    }
+    assert!(
+        super::service::validate_risk_rule_config(&serde_json::json!({
+            "max_amount": "1.234567890123456789012345678901e20"
+        }))
+        .is_ok()
+    );
+}
 fn rules() -> RiskRules {
     RiskRules {
         max_requests: Some(3),
@@ -84,6 +99,38 @@ fn risk_guard_skips_checks_without_rules_or_facts() {
         ),
         RiskDecision::Approved
     );
+}
+
+#[test]
+fn withdrawal_rate_limit_requires_available_counter_only_when_configured() {
+    let mut withdrawal = request(WITHDRAWAL, 1, 100);
+    withdrawal.request_count = None;
+    let limited = RiskRules {
+        max_requests: Some(3),
+        ..RiskRules::default()
+    };
+    assert_eq!(
+        evaluate_risk(&withdrawal, &limited),
+        RiskDecision::Rejected(RiskReject::RateLimitUnavailable)
+    );
+    assert_eq!(
+        RiskReject::RateLimitUnavailable.code(),
+        "risk_rate_limit_unavailable"
+    );
+    assert_eq!(
+        evaluate_risk(&withdrawal, &RiskRules::default()),
+        RiskDecision::Approved
+    );
+    withdrawal.request_count = Some(3);
+    assert_eq!(evaluate_risk(&withdrawal, &limited), RiskDecision::Approved);
+    withdrawal.request_count = Some(4);
+    assert_eq!(
+        evaluate_risk(&withdrawal, &limited),
+        RiskDecision::Rejected(RiskReject::RateLimit)
+    );
+    withdrawal.operation = SPOT_ORDER.into();
+    withdrawal.request_count = None;
+    assert_eq!(evaluate_risk(&withdrawal, &limited), RiskDecision::Approved);
 }
 
 #[test]

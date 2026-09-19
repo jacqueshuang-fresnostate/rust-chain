@@ -1,3 +1,94 @@
+## 2026-09-18 23:29 - 行情成交深度来源与人工成交审计及贷款敞口
+
+- 完成内容：成交/深度 REST、WS、缓存和 PC/Mobile 展示保留来源，未知来源不伪装真实成交；人工成交传入认证管理员与必填原因，审计和资金同事务，后台双单预览及不确定结果重放；贷款新增可空用户同币种本金限额、产品容量和可选逾期禁借，待审预占、终态释放并发串行校验。
+- 修改文件：完整路径分别见任务 `research/e04-delivery.md`、`research/e07-delivery.md`、`research/e06-loan-delivery.md`；主要涉及 market/spot/loan 业务、PC/Mobile 行情组件、Web 人工成交和贷款表单、`migrations/0133_loan_exposure_limits.sql`。主会话补贷款 OpenAPI 聚合，聚合测试待运行。
+- 验证结果：各切片执行记录：market 73/73、Mobile release gate 772/772、PC 类型/构建与来源定向测试通过；人工成交 MySQL 11/11、Web 12/12、桌面和390px组件浏览器验证通过；贷款 MySQL路由10/10、贷款单测15/15、抵押回归1/1、Web8/8，含30/32并发申请边界测试。后台架构11/11和文档1/1在切片交付时通过。实库为隔离MySQL9.3，浏览器使用本地模拟响应。
+- 后续事项：E04 ticker/K线尚待补齐，E06理财/库存及全局敞口仍在实施；贷款容量不是托管余额证明。全任务最终门禁尚未运行，PC既有WS域名断言4项失败、Web既有2项失败不计入通过。未提交或部署。
+
+## 2026-09-18 23:11 - 秒合约预测闪兑平台分录首批接线
+
+- 完成内容：秒合约开仓与人工/自动结算、预测收费/结算/退费、闪兑双资产结算在原资金事务追加平台分录；按资产零和校验，重复分录失败回滚，保留数字/字符串业务引用类型。秒合约本金不提前确认为收入，闪兑手续费不重复扣款，不伪造历史开仓分录。
+- 修改文件：`src/modules/{seconds_contract,prediction,convert}/journal.rs` 及模块/资金基础设施、`src/modules/wallet/infrastructure{.rs,/shared.rs}`、`src/workers/seconds_contract_settlement.rs`、对应单测与 `tests/{seconds_contract_routes,seconds_contract_settlement_worker,prediction_commission_routes,convert_routes}.rs`。
+- 验证结果：账务单测选择 15/15；隔离 MySQL 9.3 与 Redis 下秒合约路由 3/3、秒合约 worker 1/1、预测开仓重放 1/1、闪兑含费结算 1/1。新增文件及关联修改 rustfmt 通过。
+- 后续事项：预测终局/退款实库专项仍待验证；继续杠杆/现货/佣金分录及只读资产对账，尚未宣称 E02 全部完成。未提交或部署。
+
+## 2026-09-18 22:55 - 提现限频接线与配置后失败关闭
+
+- 完成内容：提现申请传入真实 Redis 计数连接；已配置提现限频但连接缺失或计数失败时返回明确风控拒绝，成功原请求重放不再次占计数。没有限频配置与其他业务的既有故障策略保持不变。
+- 修改文件：`src/modules/wallet/{application,routes}.rs`、`src/modules/risk/{application,domain,infrastructure,mod}.rs`、`tests/wallet_routes.rs`、`tests/wallet_routes/rate_limits.rs`、`tests/unit_src/src_modules_risk_mod_tests.rs`、`.trellis/spec/backend/risk-configuration.md`、`.trellis/tasks/09-18-exchange-business-hardening/prd.md`。
+- 验证结果：`cargo test --lib -- risk` 19/19；隔离 MySQL 9.3（13316）和 Redis（16386）下 `cargo test --test wallet_routes withdrawal_rate_limit_blocks_without_counter_and_preserves_exact_replay -- --nocapture` 1/1，通过缺连接、正常限频、幂等重放不计数、Redis 命令失败及余额/订单数不变检查。服务仅本地测试用途。
+- 后续事项：继续行情来源、人工成交审计、异常工作台、平台总账和累计额度等切片。累计金额限额/冷静期/多人审核不包含在本切片；未提交或部署。
+
+## 2026-09-18 22:28 - 对照交易所业务复审剩余缺口
+
+- 完成内容：以当前工作区为基线形成八项优先事项及验收方向，覆盖提现限频未接线、平台总账覆盖、stop_limit 语义、行情来源标识丢失、异常运营工作台、授信/资金池/库存敞口、人工成交审计和佣金冲回；将托管、合规与灾备列为需外部证据核实的能力。明确已完成代理明细/倒计时和前四项优先修复不重复立项，未修改业务代码。
+- 修改文件：`.trellis/tasks/09-18-exchange-business-gap-review/{prd.md,task.json,implement.jsonl,check.jsonl,research/exchange-business-review.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo test --lib -- spot risk seconds_contract financial_retry` 48/48；报告 42 处源码路径及行号存在性检查、`task.py validate`、`git diff --check` 通过。官方公开资料检索未获可用正文，直接抓取经重试仍超时，未将外部交易所规则写成已验证结论。
+- 后续事项：建议先修提现限频、确认条件单语义、补行情来源，再推进平台总账、异常工作台及累计额度。退款、授信、计佣等规则须确认后实施；未跑数据库/浏览器端到端或生产核查，未提交/推送/部署。
+
+## 2026-09-18 21:42 - 代理进行中秒合约订单倒计时
+
+- 完成内容：代理用户秒合约列表在状态旁新增倒计时，opened 按 expires_at 每秒显示分秒，超过一小时含小时；到期显示“待结算”，已结算/人工复核显示横线。按截止时间重算并在焦点/可见性恢复时校正，翻页、切换标签、刷新、换用户与卸载清理计时器；不轮询接口、不改变订单状态或结算行为。
+- 修改文件：`web/src/agent/UserPortfolioPage.{tsx,css,test.tsx}`、`.trellis/spec/backend/agent-hierarchy.md`、`.trellis/tasks/09-18-agent-seconds-countdown/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：代理页面/API/路由/导航定向测试 5 文件 44/44，含新增 5 项倒计时回归；`npm --prefix web run typecheck`、`lint`、`build`、`budget` 与 `git diff --check` 通过。Ego Browser 本地模拟订单在 1440px 验证 00:07→00:06→待结算，历史行不倒计时且只有初始一次订单查询；390px 页面截图检查通过。
+- 后续事项：本轮未重跑 Web 全量或线上端到端；上一轮全量中两项既有无关失败仍保留。本次仅前端展示改动，无数据库迁移、后端资金操作、提交或部署。
+
+## 2026-09-18 13:38 - 代理五类金融明细页面与最终验证
+
+- 完成内容：团队用户“资产与订单”入口现提供钱包账户、秒合约订单、杠杆订单、杠杆持仓、现货订单五个标签；秒合约含进行中与历史，杠杆待成交与持仓分离，现货含部分成交与历史终态。支持独立分页、状态筛选、当前列表刷新、错误重试；代理会话或用户变化重置缓存，迟到响应不覆盖新筛选。补现货中文方向、状态前置及仅该页生效的窄屏分页排版。规范与任务验收已同步，隔离 MySQL 正常关闭。
+- 修改文件：`web/src/agent/UserPortfolioPage.{tsx,css,test.tsx}`、`web/src/api/agent{.ts,.test.ts}`、`.trellis/spec/backend/agent-hierarchy.md`、`.trellis/tasks/09-18-agent-team-financial-views/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`；后端文件见上一条切片。
+- 验证结果：前端定向 5 文件 39/39；类型检查、lint、build、budget 通过；生产策略 15/15、既有覆盖率门禁 23/23。Rust 代理单测 10/10、OpenAPI 9/9、架构 11/11、文档 1/1、`cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings` 与 `git diff --check` 通过。隔离 MySQL 9.3 真实接口回归 1/1。Ego Browser 使用本地模拟响应检查 1440px 五类表格、筛选/刷新、中文方向，以及 390px 分页；窄屏页面与分页无横向溢出，长表本身可横向滚动。浏览器模拟验证不等同于线上端到端。
+- 后续事项：Web 全量 676/678，保留已知且本轮未修改的两项失败：`adminPresentation.test.tsx` 中 `marginLiquidations.bad_debt_amount` 缺中文标签、`resourceConfigs.test.tsx` 的单个 `-` 断言命中两处。未操作线上、未提交/推送/部署；本次没有新增数据库迁移，生产 MySQL 8.4 未实测。
+
+## 2026-09-18 13:20 - 代理团队用户订单只读接口与持仓口径
+
+- 完成内容：新增代理子树内用户 `margin-orders` 与 `spot-orders` 只读接口；杠杆订单复用持久化仓位记录，待成交为 opened 且 entry_price 为空，持仓列表排除未成交记录。所有列表和 COUNT 独立重复代理子树约束，补齐状态校验、Decimal/毫秒 DTO 与 OpenAPI。未新增迁移，不调用交易或资金写入。
+- 修改文件：`src/modules/agent/{application,infrastructure,presentation,routes,service}.rs`、`src/openapi.rs`、`src/openapi/agent_portal.rs`、`tests/agent_routes.rs`、`tests/openapi_routes.rs`、`tests/unit_src/src_modules_agent_routes_tests.rs`。
+- 验证结果：`DATABASE_URL=mysql://root@127.0.0.1:13316/agent_team_test cargo test --test agent_routes agent_user_financial_views_enforce_subtree_filters_totals_and_read_only_snapshots -- --nocapture` 在本机隔离 MySQL 9.3 实跑 1/1 通过，覆盖上下级范围、越权与不存在 404、待成交/持仓区分、状态与分页 total、Decimal/毫秒、空账户不建账及前后钱包/订单快照不变。前端定向测试 34/34、类型检查、lint 通过。
+- 后续事项：继续浏览器桌面/窄屏检查、Rust 单测和架构/OpenAPI 门禁，补规范及最终交付记录；未提交、推送或部署。
+
+## 2026-09-18 12:50 - 四项优先闭环最终验证与交付
+
+- 完成内容：B01-B04 全部落实并保留业务范围边界；补齐客户端跨实例成功释放键的回归；秒合约恢复测试按原到期窗口补历史价格，不改写异常窗口。测试专用 MySQL 已通过精确 socket 正常关闭，无线上操作、提交或推送。
+- 修改文件：本任务四个切片所列代码/测试/规范、`.trellis/tasks/09-18-priority-business-closure/{prd,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、`git diff --check` 通过；关闭本机代理对 loopback 的干扰后 `cargo test --lib --test backend_architecture --test backend_documentation --quiet` 为 416/416、11/11、1/1。本轮隔离实库定向回归合计 33 项通过（秒合约 1、重试/理财/贷款/佣金 10、会话及改密 3、2FA 3、WS 16）。Mobile 全量 765/765，PC 定向 9/9，后台新动作 2/2；Web/Mobile/PC 类型检查、Mobile 测试类型检查与 Web lint 通过。
+- 后续事项：后台 Web 全量为 669/671，未改动区域的两项失败保留：`adminPresentation.test.tsx` 的 `bad_debt_amount` 中文标签缺失，以及 `resourceConfigs.test.tsx` 杠杆清算行对单个 `-` 的断言命中两处；相关文件与 HEAD 无差异，本次不扩展修复。部署前需先应用新增 0129、0130；实库验证为 MySQL 9.3，生产 8.4 与浏览器端到端尚未运行。无证据退款、人工重试后台页面、扩展平台总账等仍不在范围内。
+
+## 2026-09-18 12:49 - 用户代理会话代际与私有连接失效闭环
+
+- 完成内容：用户/代理凭据、访问令牌、刷新令牌和登录二次验证挑战贯通会话代际；HTTP 和私有 WS 校验数据库状态与代际，代理回查祖先链。停用、改密、密码找回递增代际，停用代理上级使整棵子树旧会话失效；重新启用不恢复旧凭证，旧密码证明不得升级为新代际。私有 WS 转发前及空闲每五秒校验，失败即关闭。
+- 修改文件：`migrations/0130_user_agent_session_versions.sql`、`src/modules/{auth,security,user,agent,admin,events}` 相关用例/基础设施/会话接口、`tests/{agent_routes,user_routes,auth_login_setup_routes,events_ws}.rs`、相关 `tests/unit_src`、`.trellis/spec/backend/auth-sessions.md`。
+- 验证结果：隔离 MySQL 9.3 下用户/代理存活会话停用再启用 1/1、用户改密 1/1、代理改密 1/1、登录二次验证 3/3、WebSocket 16/16；覆盖旧刷新记录存活、旧密码证明拒签、新登录可用、非零代际 2FA 及已连接 WS 不再转发。未触碰生产会话或资金。
+- 后续事项：部署前应用 0130；生产 MySQL 8.4 尚未实测，本轮实库为本机隔离 MySQL 9.3。继续最终记录与测试服务关闭。
+
+## 2026-09-18 12:46 - 三类资金后台任务持久化重试与公平扫描
+
+- 完成内容：新增共享调度表与五分钟租约，理财、逾期贷款、佣金先过滤退避再按上次尝试时间公平扫描；等待余额/来源一分钟重试，失败指数退避至一小时，移除佣金进程黑名单。迟到回写匹配租约 token，业务资金幂等仍由原事务保证；不改变费率或清算规则。
+- 修改文件：`migrations/0129_financial_worker_retries.sql`、`src/workers/{mod,financial_retry,earn_auto_redemption,loan_overdue,agent_commission_settlement}.rs`、`tests/{financial_worker_retries,earn_auto_redemption_worker,loan_overdue_worker,agent_routes}.rs`、相关 `tests/unit_src`、`.trellis/spec/backend/{financial-worker-retries,index}.md`。
+- 验证结果：隔离 MySQL 上理财 4/4、贷款逾期 4/4、共享租约 1/1、佣金积压恢复 1/1；覆盖 501/1001 项队列、修复后自动恢复、并发领取、跨连接重启及迟到回写保护。补齐旧理财/贷款夹具清理的账本与钱包外键依赖。
+- 后续事项：部署前应用迁移；不含新建人工重试后台页面。继续会话改密回归与最终门禁；未提交、推送或部署。
+
+## 2026-09-18 12:30 - 秒合约异常单依据历史证据恢复结算
+
+- 完成内容：后台异常单提供自动恢复结算，只接受权威事件时间历史行情；无证据及人工指定输赢均拒绝。恢复与资金结算同事务，保留原异常并追加操作原因审计。
+- 修改文件：`src/modules/seconds_contract/{application,infrastructure,presentation,routes,service}.rs`、`web/src/admin/resources/actions/secondsContract{.tsx,.test.tsx}`、`tests/seconds_contract_routes.rs`、`tests/unit_src/src_modules_seconds_contract_tests.rs`、`.trellis/spec/backend/seconds-contracts.md`。
+- 验证结果：隔离 MySQL 9.3 实库恢复用例 1/1，验证拒绝无证据、并发只入账一次、异常保留及恢复审计；秒合约单测 7/7，后台交互测试 2/2，Web 类型检查通过。未操作生产数据库。
+- 后续事项：继续持久化重试及账号会话兜底，统一最终门禁；无证据退款仍不在本次范围。
+
+## 2026-09-18 12:13 - 稳定理财与借贷客户端重试身份
+
+- 完成内容：Mobile 理财/贷款、PC 贷款复用稳定幂等标识，发送前保存 sessionStorage，结果未知时保留，成功才释放；按登录 scope 隔离并跨刷新恢复，参数金额规范化。PC 登录生成 scope、令牌刷新保留 scope、退出清除 scope；持久化不可用拒绝资金提交。
+- 修改文件：`mobile/src/api/{idempotency,earn,loan}.ts`、`pc/src/api/{idempotency,loan}.ts`、`pc/src/utils/authStorage.ts`、`pc/src/stores/user.ts`、`mobile/tests/{idempotency,finance-retry-adapters}.test.ts`、`pc/tests/{idempotency,auth-storage}.test.ts`、`.trellis/spec/mobile/backend-integration.md`。
+- 验证结果：Mobile 聚焦 5/5，含执行真实适配器模拟提交后丢响应；PC 幂等/存储/refresh 聚焦 9/9；Mobile 测试类型检查与 PC 类型检查通过。未对线上发起申购或贷款。
+- 后续事项：同任务继续秒合约恢复结算、公平扫描和账号封禁兜底；最终全量门禁与文档检查统一执行。
+
+## 2026-09-18 12:05 - 复审业务闭环与运营完善度
+
+- 完成内容：基于 `4bb0baf` 静态核对当前业务流程，形成六项优先完善点：秒合约 manual_review 缺少结算/退款出口、部分客户端重试身份不稳定、用户/代理鉴权缺账号状态与会话代际兜底、理财/逾期贷款/佣金扫描队首阻塞及佣金瞬态失败不恢复、平台账务覆盖不全、人工现货成交缺操作者原因审计与后台流程。另将借贷总授信和佣金计佣口径列为待确认业务规则，不把输单返佣直接认定为错误。纠正历史“没有自动现货撮合”的判断：当前已有下单与行情触发成交接线，且受真实预充值库存约束。
+- 修改文件：`.trellis/tasks/09-18-business-completeness-review/{prd.md,task.json,research/business-review.md,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`；仅审查与任务记录，无生产代码改动。
+- 验证结果：`cargo test --lib -- earn_auto_redemption loan_overdue agent_commission_settlement seconds_contract` 16/16 通过；审查报告 27 处完整源码路径/行号引用存在性检查通过；`git diff --check` 通过。未执行数据库集成、浏览器端到端、并发或故障注入，已有单测通过不代表本轮识别的异常场景已覆盖。
+- 后续事项：优先拆分秒合约异常处置、稳定重试身份和禁用状态兜底；其后完善公平扫描、持久化重试与平台账务。借贷总额度、异常退款和佣金口径须确认规则后实施；未提交、推送、部署或操作线上资金。
+
 ## 2026-09-16 03:50 - 提现确认补平台对手腿
 
 - 完成内容：`confirm_withdrawal_in_tx` 从 frozen 永久核销 `total_reserved` 时只写用户腿，平台实际付出的链上金额与留存手续费在平台账上无处可查。新增 `withdrawal_confirm_journal_legs`：`user_withdrawal_liability_close`（+预留额）、`platform_withdrawal_cash_paid`（−本金）、`platform_withdrawal_fee_income`（−手续费），因 `total_reserved = 本金 + 手续费` 故三腿和恒为零。申请冻结、审批与失败释放都只是平台内部 available/frozen 桶迁移，不产生平台侧资金移动，因此不写分录；只有链上确认这一步写，且与 frozen 扣除同一事务、靠 `confirmed` 状态早返回保证幂等。顺带把 `deposit_journal` 模块提升为 `platform_journal`（共享腿类型与零和助手），`insert_wallet_platform_journal_legs_in_tx` 改为按业务传入 context/ref_type，避免充值提现各写一份。
@@ -8871,3 +8962,133 @@
 - 修改文件：`docs/superpowers/PROGRESS.md`（仅本记录）。
 - 验证结果：未在生产执行 KILL/UPDATE/migrate；以用户审计结果与 0124 语句顺序为判断依据。
 - 后续事项：先处理可能卡住的 ALTER 会话；`SHOW CREATE TABLE` 对照 0124 后执行 `UPDATE ... success=1` 仅限 version=124 AND success=FALSE；再单独跑 migrate 吃 125。
+## 2026-09-19 00:49 - 异常工作台与佣金冲回验证交付
+
+- 完成内容：异常工作台提供负责人、显式期限、版本/租约保护的审计重新排期及秒合约人工复核只读入口；已付佣金按原付款人、币种和金额追加冲回凭证、钱包流水及平衡分录，余额不足拒绝，支付/冲回和审计同事务，幂等重放不重复扣款。修复并发实测发现的佣金凭证范围锁与钱包锁死锁。
+- 修改文件：完整路径见 `.trellis/tasks/09-18-exchange-business-hardening/research/{e05-delivery,e08-delivery}.md`；主要涉及 Admin financial_retries/agents、Web异常工作台/佣金动作、迁移0131/0135/0137及回归测试。
+- 验证结果：E05隔离MySQL/Rust6/6、Web95/95；E08隔离MySQL冲回综合场景重复通过、既有佣金路由7/7、单测5/5、Web14/14。各切片类型/lint、架构11/11、文档1/1通过；本地夹具浏览器验证包括390px冲回对话框。全量最终门禁仍在执行，不能将切片验证等同全系统通过。
+- 后续事项：继续前瞻性默认关闭的秒合约无证据退款策略、资金敞口及总账报表留档；E05重新排期本身不改资金和业务状态。需按序应用迁移，未提交、部署或操作线上。
+## 2026-09-19 01:00 - 提现策略及行情价格图表来源闭环
+
+- 完成内容：默认关闭的逐资产提现策略补滚动累计额度、地址登记成熟期、安全变更冷静期和独立多人复核，创建/审核/广播前复查；ticker与K线补真实来源和观察时间，PC/Mobile展示混合来源、未知时间与陈旧状态，修复PC快照转换丢来源和迟到REST覆盖新行情。
+- 修改文件：详情见任务 `research/e01b-delivery.md`、`research/e04-ticker-candle-delivery.md`；提现涉及0134、Wallet/Admin/OpenAPI/worker及表单；行情涉及market cache/presentation/feed、PC/Mobile适配器/图表/状态仓库及测试。
+- 验证结果：提现策略隔离MySQL2/2、单测3/3、链worker4/4、Admin定向68/68；来源后端7/7、PC定向7/7及类型/构建、Mobile release gate777/777和全部构建/预算通过。浏览器本地夹具检查Mobile320px与PC1440/390px，来源切换、未知/陈旧提示及两图表引擎可见；已清理夹具和服务。
+- 后续事项：真实Redis回归等待并行后端完成编译；PC全量101/106，5项配置/WS域名断言失败未改生产域名掩盖；wallet全量仍有1项今日收益边界失败待定位。提现地址登记不等于完整撤销允许名单；未启用额度策略、未提交或部署。
+## 2026-09-19 01:28 - 资金分录多产品实库回归与行情缓存验收
+
+- 完成内容：杠杆开仓/撤单/按份平仓及逐仓/全仓强平接入同事务分录，预测终局含本金与实退手续费、闪兑双资产含费与失败回滚完成实库回归；补预测资产配置测试分页，避免测试库资产增多后错误认定新资产缺失。PC域名测试显式设置并恢复本地模拟配置，不修改运行时域名。
+- 修改文件：`src/modules/margin/{journal.rs,application/lifecycle.rs,infrastructure/settlement.rs}`、`src/workers/margin_liquidation.rs`；前述秒合约/预测/闪兑分录文件及 `tests/{convert_routes,margin_liquidation_worker,prediction_commission_routes}.rs`、`tests/prediction/journal.rs`；`pc/tests/{backendAdapters,stomp}.test.ts`。详细行情证据见任务 `research/e04-ticker-candle-delivery.md`。
+- 验证结果：隔离MySQL/Redis完整文件回归：闪兑19/19、杠杆强平9/9、预测6/6、秒合约worker6/6；预测包含胜负/赔付上限/两种无效退费与终态重放。行情真实Redis5/5；架构11/11、文档1/1、OpenAPI10/10；PC全量106/106。钱包全量经修正7日汇总测试预期后15/15，1个手动浏览器夹具忽略，未改变生产收益口径。
+- 后续事项：杠杆主动平仓并发锁改进与新策略/快照还在验证；全Rust单测发现可选数据库测试读取通用环境变量造成竞态，正在隔离修复，不能宣称最终全绿。没有历史账务回填或托管偿付证明，未提交、部署。
+
+## 2026-09-19 01:39 - 现货条件单明确触发方向与响应式交易布局验收
+
+- 完成内容：新增条件单显式选择上涨/下跌触发，触发时间持久化且不因后续成交失败丢失；旧订单比较规则和请求指纹保持兼容。PC 下单/历史、Mobile 只读订单和后台贯通触发信息；修复 PC 1024px 表单裁切和390px图表/表单重叠。
+- 修改文件：完整列表及证据见 `.trellis/tasks/09-18-exchange-business-hardening/research/e03-delivery.md`，主要涉及迁移0132、spot各层、PC订单表单/历史/Trade布局、Mobile订单读取、后台展示与对应测试；本条同步任务PRD验收状态。
+- 验证结果：隔离MySQL9.3现货路由62/62、现货单测26/26；最终PC全量110/110；1728/1024/390px本地mock浏览器均实际提交成功、图表像素非空且无横向溢出。定向类型、布局、标签检查通过，全任务联合门禁仍在执行。
+- 后续事项：发布须先应用0132并协调PC/API升级，不回填旧订单触发方向。对账留档、退款终态和最终门禁待收尾；未提交、部署或操作线上。
+
+## 2026-09-19 01:43 - 累计授信与产品兑付库存预算验收
+
+- 完成内容：贷款逐用户同币种总本金与产品容量、理财本金/总兑付义务、闪兑显式库存预算、秒合约最大未付赔付上限接入配置和事务校验；相同请求重放不重复占额，终态按规则释放。所有新增限制默认不启用，不替运营填写金额。
+- 修改文件：完整路径和合同见任务 `research/e06-loan-delivery.md`、`research/e06-pool-inventory-delivery.md` 及 `.trellis/spec/backend/aggregate-exposure.md`；新增迁移0133/0136/0138，相关Loan/Earn/Convert/Seconds及后台表单/测试，任务PRD。
+- 验证结果：贷款实库10/10、单测15/15及抵押1/1；理财全量实库22/22；库存与秒合约容量专项通过，32并发边界仅允许7单，包含回滚、重放、版本冲突、退款释放和存量策略隔离。后台定向27/27；真实表单本地mock浏览器三类1440/390px均无横向溢出。全Web联合820/820，PC110/110及类型/构建通过。
+- 后续事项：显式库存预算不代表托管余额，保护开启时拒绝未单独预算的反向兑换；未实现跨产品统一资金池或外部对冲。最终移动端/Rust门禁及对账退款切片仍在收尾，未提交或部署。
+
+## 2026-09-19 01:48 - 杠杆平仓并发幂等锁与前后端联合门禁
+
+- 完成内容：平仓在业务锁后检查不可变执行凭证，避免不存在的幂等键范围锁死锁；全仓仅平仓路径采用排他占用账户，避免INSERT IGNORE锁升级死锁，未修改其他创建/worker路径。补移动端本金退款流水枚举测试，整理发布迁移及配置边界。
+- 修改文件：`src/modules/margin/{application/lifecycle.rs,infrastructure/close_executions.rs,infrastructure/cross_accounts.rs}`、`tests/unit_src/src_modules_margin_close_execution_concurrency_tests.rs`、`.trellis/spec/backend/margin-trading-actions.md`、`mobile/tests/wallet-ledger-classification.test.ts`、任务 `research/release-checklist.md`；定向格式化 `src/openapi.rs`、`tests/seconds_contract_routes.rs`，索引新增对账规范。
+- 验证结果：隔离实库确定性并发2/2、并行部分平仓3/3，确认逐仓/全仓100%平仓重放仅一笔执行、钱包100→130一次、分录逐资产平衡；Rust单测463/463、架构11/11、文档1/1、OpenAPI10/10与严格Clippy通过。Mobile完整release gate779/779及双构建/预算通过；Web820/820、类型/lint/构建/预算/策略15/15与既有覆盖率23/23；PC110/110及类型/构建通过。
+- 后续事项：对账留档和退款实库交付记录仍在汇总，不将可选数据库单测分支跳过视为实库验证。待最终格式/变更核验与关闭专用测试服务；没有提交、部署或生产操作。
+
+## 2026-09-19 01:52 - 秒合约前瞻性本金退款及佣金互斥终态验收
+
+- 完成内容：默认关闭的产品退款策略只在真正新开仓时留版本快照；等待期届满且原结算窗口仍无权威证据时，认证管理员可按原因退还原本金。退款、来源终态、待付佣金拒绝、钱包流水、平衡分录和审计同事务；退款与支付/结算/迟到行情互斥，异常已付佣金拒绝自动退款。四端显示中性退款终态，仅新提交成功发布原用户私有刷新事件。
+- 修改文件：详见任务 `research/e08-refund-delivery.md`，涉及0139、Seconds退款子模块/事件封装、佣金source-first锁、Admin退款界面/权限/OpenAPI、Agent/PC/Mobile终态/账单和测试；Seconds/Agent规范与PRD同步。
+- 验证结果：隔离MySQL9.3/Redis综合实库用例连续两次通过，覆盖策略/重放/并发/迟到证据/账务审计失败回滚/权限/私有事件；佣金冲回1/1、原佣金选择7/7；Web退款/冲回/确认框18/18。实际表单mock浏览器1440/390px检查无溢出，错误保留原因。Web820之后仅增加一条已通过的测试，生产UI未改变。
+- 后续事项：全秒合约路由扩展回归26/28，两项旧夹具因使用不存在的管理员/用户被401提前拦截，正在修正测试故障注入，生产鉴权不放宽。旧订单无快照永久不套用该政策；不改变输赢、不回填历史、不自动冲回异常已付佣金。未激活策略、提交或部署。
+
+## 2026-09-19 01:54 - 逐资产对账与不可变人工留档及跟进验收
+
+- 完成内容：补齐现货/杠杆/秒合约/预测/闪兑/佣金资金分录，后台逐币种检查单笔分录平衡、钱包与最新流水差异及13类独立业务义务；支持人工采集不可变证据、分页历史和追加负责人/期限/说明。原查询仍为只读一致快照；留档/跟进与审计同事务，不修改业务余额，也不伪造日结、历史起点或托管资产。
+- 修改文件：完整列表见任务 `research/e02-report-delivery.md`、`research/e02-spot-delivery.md`；新增0140、Admin financial_reconciliation各层及Web对账/留档组件、OpenAPI与测试，`.trellis/spec/backend/financial-reconciliation.md`，任务PRD及发布清单。
+- 验证结果：指定13316隔离库下对账选择8/8（含两项实际数据库综合测试），覆盖13类非零指标、105/100详情上限、原证据重放、不可修改、审计失败回滚、双父记录首次并发跟进不死锁及HTTP权限；Web42/42，实际组件mock浏览器1728/1280/768/390px采集/跟进流程通过。规范/格式/构建及主会话联合门禁记录见前条。
+- 后续事项：八项功能切片已交付，剩余两项秒合约旧测试夹具复跑及测试服务清理。对账始终标记历史覆盖不完整，没有自动日结、历史补账、外部托管核验或跨产品统一资金池；未提交、部署。
+
+## 2026-09-19 02:07 - 交易所八项业务优化最终验收与测试环境清理
+
+- 完成内容：八项有界功能切片及退款/对账留档补充全部交付；修复两处秒合约旧测试身份夹具，以真实鉴权加定向SQL故障注入保留回滚和非幂等冲突验证，不放宽生产鉴权。任务标记完成，发布清单记录0131–0140及0129/0130前置核对、未启用策略和运营边界；未运行会自动提交的归档脚本。
+- 修改文件：`tests/seconds_contract_routes.rs`、任务 `.trellis/tasks/09-18-exchange-business-hardening/{prd.md,task.json,research/release-checklist.md}`、`docs/superpowers/PROGRESS.md`；全部功能修改清单和实库命令见各E01–E08交付记录。
+- 验证结果：最终全秒合约路由28/28，明确同时配置普通隔离库与退款专用库/Redis，退款综合场景实际执行无环境缺失跳过；最后测试修改后严格Clippy、全局fmt、diff检查通过。联合验证Rust463/463、架构11/11、文档1/1、OpenAPI10/10、Web820/820及后加测试定向18/18、Mobile完整release gate779/779、PC110/110；对应类型/lint/构建/预算均通过。专用MySQL13316与Redis16386正常关闭并核实进程退出，原有后台预览5178返回HTTP200且保留。
+- 后续事项：上线前仍须演练生产MySQL8.4迁移、核对权限并由业务显式配置额度/冷静期/退款等待期。地址冷静期启用前需客户端登记流程或批准的等效流程；没有完整可撤销允许名单、自动日结/历史补账、外部托管证明、统一跨产品资金池或外部对冲。以上为发布/另项业务边界，不冒充已完成；未提交、推送、部署或操作线上资金。
+
+## 2026-09-19 04:32 - 业务加固后用户代理操作闭环复审
+
+- 完成内容：形成八项后续完善清单，优先指出PC闪兑展示/确认报价不一致及未知结果重试新建交易、输入Number精度损失、代理佣金本页混币总额及冲回证据；另列地址登记客户端、库存方向提示、代理订单到期刷新/触发信息、异常期限通知与业务到分录完整性。区分已复现问题、启用策略前置和运营建议，不重复否定上轮已交付能力。
+- 修改文件：`.trellis/tasks/09-19-exchange-post-hardening-review/{prd.md,task.json,implement.jsonl,check.jsonl,research/post-hardening-review.md}`、`docs/superpowers/PROGRESS.md`；没有修改业务代码或执行规范。
+- 验证结果：AST提取当前PC `handleSwap` 函数并用内存接口注入“提交成功后丢响应”，再次操作确认为两个不同新报价ID，证明潜在重复兑换路径；同链路Number转换将1.000000000000000001变为1。`cargo test --lib -- agent withdrawal_policy financial_retry` 21/21；报告36处源码引用、任务上下文与diff检查通过。没有真实资金、网络接口或数据库复现，不声称已发生线上损失。
+- 后续事项：建议先修PC闪兑确认/重试/精度，再修代理佣金核账；地址冷静期和闪兑库存策略启用前补用户入口/方向能力。公开参考检索未取得可用正文，本轮以仓库证据为准；未启动数据库、提交、部署或变更策略。
+
+## 2026-09-19 05:26 - 手机端与后端金额精度链路复审
+
+- 完成内容：确认手机闪兑报价/历史、理财持仓和贷款账单转Number丢失原文，小额非零手续费可显示为0；确认杠杆开仓19位小数通过实际校验、现货价格数量乘积可产生20位小数直接进入写入路径，以及杠杆计息分批截断尾差。区分响应展示问题、存储边界风险与已受DecimalText/资产量化保护的请求，不声称已发生线上资金损失。
+- 修改文件：`.trellis/tasks/09-19-mobile-backend-precision-review/{prd.md,task.json,implement.jsonl,check.jsonl,research/precision-review.md,research/mobile-repro.mjs,research/backend-repro.mjs}`、`docs/superpowers/PROGRESS.md`；未修改业务代码或金额规则。
+- 验证结果：真实Mobile适配器通过Vite SSR和内存HTTP复现，原请求完整、响应大额失真、1e-8手续费格式化为0且确认仅发送quote_id；实际Rust函数提取/域文件引用复现19位保证金放行、16/20位预留乘积和两批2e-18对单批3e-18。Mobile定向36/36、Rust定向61/61（显式排除需独立数据库的库存用例）；报告31处源码引用、任务上下文和diff检查通过。
+- 后续事项：优先补杠杆入参精度与现货全生命周期量化，再统一Mobile报价/账单DecimalText和小额显示；计息余数策略需单独明确。未启动数据库或重跑浏览器/全量构建，未核查线上资产配置及历史账差，未提交、推送或部署。
+
+## 2026-09-19 07:24 - 统一十进制入口与时间溢出边界
+
+- 完成内容：新增无损DECIMAL容量校验和受限十进制解析，158个金额请求/嵌套配置字段接入，保留PATCH缺省/清空语义；行情入口拒绝异常指数和不可存储数值。JWT/刷新令牌有效期受检计算并按实际TIMESTAMP列校验，K线恢复改用整数毫秒对齐及受检日期运算。
+- 修改文件：完整清单见 `.trellis/tasks/09-19-numeric-safety-hardening/research/n01-shared.md`；主要为 `src/{numeric,time,config,lib}.rs`、认证入口、各模块presentation、行情解析/K线恢复、对应单测、`tests/{numeric_contract,market_adapters}.rs` 与数值规范。
+- 验证结果：公共数值/时间/认证与K线恢复定向33/33，DTO契约1/1、行情适配6/6；随后全库496项中公共新增测试通过，但有1项其他切片旧错误文本断言待修、5项本地mock端口被沙箱阻断，已按权限重跑，尚未宣称联合门禁通过。定向rustfmt通过。
+- 后续事项：继续Mobile/Admin/Agent与交易结算切片、实库和浏览器回归、联合门禁；不修改历史余额，不自动迁移ID接口或扩展现有2038时间存储上限。未提交、推送、部署。
+
+## 2026-09-19 07:44 - 管理后台与代理后台数值入口验收
+
+- 完成内容：金额提交严格使用十进制字符串，按真实金额/利率字段容量拒绝超界；快速充值保留尾随零，提现策略非法整数不得变成空配置。后台和代理的ID/计数/分页/时间校验安全范围，金额展示和导出保留原文；代理佣金按币种精确汇总，不再展示无币种语义的混合金额。
+- 修改文件：完整清单与数值用途库存见 `.trellis/tasks/09-19-numeric-safety-hardening/research/n03-admin.md`；覆盖 `web/src/{shared,api,admin,agent}` 对应入口、实际表单及测试，Admin规范。
+- 验证结果：最终96文件887/887；typecheck、lint、production-policy15/15、coverage23/23、build、budget和diff-check通过。桌面及390px本地mock验证超界阻断、`9007199254740993.000000000000000001`与`12.50`原文POST，微额不显示为0。浏览器验证环境已关闭。主会话此时Rust全库500/500与严格Clippy通过，后续集合字段补充仍需最终复跑。
+- 后续事项：Mobile与其他后端切片及联合复核继续；少数DTO未提供资产精度时由后端权威检查，代理闪兑分币种统计尚无接口。本地mock不代表生产实测；未提交、推送、部署。
+
+## 2026-09-19 07:45 - 杠杆金额边界与前向计息余数验收
+
+- 完成内容：开仓按权威资产精度及存储容量校验，部分平仓保留原始剩余本金/债务，新增盈亏只量化一次并复用于资金记录。迁移0141新增26位利息余数，零增量仍保存余数和推进检查点，部署前已丢尾差不追补；杠杆档位数组补逐项受限解析。
+- 修改文件：完整30路径及迁移语义见 `.trellis/tasks/09-19-numeric-safety-hardening/research/n05-margin.md`；主要为Margin各层、计息/强平worker、对应测试和 `migrations/0141_margin_interest_remainder.sql`；数组入口由公共数值模块、Margin presentation及契约测试补充。
+- 验证结果：隔离MySQL9.3/Redis下Margin路由43/43、计息强平worker12/12、Margin单测60/60，专用并发分支实际执行；架构11/11、文档1/1、所属文件格式与diff通过。实库验证1h+1h与2h债务/余数一致、零增量检查点推进、溢出回滚；迁移141真实成功，列与CHECK约束只读核验通过。最后新增集合入口纳入主会话最终联合测试。
+- 后续事项：上线先执行0141并统一切换API/计息writer，禁止新旧writer混跑，需生产MySQL8.4迁移演练；全任务联合验证尚在运行。未改历史余额、追补利息、提交或部署。
+
+## 2026-09-19 07:45 - 钱包及其他金融业务容量与整数边界验收
+
+- 完成内容：钱包余额/流水/平台分录最终写入检查容量；闪兑保留历史余额尾差；理财、贷款、秒合约、新币、预测、佣金及快速充值补源值/派生金额边界，快速充值遵循实际36,18字段。修复精度位数窄化、分页计数、期限与解锁日期越界，后台交易对参数与真实资产精度一致。
+- 修改文件：完整库存、文件清单和验证限制见 `.trellis/tasks/09-19-numeric-safety-hardening/research/n06-backend.md`；覆盖Wallet/Convert/Earn/Loan/Seconds/NewCoin/Prediction/Agent/Risk/QuickRecharge、相关Admin和worker及回归测试。
+- 验证结果：最终隔离库Convert20/20、Earn22/22、LoanRisk1/1、Prediction6/6、Seconds28/28合计77项，退款专项专用库分支实际执行；另Admin数值2/2。定向单测237/237、架构11/11、文档1/1，格式和diff通过。包含充值/闪兑余额溢出回滚、贷款期限越界回滚、非法理财输入后余额/流水/事件不变和正常同键再提交。
+- 后续事项：没有对每个业务终态新增独立溢出实库夹具，链上/支付回调未做外部端到端；这些验证边界已明确记录。继续最终联合复核与专用环境清理，未改历史数据、激活策略、提交或部署。
+
+## 2026-09-19 07:49 - 现货预留成交撤单精度闭环验收
+
+- 完成内容：源价格/数量按交易对和真实资产精度校验；预留和每次成交报价金额按计价资产精度一次量化，贯通钱包、流水和分录。部分成交保留余量，终态释放按原冻结快照/流水减实际扣款，不重算历史乘积、不抹旧尾差、不挪用同账户其他冻结资金；缺证据返回409。
+- 修改文件：完整清单见 `.trellis/tasks/09-19-numeric-safety-hardening/research/n04-spot.md`；Spot领域/服务/应用/基础设施、Admin交易对纯校验、对应测试和现货规范。本切片无迁移。
+- 验证结果：隔离MySQL9.3实库串行Spot65/65（原有62/62），领域9/9、服务6/6、SQL仓储2/2，定向单测31/31、架构11/11、文档1/1及范围fmt/diff通过；真实验证20位小数乘积、18位资产下双向1e-18成交、8路重放、部分撤单、最终尾差释放及最后资金腿溢出回滚。
+- 后续事项：四线程测试64/65中的单个失败定位为既有系统用户/钱包初始化锁顺序死锁，事务完整回滚、订单仍待后续行情处理；未用重试掩盖，作为独立并发治理事项记录。继续最终全目标回归/复核和环境清理，未提交、推送、部署。
+
+## 2026-09-19 08:06 - 手机端精确金额与确认界面验收
+
+- 完成内容：闪兑/理财/贷款/预测金额和费率全程保留十进制文本，资金操作不回退到浮点余额；账户各桶精确合计，ID/分页/时间等整数入口按用途校验。修复微额显示为零及长金额确认界面裁切，保留只读图表和估算的有限浮点边界。
+- 修改文件：完整清单与数值分类见 `.trellis/tasks/09-19-numeric-safety-hardening/research/n02-mobile.md`；主要为Mobile API/core、交易/资产/账单页面及确认组件、行为回归与集成规范；证据在 `mobile/tests/evidence/n02/`。
+- 验证结果：最终完整release:gate退出0，785/785且0 skipped，类型/测试类型、PWA/Tauri双构建、产物和所有预算通过，未调高阈值。8类真实组件/页面在320/390/1440px共24项浏览器检查通过，页面及弹窗横向溢出为0，覆盖大额原文、1e-18费用和精确预览；最终diff检查通过，浏览器与5197服务已关闭。
+- 后续事项：浏览器为本地mock，未验证原生iOS/Android设备或移动端到真实后端资金全链路；Tauri构建不是签名原生包。后台独立复核的最后嵌套配置回归仍在收尾，未提交、推送、部署。
+
+## 2026-09-19 08:08 - 全端数值安全最终复核与环境清理
+
+- 完成内容：N01-N07实施及验证收尾，整理金额/利率/ID/计数/分页/时间/图表数值用途库存。独立复核修复后台杠杆档位、提现梯度和行情策略详情/预设把已失真Number重新转字符串的路径，无效必填值保留为错误，不静默删除配置；任务标记完成并保存发布清单。
+- 修改文件：`web/src/admin/resources/actions/{margin,wallet}.tsx`、`marketStrategy/model.ts`及真实组件/模型回归、Admin响应规范；Main补集合入口和默认行情校验阶段/杠杆SQL契约测试、现货可选环境夹具；完整清单见 `.trellis/tasks/09-19-numeric-safety-hardening/research/{n01-shared,n07-review,numeric-inventory,release-checklist}.md` 与任务元数据。
+- 验证结果：最终Rust全目标通过（含单测501/501、160字段契约、架构/文档/OpenAPI），严格全目标全特性Clippy、全局fmt、diff、源码完整性及16项扫描器测试通过；该轮未配置DB，不冒充实库证据。独立实库验证见N04-N06，最后修改的现货触发/重放夹具另实跑1/1。最终Mobile785/785及完整release gate、Web899/899及类型/lint/策略15/覆盖率23/构建预算、PC110/110和类型检查通过。专用MySQL/Redis正常关闭且PID文件移除，3037/5197和验证浏览器已关闭，原5178仍HTTP200。
+- 后续事项：上线先应用0141并统一切换计息writer，演练生产MySQL8.4迁移；原生设备、外部支付/链上回调及每种终态溢出未全部实测。另留存现货账户初始化既有并发死锁治理项，失败事务回滚但需后续处理。无历史余额改写、利息追补、策略激活、提交、推送或部署；未执行自动提交归档钩子。
+
+## 2026-09-19 08:16 - 累积业务完善与数值安全提交核验
+
+- 完成内容：按用户“提交推送”授权整理本轮累积的代理订单/钱包与倒计时、业务闭环、资金治理和数值安全改造，连同迁移0129–0141、测试、规范及任务交付证据作为一个完整依赖集合提交；排除根目录临时 `.vite/` 缓存和已忽略的测试日志。沿用现有数值安全任务跟踪，不新增业务修改。
+- 修改文件：`src/`、`tests/`、`migrations/0129*` 至 `migrations/0141*`、`mobile/src/`、`mobile/tests/`、`pc/src/`、`pc/tests/`、`web/src/`、相关 `.trellis/spec/`、九个本轮 `.trellis/tasks/09-18-*` / `09-19-*` 任务及本进度记录；具体文件以本次提交清单为准。
+- 验证结果：提交前重新执行 `git diff --check`、`cargo fmt --all -- --check`、源码完整性扫描及扫描器16项单测，全部通过；完整业务测试沿用08:08最终验收记录，本次未重启数据库或重复全量测试。`git fetch origin` 成功，远端无新增提交，本地已有6个待推送提交；测试证据为本地mock，未发现其中包含真实登录凭据。
+- 后续事项：执行普通提交及推送并核对远端提交哈希，不强制推送。推送main会触发既有镜像工作流；本地核验不等于CI构建或线上部署成功，0141迁移顺序、MySQL8.4演练及既有发布边界仍须遵守。

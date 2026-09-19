@@ -1,7 +1,8 @@
 import type { MarketTicker } from './types.ts'
 import { decimalTextFromBoundary, type DecimalText } from './decimal.ts'
+import type { MarketProvenance } from './marketProvenance.ts'
 
-export interface LiveMarketTickerUpdate {
+export interface LiveMarketTickerUpdate extends MarketProvenance {
   symbol: string
   lastPrice: number
   lastPriceText?: DecimalText
@@ -29,6 +30,9 @@ export function applyLiveMarketTickerUpdate(
   const percentDenominator = changePercent === null ? 0 : 1 + changePercent / 100
   return {
     ...current,
+    ...('source' in current || 'source' in update ? { source: update.source } : {}),
+    ...('provider' in current || 'provider' in update ? { provider: update.provider } : {}),
+    sourceObservedAt: normalizeObservedAt(update.observedAt) || undefined,
     lastPrice: update.lastPrice,
     lastPriceText: update.lastPriceText
       || decimalTextFromBoundary(update.lastPrice, { allowNegative: false, allowZero: false })
@@ -57,7 +61,7 @@ export function mergeMarketTickerSnapshots(
 
     const existingObservedAt = normalizeObservedAt(existing.observedAt)
     const incomingObservedAt = normalizeObservedAt(snapshot.observedAt)
-    if (existingObservedAt <= 0 || incomingObservedAt <= 0 || existingObservedAt <= incomingObservedAt) {
+    if (existingObservedAt <= 0 || (incomingObservedAt > 0 && existingObservedAt <= incomingObservedAt)) {
       return snapshot
     }
 
@@ -77,6 +81,9 @@ function withLatestTickerSnapshot(
 ): MarketTicker {
   return {
     ...incoming,
+    ...('source' in incoming || 'source' in current ? { source: current.source } : {}),
+    ...('provider' in incoming || 'provider' in current ? { provider: current.provider } : {}),
+    sourceObservedAt: current.sourceObservedAt,
     lastPrice: current.lastPrice,
     lastPriceText: current.lastPriceText,
     openPrice: current.openPrice,
@@ -89,7 +96,7 @@ function withLatestTickerSnapshot(
 }
 
 function normalizeObservedAt(value: number | undefined): number {
-  if (!Number.isFinite(value) || Number(value) <= 0) return 0
+  if (!Number.isSafeInteger(value) || Number(value) <= 0 || Number(value) > 8_640_000_000_000_000) return 0
   const timestamp = Number(value)
   return timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
 }

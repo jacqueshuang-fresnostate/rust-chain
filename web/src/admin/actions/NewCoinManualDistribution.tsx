@@ -6,7 +6,7 @@ import { apiRequest } from '../../api/client';
 import type { DetailDrawerData } from '../../shared/DetailDrawer';
 import type { ApiRecord } from '../../api/types';
 import { AdminTextInput } from '../../shared/SemiFormControls';
-import { addDecimalText, compareDecimalText, isNonNegativeDecimalText, multiplyDecimalText } from '../../shared/decimal';
+import { addDecimalText, compareDecimalText, decimalFitsStorage, isNonNegativeDecimalText, multiplyDecimalText } from '../../shared/decimal';
 import { useCanAdminRequest } from '../access';
 import { loadProjectCenter, projectQueryKey } from '../new-coins/projectModel';
 import { ADMIN_OPTION_QUERY_KEY } from '../sharedOptionQuery';
@@ -31,8 +31,8 @@ export function NewCoinManualDistribution({ order, onSettled }: { order: ApiReco
   const payment = multiplyDecimalText(price, quantity.trim());
   const refund = payment === null ? null : addDecimalText(frozen, `-${payment}`);
   const comparison = compareDecimalText(quantity.trim(), requested);
-  const valid = isNonNegativeDecimalText(quantity.trim()) && (comparison === -1 || comparison === 0)
-    && payment !== null && refund !== null && isNonNegativeDecimalText(refund)
+  const valid = decimalFitsStorage(quantity) && isNonNegativeDecimalText(quantity.trim()) && (comparison === -1 || comparison === 0)
+    && payment !== null && compareDecimalText(payment, '1e20') === -1 && refund !== null && isNonNegativeDecimalText(refund)
     && !project.isFetching && !project.error && project.data?.project.lifecycle_status === 'distribution' && project.data.project.status === 'active';
   if (!canRead || !canWrite || order.status !== 'pending' || order.settlement_mode !== 'manual_distribution') return null;
   const close = () => { if (!busy) { setOpen(false); setReason(''); setError(''); } };

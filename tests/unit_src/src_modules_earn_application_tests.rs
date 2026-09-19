@@ -9,7 +9,19 @@ fn subscribe_and_redeem_both_use_asset_precision_and_platform_legs() {
     assert!(source.contains("earn_redemption_journal_legs("));
     assert_eq!(
         source.matches("load_asset_precision_in_tx").count(),
-        3,
-        "subscribe, redeem and replay must each read the asset precision in their own transaction"
+        5,
+        "subscribe, redeem, replay and both product exposure writes must read asset precision"
+    );
+    assert_eq!(
+        source
+            .matches("validate_exposure_capacity(write.principal_capacity.as_ref(), precision)")
+            .count(),
+        2
+    );
+    assert_eq!(
+        source
+            .matches("validate_exposure_capacity(write.liability_capacity.as_ref(), precision)")
+            .count(),
+        2
     );
 }

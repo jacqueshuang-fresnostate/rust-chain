@@ -47,6 +47,8 @@ use axum::{
     routing::{get, patch, post},
 };
 
+mod refund;
+
 /// 注册面向终端用户的秒合约路由，由调用方挂到已带用户鉴权的路由树下。
 /// 产品目录为只读列表；订单路径上 GET 查自己的历史订单、POST 提交开仓，两者共用同一路径不同方法。
 /// 用户侧没有结算入口，到期结算只能由后台接口或结算 worker 触发。
@@ -65,6 +67,7 @@ pub fn user_routes() -> Router<AppState> {
 /// 该入口会实际动用户资金，调用方必须确保其挂载在管理员鉴权与审计中间件之后。
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
+        .merge(refund::routes())
         .route(
             "/seconds-contracts/products",
             get(list_admin_products).post(create_product),
@@ -252,8 +255,7 @@ async fn open_order(
 }
 
 /// 处理后台人工结算秒合约订单请求，会按胜负结果实际向用户钱包派奖，属于高风险资金入口。
-/// 胜负结果由请求体给出而非服务端比价推导，因此调用方须先核对开仓价与结算价再提交，
-/// 结算价同样取自请求体，用例只负责校验、落库和按订单固化的赔率计算赔付。
+/// 胜负只能由服务端事件时间历史价格推导；result=auto 可恢复人工审核单，不接受客户端结算价。
 /// 结算幂等：订单已结算且结果相同则回读原结果不重复派奖，结果不同则返回冲突并拒绝覆盖。
 /// 不需要 Redis，因为不读行情；事件在结算事务提交成功后才推送，管理员编号写入审计作为操作人。
 async fn settle_order(

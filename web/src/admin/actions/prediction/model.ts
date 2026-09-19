@@ -1,5 +1,6 @@
 import type { SemiSelectOption } from '../../../shared/SemiFormControls';
-import { canonicalDecimalText, isNonNegativeDecimalText } from '../../../shared/decimal';
+import { canonicalDecimalText, decimalFitsStorage, isNonNegativeDecimalText, requiredDecimalText } from '../../../shared/decimal';
+import { requiredSafeInteger } from '../../../shared/integer';
 import type {
   PredictionAssetConfig,
   PredictionAssetDraft,
@@ -67,15 +68,13 @@ function parseTags(value: string): string[] {
 }
 
 function positiveInteger(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${label}必须为正整数`);
-  return parsed;
+  return requiredSafeInteger(value, label, 1);
 }
 
 function nonNegativeAmount(value: string, label: string): string {
   const trimmed = value.trim();
   const canonical = canonicalDecimalText(trimmed);
-  if (canonical === null || !isNonNegativeDecimalText(canonical)) {
+  if (canonical === null || !decimalFitsStorage(trimmed) || !isNonNegativeDecimalText(canonical)) {
     throw new Error(`${label}必须为非负数字`);
   }
   return canonical;
@@ -90,12 +89,12 @@ export function settingsPayload(
     sync_enabled: values.syncEnabled,
     sync_interval_seconds: positiveInteger(values.syncIntervalSeconds, '同步间隔'),
     sync_tags: parseTags(values.syncTags),
-    allowed_asset_ids: values.allowedAssetIds.map(Number),
-    default_fee_rate: nonNegativeAmount(values.defaultFeeRate, '默认手续费率'),
+    allowed_asset_ids: values.allowedAssetIds.map((value) => positiveInteger(value, '资产ID')),
+    default_fee_rate: requiredDecimalText(nonNegativeAmount(values.defaultFeeRate, '默认手续费率'), '默认手续费率', 18, 8),
     default_settlement_mode: values.defaultSettlementMode,
     default_invalid_refund_policy: values.defaultInvalidRefundPolicy,
     quote_ttl_seconds: positiveInteger(values.quoteTtlSeconds, '报价有效秒数'),
-    revision,
+    revision: requiredSafeInteger(revision, '配置版本'),
     reason
   };
 }
@@ -106,10 +105,10 @@ export function assetConfigPayload(
   reason: string
 ) {
   return {
-    asset_id: asset.asset_id,
+    asset_id: requiredSafeInteger(asset.asset_id, '资产ID', 1),
     enabled: draft.enabled,
     max_payout_amount: nonNegativeAmount(draft.maxPayoutAmount, '最大赔付'),
-    revision: asset.revision,
+    revision: requiredSafeInteger(asset.revision, '配置版本'),
     reason
   };
 }

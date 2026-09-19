@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 
 import { StompService } from '../src/api/stomp.ts'
+import { APP_CONFIG } from '../src/config/app.ts'
 import { useMarketStore, type Ticker } from '../src/stores/market.ts'
 
 type SentCommand = {
@@ -55,6 +56,7 @@ class MockWebSocket {
 }
 
 const originalWebSocket = globalThis.WebSocket
+const originalBackendDomain = APP_CONFIG.BACKEND_API_DOMAIN
 const originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
 
 test('subscribes existing PC market tickers when the public websocket opens', (t) => {
@@ -201,6 +203,8 @@ test('routes enveloped depth payloads to matching market subscriptions', async (
         bids: [{ price: '70000', amount: '1.5' }],
         asks: [{ price: '70010', quantity: '2' }],
         observed_at: 1_717_173_000_000,
+        source: 'default',
+        provider: 'strategy',
       },
     }),
   })
@@ -208,8 +212,31 @@ test('routes enveloped depth payloads to matching market subscriptions', async (
   assert.equal(messages.length, 1)
   assert.equal(messages[0].symbol, 'BTC/USDT')
   assert.equal(messages[0].direction, 'SNAPSHOT')
+  assert.equal(messages[0].source, 'default')
+  assert.equal(messages[0].provider, 'strategy')
   assert.deepEqual(messages[0].bids, [{ price: 70000, amount: 1.5 }])
   assert.deepEqual(messages[0].asks, [{ price: 70010, amount: 2 }])
+})
+
+test('public trade protocol preserves each provider and source instead of flattening mixed streams', async (t) => {
+  const { service } = setupService()
+  t.after(() => { service.disconnect(); restoreWebSocket() })
+  const messages: any[] = []
+  await service.subscribe('spot', 'spot:trade:BTC/USDT', (message) => messages.push(JSON.parse(message.body)))
+  const socket = latestSocket()
+  socket.open()
+  for (const [source, provider] of [['external', 'htx'], ['default', 'strategy'], ['strategy', 'strategy'], ['unknown', 'new-provider']]) {
+    socket.onmessage?.({ data: JSON.stringify({
+      symbol: 'BTCUSDT', trade_id: '7', side: 'sell', price: '12', quantity: '2',
+      traded_at: 1790000000000, source, provider,
+    }) })
+    const trade = messages.at(-1)
+    assert.equal(trade.source, source)
+    assert.equal(trade.provider, provider)
+    assert.equal(trade.id, '7')
+    assert.equal(trade.direction, 'SELL')
+  }
+  assert.equal(messages.length, 4)
 })
 
 test('routes enveloped kline payloads by topic symbol and interval', async (t) => {
@@ -431,6 +458,7 @@ test('reconnects private websocket while token remains and stops after token rem
 
 function setupService(options?: { reconnectDelayMs?: number }) {
   MockWebSocket.instances = []
+  APP_CONFIG.BACKEND_API_DOMAIN = 'http://127.0.0.1:8080'
   globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket
   setActivePinia(createPinia())
   return {
@@ -441,6 +469,7 @@ function setupService(options?: { reconnectDelayMs?: number }) {
 
 function restoreWebSocket() {
   globalThis.WebSocket = originalWebSocket
+  APP_CONFIG.BACKEND_API_DOMAIN = originalBackendDomain
 }
 
 function installAuthToken(token?: string) {

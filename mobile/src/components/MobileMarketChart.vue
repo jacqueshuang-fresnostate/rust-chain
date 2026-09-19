@@ -7,11 +7,14 @@ import { fetchOlderKlines } from '@/api/market'
 import { createMarketChartHistorySession, type MarketChartHistorySnapshot } from '@/core/marketChartHistory'
 import { calculateMarketMovingAverages } from '@/core/marketIndicators'
 import type { KlinePoint, MarketTicker } from '@/core/types'
+import MarketProvenanceLabel from '@/components/MarketProvenanceLabel.vue'
+import { marketSource, type MarketProvenance } from '@/core/marketProvenance'
 
 const props = withDefaults(defineProps<{
   points: KlinePoint[]
   symbol: string
   marketType?: MarketTicker['marketType']
+  ticker?: MarketTicker
   loading?: boolean
   interval?: string
 }>(), {
@@ -36,6 +39,12 @@ const movingAverages = computed(() => calculateMarketMovingAverages(normalizedPo
 const chartLocale = computed(() => locale.value === 'en' ? 'en-US' : 'zh-CN')
 const hasGeneratedSource = computed(() => props.marketType === 'strategy' || props.marketType === 'internal')
 const hasRenderableData = computed(() => normalizedPoints.value.length > 0)
+const sources = computed(() => {
+  const distinct = new Map<string, MarketProvenance>()
+  for (const point of normalizedPoints.value) distinct.set(marketSource(point), point)
+  if (!distinct.size) distinct.set('unknown', {})
+  return [...distinct].map(([key, provenance]) => ({ key, provenance }))
+})
 </script>
 
 <template>
@@ -48,6 +57,11 @@ const hasRenderableData = computed(() => normalizedPoints.value.length > 0)
     :data-history-state="history.status"
     :aria-busy="loading"
   >
+    <div class="mobile-market-chart__provenance">
+      <MarketProvenanceLabel v-if="ticker" :provenance="ticker" :observed-at="ticker.sourceObservedAt" live />
+      <span>{{ t('marketProvenance.chartSources') }}</span>
+      <MarketProvenanceLabel v-for="item in sources" :key="item.key" :provenance="item.provenance" />
+    </div>
     <p v-if="hasGeneratedSource" class="mobile-market-chart__source">{{ t('marketDetail.generatedMarketSource') }}</p>
     <div class="mobile-market-chart__viewport">
       <LightweightMarketChart
@@ -95,6 +109,8 @@ const hasRenderableData = computed(() => normalizedPoints.value.length > 0)
 
 <style scoped>
 .mobile-market-chart {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   height: 100%;
   min-height: 0;
@@ -121,12 +137,14 @@ const hasRenderableData = computed(() => normalizedPoints.value.length > 0)
 }
 
 .mobile-market-chart__viewport {
-  height: 100%;
+  flex: 1;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
   position: relative;
 }
+
+.mobile-market-chart__provenance { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; padding: 4px 8px; font-size: 10px; flex: none; }
 
 .mobile-market-chart__state {
   align-items: center;

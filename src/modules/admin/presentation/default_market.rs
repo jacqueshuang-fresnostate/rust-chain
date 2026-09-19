@@ -8,6 +8,10 @@ use crate::modules::market::synthetic_default::DefaultMarketParameters;
 pub(crate) struct SaveDefaultMarketRequest {
     pub(crate) expected_version: u32,
     pub(crate) enabled: bool,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) initial_price: Option<BigDecimal>,
     pub(crate) config: DefaultMarketParameters,
     pub(crate) reason: Option<String>,
@@ -25,6 +29,10 @@ pub(crate) struct PauseDefaultMarketRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviewDefaultMarketRequest {
     pub(crate) expected_version: u32,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) initial_price: Option<BigDecimal>,
     pub(crate) config: DefaultMarketParameters,
 }

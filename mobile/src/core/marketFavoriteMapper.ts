@@ -1,4 +1,5 @@
-import { asNumber, normalizeSymbol } from './format.ts'
+import { normalizeSymbol } from './format.ts'
+import { requiredId } from './numeric.ts'
 import type { MarketFavorite } from './types.ts'
 
 export interface BackendMarketFavoriteRecord {
@@ -10,7 +11,8 @@ export interface BackendMarketFavoriteRecord {
 }
 
 export function mapMarketFavorite(record: BackendMarketFavoriteRecord): MarketFavorite | null {
-  const marketId = asNumber(record.market_id)
+  let marketId: number
+  try { marketId = requiredId(record.market_id) } catch { return null }
   const symbol = normalizeSymbol(String(record.symbol || ''))
   if (marketId <= 0 || !symbol) return null
 

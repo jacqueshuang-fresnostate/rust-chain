@@ -12,6 +12,7 @@ use crate::{
         events::{EventBroadcastHub, EventBroadcastMessage},
     },
     state::AppState,
+    workers::financial_retry::{self, RetryOutcome},
 };
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -153,18 +154,29 @@ pub async fn run_once_with_broadcast(
         if summary.redeemed >= redemption_limit {
             break;
         }
+        let Some(lease) =
+            financial_retry::claim(pool, "earn", candidate.subscription_id, now).await?
+        else {
+            continue;
+        };
         summary.scanned += 1;
-        match redeem_subscription_by_id(pool, candidate.subscription_id, now).await {
+        let outcome = match redeem_subscription_by_id(pool, candidate.subscription_id, now).await {
             Ok(EarnRedemptionOutcome::Redeemed(event)) => {
                 summary.redeemed += 1;
                 publish_redemption_event(hub, &event);
+                RetryOutcome::Complete
             }
-            Ok(EarnRedemptionOutcome::Skipped) => summary.skipped += 1,
+            Ok(EarnRedemptionOutcome::Skipped) => {
+                summary.skipped += 1;
+                RetryOutcome::Complete
+            }
             Err(error) => {
                 summary.failed += 1;
                 warn!(subscription_id = candidate.subscription_id, %error, "理财自动赎回失败");
+                RetryOutcome::Failed
             }
-        }
+        };
+        financial_retry::finish(pool, lease, now, outcome).await?;
     }
 
     Ok(summary)
@@ -196,13 +208,15 @@ async fn fetch_due_subscriptions(
     limit: u32,
 ) -> AppResult<Vec<DueEarnSubscription>> {
     sqlx::query_as::<_, DueEarnSubscription>(
-        r#"SELECT id AS subscription_id
-           FROM earn_subscriptions
-           WHERE status = 'subscribed'
-             AND matures_at <= ?
-           ORDER BY matures_at ASC, id ASC
+        r#"SELECT s.id AS subscription_id
+           FROM earn_subscriptions s
+           LEFT JOIN financial_worker_retries r ON r.task_kind = 'earn' AND r.item_id = s.id
+           WHERE s.status = 'subscribed' AND s.matures_at <= ?
+             AND (r.next_attempt_at IS NULL OR r.next_attempt_at <= ?)
+           ORDER BY r.last_attempt_at ASC, s.matures_at ASC, s.id ASC
            LIMIT ?"#,
     )
+    .bind(now.naive_utc())
     .bind(now.naive_utc())
     .bind(limit.clamp(1, 500) as i64)
     .fetch_all(pool)

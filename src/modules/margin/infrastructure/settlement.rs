@@ -40,6 +40,17 @@ pub(crate) async fn debit_margin_position_open_collateral(
     position_id: u64,
     margin_mode: &str,
 ) -> AppResult<String> {
+    crate::numeric::ensure_amount_storage(amount, "margin collateral")?;
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        "margin",
+        &format!("margin:{position_id}:open"),
+        asset_id,
+        "margin_position",
+        position_id,
+        &crate::modules::margin::journal::opening_legs(amount),
+    )
+    .await?;
     if margin_mode == "cross" {
         let margin_wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
         if margin_wallet.available < *amount {
@@ -49,6 +60,7 @@ pub(crate) async fn debit_margin_position_open_collateral(
             )));
         }
         let available_after = margin_wallet.available.clone() - amount.clone();
+        crate::numeric::ensure_amount_storage(&available_after, "margin wallet available")?;
         sqlx::query(
             "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
         )
@@ -89,6 +101,7 @@ pub(crate) async fn debit_margin_position_open_collateral(
             ));
         }
         let available_after = margin_wallet.available.clone() - amount.clone();
+        crate::numeric::ensure_amount_storage(&available_after, "margin wallet available")?;
         sqlx::query(
             "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
         )
@@ -122,6 +135,7 @@ pub(crate) async fn debit_margin_position_open_collateral(
         )));
     }
     let available_after = wallet.available.clone() - amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "spot wallet available")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -186,6 +200,7 @@ pub(crate) async fn credit_margin_position_amount(
     change_type: &str,
     position_id: u64,
 ) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, "margin credit")?;
     if amount <= &BigDecimal::from(0) {
         return Ok(());
     }
@@ -193,6 +208,7 @@ pub(crate) async fn credit_margin_position_amount(
         "margin" => {
             let wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
             let available_after = wallet.available.clone() + amount.clone();
+            crate::numeric::ensure_amount_storage(&available_after, "margin wallet available")?;
             sqlx::query(
                 "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
             )
@@ -219,6 +235,7 @@ pub(crate) async fn credit_margin_position_amount(
         "spot" => {
             let wallet = lock_spot_wallet_row(tx, user_id, asset_id).await?;
             let available_after = wallet.available.clone() + amount.clone();
+            crate::numeric::ensure_amount_storage(&available_after, "spot wallet available")?;
             sqlx::query(
                 "UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
             )
@@ -265,7 +282,9 @@ pub(crate) async fn apply_cross_margin_position_settlement(
     position_id: u64,
 ) -> AppResult<()> {
     let wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
-    let available_after = (wallet.available.clone() + amount.clone()).with_scale(18);
+    crate::numeric::ensure_amount_storage(amount, "cross margin settlement")?;
+    let available_after = wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "margin wallet available")?;
     if available_after < 0 {
         return Err(AppError::Validation(
             "cross margin position loss exceeds shared available equity; account liquidation is required"
@@ -317,6 +336,8 @@ pub(crate) async fn apply_cross_margin_account_settlement(
     let wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
     let settlement = cross_margin_liquidation_settlement(&wallet.available, account_equity)
         .map_err(|message| AppError::Internal(message.to_owned()))?;
+    crate::numeric::ensure_amount_storage(account_equity, "cross margin equity")?;
+    crate::numeric::ensure_amount_storage(&settlement.bad_debt, "cross margin bad debt")?;
     sqlx::query(
         "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -359,6 +380,8 @@ pub(crate) async fn mark_position_closed(
     exit_price: &BigDecimal,
     cumulative_realized_pnl: &BigDecimal,
 ) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(exit_price, "margin exit price")?;
+    crate::numeric::ensure_amount_storage(cumulative_realized_pnl, "margin cumulative pnl")?;
     let update_position = sqlx::query(
         r#"UPDATE margin_positions
            SET status = 'closed', closed_at = ?, exit_price = ?, realized_pnl = ?,
@@ -405,6 +428,15 @@ pub(crate) async fn mark_position_partially_closed(
     position_id: u64,
     write: MarginPositionPartialCloseWrite<'_>,
 ) -> AppResult<()> {
+    for amount in [
+        write.remaining_margin_amount,
+        write.remaining_notional_amount,
+        write.remaining_borrowed_amount,
+        write.remaining_interest_amount,
+        write.cumulative_realized_pnl,
+    ] {
+        crate::numeric::ensure_amount_storage(amount, "margin remaining amount")?;
+    }
     let update_position = sqlx::query(
         r#"UPDATE margin_positions
            SET margin_amount = ?, notional_amount = ?, borrowed_amount = ?,

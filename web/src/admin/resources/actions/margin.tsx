@@ -5,7 +5,7 @@ import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
-import { canonicalDecimalText, compareDecimalText, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
+import { canonicalDecimalText, compareDecimalText, decimalFitsStorage, isNonNegativeDecimalText, isPositiveDecimalText } from '../../../shared/decimal';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminCheckbox, AdminMultiSelect, AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
@@ -116,7 +116,7 @@ function customLeverageLevelError(value: string): string | null {
   const invalidLevel = value
     .split(',')
     .map((level) => level.trim())
-    .find((level) => !isPlainUnsignedDecimal(level) || compareDecimalText(level, '1') !== 1);
+    .find((level) => !isPlainUnsignedDecimal(level) || !decimalFitsStorage(level, 18, 8) || compareDecimalText(level, '1') !== 1);
 
   return invalidLevel === undefined ? null : `自定义杠杆档位“${invalidLevel || '空项'}”必须为大于 1 的十进制数`;
 }
@@ -152,6 +152,8 @@ function marginProductStepError(values: MarginProductValues, tab: Exclude<Margin
   if (values.maxMargin.trim() && compareDecimalText(values.maxMargin, values.minMargin) === -1) return '最大保证金不能小于最小保证金';
   if (!isPlainUnsignedDecimal(values.maintenanceMarginRate) || !isNonNegativeDecimalText(values.maintenanceMarginRate)) return '维持保证金率必须为非负十进制数';
   if (values.hourlyInterestRate.trim() && (!isPlainUnsignedDecimal(values.hourlyInterestRate) || !isNonNegativeDecimalText(values.hourlyInterestRate))) return '小时利率必须为非负十进制数，或留空';
+  if (![values.minMargin, ...(values.maxMargin.trim() ? [values.maxMargin] : [])].every((value) => decimalFitsStorage(value))) return '保证金超出 20 位整数、18 位小数的存储范围';
+  if (![values.maintenanceMarginRate, ...(values.hourlyInterestRate.trim() ? [values.hourlyInterestRate] : [])].every((value) => decimalFitsStorage(value, 18, 8))) return '费率超出 10 位整数、8 位小数的存储范围';
   return null;
 }
 
@@ -181,9 +183,9 @@ function marginProductFromRecord(record: ApiRecord): MarginProductValues {
   const supportedMarginModes: MarginMode[] = marginModes.length > 0 ? marginModes : ['isolated'];
   const leverageLevels = Array.isArray(record.leverage_levels)
     ? record.leverage_levels
-        .filter((level) => typeof level === 'string' || typeof level === 'number')
-        .map((level) => normalizedMarginLeverageLevel(String(level)))
-        .filter(Boolean)
+        .map((level) => typeof level === 'string' && level.trim()
+          ? normalizedMarginLeverageLevel(level)
+          : '无效档位，请重新填写')
     : [];
   const defaultLevelSet = new Set(defaultLeverageLevels);
 
@@ -203,12 +205,13 @@ function marginProductFromRecord(record: ApiRecord): MarginProductValues {
   };
 }
 
-function marginProductRequestBody(values: MarginProductValues, reason: string) {
+export function marginProductRequestBody(values: MarginProductValues, reason: string) {
   const validationError = marginProductWorkflowError(values, 'review');
   if (validationError) {
     throw new Error(validationError);
   }
   const leverageLevels = marginLeverageLevels(values);
+  if (!leverageLevels.every((value) => decimalFitsStorage(value, 18, 8))) throw new Error('杠杆档位超出存储精度');
   const maxLeverage = leverageLevels.at(-1);
   if (!maxLeverage) {
     throw new Error('杠杆档位不能为空');

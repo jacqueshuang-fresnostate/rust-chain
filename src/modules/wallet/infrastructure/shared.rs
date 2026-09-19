@@ -86,6 +86,13 @@ pub(super) async fn update_wallet_balance(
     frozen: &BigDecimal,
     locked: &BigDecimal,
 ) -> AppResult<()> {
+    for (value, label) in [
+        (available, "wallet available"),
+        (frozen, "wallet frozen"),
+        (locked, "wallet locked"),
+    ] {
+        crate::numeric::ensure_amount_storage(value, label)?;
+    }
     if available < &BigDecimal::from(0)
         || frozen < &BigDecimal::from(0)
         || locked < &BigDecimal::from(0)
@@ -129,6 +136,15 @@ pub(super) async fn insert_wallet_ledger_in_tx(
     ref_type: &str,
     ref_id: &str,
 ) -> AppResult<()> {
+    for (value, label) in [
+        (amount, "wallet ledger amount"),
+        (balance_after, "wallet ledger balance"),
+        (available_after, "wallet ledger available"),
+        (frozen_after, "wallet ledger frozen"),
+        (locked_after, "wallet ledger locked"),
+    ] {
+        crate::numeric::ensure_amount_storage(value, label)?;
+    }
     sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,
@@ -157,7 +173,7 @@ pub(super) async fn insert_wallet_ledger_in_tx(
 /// 不闭合的分录直接按内部错误中止，避免把不平的账提交进对账表。
 /// 冲突时沿用唯一键 `(transaction_key, account_code, asset_id)` 语义拒绝重复分录，
 /// 由调用方事务回滚，绝不静默跳过，避免出现只有用户腿而没有平台腿的半截账。
-pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
+pub(crate) async fn insert_wallet_platform_journal_legs_in_tx(
     tx: &mut Transaction<'_, MySql>,
     context: &str,
     transaction_key: &str,
@@ -166,6 +182,32 @@ pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
     ref_id: u64,
     legs: &[WalletPlatformJournalLeg],
 ) -> AppResult<()> {
+    insert_platform_journal_with_reference_in_tx(
+        tx,
+        context,
+        transaction_key,
+        asset_id,
+        ref_type,
+        ref_id,
+        legs,
+    )
+    .await
+}
+
+/// 按业务引用写入同币种零和分录，支持报价编号等非整数引用；唯一冲突或不平衡使原资金事务回滚。
+/// metadata 保留引用的原始 JSON 类型，兼容既有数字引用；不跨币种抵销，也不静默吞掉重复分录。
+pub(crate) async fn insert_platform_journal_with_reference_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    context: &str,
+    transaction_key: &str,
+    asset_id: u64,
+    ref_type: &str,
+    ref_id: impl serde::Serialize + ToString,
+    legs: &[WalletPlatformJournalLeg],
+) -> AppResult<()> {
+    for leg in legs {
+        crate::numeric::ensure_amount_storage(&leg.amount, "platform journal amount")?;
+    }
     let total = legs
         .iter()
         .fold(BigDecimal::from(0), |total, leg| total + leg.amount.clone());
@@ -179,7 +221,7 @@ pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
             r#"INSERT INTO platform_financial_journal
                (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id,
                 metadata_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, JSON_OBJECT('ref_id', ?))"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(transaction_key)
         .bind(context)
@@ -188,7 +230,7 @@ pub(super) async fn insert_wallet_platform_journal_legs_in_tx(
         .bind(&leg.amount)
         .bind(ref_type)
         .bind(ref_id.to_string())
-        .bind(ref_id)
+        .bind(sqlx::types::Json(serde_json::json!({ "ref_id": ref_id })))
         .execute(&mut **tx)
         .await?;
     }

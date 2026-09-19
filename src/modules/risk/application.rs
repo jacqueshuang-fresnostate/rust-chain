@@ -40,7 +40,8 @@ pub struct RiskGuardInput {
 impl ApplicationLayer for RiskGuardInput {}
 
 /// 实时读取启用规则，按操作和作用域合并后依次评估黑名单、限频、金额及价格偏离；命中返回 403。
-/// Redis 计数故障按放行处理，拒绝事件落库故障仅告警；调用方必须在任何钱包冻结、扣款和订单写入前调用本闸门。
+/// Redis 计数故障返回缺失事实，由领域层对已配置提现限频失败关闭；拒绝事件落库故障仅告警。
+/// 调用方必须在任何钱包冻结、扣款和订单写入前调用本闸门。
 pub async fn enforce_risk_control(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -77,7 +78,7 @@ pub async fn enforce_risk_control(
 /// 取得本次请求在限频窗口内的累计次数，仅当策略确实含请求数上限且 Redis 可用时才真正自增。
 /// 计数键按操作、限频作用域和用户三段隔离，因此不同作用域的规则各用各的配额互不干扰。
 /// 注意本函数一旦执行就已经把计数加一，即便后续因其他维度拒绝也不会回退，这是固定窗口计数的既定语义。
-/// Redis 报错时只告警并返回空值，让限频维度在评估阶段被跳过，缓存故障不阻断正常交易。
+/// Redis 报错时告警并返回空值，不伪造零计数；领域层决定该操作是否允许降级。
 async fn resolve_request_count(
     redis: Option<&ConnectionManager>,
     input: &RiskGuardInput,

@@ -275,14 +275,17 @@ impl MySqlAuthRepository {
     /// 账号被停用与记录不存在都返回 `None`，调用方须把两者折叠成未授权，不得据此判断账号是否存在。
     /// 这是不加锁的普通读取，返回之后账号仍可能被并发停用。
     async fn find_active_user(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        let actor_id = sqlx::query_scalar::<_, u64>(
-            "SELECT id FROM users WHERE id = ? AND status = 'active' LIMIT 1",
+        let row = sqlx::query_as::<_, (u64, u64)>(
+            "SELECT id, auth_session_version FROM users WHERE id = ? AND status = 'active' LIMIT 1",
         )
         .bind(actor.actor_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::User, actor_id, Some(actor_id))))
+        Ok(row.map(|(actor_id, version)| {
+            AuthActor::new(ActorType::User, actor_id, Some(actor_id))
+                .with_auth_session_version(version)
+        }))
     }
 
     /// 确认平台管理员记录存在且状态为活跃，命中时重建管理员主体，`user_id` 固定留空。
@@ -310,8 +313,8 @@ impl MySqlAuthRepository {
     /// 这样冻结上级代理即可立刻切断其全部下级后台的会话续期，而不必逐个改写下级账号状态。
     /// 任何一项不满足都返回 `None`，调用方无法区分究竟是账号本身被停用还是某一级上级被冻结。
     async fn find_active_agent(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        let actor_id = sqlx::query_scalar::<_, u64>(
-            r#"SELECT agent_admin_users.id
+        let row = sqlx::query_as::<_, (u64, u64)>(
+            r#"SELECT agent_admin_users.id, agent_admin_users.auth_session_version
                FROM agent_admin_users
                INNER JOIN agents ON agents.id = agent_admin_users.agent_id
                WHERE agent_admin_users.id = ?
@@ -330,7 +333,9 @@ impl MySqlAuthRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Agent, actor_id, None)))
+        Ok(row.map(|(actor_id, version)| {
+            AuthActor::new(ActorType::Agent, actor_id, None).with_auth_session_version(version)
+        }))
     }
 }
 
@@ -429,40 +434,42 @@ impl AuthRepository for MySqlAuthRepository {
     /// 状态随记录一并返回而不是写进查询条件，使停用账号照样走完口令比对，与密码错误保持一致的响应特征。
     /// 未命中只返回 `None`，不附带任何可用来区分邮箱是否已注册的额外信息。
     async fn find_user_by_email(&self, email: &str) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM users WHERE email = ? LIMIT 1",
+        let row = sqlx::query_as::<_, (u64, String, String, u64)>(
+            "SELECT id, password_hash, status, auth_session_version FROM users WHERE email = ? LIMIT 1",
         )
         .bind(email)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id)),
+        Ok(row.map(
+            |(actor_id, password_hash, status, version)| StoredActorCredential {
+                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id))
+                    .with_auth_session_version(version),
                 password_hash,
                 status,
-            }),
-        )
+            },
+        ))
     }
 
     /// 按手机号取出同一组用户凭据快照，这是邮箱之外的第二条登录标识入口。
     /// 号码按存储中的原样精确匹配，SQL 里不做去分隔符或模糊处理，格式整形必须在调用之前完成。
     /// 与邮箱查询命中的是同一张用户表的同一批字段，未命中同样只返回 `None`。
     async fn find_user_by_phone(&self, phone: &str) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM users WHERE phone = ? LIMIT 1",
+        let row = sqlx::query_as::<_, (u64, String, String, u64)>(
+            "SELECT id, password_hash, status, auth_session_version FROM users WHERE phone = ? LIMIT 1",
         )
         .bind(phone)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id)),
+        Ok(row.map(
+            |(actor_id, password_hash, status, version)| StoredActorCredential {
+                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id))
+                    .with_auth_session_version(version),
                 password_hash,
                 status,
-            }),
-        )
+            },
+        ))
     }
 
     /// 按用户名取出用户凭据快照，用户名须已完成小写与字符集规范化。
@@ -473,20 +480,21 @@ impl AuthRepository for MySqlAuthRepository {
         &self,
         username: &str,
     ) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM users WHERE username = ? LIMIT 1",
+        let row = sqlx::query_as::<_, (u64, String, String, u64)>(
+            "SELECT id, password_hash, status, auth_session_version FROM users WHERE username = ? LIMIT 1",
         )
         .bind(username)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id)),
+        Ok(row.map(
+            |(actor_id, password_hash, status, version)| StoredActorCredential {
+                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id))
+                    .with_auth_session_version(version),
                 password_hash,
                 status,
-            }),
-        )
+            },
+        ))
     }
 
     /// 按用户名取出平台管理员的 ID、口令哈希与状态，构造出的主体不带 `user_id`。
@@ -535,8 +543,8 @@ impl AuthRepository for MySqlAuthRepository {
         &self,
         username: &str,
     ) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            r#"SELECT agent_admin_users.id, agent_admin_users.password_hash, agent_admin_users.status
+        let row = sqlx::query_as::<_, (u64, String, String, u64)>(
+            r#"SELECT agent_admin_users.id, agent_admin_users.password_hash, agent_admin_users.status, agent_admin_users.auth_session_version
                FROM agent_admin_users
                INNER JOIN agents ON agents.id = agent_admin_users.agent_id
                WHERE agent_admin_users.username = ?
@@ -554,13 +562,14 @@ impl AuthRepository for MySqlAuthRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::Agent, actor_id, None),
+        Ok(row.map(
+            |(actor_id, password_hash, status, version)| StoredActorCredential {
+                actor: AuthActor::new(ActorType::Agent, actor_id, None)
+                    .with_auth_session_version(version),
                 password_hash,
                 status,
-            }),
-        )
+            },
+        ))
     }
 
     /// 按主体类型把活跃状态回查分派到用户、管理员或代理各自的私有实现上。
@@ -1441,7 +1450,7 @@ pub(crate) async fn update_user_password_in_tx(
     user_id: u64,
     password_hash: &str,
 ) -> AppResult<()> {
-    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+    sqlx::query("UPDATE users SET password_hash = ?, auth_session_version = auth_session_version + 1 WHERE id = ?")
         .bind(password_hash)
         .bind(user_id)
         .execute(&mut **tx)

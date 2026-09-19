@@ -28,14 +28,13 @@ import {
   type LoanProduct,
 } from '@/api/loan'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatDateTime } from '@/core/format'
+import { formatExactAmount as formatAmount, formatDateTime, formatRatePercent } from '@/core/format'
 import {
   decimalAdd,
   decimalCompare,
   decimalMinimum,
   decimalMultiply,
   decimalTextFromBoundary,
-  decimalTextFromFiniteNumber,
   decimalWithinRange,
   normalizeDecimalText,
   positiveDecimalInput,
@@ -74,7 +73,7 @@ const amountText = computed(() => positiveDecimalInput(amount.value))
 const collateralAmountText = computed(() => positiveDecimalInput(collateralAmount.value))
 const selectedCollateral = computed(() => accounts.value.find((account) => account.assetId === collateralAssetId.value))
 const collateralAvailableText = computed(() => decimalTextFromBoundary(
-  selectedCollateral.value?.availableText ?? selectedCollateral.value?.available,
+  selectedCollateral.value?.availableText,
   { allowNegative: false },
 ))
 const dialogOpen = computed(() => Boolean(pendingAction.value))
@@ -125,9 +124,9 @@ const visibleProducts = computed(() => productFilter.value === 'all'
 const amountPresets = computed(() => {
   const product = selected.value
   if (!product) return []
-  const minimum = product.minAmountText || decimalTextFromFiniteNumber(product.minAmount)
+  const minimum = product.minAmountText || product.minAmount
   const maximum = product.maxAmountText
-    || (product.maxAmount ? decimalTextFromFiniteNumber(product.maxAmount) : decimalMultiply(minimum, normalizeDecimalText('10')))
+    || product.maxAmount || decimalMultiply(minimum, normalizeDecimalText('10'))
   return [...new Set<DecimalText>([
     minimum,
     decimalMinimum(maximum, decimalMultiply(minimum, normalizeDecimalText('2'))) || minimum,
@@ -137,8 +136,8 @@ const amountPresets = computed(() => {
 })
 const estimatedInterest = computed<DecimalText>(() => {
   const product = selected.value
-  if (!product || !amountText.value || !Number.isFinite(product.interestRate)) return normalizeDecimalText('0')
-  return decimalMultiply(amountText.value, decimalTextFromFiniteNumber(product.interestRate))
+  if (!product || !amountText.value) return normalizeDecimalText('0')
+  return decimalMultiply(amountText.value, product.interestRate)
 })
 const estimatedRepayment = computed(() => amountText.value
   ? decimalAdd(amountText.value, estimatedInterest.value)
@@ -439,7 +438,7 @@ onBeforeUnmount(() => {
             <small>{{ product.loanType === 'collateralized' ? t('loan.collateralized') : t('loan.credit') }} · {{ t('loan.termDays', { days: product.termDays }) }}</small>
           </span>
           <span class="loan-product-pencil__rate">
-            <b class="pencil-numeric">{{ (product.interestRate * 100).toFixed(2) }}%</b>
+            <b class="pencil-numeric">{{ formatRatePercent(product.interestRate) }}%</b>
             <small>{{ t('loan.annualRate') }}</small>
           </span>
           <ChevronRight :size="17" />
@@ -486,7 +485,7 @@ onBeforeUnmount(() => {
                 <span v-else class="loan-collateral-trigger__empty"><Landmark :size="18" /></span>
                 <span class="loan-collateral-trigger__copy">
                   <strong>{{ selectedCollateral?.symbol || t('loan.noCollateralAssets') }}</strong>
-                  <small v-if="selectedCollateral" class="pencil-numeric">{{ t('loan.availableBalance', { amount: formatAmount(selectedCollateral.available) }) }}</small>
+                  <small v-if="selectedCollateral" class="pencil-numeric">{{ t('loan.availableBalance', { amount: formatAmount(selectedCollateral.availableText) }) }}</small>
                   <small v-else>{{ session.isAuthenticated ? t('loan.noCollateralAssets') : t('loan.loginDescription') }}</small>
                 </span>
                 <ChevronDown :size="18" />
@@ -566,7 +565,7 @@ onBeforeUnmount(() => {
               <AssetMark :symbol="account.symbol" :src="account.logoUrl" :size="40" />
               <span class="pencil-row__copy">
                 <strong>{{ account.symbol }}</strong>
-                <small class="pencil-numeric">{{ t('loan.availableBalance', { amount: formatAmount(account.available) }) }}</small>
+                <small class="pencil-numeric">{{ t('loan.availableBalance', { amount: formatAmount(account.availableText) }) }}</small>
               </span>
               <span class="pencil-row__value"><Check v-if="account.assetId === collateralAssetId" :size="18" /></span>
             </button>
@@ -759,6 +758,7 @@ onBeforeUnmount(() => {
 .loan-product-pencil dd {
   font-size: 9px;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .loan-products-empty {
@@ -927,6 +927,7 @@ onBeforeUnmount(() => {
 .loan-estimate-pencil dd {
   font-size: 10px;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .loan-orders-pencil {
@@ -934,7 +935,7 @@ onBeforeUnmount(() => {
 }
 
 .loan-order-pencil {
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .loan-order-pencil i {
@@ -943,6 +944,14 @@ onBeforeUnmount(() => {
 
 .loan-order-pencil .pencil-row__value strong {
   font-size: 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.loan-action-dialog dd,
+#loan-action-summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .loan-order-pencil .pencil-row__value button {

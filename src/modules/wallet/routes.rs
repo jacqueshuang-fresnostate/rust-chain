@@ -54,11 +54,14 @@ use super::{
     },
 };
 
+mod withdrawal_policy;
+
 /// 组装用户端钱包路由：账户余额、今日收益、收益历史、资金流水、充提资产与网络、充值地址和提现申请。
 /// 提现路径同时挂载查询与创建两个方法，前者读本人申请列表，后者发起冻结并落申请。
 /// 全部处理器都要求用户令牌，路由本身不附加额外中间件，限流与审计由上层路由树统一装配。
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(withdrawal_policy::user_routes())
         .route("/wallet/accounts", get(list_accounts))
         .route("/wallet/today-return", get(get_today_return))
         .route("/wallet/return-history", get(get_return_history))
@@ -82,6 +85,7 @@ pub fn routes() -> Router<AppState> {
 /// 全部处理器都要求后台令牌，跨用户可见性由管理员权限承担，路由层不再按用户过滤。
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
+        .merge(withdrawal_policy::admin_routes())
         .route("/wallet/withdrawals", get(list_admin_withdrawals))
         .route("/wallet/withdrawals/:id/approve", post(approve_withdrawal))
         .route("/wallet/withdrawals/:id/reject", post(reject_withdrawal))
@@ -232,9 +236,14 @@ async fn create_withdrawal_request(
 ) -> AppResult<Json<WithdrawalRequestResponse>> {
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
-    let withdrawal =
-        create_withdrawal_request_use_case(&pool, state.settings.as_ref(), user_id, request)
-            .await?;
+    let withdrawal = create_withdrawal_request_use_case(
+        &pool,
+        state.redis.as_ref(),
+        state.settings.as_ref(),
+        user_id,
+        request,
+    )
+    .await?;
     Ok(Json(withdrawal))
 }
 

@@ -83,6 +83,7 @@ export const ADMIN_FIELD_VALUE_LABELS: Record<string, Record<string, string>> = 
     spot_price_improvement_release: '现货差价释放',
     seconds_contract_open: '秒合约开仓',
     seconds_contract_settle_win: '秒合约盈利结算',
+    seconds_contract_principal_refund: '秒合约本金退还',
     margin_position_open: '杠杆开仓',
     margin_position_close: '杠杆平仓',
     margin_position_liquidate: '杠杆强平',
@@ -177,7 +178,12 @@ export const ADMIN_FIELD_VALUE_LABELS: Record<string, Record<string, string>> = 
   },
   order_type: {
     limit: '限价',
-    market: '市价'
+    market: '市价',
+    stop_limit: '条件限价'
+  },
+  trigger_direction: {
+    rising: '上涨触发',
+    falling: '下跌触发'
   },
   pricing_mode: {
     fixed: '固定汇率',

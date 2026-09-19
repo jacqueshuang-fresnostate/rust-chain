@@ -411,6 +411,14 @@ async fn settle_order_by_id(
         )
         .await?;
     }
+    infrastructure::insert_seconds_journal_in_tx(
+        &mut tx,
+        order.id,
+        order.stake_asset,
+        &order.stake_amount,
+        Some(&payout_amount),
+    )
+    .await?;
     infrastructure::mark_order_settled(&mut tx, order.id, result, &snapshot).await?;
     let event = SecondsContractSettlementEvent {
         user_id: order.user_id,

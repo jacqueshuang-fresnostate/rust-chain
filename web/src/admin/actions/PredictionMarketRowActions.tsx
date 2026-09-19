@@ -1,4 +1,6 @@
 import { adminErrorMessage } from '../../shared/adminErrorMessage';
+import { parseSafeInteger, requiredSafeInteger } from '../../shared/integer';
+import { decimalFitsStorage, isNonNegativeDecimalText, requiredDecimalText } from '../../shared/decimal';
 import { Button, SideSheet, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -69,7 +71,7 @@ function recordToForm(record: ApiRecord): FormValues {
 }
 
 function recordId(record: ApiRecord) {
-  return Number(record.id);
+  return parseSafeInteger(record.id, 1);
 }
 
 function marketCanSettle(record: ApiRecord) {
@@ -108,14 +110,20 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
     setSaving(true);
     try {
       const payoutCapOverrides = formValues.payoutCapOverrides.trim() ? JSON.parse(formValues.payoutCapOverrides) : null;
+      if (marketId === null) throw new Error('市场ID无效');
+      if (payoutCapOverrides !== null && (typeof payoutCapOverrides !== 'object' || Array.isArray(payoutCapOverrides) ||
+        !Object.entries(payoutCapOverrides).every(([id, amount]) =>
+          parseSafeInteger(id, 1) !== null && decimalFitsStorage(amount) && isNonNegativeDecimalText(amount)))) {
+        throw new Error('赔付上限必须为资产ID到精确金额字符串的对象');
+      }
       await apiRequest(`/admin/api/v1/prediction/markets/${marketId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           display_status: formValues.displayStatus,
           settlement_mode_override: formValues.settlementModeOverride || null,
-          allowed_asset_ids_override: formValues.allowedAssetIdsOverride.length ? formValues.allowedAssetIdsOverride.map(Number) : null,
+          allowed_asset_ids_override: formValues.allowedAssetIdsOverride.length ? formValues.allowedAssetIdsOverride.map((id) => requiredSafeInteger(id, '资产ID', 1)) : null,
           payout_cap_overrides: payoutCapOverrides,
-          fee_rate_override: formValues.feeRateOverride.trim() ? formValues.feeRateOverride.trim() : null
+          fee_rate_override: formValues.feeRateOverride.trim() ? requiredDecimalText(formValues.feeRateOverride, '手续费率', 18, 8) : null
         })
       });
       Toast.success('竞猜市场配置已保存');
@@ -129,6 +137,7 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
   }
 
   async function settle(result: 'yes' | 'no' | 'invalid', invalidRefundPolicy?: string) {
+    if (marketId === null) throw new Error('市场ID无效');
     await apiRequest(`/admin/api/v1/prediction/markets/${marketId}/settle`, {
       method: 'POST',
       body: JSON.stringify({
@@ -146,7 +155,7 @@ export function PredictionMarketRowActions({ helpers, record }: PredictionMarket
         详情
       </Button>
       <AdminRequestActionBoundary endpoint={`/admin/api/v1/prediction/markets/${marketId}`} method="PATCH">
-        <Button onClick={() => setSheetVisible(true)} theme="light" type="primary">
+        <Button disabled={marketId === null} onClick={() => setSheetVisible(true)} theme="light" type="primary">
           编辑
         </Button>
         <SideSheet

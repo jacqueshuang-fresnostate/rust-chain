@@ -1,7 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { clearAuthStorage, readAuthToken, readRefreshToken, writeAuthTokens } from '../src/utils/authStorage.ts'
+import { clearAuthStorage, readAuthSessionScope, readAuthToken, readRefreshToken, writeAuthTokens } from '../src/utils/authStorage.ts'
+
+test('financial session scope survives refresh but changes on login and logout', () => {
+  installMemoryStorage()
+  writeAuthTokens('alice', 'refresh-alice', true)
+  const first = readAuthSessionScope()
+  writeAuthTokens('alice-refreshed', 'refresh-next')
+  assert.equal(readAuthSessionScope(), first)
+  writeAuthTokens('bob', 'refresh-bob', true)
+  assert.notEqual(readAuthSessionScope(), first)
+  clearAuthStorage()
+  assert.throws(() => readAuthSessionScope(), /authenticated/)
+})
 
 function installMemoryStorage(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial))
@@ -78,4 +90,3 @@ test('auth storage writes refreshed tokens and clears all login stores', () => {
   assert.equal(storage.getItem('refresh_token'), null)
   assert.equal(storage.getItem('user'), null)
 })
-

@@ -47,7 +47,8 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
   assert.equal(marginShortcutAvailable('1000', '120'), '120')
   assert.equal(marginShortcutAvailable('80', '120'), '80')
   assert.equal(marginShortcutAvailable('1000', null), '1000')
-  assert.equal(marginShortcutAvailable('1000', '0'), '1000')
+  assert.equal(marginShortcutAvailable('1000', '0'), '0')
+  assert.equal(marginShortcutAvailable('1000', 'invalid'), '0')
   const preciseMaximum = '100.000000009'
   assert.equal(
     clampMarginShortcutAmount('100.00000001', '1000', preciseMaximum),
@@ -142,12 +143,12 @@ test('字段、打开确认层和最终 placeMarginOrder 共用同一校验结�
   const reviewOrderSource = sliceFunction('function reviewOrder(event?: Event): void {', 'function reviewContractOrder')
   const submitOrderSource = sliceFunction('async function submitOrder(): Promise<void> {', 'function trapDialogFocus')
 
-  assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?minMargin: selectedProduct\.value\?\.minMarginText \?\? selectedProduct\.value\?\.minMargin,[\s\S]*?maxMargin: selectedProduct\.value\?\.maxMarginText \?\? selectedProduct\.value\?\.maxMargin/)
+  assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?minMargin: selectedProduct\.value\?\.minMarginText,[\s\S]*?maxMargin: selectedProduct\.value\?\.maxMarginText/)
   assert.match(tradeSource, /marginAmountError = computed\([\s\S]*?marginOrderDraft\.value\.marginAmountValidation/)
   assert.match(reviewOrderSource, /!marginOrderDraft\.value\.marginAmountValidation\.isValid[\s\S]*?marginAmountValidationMessage/)
-  assert.match(submitOrderSource, /validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?minMargin: product\.minMarginText \?\? product\.minMargin,[\s\S]*?maxMargin: product\.maxMarginText \?\? product\.maxMargin,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?marginAmountValidationMessage\(requestMarginValidation\)[\s\S]*?if \(!review \|\| !review\.marginAmountText\) return[\s\S]*?await placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
+  assert.match(submitOrderSource, /validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?minMargin: product\.minMarginText,[\s\S]*?maxMargin: product\.maxMarginText,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?marginAmountValidationMessage\(requestMarginValidation\)[\s\S]*?if \(!review \|\| !review\.marginAmountText\) return[\s\S]*?await placeMarginOrder\(\{\s*\.\.\.review\.request,\s*marginAmount: review\.marginAmountText,\s*price: review\.request\.price,\s*\}\)/)
   assert.equal(submitOrderSource.match(/placeMarginOrder\(/g)?.length, 1)
-  assert.match(tradeSource, /maximum: mode\.value === 'contract'[\s\S]*?selectedProduct\.value\?\.maxMarginText \?\? selectedProduct\.value\?\.maxMargin[\s\S]*?: null/)
+  assert.match(tradeSource, /maximum: mode\.value === 'contract'[\s\S]*?selectedProduct\.value\?\.maxMarginText[\s\S]*?: null/)
   assert.match(tradeSource, /quantity\.value = nextQuantity === '0' \? '' : nextQuantity/)
   assert.match(tradeSource, /contractShortcutAvailable = computed\(\(\) => marginShortcutAvailable\(/)
   assert.match(tradeSource, /const percentage = ref<number \| null>\(0\)/)

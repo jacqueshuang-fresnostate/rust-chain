@@ -33,6 +33,10 @@ use std::{
 };
 use tower::ServiceExt;
 use uuid::Uuid;
+
+#[path = "admin_routes/numeric_safety.rs"]
+mod numeric_safety;
+
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{body_string_contains, header, method, path},
@@ -979,6 +983,16 @@ async fn delete_admin_agent_management_fixture(
         .execute(pool)
         .await?;
     for agent_id in agent_ids {
+        sqlx::query(
+            r#"DELETE journal FROM platform_financial_journal journal
+               INNER JOIN agent_commission_records records
+                 ON journal.ref_type = 'agent_commission'
+                AND journal.ref_id = CAST(records.id AS CHAR)
+               WHERE records.agent_id = ?"#,
+        )
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
         sqlx::query("DELETE FROM agent_commission_records WHERE agent_id = ?")
             .bind(agent_id)
             .execute(pool)
@@ -18186,6 +18200,8 @@ async fn admin_market_strategy_activation_guards_expiry_overlap_and_exposes_runt
     Ok(())
 }
 
+#[path = "admin_routes/commission_reversal.rs"]
+mod commission_reversal;
 #[path = "admin_routes/default_market.rs"]
 mod default_market;
 #[path = "admin_routes/financial_validation.rs"]

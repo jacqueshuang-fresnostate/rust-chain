@@ -25,12 +25,19 @@ the feature contract for the business context being modified.
 | [Spot Order Contracts](./spot-orders.md) | Spot market order reference-price protection, Redis ticker execution, and wallet reservation contract | Active |
 | [Margin Trading Actions](./margin-trading-actions.md) | Margin ticker, wallet-scope settlement, transfer idempotency, bulk actions, and supported-mode contracts | Active |
 | [Earn Product Contracts](./earn-products.md) | Earn product fee snapshots and redemption settlement contracts | Active |
+| [Financial Worker Retries](./financial-worker-retries.md) | 持久化调度、公平候选、租约与资金幂等边界 | Active |
 | [Loan Product Contracts](./loan-products.md) | Admin loan-product filtering, enum validation, and paginated total contracts | Active |
 | [Seconds Contract Contracts](./seconds-contracts.md) | Seconds product cycle, order duration, and PC/admin payload contracts | Active |
 | [Agent Hierarchy Contracts](./agent-hierarchy.md) | Three-level agent organization, subtree scope, and multi-business differential commission contracts | Active |
 | [Wallet Amount Precision Contract](./wallet-amount-precision.md) | Asset precision rules for calculated wallet balances and ledger snapshots | Active |
+| [Numeric Safety Contract](./numeric-safety.md) | Bounded lossless decimal ingress, storage envelopes, safe integers and checked expiry | Active |
+| [Financial Journal Coverage](./financial-journals.md) | Per-asset atomic accounting, partial historical coverage and settlement invariants | Active |
+| [Financial Reconciliation](./financial-reconciliation.md) | Read-only per-asset diagnostics, immutable manual evidence and audited append-only follow-ups | Active |
+| [Aggregate Exposure Admission](./aggregate-exposure.md) | Loan, Earn, Convert and seconds per-asset limits, replay and prospective policy snapshots | Active |
+| [Public Market Provenance](./market-provenance.md) | Source evidence through REST/WS/cache and client charts; unknown and freshness rules | Active |
 | [Admin Financial Validation](./admin-financial-validation.md) | Manual recharge precision locks/replay and executable convert configuration bounds | Active |
 | [Risk Configuration](./risk-configuration.md) | Known JSON validation, locked enable/legacy disable and exact spot pair scopes | Active |
+| [Withdrawal Policy](./withdrawal-policy.md) | Explicit rolling allowances, address/security cooling, frozen reviewer requirements and unknown-broadcast safety | Active |
 | [External Market Fallback](./market-fallback.md) | Request-time Coinbase windows and provider/failure isolation | Active |
 | [Deposit Address Contracts](./deposit-addresses.md) | Configurable deposit network address groups and address-pool allocation contracts | Active |
 | [Order Identifier Display Contract](./order-identifiers.md) | User-visible order numbers and internal ID separation across admin and PC UI | Active |

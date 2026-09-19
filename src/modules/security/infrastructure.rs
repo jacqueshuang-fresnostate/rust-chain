@@ -299,18 +299,20 @@ pub async fn create_login_two_factor_challenge(
     pool: &Pool<MySql>,
     user_id: u64,
     challenge_type: LoginTwoFactorChallengeType,
+    auth_session_version: u64,
 ) -> AppResult<CreatedLoginTwoFactorChallenge> {
     let challenge_id = Uuid::now_v7().to_string();
     let expires_at = Utc::now() + Duration::seconds(LOGIN_CHALLENGE_TTL_SECONDS);
     sqlx::query(
         r#"INSERT INTO login_two_factor_challenges
-              (challenge_id, user_id, challenge_type, expires_at)
-           VALUES (?, ?, ?, ?)"#,
+              (challenge_id, user_id, challenge_type, expires_at, auth_session_version)
+           VALUES (?, ?, ?, ?, ?)"#,
     )
     .bind(&challenge_id)
     .bind(user_id)
     .bind(challenge_type.as_str())
     .bind(expires_at.naive_utc())
+    .bind(auth_session_version)
     .execute(pool)
     .await?;
 
@@ -331,10 +333,10 @@ pub async fn load_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
 ) -> AppResult<LoginTwoFactorChallenge> {
-    let row = sqlx::query_as::<_, (String, u64, String, DateTime<Utc>, Option<DateTime<Utc>>)>(
-        r#"SELECT challenge_id, user_id, challenge_type, expires_at, consumed_at
-           FROM login_two_factor_challenges
-           WHERE challenge_id = ?
+    let row = sqlx::query_as::<_, (String, u64, String, DateTime<Utc>, Option<DateTime<Utc>>, u64)>(
+        r#"SELECT c.challenge_id, c.user_id, c.challenge_type, c.expires_at, c.consumed_at, c.auth_session_version
+           FROM login_two_factor_challenges c JOIN users u ON u.id = c.user_id
+           WHERE c.challenge_id = ? AND u.status = 'active' AND u.auth_session_version = c.auth_session_version
            LIMIT 1"#,
     )
     .bind(challenge_id)
@@ -348,6 +350,7 @@ pub async fn load_login_two_factor_challenge(
         challenge_type: LoginTwoFactorChallengeType::from_storage(&row.2)?,
         expires_at: row.3,
         consumed_at: row.4,
+        auth_session_version: row.5,
     })
 }
 

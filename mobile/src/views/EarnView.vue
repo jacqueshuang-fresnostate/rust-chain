@@ -16,13 +16,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchEarnProducts, fetchEarnSubscriptions, redeemEarnSubscription, subscribeEarnProduct, type EarnProduct, type EarnSubscription } from '@/api/earn'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatDateTime } from '@/core/format'
+import { formatExactAmount as formatAmount, formatDateTime, formatRatePercent } from '@/core/format'
 import {
   decimalDivide,
   decimalMinimum,
   decimalMultiply,
   decimalTextFromBoundary,
-  decimalTextFromFiniteNumber,
   decimalWithinRange,
   normalizeDecimalText,
   positiveDecimalInput,
@@ -58,16 +57,16 @@ const holdingsSection = ref<HTMLElement | null>(null)
 const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === selected.value?.assetId))
 const available = computed<number | null>(() => selectedAccount.value?.available ?? null)
 const availableText = computed(() => decimalTextFromBoundary(
-  selectedAccount.value?.availableText ?? selectedAccount.value?.available,
+  selectedAccount.value?.availableText,
   { allowNegative: false },
 ))
-const availableLabel = computed(() => available.value === null ? '--' : formatAmount(available.value))
+const availableLabel = computed(() => formatAmount(availableText.value))
 const amountText = computed(() => positiveDecimalInput(amount.value))
 const dialogOpen = computed(() => Boolean(selected.value))
 const estimatedDailyYield = computed<DecimalText | null>(() => {
-  if (!selected.value || !amountText.value || !Number.isFinite(selected.value.aprRate) || selected.value.aprRate < 0) return null
+  if (!selected.value || !amountText.value) return null
   return decimalDivide(
-    decimalMultiply(amountText.value, decimalTextFromFiniteNumber(selected.value.aprRate)),
+    decimalMultiply(amountText.value, selected.value.aprRate),
     normalizeDecimalText('365'),
     18,
   )
@@ -89,10 +88,10 @@ const availabilityLabel = computed(() => {
   const values = {
     available: availableLabel.value,
     asset: product.assetSymbol,
-    minimum: formatMoney(product.minSubscribeText || decimalTextFromFiniteNumber(product.minSubscribe), product.assetSymbol),
+    minimum: formatMoney(product.minSubscribeText || product.minSubscribe, product.assetSymbol),
     maximum: product.maxSubscribeText === undefined && product.maxSubscribe === undefined
       ? '--'
-      : formatMoney(product.maxSubscribeText || decimalTextFromFiniteNumber(product.maxSubscribe || 0), product.assetSymbol),
+      : formatMoney(product.maxSubscribeText || product.maxSubscribe!, product.assetSymbol),
   }
   return t(product.maxSubscribe === undefined ? 'earn.availability' : 'earn.availabilityWithMaximum', values)
 })
@@ -229,8 +228,8 @@ function handleSubscribeDialogKeydown(event: KeyboardEvent): void {
   trapSubscribeFocus(event, closeSubscribe)
 }
 
-function configuredRate(value: number | undefined): string {
-  return value === undefined ? '--' : (value * 100).toFixed(2)
+function configuredRate(value: DecimalText | undefined): string {
+  return formatRatePercent(value)
 }
 
 function earlyRedeemRule(product: EarnProduct): string {
@@ -307,7 +306,7 @@ onMounted(() => { void load() })
               <b class="pencil-pill">{{ product.termDays ? t('earn.termDays', { days: product.termDays }) : t('earn.flexible') }}</b>
             </header>
             <dl>
-              <div><dt>{{ t('earn.estimatedApr') }}</dt><dd class="up pencil-numeric">{{ (product.aprRate * 100).toFixed(2) }}%</dd></div>
+              <div><dt>{{ t('earn.estimatedApr') }}</dt><dd class="up pencil-numeric">{{ formatRatePercent(product.aprRate) }}%</dd></div>
               <div><dt>{{ t('earn.minimumLabel') }}</dt><dd class="pencil-numeric">{{ formatAmount(product.minSubscribe) }} {{ product.assetSymbol }}</dd></div>
               <div><dt>{{ t('earn.riskLabel') }}</dt><dd>{{ t('earn.platformRules') }}</dd></div>
             </dl>
@@ -358,7 +357,7 @@ onMounted(() => { void load() })
         <section class="earn-dialog-product">
           <small>{{ selected.category }} / {{ selected.assetSymbol }}</small>
           <h2>{{ selected.name || t('earn.defaultName', { asset: selected.assetSymbol }) }}</h2>
-          <p>{{ t('earn.referenceApr', { apr: (selected.aprRate * 100).toFixed(2) }) }}</p>
+          <p>{{ t('earn.referenceApr', { apr: formatRatePercent(selected.aprRate) }) }}</p>
           <span>{{ selected.termDays ? t('earn.termDays', { days: selected.termDays }) : t('earn.flexible') }}</span>
         </section>
 
@@ -461,7 +460,7 @@ onMounted(() => { void load() })
   border-radius: 0;
   color: var(--ink);
   display: grid;
-  height: 172px;
+  min-height: 172px;
   padding: 0;
   text-align: left;
   width: 100%;
@@ -491,7 +490,7 @@ onMounted(() => { void load() })
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  height: 36px;
+  min-height: 36px;
   margin: 14px 0 0;
 }
 
@@ -511,9 +510,7 @@ onMounted(() => { void load() })
   font-size: 11px;
   line-height: 16px;
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .earn-product-pencil dl > div:first-child dd {
@@ -614,6 +611,12 @@ onMounted(() => { void load() })
 
 .earn-holding-row {
   grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+
+.earn-holding-row .pencil-row__copy strong {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .earn-holding-row .pencil-row__value button {

@@ -20,6 +20,35 @@ fn pair() -> TradingPairRule {
     }
 }
 
+#[test]
+fn rejects_unrepresentable_spot_sources_and_precision_configuration() {
+    let mut rule = pair();
+    rule.price_precision = 18;
+    rule.quantity_precision = 18;
+    rule.min_order_value = dec("0.000000000000000001");
+    for price in ["1e20", "1e-19", "1e-4294967296", "1e4294967296"] {
+        assert!(create_limit_order("user", OrderSide::Buy, dec(price), dec("1"), &rule).is_err());
+    }
+    for quantity in ["1e20", "1e-19", "1e-4294967296"] {
+        assert!(
+            create_limit_order("user", OrderSide::Sell, dec("1"), dec(quantity), &rule).is_err()
+        );
+    }
+    assert!(create_limit_order("user", OrderSide::Buy, dec("1"), dec("1e-18"), &rule).is_ok());
+    assert!(
+        create_limit_order(
+            "user",
+            OrderSide::Buy,
+            dec("99999999999999999999"),
+            dec("1"),
+            &rule
+        )
+        .is_ok()
+    );
+    rule.quantity_precision = u32::MAX;
+    assert!(create_limit_order("user", OrderSide::Buy, dec("1"), dec("1"), &rule).is_err());
+}
+
 fn open_limit_order(quantity: &str) -> SpotOrder {
     SpotOrder {
         id: "order-1".to_owned(),
@@ -29,6 +58,8 @@ fn open_limit_order(quantity: &str) -> SpotOrder {
         order_type: OrderType::Limit,
         price: Some(dec("100")),
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity: dec(quantity),
         filled_quantity: dec("0"),
         status: OrderStatus::Open,

@@ -41,8 +41,13 @@ pub struct SaveQuickRechargeConfigRequest {
     pub(crate) mobile_web_redirect_url: Option<String>,
     pub(crate) desktop_web_redirect_url: Option<String>,
     /// 单笔最小充值金额，必须为正数。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_amount: BigDecimal,
     /// 单笔最大充值金额，给出时不得小于最小值，省略表示不限。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_amount: Option<BigDecimal>,
     /// 变更原因，字段可空但业务上必填，缺失会在校验阶段被拒绝。
     pub(crate) reason: Option<String>,
@@ -53,6 +58,7 @@ pub struct SaveQuickRechargeConfigRequest {
 #[derive(Debug, Deserialize)]
 pub struct TestQuickRechargeConfigRequest {
     /// 测试用法币金额，必须落在当前配置的金额区间内。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
     /// 测试原因，业务上必填，与配置快照一并写入审计。
     pub(crate) reason: Option<String>,
@@ -72,6 +78,7 @@ pub struct DeleteQuickRechargeOrderRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateQuickRechargeOrderRequest {
     /// 充值法币金额，必须落在渠道配置的最小与最大金额之间。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
     /// 发起端类型，用于选择支付完成后的回跳地址；省略时使用通用回跳地址。
     pub(crate) return_target: Option<QuickRechargeReturnTarget>,

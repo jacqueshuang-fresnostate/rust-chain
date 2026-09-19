@@ -236,6 +236,12 @@ const tick = () => {
 
             try {
                 const result = await store.checkOrderResult(order.id, order.symbol)
+                if (result && (result.status === 'REFUNDED' || result.status === 'MANUAL_REVIEW')) {
+                    store.currentOrders = store.currentOrders.filter(o => o.id !== order.id)
+                    store.loadBalance()
+                    if (orderTab.value === 'history') store.loadHistoryOrders(symbol.value, 0)
+                    return
+                }
                 // If the backend indicates it's settled (CLOSE status or WIN/LOSE result)
                 if (result && (result.status === 'CLOSE' || result.status === 1 || result.result === 'WIN' || result.result === 'LOSE' || result.result === 1 || result.result === 2)) {
 
@@ -286,6 +292,8 @@ const formatCountdown = (seconds: number) => {
 }
 
 const getResultText = (order: SecondOrder) => {
+    if (order.status === 'REFUNDED') return t('seconds.status_refunded')
+    if (order.status === 'MANUAL_REVIEW') return t('seconds.status_manual_review')
     if (order.status === 'ENTRUST') return t('seconds.status_entrust')
     if (order.status === 'OPEN') return t('seconds.status_open')
     if (order.status === 'CANCELED') return t('seconds.status_canceled')
@@ -533,9 +541,10 @@ onUnmounted(() => {
                                 </td>
                                 <td class="px-4 py-2 text-right font-mono">{{ order.betAmount }}</td>
                                 <td class="px-4 py-2 text-right font-mono">{{ formatNumber(order.openPrice, 'price') }}</td>
-                                <td class="px-4 py-2 text-right font-mono">{{ formatNumber(order.closePrice, 'price') }}</td>
+                                <td class="px-4 py-2 text-right font-mono">{{ order.status === 'REFUNDED' || order.status === 'MANUAL_REVIEW' ? '--' : formatNumber(order.closePrice, 'price') }}</td>
                                 <td class="px-4 py-2 text-right font-mono font-bold" :class="getResultClass(order)">
-                                    {{ order.profit >= 0 ? '+' : '' }}{{ numeral(order.profit).format('0,0.00') }}
+                                    <template v-if="order.status === 'REFUNDED' || order.status === 'MANUAL_REVIEW'">--</template>
+                                    <template v-else>{{ order.profit >= 0 ? '+' : '' }}{{ numeral(order.profit).format('0,0.00') }}</template>
                                 </td>
                                 <td class="px-4 py-2 text-center">
                                     <span class="text-[10px] font-bold px-1.5 py-0.5 rounded" :class="getResultClass(order)">

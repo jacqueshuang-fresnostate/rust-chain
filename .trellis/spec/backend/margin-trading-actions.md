@@ -56,9 +56,10 @@
 - An explicit single-close percentage allocates that share of the currently
   locked remaining margin, notional, borrowed principal, and accrued interest.
   Percentages below 100 keep the row `opened` with exact remainders; 100 closes
-  every remaining amount. Allocation rounds the closed slice down to the
-  database's 18-decimal scale and derives the remainder by subtraction, so no
-  amount disappears. A nonzero partial request that would create a zero closed
+  every remaining amount. Allocation truncates the newly closed slice to the
+  authoritative margin asset precision and derives the remainder by exact
+  subtraction; historical sub-asset dust is retained and full close consumes
+  it without re-quantization. A nonzero partial request that would create a zero closed
   or remaining margin/notional is rejected before wallet mutation.
 - Realized PnL uses only the allocated notional and the fresh server mark.
   Isolated settlement credits the nonnegative allocated equity back to the
@@ -209,6 +210,163 @@ if margin_limit_order_is_triggered(direction, limit_price, accepted_ticker)? {
 ```
 
 Settlement follows the recorded funding scope, and unsupported risk semantics fail explicitly.
+
+## Scenario: Numeric Admission, Settlement And Forward Interest Carry
+
+### 1. Scope / Trigger
+
+New margin collateral/transfers, product bounds, ticker fills, active/partial
+close, isolated/cross liquidation, and interest worker checkpoints.
+
+### 2. Signatures
+
+- `crate::numeric::ensure_amount_storage(value, label)` checks DECIMAL(38,18).
+- `ensure_decimal_storage(value, 18, 8, label)` checks leverage/rate columns.
+- `margin::amounts::validate_input_amount(value, assets.precision_scale, label)`.
+- `margin::amounts::generated_amount(value, assets.precision_scale, label)`.
+- `accrue_locked_position_interest(tx, position_id, now)`.
+- Migration 0141: `margin_positions.interest_remainder DECIMAL(26,26)`.
+
+### 3. Contracts
+
+- New collateral and transfers reject excess asset or storage precision.
+  Source values are never silently rounded; trailing zeroes are insignificant.
+  New product min/max amounts also fit the authoritative margin asset.
+- Stored `leverage_levels` strings use bounded `parse_decimal_input` before
+  exact matching and must fit DECIMAL(18,8). Huge exponents/strings cannot
+  bypass typed DTO validation through dynamic product configuration.
+- Compute notional from validated collateral/leverage and quantize once to
+  the margin asset. Reject its integer overflow before order insertion/debit.
+  Borrowed principal is derived from that same canonical notional.
+- New realized PnL is quantized toward zero to the margin asset and reused
+  across execution receipt, wallet delta and platform legs. Destination
+  balances, cumulative PnL, settlement and account aggregates must fit storage.
+  Do not quantize balance buckets independently or rewrite stored dust.
+- Partial-close allocations use asset precision, with remainders by exact
+  subtraction. Full close/cancellation releases the original stored remainder,
+  including pre-existing sub-asset dust and already accrued interest.
+- Accrual is simple interest on the position's snapshot rate. Add the previous
+  carry to `borrowed * rate * whole_hours`, quantize only the new delta, and
+  store the exact residual. Eighteen principal plus eight rate fractional
+  digits require 26 residual places; no floating-point intermediate is used.
+- Migration initializes only the new residual to zero. It does not rebuild
+  past debt, advance an existing checkpoint, backcharge previously truncated
+  fractions, or alter wallet/order/ledger history.
+- A zero-quantized increment still atomically advances the whole-hour
+  checkpoint and residual. Worker `accrued` counts checkpoint writes, not
+  exclusively positive increases in debt. Replay at the same cutoff is inert.
+- Active close accrues completed hours before reducing principal. Partial
+  close retains the carry on the remaining position rather than rebilling or
+  discarding it; terminal close/liquidation does not charge a sub-asset carry
+  and retains it in the terminal row for audit. The existing whole-hour rule
+  remains: incomplete hours crossing partial close use the remaining principal
+  when the next full hour is reached.
+- Liquidation accrues under existing account/position locks. Risk-trigger
+  formulas remain unchanged; after deciding to liquidate, canonical per-leg
+  PnL is used for execution equity, payout, bad debt, records and journals.
+  Cross execution aggregates those same per-position values, never rounds an
+  independent account PnL. Risk read projections may still show finer
+  unexecuted PnL, not an executable settlement quote.
+- Duration and schedule overflow fail closed. The billed hour count and
+  checkpoint advance are identical, never independently clamped.
+- Deploy 0141 before API/workers; old and new interest writers must not run
+  together because old code does not preserve the new residual invariant.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| 19 effective decimals, asset 8 with 9 decimals, 21 integer digits | Reject without financial mutation |
+| Excess trailing zeros only | Accept unchanged numeric value |
+| Valid factors but overflowing notional/PnL or destination balance | Roll back receipt, wallet and journal together |
+| Zero partial margin/notional after quantization | Reject partial close |
+| Zero new interest units with a positive raw fraction | Commit carry/checkpoint, no wallet movement |
+| New interest plus existing debt exceeds storage | Roll back carry, debt and checkpoint |
+| Historical dust in balances or accrued interest | Preserve exactly, never backfill |
+
+### 5. Tests Required
+
+Asset-8 and asset-18 boundaries, normalized trailing zeroes, dynamic leverage
+exponents, notional/PnL/balance overflow, exact partial/full remainders,
+execution replay, negative PnL, zero-quantized partial slices, interest batch
+equivalence and zero-delta checkpoints, existing-debt preservation, duration
+overflow, and real isolated MySQL/Redis journal/wallet/position consistency.
+
+## Scenario: Active Close Lock Serialization And Replay Visibility
+
+### 1. Scope / Trigger
+
+- Concurrent explicit active closes, including missing execution keys and
+  same-position terminal-close retries, under MySQL REPEATABLE READ.
+- This contract changes neither limit-fill/worker locking nor the shared
+  account-creation helper's creation marker.
+
+### 2. Signatures
+
+- `claim_cross_margin_account_for_close(tx, user_id, margin_asset)`
+- `load_margin_close_execution_by_key_in_tx(tx, user_id, idempotency_key)`
+- Execution uniqueness remains `(user_id, idempotency_key)`.
+
+### 3. Contracts
+
+- Isolated close locks the position first. Cross close first claims the
+  account with `INSERT ... ON DUPLICATE KEY UPDATE id = id`, reads its state
+  with `FOR UPDATE`, then locks the position. The upsert acquires X directly
+  instead of upgrading the duplicate-key S lock from `INSERT IGNORE`.
+- An absent account retains lazy creation. An existing account claim does not
+  reset status, version, risk values, balances, or `updated_at`; a no-value-change
+  upsert must not advance its auto-update timestamp. The current schema has no
+  account triggers; adding INSERT/UPDATE triggers requires re-review of this
+  lock-only claim's side effects.
+- The immutable execution lookup is nonlocking and must be the transaction's
+  first consistent read, after account/position serialization. Earlier
+  operations are writes or current reads; preflight reads occur outside the
+  transaction. Thus a waiter sees the prior same-position committed execution
+  without holding a missing-key gap lock.
+- Do not introduce an ordinary snapshot read before that lookup. Replay and
+  changed-intent conflict checks precede terminal-state rejection.
+- Insert the unique execution receipt before wallet mutation. Cross-position
+  unique-key losers roll back before pool-based replay; never request a second
+  pool connection while holding the close transaction.
+- Existing journal hooks, settlement arithmetic, state transitions, and
+  same-intent replay/changed-intent conflict semantics remain unchanged.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Two distinct missing execution keys | Both inserts succeed without the former gap-lock deadlock |
+| Two same-key 100% closes blocked on the same position/account | One settlement; waiter replays the committed execution |
+| Same key, changed percentage or position | Conflict, no additional financial mutation |
+| Existing inactive account claimed only for locking | Preserve state/version/risk/time and wallet balance |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the first consistent read follows lock acquisition and sees the
+  execution committed by the previous lock holder.
+- Base: a missing account is created with existing database defaults.
+- Bad: use missing-key `FOR UPDATE`, or establish a snapshot before waiting,
+  or replace shared account creation semantics to fix only active close.
+
+### 6. Tests Required
+
+- A real-DB barrier holds both absent-key reads before either execution insert.
+- In isolated and cross modes, observe both application transactions blocked
+  before releasing the fixture lock, then assert one full close, one wallet
+  credit, one execution, one balanced journal transaction, replay, and conflicts.
+- Assert no-op account claim state/version/risk/time and balance preservation;
+  an actual cross close increments version exactly once. Run the three original
+  partial-close route tests in parallel.
+- Optional unit integration tests use only `MARGIN_CONCURRENCY_DATABASE_URL`
+  and `MARGIN_CONCURRENCY_REDIS_URL`; guard MySQL to loopback and an `_test`
+  database. Generic `DATABASE_URL` is mutable in configuration unit tests.
+
+### 7. Wrong Vs Correct
+
+- Wrong: `INSERT IGNORE` then S-to-X upgrade for concurrent active closes;
+  `SELECT ... FOR UPDATE` on an absent immutable execution key.
+- Correct: close-specific atomic X claim, position current lock, then the first
+  nonlocking execution read; keep unique insertion ahead of financial changes.
 
 ## Scenario: Margin Wallet Transfer Idempotency
 

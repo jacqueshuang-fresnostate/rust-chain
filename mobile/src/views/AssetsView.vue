@@ -31,7 +31,8 @@ import {
   type TodayReturn,
 } from '@/api/wallet'
 import { formatAmount, formatFiat } from '@/core/format'
-import { decimalCompare, decimalTextFromBoundary, tryNormalizeDecimalText } from '@/core/decimal'
+import { decimalAdd, decimalCompare, decimalMultiply, decimalSign, decimalTextFromBoundary, formatDecimalText, normalizeDecimalText, tryNormalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { walletTotal, walletAvailable, walletFrozen } from '@/core/walletAmounts'
 import { useModalDialog } from '@/core/modalDialog'
 import { createSessionRequestLifecycle } from '@/core/sessionRequest'
 import {
@@ -48,10 +49,10 @@ type AssetHoldingRow = {
   spot?: WalletAccount
   margin?: WalletAccount
   logoUrl?: string
-  amount: number
-  available: number
-  frozen: number
-  estimatedValue: number | null
+  amount: DecimalText
+  available: DecimalText
+  frozen: DecimalText
+  estimatedValue: DecimalText | null
 }
 
 type AssetAccountScope = 'all' | 'spot' | 'margin'
@@ -155,10 +156,7 @@ const estimateCoverage = computed<'full' | 'partial' | 'unavailable' | 'empty'>(
 const totalEstimateLabel = computed(() => {
   if (!balanceVisible.value) return '••••••'
   if (!accountDataAvailable.value || estimateCoverage.value === 'unavailable') return '--'
-  return new Intl.NumberFormat(locale.value === 'en' ? 'en-US' : 'zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(totalEstimate.value)
+  return formatEstimate(totalEstimate.value)
 })
 const assetsHeroImage = computed(() => theme.isDark ? assetsHeroDark : assetsHeroLight)
 const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
@@ -201,9 +199,8 @@ const marginTransferAssetIds = computed(() => new Set(
 const spotTransferAccounts = computed(() => accounts.value.filter((account) => marginTransferAssetIds.value.has(account.assetId)))
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? spotTransferAccounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
-const transferAvailable = computed<number | null>(() => transferAccount.value?.available ?? null)
-const transferAvailableText = computed(() => decimalTextFromBoundary(transferAccount.value?.availableText ?? transferAvailable.value, { allowNegative: false }))
-const transferAvailableLabel = computed(() => transferAvailable.value === null ? '--' : formatAmount(transferAvailable.value))
+const transferAvailableText = computed(() => decimalTextFromBoundary(transferAccount.value?.availableText, { allowNegative: false }))
+const transferAvailableLabel = computed(() => formatAmount(transferAvailableText.value))
 const transferAssetLogo = computed(() => transferAccount.value?.logoUrl
   || accounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
   || marginAccounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl)
@@ -437,9 +434,9 @@ function buildHoldingRows(scope: AssetAccountScope): AssetHoldingRow[] {
     .map((row) => {
       const spot = scope === 'margin' ? undefined : row.spot
       const margin = scope === 'spot' ? undefined : row.margin
-      const amount = walletTotal(spot) + walletTotal(margin)
-      const available = walletAvailable(spot) + walletAvailable(margin)
-      const frozen = walletFrozen(spot) + walletFrozen(margin)
+      const amount = decimalAdd(walletTotal(spot), walletTotal(margin))
+      const available = decimalAdd(walletAvailable(spot), walletAvailable(margin))
+      const frozen = decimalAdd(walletFrozen(spot), walletFrozen(margin))
       return {
         ...row,
         spot,
@@ -451,19 +448,23 @@ function buildHoldingRows(scope: AssetAccountScope): AssetHoldingRow[] {
         estimatedValue: estimateAssetValue(row.symbol, amount),
       }
     })
-    .filter((row) => row.amount > 0)
+    .filter((row) => decimalSign(row.amount) > 0)
     .sort((left, right) => {
       if (left.estimatedValue === null && right.estimatedValue !== null) return 1
       if (left.estimatedValue !== null && right.estimatedValue === null) return -1
       if (left.estimatedValue !== null && right.estimatedValue !== null && left.estimatedValue !== right.estimatedValue) {
-        return right.estimatedValue - left.estimatedValue
+        return decimalCompare(right.estimatedValue, left.estimatedValue)
       }
       return left.symbol.localeCompare(right.symbol)
     })
 }
 
-function holdingEstimate(rows: AssetHoldingRow[]): number {
-  return rows.reduce((total, row) => total + (row.estimatedValue ?? 0), 0)
+function holdingEstimate(rows: AssetHoldingRow[]): DecimalText {
+  return rows.reduce((total, row) => decimalAdd(total, row.estimatedValue ?? normalizeDecimalText('0')), normalizeDecimalText('0'))
+}
+
+function formatEstimate(value: DecimalText): string {
+  return formatDecimalText(value, locale.value === 'en' ? 'en-US' : 'zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function accountEstimateLabel(rows: AssetHoldingRow[]): string {
@@ -471,22 +472,7 @@ function accountEstimateLabel(rows: AssetHoldingRow[]): string {
   if (!accountDataAvailable.value) return '--'
   if (rows.length === 0) return '0.00'
   if (!rows.some((row) => row.estimatedValue !== null)) return '--'
-  return new Intl.NumberFormat(locale.value === 'en' ? 'en-US' : 'zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(holdingEstimate(rows))
-}
-
-function walletTotal(account?: WalletAccount): number {
-  return account ? account.available + account.frozen + account.locked : 0
-}
-
-function walletAvailable(account?: WalletAccount): number {
-  return account?.available || 0
-}
-
-function walletFrozen(account?: WalletAccount): number {
-  return account ? account.frozen + account.locked : 0
+  return formatEstimate(holdingEstimate(rows))
 }
 
 function upsertWalletAccount(wallets: WalletAccount[], next: WalletAccount): WalletAccount[] {
@@ -497,10 +483,10 @@ function upsertWalletAccount(wallets: WalletAccount[], next: WalletAccount): Wal
     : [...wallets, merged]
 }
 
-function estimateAssetValue(symbol: string, amount: number): number | null {
+function estimateAssetValue(symbol: string, amount: DecimalText): DecimalText | null {
   if (symbol === QUOTE_ASSET_SYMBOL) return amount
-  const lastPrice = marketStore.tickerFor(`${symbol}/USDT`)?.lastPrice
-  return Number.isFinite(lastPrice) && Number(lastPrice) > 0 ? amount * Number(lastPrice) : null
+  const lastPrice = marketStore.tickerFor(`${symbol}/USDT`)?.lastPriceText
+  return lastPrice ? decimalMultiply(amount, lastPrice) : null
 }
 
 function preferredTransferAsset(wallets: WalletAccount[]): string {
@@ -786,7 +772,7 @@ onUnmounted(() => {
                   <small>{{ t('assets.transferAssetSource', { account: transferFrom === 'spot' ? t('assets.spotAccount') : t('assets.marginAccount') }) }}</small>
                 </span>
                 <span class="assets-transfer-picker__value">
-                  <strong class="pencil-numeric">{{ formatAmount(account.available) }}</strong>
+                  <strong class="pencil-numeric">{{ formatAmount(account.availableText) }}</strong>
                   <small>{{ t('assets.transferAvailable') }}</small>
                 </span>
                 <Check v-if="account.symbol === transferAsset" :size="17" aria-hidden="true" />
@@ -813,7 +799,7 @@ onUnmounted(() => {
                 <span>{{ t('assets.transferAvailableAmount', { amount: transferAvailableLabel }) }}</span>
                 <button
                   type="button"
-                  :disabled="transferring || transferAvailable === null || transferAvailable <= 0"
+                  :disabled="transferring || !transferAvailableText || decimalSign(transferAvailableText) <= 0"
                   @click.prevent="fillTransferAvailable"
                 >
                   <span>{{ t('common.all') }}</span>
@@ -1185,7 +1171,7 @@ onUnmounted(() => {
   grid-template-areas:
     "top balance"
     "meta balance";
-  grid-template-columns: minmax(0, 1fr) minmax(116px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   min-height: 82px;
   min-width: 0;
   padding: 13px 14px;
@@ -1252,9 +1238,7 @@ onUnmounted(() => {
   font-weight: 700;
   line-height: 22px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .assets-account-card__balance small,
@@ -1292,7 +1276,7 @@ onUnmounted(() => {
   color: var(--ink);
   display: grid;
   gap: 10px;
-  grid-template-columns: 32px minmax(0, 1fr) minmax(84px, auto);
+  grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1fr);
   min-height: 52px;
   min-width: 0;
   padding: 7px 0;
@@ -1316,9 +1300,7 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 650;
   line-height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .assets-holding-row__copy small,
@@ -1326,9 +1308,7 @@ onUnmounted(() => {
   color: var(--muted);
   font-size: 10px;
   line-height: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .assets-holding-row__amount {
@@ -2051,7 +2031,7 @@ html[data-theme='dark'] .assets-transfer-sheet {
   }
 
   .assets-account-card {
-    grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     padding-inline: 12px;
   }
 
@@ -2060,7 +2040,7 @@ html[data-theme='dark'] .assets-transfer-sheet {
   }
 
   .assets-holding-row {
-    grid-template-columns: 30px minmax(0, 1fr) minmax(74px, auto);
+    grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .assets-holding-row :deep(.asset-mark) {

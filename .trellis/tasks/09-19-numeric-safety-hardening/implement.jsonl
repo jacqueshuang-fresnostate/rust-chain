@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"Financial precision and asset quantization"}
+{"file":".trellis/spec/backend/numeric-safety.md","reason":"Shared bounded decimal, storage and checked expiry contracts"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Architecture and tests"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Mobile exact financial data contracts"}
+{"file":".trellis/spec/admin/resource-response-contract.md","reason":"Admin authoritative response fields"}
+{"file":".trellis/tasks/09-19-mobile-backend-precision-review/research/precision-review.md","reason":"Verified current defects and reproductions"}

@@ -34,6 +34,10 @@ pub(crate) struct EarnProductRuleRow {
     pub(crate) min_subscribe: BigDecimal,
     /// 单笔最大申购额，为空表示不限。
     pub(crate) max_subscribe: Option<BigDecimal>,
+    /// 产品同币种本金预算，null 保留原有不限总量语义。
+    pub(crate) principal_capacity: Option<BigDecimal>,
+    /// 产品同币种全期毛兑付预算，不从平台账本推断。
+    pub(crate) liability_capacity: Option<BigDecimal>,
     /// 产品状态，非 active 时不允许申购。
     pub(crate) status: String,
 }
@@ -84,6 +88,8 @@ pub(crate) struct EarnProductWrite {
     pub(crate) early_redeem_fee_rate: BigDecimal,
     pub(crate) min_subscribe: BigDecimal,
     pub(crate) max_subscribe: Option<BigDecimal>,
+    pub(crate) principal_capacity: Option<BigDecimal>,
+    pub(crate) liability_capacity: Option<BigDecimal>,
     pub(crate) status: String,
 }
 

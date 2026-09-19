@@ -8,7 +8,8 @@ import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
-import { compareDecimalText } from '../../../shared/decimal';
+import { compareDecimalText, decimalFitsPrecision, decimalFitsStorage } from '../../../shared/decimal';
+import { parseSafeInteger } from '../../../shared/integer';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminMultiSelect, AdminSelect, AdminSwitch, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import { useSharedAdminOptionQuery } from '../../sharedOptionQuery';
@@ -175,15 +176,13 @@ function recordWithdrawFeeTiers(record: ApiRecord): AssetWithdrawFeeTierValues[]
   const rawTiers = Array.isArray(rawValue) ? rawValue : parseJsonArray(rawValue);
   return rawTiers
     .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const tier = item as Record<string, unknown>;
+      const tier = item && typeof item === 'object' ? item as Record<string, unknown> : {};
       return {
         minAmount: formValueString(tier.min_amount),
-        maxAmount: formValueString(tier.max_amount),
+        maxAmount: tier.max_amount === null ? '' : formValueString(tier.max_amount),
         feeRatePercent: formValueString(tier.fee_rate_percent)
       };
-    })
-    .filter((tier): tier is AssetWithdrawFeeTierValues => Boolean(tier && tier.minAmount && tier.feeRatePercent));
+    });
 }
 
 function withdrawFeeTierPayload(tiers: AssetWithdrawFeeTierValues[]) {
@@ -212,7 +211,7 @@ function parseJsonArray(value: unknown): unknown[] {
 }
 
 function formValueString(value: unknown): string {
-  return typeof value === 'number' || typeof value === 'string' ? String(value) : '';
+  return typeof value === 'string' ? value : '无效金额，请重新填写';
 }
 
 function isDepositAddressPoolSubmittable(values: DepositAddressPoolValues): boolean {
@@ -295,7 +294,7 @@ function depositNetworkConfigRequestBody(values: DepositNetworkConfigValues, rea
     address_group_name: optionalString(values.addressGroupName),
     asset_symbols: normalizedDepositAssetSymbols(values.assetSymbols),
     status: requiredString(values.status, '状态'),
-    sort_order: Number.parseInt(values.sortOrder, 10),
+    sort_order: requiredNonNegativeInteger(values.sortOrder, '排序值', 2_147_483_647),
     reason
   };
 }
@@ -396,7 +395,7 @@ function isAssetCreatable(values: AssetValues): boolean {
   return Boolean(
     values.symbol.trim() &&
       values.name.trim() &&
-      isNonNegativeIntegerInput(values.precisionScale) &&
+      assetAmountsFit(values) &&
       isNonNegativeDecimalInput(values.minDepositAmount) &&
       isNonNegativeDecimalInput(values.depositFee) &&
       isNonNegativeDecimalInput(values.withdrawFee) &&
@@ -407,7 +406,7 @@ function isAssetCreatable(values: AssetValues): boolean {
 function isAssetConfigUpdatable(values: AssetConfigValues): boolean {
   return Boolean(
     values.name.trim() &&
-      isNonNegativeIntegerInput(values.precisionScale) &&
+      assetAmountsFit(values) &&
       values.assetType.trim() &&
       values.status.trim() &&
       isNonNegativeDecimalInput(values.minDepositAmount) &&
@@ -415,6 +414,13 @@ function isAssetConfigUpdatable(values: AssetConfigValues): boolean {
       isNonNegativeDecimalInput(values.withdrawFee) &&
       isWithdrawFeeTiersInputValid(values.withdrawFeeTiers)
   );
+}
+
+function assetAmountsFit(values: AssetConfigValues): boolean {
+  const precision = parseSafeInteger(values.precisionScale, 0, 18);
+  return precision !== null && [values.minDepositAmount, values.depositFee, values.withdrawFee,
+    ...values.withdrawFeeTiers.flatMap((tier) => [tier.minAmount, ...(tier.maxAmount.trim() ? [tier.maxAmount] : [])])]
+    .every((value) => decimalFitsStorage(value) && decimalFitsPrecision(value, precision));
 }
 
 function toDepositNetworkConfigOption(record: ApiRecord): DepositNetworkConfigOption | null {
@@ -664,7 +670,7 @@ function AssetEditAction({ assetId, helpers, record }: { assetId: string; helper
                       body: JSON.stringify({
                         name: requiredString(config.name, '资产名称'),
                         logo_url: optionalString(config.logoUrl),
-                        precision_scale: requiredNonNegativeInteger(config.precisionScale, '资产精度'),
+                        precision_scale: requiredNonNegativeInteger(config.precisionScale, '资产精度', 18),
                         asset_type: requiredString(config.assetType, '资产类型'),
                         status: requiredString(config.status, '状态'),
                         deposit_enabled: config.depositEnabled,
@@ -1393,7 +1399,7 @@ export function CreateAssetAction({ onCreated }: CreateActionProps = {}) {
                     symbol: requiredString(asset.symbol, '资产符号'),
                     name: requiredString(asset.name, '资产名称'),
                     logo_url: optionalString(asset.logoUrl),
-                    precision_scale: requiredNonNegativeInteger(asset.precisionScale, '资产精度'),
+                    precision_scale: requiredNonNegativeInteger(asset.precisionScale, '资产精度', 18),
                     asset_type: asset.assetType,
                     status: asset.status,
                     deposit_enabled: asset.depositEnabled,

@@ -3,6 +3,25 @@ use chrono::{TimeDelta, TimeZone, Utc};
 use serde_json::{Value, json};
 
 #[test]
+fn numeric_safety_prediction_json_caps_fail_closed_and_source_prices_keep_precision() {
+    use super::service::{
+        decimal_from_json, ensure_probability_price, validate_payout_cap_overrides,
+    };
+    for value in ["1e20", "1e-19", "1e100000", "NaN", "-1"] {
+        assert!(validate_payout_cap_overrides(Some(&json!({"1": value}))).is_err());
+    }
+    assert!(
+        validate_payout_cap_overrides(Some(&json!({"1":"9007199254740993.000000000000000001"})))
+            .is_ok()
+    );
+    assert!(validate_payout_cap_overrides(Some(&json!({"1":null}))).is_err());
+    assert!(decimal_from_json(&json!("1e-1000000000")).is_none());
+    let raw = decimal_from_json(&json!("0.12345678901234567890123456789")).unwrap();
+    assert!(ensure_probability_price(&raw).is_err());
+    assert!(ensure_probability_price(&"0.1234567800".parse().unwrap()).is_ok());
+}
+
+#[test]
 fn extracts_markets_from_polymarket_events_with_context() {
     let payload = json!({
         "events": [

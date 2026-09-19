@@ -15,6 +15,7 @@ import {
   updateAgentInviteCodeStatus
 } from '../api/agent';
 import {
+  commissionPageTotals,
   AgentCommissionsPage,
   AgentConvertStatsPage,
   AgentDashboardPage,
@@ -53,6 +54,27 @@ const now = Date.now();
 describe('Agent portal pages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('aggregates only loaded same-asset commissions with exact arithmetic', () => {
+    const row = { id: 1, user_id: 2, source_type: 'spot', source_id: 's', source_amount: '1',
+      commission_amount: '9007199254740993.000000000000000001', payout_asset_id: 2,
+      status: 'pending', depth: 1, created_at: now };
+    expect(commissionPageTotals([row, { ...row, id: 2, commission_amount: '0.000000000000000001' },
+      { ...row, id: 3, payout_asset_id: 3, commission_amount: '1' }, { ...row, id: 4, payout_asset_id: null }]))
+      .toEqual([{ assetId: 2, amount: '9007199254740993.000000000000000002' }, { assetId: 3, amount: '1' }]);
+    expect(commissionPageTotals([{ ...row, commission_amount: 'NaN' }])).toEqual([{ assetId: 2, amount: null }]);
+  });
+
+  it('does not send rounded invitation limits', async () => {
+    getAgentInviteCodesMock.mockResolvedValue({ invite_codes: [] });
+    render(<AgentInviteCodesPage />);
+    await screen.findByRole('button', { name: '创建邀请码' });
+    for (const value of ['9007199254740993', '2147483648', '1.000000000000000001', '1e3', 'Infinity']) {
+      fireEvent.change(screen.getByRole('textbox', { name: '使用上限' }), { target: { value } });
+      fireEvent.click(screen.getByRole('button', { name: '创建邀请码' }));
+    }
+    expect(createAgentInviteCodeMock).not.toHaveBeenCalled();
   });
 
   it('renders dashboard identity and metrics', async () => {
@@ -184,6 +206,8 @@ describe('Agent portal pages', () => {
 
     expect(await screen.findByText('buyer@example.test')).toBeInTheDocument();
     expect(screen.getByText('quote-1')).toBeInTheDocument();
+    expect(screen.getByText('仅当前已加载记录，非全量；不同资产不合计')).toBeInTheDocument();
+    expect(screen.queryByText('总佣金：')).not.toBeInTheDocument();
   });
 
   it('renders convert stats', async () => {

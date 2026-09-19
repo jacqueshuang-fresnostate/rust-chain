@@ -19,6 +19,10 @@ pub(crate) struct SpotTradeRecord {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct KlineDocumentRecord {
+    #[serde(default)]
+    pub(crate) source: Option<String>,
+    #[serde(default)]
+    pub(crate) updated_at: Option<BsonDateTime>,
     #[serde(rename = "_id")]
     pub(crate) _id: Option<ObjectId>,
     pub(crate) interval: String,

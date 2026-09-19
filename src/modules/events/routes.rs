@@ -157,9 +157,9 @@ async fn private_ws(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
 ) -> AppResult<Response> {
-    let auth = authorize_private_ws(&state, query).await?;
+    let (auth, validator) = authorize_private_ws(&state, query).await?;
     let hub = state.event_broadcast_hub.clone();
-    Ok(ws.on_upgrade(move |socket| run_private_socket(socket, auth, hub)))
+    Ok(ws.on_upgrade(move |socket| run_private_socket(socket, auth, hub, validator)))
 }
 
 /// 升级为代理私有 WebSocket，只用作持久客服消息提交后的低延迟刷新提示。
@@ -170,7 +170,7 @@ async fn agent_private_ws(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
 ) -> AppResult<Response> {
-    let auth = authorize_agent_private_ws(&state, query).await?;
+    let (auth, validator) = authorize_agent_private_ws(&state, query).await?;
     let hub = state.event_broadcast_hub.clone();
-    Ok(ws.on_upgrade(move |socket| run_agent_private_socket(socket, auth, hub)))
+    Ok(ws.on_upgrade(move |socket| run_agent_private_socket(socket, auth, hub, validator)))
 }

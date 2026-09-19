@@ -5,6 +5,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { ConfirmAction } from './ConfirmAction';
 
 describe('ConfirmAction', () => {
+  it('forwards optional string and numeric widths while retaining the default for other callers', async () => {
+    const props = { actionText: '冲正', title: '确认冲正', onConfirm: vi.fn() };
+    const view = render(<ConfirmAction {...props} />);
+    await userEvent.click(screen.getByRole('button', { name: '冲正' }));
+    const dialog = await screen.findByRole('dialog');
+    const modal = dialog.closest('.semi-modal') as HTMLElement;
+    const defaultWidth = modal.style.width;
+    expect(defaultWidth).not.toContain('100vw');
+    view.rerender(<ConfirmAction {...props} modalWidth="75%" />);
+    expect(modal.style.width).toBe('75%');
+    view.rerender(<ConfirmAction {...props} modalWidth={420} />);
+    expect(modal.style.width).toBe('420px');
+    view.rerender(<ConfirmAction {...props} />);
+    expect(modal.style.width).toBe(defaultWidth);
+  });
+
   it('submits a trimmed reason with primary semantics and clears cancelled drafts', async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn().mockResolvedValue(undefined);

@@ -10,6 +10,7 @@ pub mod error;
 pub mod infra;
 pub mod migration;
 pub mod modules;
+pub mod numeric;
 pub mod openapi;
 pub mod state;
 pub mod time;

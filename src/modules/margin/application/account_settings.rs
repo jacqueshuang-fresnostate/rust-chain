@@ -73,6 +73,7 @@ pub(crate) async fn transfer_margin_funds(
         idempotency_key,
     } = request;
     validate_positive_decimal(&amount, "transfer amount")?;
+    crate::numeric::ensure_amount_storage(&amount, "margin transfer amount")?;
     let from = normalized_margin_account(&from)?;
     let to = normalized_margin_account(&to)?;
     if from == to {
@@ -613,6 +614,7 @@ fn validate_product_leverage(
     leverage: &BigDecimal,
     product: &MarginProductSettingRule,
 ) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(leverage, 18, 8, "margin leverage")?;
     if !product
         .leverage_levels
         .0

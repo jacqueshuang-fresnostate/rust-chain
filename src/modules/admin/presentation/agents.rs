@@ -162,9 +162,36 @@ pub(crate) struct UpdateAgentCommissionStatusRequest {
 impl PresentationLayer for UpdateAgentCommissionStatusRequest {}
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReverseAgentCommissionRequest {
+    pub(crate) idempotency_key: String,
+    pub(crate) reason: Option<String>,
+}
+
+impl PresentationLayer for ReverseAgentCommissionRequest {}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct AdminAgentCommissionReversalResponse {
+    pub(crate) commission_id: u64,
+    pub(crate) admin_id: u64,
+    pub(crate) idempotency_key: String,
+    pub(crate) payout_ledger_id: u64,
+    pub(crate) agent_user_id: u64,
+    pub(crate) asset_id: u64,
+    pub(crate) amount: BigDecimal,
+    pub(crate) original_commission: sqlx::types::Json<serde_json::Value>,
+    pub(crate) reason: String,
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
+}
+
+impl PresentationLayer for AdminAgentCommissionReversalResponse {}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct CreateAgentCommissionRuleRequest {
     pub(crate) agent_id: u64,
     pub(crate) product_type: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) commission_rate: BigDecimal,
     pub(crate) status: Option<String>,
     pub(crate) reason: Option<String>,
@@ -174,6 +201,10 @@ impl PresentationLayer for CreateAgentCommissionRuleRequest {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateAgentCommissionRuleRequest {
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) commission_rate: Option<BigDecimal>,
     pub(crate) status: Option<String>,
     pub(crate) reason: Option<String>,

@@ -140,6 +140,9 @@ pub(crate) fn validate_new_coin_convert_rule(
             "fixed_rate is required for fixed rate_source".to_owned(),
         ));
     }
+    if let Some(rate) = &request.fixed_rate {
+        crate::numeric::ensure_amount_storage(rate, "fixed_rate")?;
+    }
     if let Some(fixed_rate) = &request.fixed_rate
         && fixed_rate <= 0
     {
@@ -369,6 +372,16 @@ fn validate_unlock_rule_shape(
                     "relative_unlock_seconds is required for relative_period unlock".to_owned(),
                 ));
             }
+            let valid_expiry = relative_unlock_seconds
+                .and_then(|seconds| i64::try_from(seconds).ok())
+                .and_then(chrono::TimeDelta::try_seconds)
+                .and_then(|duration| Utc::now().checked_add_signed(duration));
+            let Some(valid_expiry) = valid_expiry else {
+                return Err(AppError::Validation(
+                    "relative_unlock_seconds exceeds supported timestamp range".to_owned(),
+                ));
+            };
+            crate::time::ensure_timestamp_storage(&valid_expiry, "relative_unlock_seconds")?;
             if listed_at.is_some() || fixed_unlock_at.is_some() {
                 return Err(AppError::Validation(
                     "relative_period unlock cannot include listed_at or fixed_unlock_at".to_owned(),
@@ -414,6 +427,7 @@ fn validate_unlock_fee_rule_shape(
         8,
         "unlock_fee_rate",
     )?;
+    crate::numeric::ensure_decimal_storage(unlock_fee_rate, 18, 8, "unlock_fee_rate")?;
     match optional_string(unlock_fee_basis).as_deref() {
         Some("market_value" | "profit") => {}
         Some(_) => {

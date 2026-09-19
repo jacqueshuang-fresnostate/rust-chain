@@ -40,6 +40,7 @@ pub async fn execute_triggered_margin_limit_orders_with_hub(
     market_price: &BigDecimal,
     hub: Option<&EventBroadcastHub>,
 ) -> AppResult<u32> {
+    crate::numeric::ensure_amount_storage(market_price, "margin market price")?;
     if market_price <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
             "margin market price must be positive".to_owned(),

@@ -7,6 +7,7 @@ import { normalizeDecimalText } from '../src/core/decimal.ts'
 import { createMarketDetailStreamSession, type MarketDetailStreamOptions, type MarketDetailStreamSessionOptions } from '../src/api/marketDetailStream.ts'
 import { mergeMarketTradeHistory, mergeMarketTrades, normalizeMarketKlineInterval } from '../src/api/marketSocketProtocol.ts'
 import type { KlinePoint, OrderBookLevel, TradePrint } from '../src/core/types.ts'
+import type { MarketProvenance } from '../src/core/marketProvenance.ts'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -17,7 +18,7 @@ function deferred<T>() {
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
 const point = (close: number): KlinePoint => ({ time: 1_720_000_020_000, open: close, high: close, low: close, close, volume: 1 })
 const trade = (id: string): TradePrint => ({ id, price: 10, quantity: 1, side: 'buy', time: 1_720_000_020_000 })
-type Depth = { bids: OrderBookLevel[]; asks: OrderBookLevel[] }
+type Depth = { bids: OrderBookLevel[]; asks: OrderBookLevel[]; provenance?: MarketProvenance }
 const book = (price: number): Depth => ({ bids: [{ price, quantity: 1, priceText: normalizeDecimalText(String(price))!, quantityText: normalizeDecimalText('1')! }], asks: [] })
 
 // Execute the real view loader/control flow with deferred transports and the real
@@ -44,6 +45,7 @@ function harness(view: 'MarketDetailView' | 'TradeView') {
     pairSymbol: { value: 'BTC/USDT' }, interval: { value: '1m' }, chartLoading: { value: false },
     loading: { value: false }, tradesLoading: { value: false }, depthLoading: { value: false }, klineError: { value: false }, depthError: { value: false }, tradesError: { value: false },
     liveDepthReceived: { value: false }, liveDetailActive: { value: false }, liveDetailUpdatedAt: { value: 0 },
+    depthProvenance: { value: undefined as MarketProvenance | undefined },
   }
   const bindings = {
     ...state, requestVersion: 0, marketRequestVersion: 0, viewActive: true,
@@ -65,6 +67,26 @@ function harness(view: 'MarketDetailView' | 'TradeView') {
 }
 
 for (const view of ['MarketDetailView', 'TradeView'] as const) {
+  test(`${view}: provenance follows live depth, rejects late REST and resets on symbol change`, async () => {
+    const state = harness(view)
+    const loading = state.load()
+    state.streams[0]!.onDepth({ ...book(12), provenance: { source: 'default', provider: 'strategy' } })
+    state.depths[0]!.resolve({ ...book(10), provenance: { source: 'external', provider: 'htx' } })
+    state.klines[0]!.resolve([]); state.histories[0]!.resolve([])
+    await loading
+    assert.deepEqual(state.depthProvenance.value, { source: 'default', provider: 'strategy' })
+    assert.equal(state.bids.value[0]?.price, 12)
+    state.pairSymbol.value = 'ETH/USDT'
+    const next = state.load()
+    assert.equal(state.depthProvenance.value, undefined)
+    state.streams[0]!.onDepth({ ...book(20), provenance: { source: 'external', provider: 'htx' } })
+    assert.equal(state.depthProvenance.value, undefined)
+    state.depths[1]!.resolve(book(30)); state.klines[1]!.resolve([]); state.histories[1]!.resolve([])
+    await next
+    assert.equal(state.depthProvenance.value, undefined)
+    state.stop()
+  })
+
   test(`${view}: ready K-lines do not wait for order-book or trade REST latency`, async () => {
     const state = harness(view)
     const loading = state.load()

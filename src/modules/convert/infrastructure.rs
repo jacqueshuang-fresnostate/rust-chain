@@ -33,7 +33,6 @@ use crate::{
                 resolve_fixed_convert_rate, validate_quote_amount,
             },
         },
-        wallet::truncate_amount_to_asset_precision,
     },
 };
 use bigdecimal::BigDecimal;
@@ -465,6 +464,14 @@ pub(crate) async fn confirm_and_settle_convert_quote(
         ));
     }
     validate_authoritative_quote_config_in_tx(&mut tx, &quote, database_now).await?;
+    super::inventory::consume_output_in_tx(
+        &mut tx,
+        quote.convert_pair_id,
+        &quote.quote_id,
+        quote.to_asset_id,
+        &quote.to_amount,
+    )
+    .await?;
     insert_order_for_quote_in_tx(&mut tx, &quote).await?;
     settle_convert_order_in_tx(&mut tx, &quote_id_value, user_id).await?;
     let consumed = sqlx::query(
@@ -734,7 +741,7 @@ async fn settle_convert_order_in_tx(
     user_id: u64,
 ) -> AppResult<()> {
     let order = sqlx::query_as::<_, ConvertSettlementOrderRecord>(
-        r#"SELECT from_asset AS from_asset_id, to_asset AS to_asset_id, from_amount, to_amount
+        r#"SELECT from_asset AS from_asset_id, to_asset AS to_asset_id, from_amount, to_amount, fee_amount
            FROM convert_orders
            WHERE quote_id = ? AND user_id = ? AND status = 'pending'
            LIMIT 1
@@ -772,9 +779,15 @@ async fn settle_convert_order_in_tx(
     let to_precision_scale = load_asset_precision_scale(&mut **tx, order.to_asset_id).await?;
 
     let from_available_after = from_wallet.available.clone() - order.from_amount.clone();
-    let raw_to_available_after = to_wallet.available.clone() + order.to_amount.clone();
-    let to_available_after =
-        truncate_amount_to_asset_precision(&raw_to_available_after, to_precision_scale);
+    super::service::ensure_convert_amount_precision(
+        &order.to_amount,
+        to_precision_scale,
+        "convert to_amount",
+    )?;
+    let to_available_after = to_wallet.available.clone() + order.to_amount.clone();
+    crate::numeric::ensure_amount_storage(&order.from_amount, "convert from_amount")?;
+    crate::numeric::ensure_amount_storage(&from_available_after, "convert source balance")?;
+    crate::numeric::ensure_amount_storage(&to_available_after, "convert target balance")?;
 
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&from_available_after)
@@ -834,6 +847,28 @@ async fn settle_convert_order_in_tx(
     .bind(quote_id)
     .execute(&mut **tx)
     .await?;
+
+    for (asset_id, legs) in [
+        (
+            order.from_asset_id,
+            super::journal::source_legs(&order.from_amount, &order.fee_amount),
+        ),
+        (
+            order.to_asset_id,
+            super::journal::target_legs(&order.to_amount),
+        ),
+    ] {
+        crate::modules::wallet::infrastructure::insert_platform_journal_with_reference_in_tx(
+            tx,
+            "convert",
+            &format!("convert:{quote_id}:settle"),
+            asset_id,
+            "convert_order",
+            quote_id,
+            &legs,
+        )
+        .await?;
+    }
 
     Ok(())
 }

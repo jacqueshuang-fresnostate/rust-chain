@@ -22,9 +22,15 @@ pub enum DefaultMarketMode {
 #[serde(deny_unknown_fields)]
 pub struct DefaultMarketFollowParameters {
     pub reference_pair_id: u64,
-    #[serde(default = "default_follow_multiplier")]
+    #[serde(
+        default = "default_follow_multiplier",
+        deserialize_with = "crate::numeric::deserialize_decimal"
+    )]
     pub multiplier: BigDecimal,
-    #[serde(default = "default_follow_max_move_ratio")]
+    #[serde(
+        default = "default_follow_max_move_ratio",
+        deserialize_with = "crate::numeric::deserialize_decimal"
+    )]
     pub max_move_ratio: BigDecimal,
     #[serde(default = "default_follow_stale_after_seconds")]
     pub stale_after_seconds: u32,
@@ -73,12 +79,25 @@ fn default_follow_stale_after_seconds() -> u32 {
 pub struct DefaultMarketParameters {
     pub mode: DefaultMarketMode,
     pub follow: Option<DefaultMarketFollowParameters>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub volatility: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub mean_reversion: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub price_min: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub price_max: Option<BigDecimal>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub volume_min: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub volume_max: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub wick_strength: BigDecimal,
     pub depth_levels: u32,
 }

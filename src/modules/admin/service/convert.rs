@@ -52,6 +52,16 @@ pub(crate) fn validate_convert_pair_values(
     target_min_amount: &BigDecimal,
     target_max_amount: Option<&BigDecimal>,
 ) -> AppResult<()> {
+    for (value, label) in [
+        (Some(min_amount), "min_amount"),
+        (max_amount, "max_amount"),
+        (Some(target_min_amount), "target_min_amount"),
+        (target_max_amount, "target_max_amount"),
+    ] {
+        if let Some(value) = value {
+            crate::numeric::ensure_amount_storage(value, label)?;
+        }
+    }
     if from_asset_id == to_asset_id {
         return Err(AppError::Validation(
             "convert pair assets must be different".to_owned(),
@@ -128,5 +138,9 @@ pub(crate) fn convert_pair_audit_json(pair: &ConvertPairResponse) -> Value {
         "target_min_amount": pair.target_min_amount,
         "target_max_amount": pair.target_max_amount,
         "enabled": pair.enabled,
+        "inventory_enabled": pair.inventory_enabled,
+        "inventory_funded_amount": pair.inventory_funded_amount,
+        "inventory_consumed_amount": pair.inventory_consumed_amount,
+        "inventory_revision": pair.inventory_revision,
     })
 }

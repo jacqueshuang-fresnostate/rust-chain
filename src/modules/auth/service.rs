@@ -29,7 +29,7 @@ use crate::{
         countries::normalize_country_code,
     },
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use sa_token_core::SaTokenManager;
 use serde_json::json;
 use std::sync::Arc;
@@ -344,7 +344,7 @@ impl<R: AuthRepository> AuthService<R> {
 
     /// 为已完成口令/2FA 等额外校验的主体按当前运行模式签发会话。
     ///
-    /// 本方法不重新查询主体状态；调用方须传入刚验证的权威主体。Sa-Token 模式先创建访问会话、
+    /// 调用方须传入凭据验证时的权威代际；签发前只比对代际，不把旧认证证明升级为当前代际。Sa-Token 模式先创建访问会话、
     /// 后写刷新令牌记录；后一步失败时访问会话可已存在，本方法不做补偿登出。
     pub async fn issue_tokens_for_actor(&self, actor: AuthActor) -> AppResult<IssuedTokens> {
         self.issue_tokens(actor).await
@@ -354,8 +354,28 @@ impl<R: AuthRepository> AuthService<R> {
     /// 未配置时走本地 JWT：用访问和刷新两种 TTL 分别签发令牌，再把刷新令牌的摘要连同到期时间入库，
     /// 落库的只有摘要，原始刷新令牌仅出现在返回值里。
     /// 令牌签发成功但摘要写库失败会直接上抛，此时一个令牌都不返回，客户端不会拿到无法刷新的半套会话。
-    /// 本方法不校验主体状态，调用方必须传入刚刚验证过的权威主体。
+    /// 用户与代理签发前回查状态及代际；并发安全变更若发生在此检查之后，旧代际仍会在请求闸门被拒绝。
     async fn issue_tokens(&self, actor: AuthActor) -> AppResult<IssuedTokens> {
+        crate::time::checked_expiry(
+            Utc::now(),
+            self.settings.jwt_access_ttl_seconds,
+            "access token TTL",
+        )?;
+        let refresh_expires_at = crate::time::checked_expiry(
+            Utc::now(),
+            self.settings.jwt_refresh_ttl_seconds,
+            "refresh token TTL",
+        )?;
+        if actor.actor_type != ActorType::Admin {
+            let current = self
+                .repository
+                .find_active_actor(&actor)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
+            if current.auth_session_version != actor.auth_session_version {
+                return Err(AppError::Unauthorized);
+            }
+        }
         if let Some(manager) = &self.auth_manager {
             return self.issue_sa_tokens(manager, actor).await;
         }
@@ -377,8 +397,7 @@ impl<R: AuthRepository> AuthService<R> {
             actor.auth_session_version,
         )?;
         let token_hash = hash_refresh_token(&refresh_token)?;
-        let expires_at = Utc::now().naive_utc()
-            + Duration::seconds(self.settings.jwt_refresh_ttl_seconds as i64);
+        let expires_at = refresh_expires_at.naive_utc();
 
         self.repository
             .store_refresh_token(StoredRefreshToken {
@@ -409,6 +428,11 @@ impl<R: AuthRepository> AuthService<R> {
         manager: &SaTokenManager,
         actor: AuthActor,
     ) -> AppResult<IssuedTokens> {
+        let expires_at = crate::time::checked_expiry(
+            Utc::now(),
+            self.settings.jwt_refresh_ttl_seconds,
+            "refresh token TTL",
+        )?;
         let scope = actor.actor_type.scope();
         let access_token = manager
             .login_with_options(
@@ -427,8 +451,6 @@ impl<R: AuthRepository> AuthService<R> {
             .await
             .map_err(map_sa_token_error)?;
         let refresh_token = generate_refresh_token();
-        let expires_at =
-            Utc::now() + Duration::seconds(self.settings.jwt_refresh_ttl_seconds as i64);
         let record = StoredProjectRefreshToken {
             refresh_token: refresh_token.clone(),
             actor_type: actor.actor_type,
@@ -451,8 +473,7 @@ impl<R: AuthRepository> AuthService<R> {
                     user_id: actor.user_id,
                     auth_session_version: actor.auth_session_version,
                     token_hash: hash_refresh_token(&refresh_token)?,
-                    expires_at: Utc::now().naive_utc()
-                        + Duration::seconds(self.settings.jwt_refresh_ttl_seconds as i64),
+                    expires_at: expires_at.naive_utc(),
                 })
                 .await?;
         }

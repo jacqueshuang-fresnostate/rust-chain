@@ -81,7 +81,7 @@ test('首页保留真实数据链路并呈现实时市场简报与三行行情',
 test('资产、我的与产品中心保持真实数据摘要和对应工作台', () => {
   assert.match(assetsSource, /class="page pencil-page pencil-root-page assets-pencil"/)
   assert.match(assetsSource, /data-assets-workspace="live"/)
-  assert.match(assetsSource, /new Intl\.NumberFormat\(locale\.value === 'en' \? 'en-US' : 'zh-CN'/)
+  assert.match(assetsSource, /formatDecimalText\(value, locale\.value === 'en' \? 'en-US' : 'zh-CN'/)
   assert.match(assetsSource, /class="pencil-hero assets-hero assets-hero--guest"/)
   assert.match(assetsSource, /class="pencil-hero assets-hero assets-hero--member"/)
   assert.match(assetsSource, /class="assets-holdings__list"/)

@@ -26,6 +26,12 @@ use uuid::Uuid;
 
 static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
+#[path = "convert_routes/inventory.rs"]
+mod inventory;
+
+#[path = "convert_routes/numeric_safety.rs"]
+mod numeric_safety;
+
 #[derive(sqlx::FromRow)]
 struct AgentCommissionRecordAssertion {
     agent_id: u64,
@@ -838,6 +844,17 @@ async fn convert_quote_applies_pair_fee_rate_and_settles_net_amount() -> Result<
             .await?;
     assert_eq!(order_fee_rate, decimal("0.01000000"));
     assert_eq!(order_fee_amount, decimal("0.100000000000000000"));
+    let journal: Vec<(u64, i64, BigDecimal)> = sqlx::query_as(
+        "SELECT asset_id, COUNT(*), SUM(amount) FROM platform_financial_journal WHERE context = 'convert' AND ref_id = ? GROUP BY asset_id ORDER BY asset_id",
+    ).bind(&quote_id).fetch_all(&pool).await?;
+    assert_eq!(
+        journal,
+        vec![(from_asset, 3, decimal("0")), (to_asset, 2, decimal("0"))]
+    );
+    let income: BigDecimal = sqlx::query_scalar(
+        "SELECT amount FROM platform_financial_journal WHERE context = 'convert' AND ref_id = ? AND account_code = 'platform_convert_fee_income'",
+    ).bind(&quote_id).fetch_one(&pool).await?;
+    assert_eq!(income, decimal("-0.1"));
 
     let mut raw_redis = redis.clone();
     let _: usize = raw_redis.del(format!("convert:quote:{quote_id}")).await?;
@@ -1645,6 +1662,10 @@ async fn bidirectional_convert_confirms_use_stable_wallet_lock_order() -> Result
             .iter()
             .all(|(_, value)| value.normalized() == decimal("110"))
     );
+    sqlx::query("DELETE FROM platform_financial_journal WHERE context = 'convert' AND ref_id = ?")
+        .bind(&quote_ba)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'convert_order' AND ref_id = ?")
         .bind(&quote_ba)
         .execute(&pool)
@@ -2145,6 +2166,49 @@ async fn convert_confirm_rolls_back_order_when_settlement_fails_and_allows_retry
         .execute(&pool)
         .await?;
 
+    let journal_key = format!("convert:{quote_id}:settle");
+    sqlx::query("INSERT INTO platform_financial_journal (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id) VALUES (?, 'convert', 'user_convert_wallet_liability', ?, 10, 'convert_order', ?)")
+        .bind(&journal_key).bind(from_asset).bind(&quote_id).execute(&pool).await?;
+    let journal_conflict = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"quote_id": quote_id}).to_string()))?,
+        )
+        .await?;
+    assert!(!journal_conflict.status().is_success());
+    let balances: Vec<(u64, BigDecimal)> = sqlx::query_as(
+        "SELECT asset_id, available FROM wallet_accounts WHERE user_id = ? ORDER BY asset_id",
+    )
+    .bind(user_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        balances,
+        vec![(from_asset, decimal("10"))],
+        "target account and all money mutations roll back"
+    );
+    let consumed_orders: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM convert_orders WHERE quote_id = ?")
+            .bind(&quote_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(consumed_orders, 0);
+    let quote_status: String =
+        sqlx::query_scalar("SELECT status FROM convert_quotes WHERE quote_id = ?")
+            .bind(&quote_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(quote_status, "quoted");
+    sqlx::query("DELETE FROM platform_financial_journal WHERE transaction_key = ?")
+        .bind(&journal_key)
+        .execute(&pool)
+        .await?;
+
     let retry_response = app
         .oneshot(
             Request::builder()
@@ -2221,6 +2285,10 @@ async fn cleanup_fixture(
     to_asset: u64,
     user_id: u64,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM platform_financial_journal WHERE context = 'convert' AND ref_id = ?")
+        .bind(quote_id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'convert_order' AND ref_id = ?")
         .bind(quote_id)
         .execute(pool)

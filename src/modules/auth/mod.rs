@@ -178,7 +178,7 @@ pub struct AuthActor {
     pub actor_type: ActorType,
     pub actor_id: u64,
     pub user_id: Option<u64>,
-    /// 管理员凭据代际；用户与代理固定为零。改密后旧代际令牌即使在撤销竞态中晚到，也会被数据库闸门拒绝。
+    /// 凭据验证时的会话代际；安全变更后旧代际令牌即使在撤销竞态中晚到，也会被数据库闸门拒绝。
     pub auth_session_version: u64,
 }
 
@@ -475,10 +475,12 @@ fn issue_token_with_session_version(
     ttl_seconds: u64,
     auth_session_version: u64,
 ) -> AppResult<String> {
+    let expires_at = crate::time::checked_expiry(Utc::now(), ttl_seconds, "token TTL")?;
     let claims = Claims {
         sub: subject.into(),
         scope,
-        exp: (Utc::now().timestamp() + ttl_seconds as i64) as usize,
+        exp: usize::try_from(expires_at.timestamp())
+            .map_err(|_| AppError::Validation("token expiry is out of range".to_owned()))?,
         token_id: versioned_token_id(auth_session_version, Uuid::now_v7().to_string()),
     };
 
@@ -531,7 +533,7 @@ fn bearer_token(parts: &Parts) -> AppResult<&str> {
 /// 此时令牌在到期前无法被单独撤销。两条路径对上层返回同一种声明结构。
 /// 令牌本身不可用返回未授权，令牌有效但作用域不是所要求的那一类则返回禁止访问，
 /// 这一区分让持用户令牌访问后台接口的请求不会被误报成未登录。
-/// 本函数不查询账号表，账号在令牌有效期内被停用仍会通过，对实时性有要求的用例须自行回查主体状态。
+/// 用户和代理必须通过数据库状态及会话代际检查；只有未挂载数据库的轻量测试略过数据库闸门。
 pub async fn claims_from_bearer_token(
     state: &AppState,
     token: &str,
@@ -542,11 +544,31 @@ pub async fn claims_from_bearer_token(
         None => decode_claims(&state.settings, token)?,
     };
 
-    if claims.scope == required_scope {
-        Ok(claims)
-    } else {
-        Err(AppError::Forbidden)
+    if claims.scope != required_scope {
+        return Err(AppError::Forbidden);
     }
+    if required_scope != TokenScope::Admin
+        && let Some(pool) = &state.mysql
+    {
+        let actor_type = match required_scope {
+            TokenScope::User => ActorType::User,
+            TokenScope::Agent => ActorType::Agent,
+            TokenScope::Admin => unreachable!(),
+        };
+        let actor_id = claims
+            .sub
+            .strip_prefix(&format!("{}:", actor_type.as_str()))
+            .and_then(|id| id.parse::<u64>().ok())
+            .ok_or(AppError::Unauthorized)?;
+        let actor = MySqlAuthRepository::new(pool.clone())
+            .find_active_actor(&AuthActor::new(actor_type, actor_id, None))
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        if actor.auth_session_version != claims_auth_session_version(&claims)? {
+            return Err(AppError::Unauthorized);
+        }
+    }
+    Ok(claims)
 }
 
 /// 把会话管理器返回的会话信息转换成统一的 `Claims`，让两套令牌实现对上层呈现同一种结构。
@@ -622,7 +644,7 @@ impl FromRequestParts<AppState> for UserAuth {
 
     /// 为用户端接口提取身份，要求 Bearer 令牌的作用域恰好是用户，管理员或代理令牌一律被拒。
     /// 提取失败会直接以 `AppError` 作为拒绝响应，处理函数因此不会在缺少有效用户身份的情况下被执行。
-    /// 提取只保证令牌此刻有效，不代表该用户账号仍然活跃，涉及资金的用例须自行回查账号状态。
+    /// 同时校验账号状态与会话代际；资金用例仍在自己的事务内校验必要业务前提。
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
@@ -664,8 +686,7 @@ impl FromRequestParts<AppState> for AgentAuth {
     type Rejection = AppError;
 
     /// 为代理后台接口提取身份，只接受代理作用域的令牌，使代理商与平台管理员的权限域彻底分开。
-    /// 令牌有效即通过：代理公司及其上级链路是否仍然活跃只在登录和刷新时校验，此处不再回查，
-    /// 因此代理被停用后其尚未过期的访问令牌仍能通过提取，需要立即阻断时必须主动撤销该主体的会话。
+    /// 每次校验账号、自身及上级链路状态和会话代际；停用后重新启用也不会恢复旧会话。
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,

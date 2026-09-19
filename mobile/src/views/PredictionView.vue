@@ -14,8 +14,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { confirmPredictionQuote, fetchPredictionConfig, fetchPredictionMarkets, fetchPredictionOrders, requestPredictionQuote, type PredictionAsset, type PredictionMarket, type PredictionOrder, type PredictionOutcome, type PredictionQuote } from '@/api/prediction'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatDateTime, formatPercent } from '@/core/format'
-import { decimalWithinRange, positiveDecimalInput } from '@/core/decimal'
+import { formatExactAmount as formatAmount, formatDateTime, formatRatePercent } from '@/core/format'
+import { decimalSign, decimalWithinRange, positiveDecimalInput } from '@/core/decimal'
 import { useModalDialog } from '@/core/modalDialog'
 import { localizePredictionMarketText, type PredictionTextKind } from '@/core/predictionLocale'
 import { useSessionStore } from '@/stores/session'
@@ -58,7 +58,7 @@ const amountText = computed(() => positiveDecimalInput(amount.value))
 const valid = computed(() => Boolean(
   selectedAccount.value
   && decimalWithinRange(amountText.value, {
-    available: selectedAccount.value.availableText ?? selectedAccount.value.available,
+    available: selectedAccount.value.availableText,
   }),
 ))
 const dialogOpen = computed(() => Boolean(selected.value))
@@ -193,7 +193,7 @@ function statusTone(status: string): string {
 
 function orderStatusLabel(order: PredictionOrder): string {
   const result = order.result?.toLowerCase()
-  if (result === 'invalid' || order.refundAmount > 0) return t('prediction.statusRefunded')
+  if (result === 'invalid' || decimalSign(order.refundAmount) > 0) return t('prediction.statusRefunded')
   if (order.status.toLowerCase() === 'settled' && result) {
     return t(result === order.outcome.toLowerCase() ? 'prediction.statusWon' : 'prediction.statusLost')
   }
@@ -202,7 +202,7 @@ function orderStatusLabel(order: PredictionOrder): string {
 
 function orderStatusTone(order: PredictionOrder): string {
   const result = order.result?.toLowerCase()
-  if (result === 'invalid' || order.refundAmount > 0) return 'is-pending'
+  if (result === 'invalid' || decimalSign(order.refundAmount) > 0) return 'is-pending'
   if (order.status.toLowerCase() === 'settled' && result) {
     return result === order.outcome.toLowerCase() ? 'is-positive' : 'is-negative'
   }
@@ -230,7 +230,7 @@ function handleOrderDialogKeydown(event: KeyboardEvent): void {
 
 function accountAvailableLabel(accountAssetId: number): string {
   const account = accounts.value.find((item) => item.assetId === accountAssetId)
-  return account ? formatAmount(account.available) : '--'
+  return account ? formatAmount(account.availableText) : '--'
 }
 
 onMounted(() => { void load() })
@@ -305,7 +305,7 @@ onMounted(() => { void load() })
                 @click="openOrder(market, 'yes')"
               >
                 <b>{{ outcomeLabel(market.yesLabel) }}</b>
-                <small class="numeric">{{ formatPercent(market.yesPrice * 100) }}</small>
+                <small class="numeric">{{ formatRatePercent(market.yesPrice) }}%</small>
               </button>
               <button
                 type="button"
@@ -313,7 +313,7 @@ onMounted(() => { void load() })
                 @click="openOrder(market, 'no')"
               >
                 <b>{{ outcomeLabel(market.noLabel) }}</b>
-                <small class="numeric">{{ formatPercent(market.noPrice * 100) }}</small>
+                <small class="numeric">{{ formatRatePercent(market.noPrice) }}%</small>
               </button>
             </div>
             <p v-if="market.description || market.endAt" class="prediction-market-meta">
@@ -389,11 +389,11 @@ onMounted(() => { void load() })
           <div class="prediction-dialog-outcomes">
             <button type="button" :aria-pressed="outcome === 'yes'" @click="outcome = 'yes'; quote = null">
               <span>{{ outcomeLabel(selected.yesLabel) }}</span>
-              <strong class="numeric">{{ formatPercent(selected.yesPrice * 100) }}</strong>
+              <strong class="numeric">{{ formatRatePercent(selected.yesPrice) }}%</strong>
             </button>
             <button type="button" :aria-pressed="outcome === 'no'" @click="outcome = 'no'; quote = null">
               <span>{{ outcomeLabel(selected.noLabel) }}</span>
-              <strong class="numeric">{{ formatPercent(selected.noPrice * 100) }}</strong>
+              <strong class="numeric">{{ formatRatePercent(selected.noPrice) }}%</strong>
             </button>
           </div>
         </section>
@@ -795,6 +795,7 @@ onMounted(() => { void load() })
   border-radius: 20px 20px 0 0;
   box-shadow: var(--shadow-soft);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   max-height: calc(100dvh - max(16px, env(safe-area-inset-top)));
   max-width: 448px;
@@ -802,6 +803,10 @@ onMounted(() => { void load() })
   overscroll-behavior: contain;
   padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
   width: 100%;
+}
+
+.prediction-dialog > * {
+  min-width: 0;
 }
 
 .prediction-dialog__grab {
@@ -968,12 +973,15 @@ onMounted(() => { void load() })
 
 .prediction-quote dt {
   color: var(--muted);
+  flex: 0 0 auto;
 }
 
 .prediction-quote dd {
   font-variant-numeric: tabular-nums;
   font-weight: 750;
   text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dialog-feedback {

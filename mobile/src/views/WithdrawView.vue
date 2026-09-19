@@ -57,14 +57,14 @@ const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, 
 
 const available = computed(() => account.value?.available || 0)
 const availableText = computed(() => decimalTextFromBoundary(
-  account.value?.availableText ?? account.value?.available,
+  account.value?.availableText,
   { allowNegative: false },
 ))
 const amountText = computed(() => positiveDecimalInput(amount.value, asset.value?.precisionScale ?? 18))
 const previewFee = computed<DecimalText>(() => asset.value && amountText.value
   ? calculateWithdrawalFeeText(
     amountText.value,
-    asset.value.withdrawFeeText ?? asset.value.withdrawFee,
+    asset.value.withdrawFeeText,
     asset.value.withdrawFeeTiers,
     asset.value.precisionScale,
   )
@@ -106,7 +106,7 @@ function useMaximum(): void {
   if (!asset.value || !availableText.value) return
   const maximum = maximumQuotedWithdrawalAmountText(
     availableText.value,
-    asset.value.withdrawFeeText ?? asset.value.withdrawFee,
+    asset.value.withdrawFeeText,
     asset.value.withdrawFeeTiers,
     asset.value.precisionScale,
   )

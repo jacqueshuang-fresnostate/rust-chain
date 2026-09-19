@@ -22,11 +22,16 @@ use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "seconds_contract_routes/principal_refund.rs"]
+mod principal_refund;
 mod support;
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
+
+#[path = "seconds_contract_routes/exposure.rs"]
+mod exposure;
 
 fn test_settings() -> Settings {
     Settings {
@@ -145,6 +150,10 @@ async fn make_order_due_with_event_price(pool: &MySqlPool, order_id: u64, price:
     .execute(pool)
     .await
     .unwrap();
+    seed_order_event_price(pool, order_id, price).await;
+}
+
+async fn seed_order_event_price(pool: &MySqlPool, order_id: u64, price: &str) {
     let (symbol, expires_at): (String, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
         r#"SELECT pairs.symbol, orders.expires_at
            FROM seconds_contract_orders orders
@@ -2073,10 +2082,26 @@ async fn admin_seconds_contract_product_create_rolls_back_when_audit_fails()
     let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
     fixture_tx.commit().await?;
 
-    let admin_token = issue_token(&settings, "admin:999999999", TokenScope::Admin, 900).unwrap();
+    let admin_id = create_admin(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
     let body = format!(
         r#"{{"pair_id":{pair_id},"stake_asset":{quote_asset},"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","reason":"audit should fail"}}"#
     );
+    // 真实管理员先通过鉴权，仅令本夹具的创建审计失败。
+    let trigger = format!("seconds_create_audit_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON admin_audit_logs FOR EACH ROW \
+         BEGIN IF NEW.admin_id = {admin_id} AND NEW.action = 'seconds_contract_product.create' \
+         THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test seconds create audit failure'; \
+         END IF; END"
+    ))
+    .execute(&pool)
+    .await?;
     let response = admin_routes()
         .with_state(state_with_mysql_and_redis(settings, pool.clone(), None))
         .oneshot(
@@ -2088,8 +2113,23 @@ async fn admin_seconds_contract_product_create_rolls_back_when_audit_fails()
                 .body(Body::from(body))
                 .unwrap(),
         )
+        .await;
+    // 即使请求报错，也先撤销故障注入，再传播错误或执行断言。
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
         .await?;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let response = response?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{payload}");
+    assert_eq!(payload["code"], "DATABASE_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("test seconds create audit failure"),
+        "{payload}"
+    );
 
     let (product_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM seconds_contract_products WHERE pair_id = ? AND stake_asset = ?",
@@ -2099,6 +2139,13 @@ async fn admin_seconds_contract_product_create_rolls_back_when_audit_fails()
     .fetch_one(&pool)
     .await?;
     assert_eq!(product_count, 0);
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ? AND action = 'seconds_contract_product.create'",
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit_count, 0);
 
     Ok(())
 }
@@ -2115,20 +2162,37 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
     let redis = Some(redis);
     let settings = test_settings();
     let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "FB").await;
     let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "FQ").await;
     let symbol = format!("{base_symbol}-{quote_symbol}");
     let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
     let product_id = seed_seconds_product(&mut fixture_tx, pair_id, quote_asset).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 50)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .execute(&mut *fixture_tx)
+        .await?;
     fixture_tx.commit().await?;
     seed_ticker(&redis, &symbol, "100.000000000000000000").await;
 
-    let token = issue_token(&settings, "user:999999999", TokenScope::User, 900).unwrap();
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
     let idempotency_key = format!("seconds-fk-{}", Uuid::now_v7().simple());
     let request_body = format!(
         r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
 
+    // 保留真实身份与资金条件，精确注入外键错误而非唯一键冲突，覆盖非重放分支。
+    let trigger = format!("seconds_open_fk_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON seconds_contract_orders FOR EACH ROW \
+         BEGIN IF NEW.user_id = {user_id} AND NEW.product_id = {product_id} \
+         AND NEW.idempotency_key = '{idempotency_key}' \
+         THEN SIGNAL SQLSTATE '23000' SET MYSQL_ERRNO = 1452, \
+         MESSAGE_TEXT = 'test seconds order foreign key failure'; END IF; END"
+    ))
+    .execute(&pool)
+    .await?;
     let response = user_routes()
         .with_state(state_with_mysql_and_redis(settings, pool.clone(), redis))
         .oneshot(
@@ -2140,7 +2204,11 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
                 .body(Body::from(request_body))
                 .unwrap(),
         )
+        .await;
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
         .await?;
+    let response = response?;
     let status = response.status();
     let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
     let payload: Value = serde_json::from_slice(&body)?;
@@ -2152,10 +2220,40 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
         String::from_utf8_lossy(&body)
     );
     assert_eq!(payload["code"], "DATABASE_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("test seconds order foreign key failure"),
+        "{payload}"
+    );
     assert_ne!(
         payload["message"],
         "conflict: seconds contract idempotency key is being committed"
     );
+    let order_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM seconds_contract_orders WHERE user_id = ? AND idempotency_key = ?",
+    )
+    .bind(user_id)
+    .bind(&idempotency_key)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(order_count, 0);
+    let balance: (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(balance, (decimal("50"), decimal("0"), decimal("0")));
+    let ledger_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(ledger_count, 0);
 
     Ok(())
 }
@@ -2845,6 +2943,135 @@ async fn seconds_contract_open_order_uses_requested_product_cycle() -> Result<()
 }
 
 #[tokio::test]
+async fn seconds_contract_review_recovery_requires_history_and_pays_once()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let admin_id = create_admin(&pool).await;
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "RB").await;
+    let (asset_id, quote_symbol) = create_asset(&mut tx, "RQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut tx, base_asset, asset_id, &symbol).await;
+    let product_id = seed_seconds_product(&mut tx, pair_id, asset_id).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 40)")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&mut *tx)
+        .await?;
+    let order_id = sqlx::query(
+        r#"INSERT INTO seconds_contract_orders
+        (user_id, product_id, pair_id, stake_asset, direction, stake_amount, payout_rate,
+         entry_price, status, idempotency_key, expires_at, settlement_failure_code,
+         settlement_failed_at, settlement_window_start, settlement_window_end)
+        VALUES (?, ?, ?, ?, 'up', 10, 0.8, 100, 'manual_review', ?,
+         DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND), 'missing_settlement_snapshot',
+         CURRENT_TIMESTAMP(6), DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND),
+         DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 25 SECOND))"#,
+    )
+    .bind(user_id)
+    .bind(product_id)
+    .bind(pair_id)
+    .bind(asset_id)
+    .bind(format!("review-{}", Uuid::now_v7()))
+    .execute(&mut *tx)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO seconds_contract_settlement_exceptions
+        (order_id, failure_code, detected_at, window_start, window_end)
+        SELECT id, 'missing_settlement_snapshot', CURRENT_TIMESTAMP(6), expires_at,
+               DATE_ADD(expires_at, INTERVAL 5 SECOND) FROM seconds_contract_orders WHERE id = ?"#,
+    )
+    .bind(order_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = admin_routes().with_state(state_with_mysql_and_redis(settings, pool.clone(), None));
+    let request = |result: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/seconds-contracts/orders/{order_id}/settle"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"result": result, "reason": "reviewed archive"}).to_string(),
+            ))
+            .unwrap()
+    };
+    for result in ["win", "auto"] {
+        assert_eq!(
+            app.clone().oneshot(request(result)).await?.status(),
+            StatusCode::CONFLICT
+        );
+    }
+    let state: (String, BigDecimal) = sqlx::query_as(
+        "SELECT orders.status, wallets.available FROM seconds_contract_orders orders JOIN wallet_accounts wallets ON wallets.user_id = orders.user_id AND wallets.asset_id = orders.stake_asset WHERE orders.id = ?",
+    ).bind(order_id).fetch_one(&pool).await?;
+    assert_eq!(state, ("manual_review".to_owned(), decimal("40")));
+    seed_order_event_price(&pool, order_id, "105").await;
+    let (one, two) = tokio::join!(
+        app.clone().oneshot(request("auto")),
+        app.clone().oneshot(request("auto")),
+    );
+    for response in [one?, two?] {
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = body_json(response).await?;
+        assert_eq!(payload["order"]["result"], "win");
+        assert_eq!(payload["order"]["settlement_price_source"], "bitget");
+    }
+    let amount: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(amount, decimal("58"));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ?")
+        .bind(order_id.to_string()).fetch_one(&pool).await?;
+    assert_eq!(count, 1);
+    let audit: (i64, Option<String>) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(reason) FROM admin_audit_logs WHERE target_id = ? AND action = 'seconds_contract_order.recover'",
+    ).bind(order_id.to_string()).fetch_one(&pool).await?;
+    assert_eq!(audit, (1, Some("reviewed archive".to_owned())));
+    let exceptions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM seconds_contract_settlement_exceptions WHERE order_id = ?",
+    )
+    .bind(order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(exceptions, 1);
+    let journal: (i64, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE transaction_key = ?",
+    )
+    .bind(format!("seconds_contract:{order_id}:settle"))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(journal, (3, decimal("0")), "recovery journals only once");
+    let opening: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM platform_financial_journal WHERE transaction_key = ?",
+    )
+    .bind(format!("seconds_contract:{order_id}:open"))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        opening, 0,
+        "do not invent an opening journal for a legacy order"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Result<(), Box<dyn Error>>
 {
     let Some(pool) = mysql_pool().await else {
@@ -2976,6 +3203,20 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
             .fetch_one(&pool)
             .await?;
     assert_eq!(available, decimal("58.000000000000000000"));
+    let journal: (i64, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE context = 'seconds_contract' AND ref_id = ?",
+    )
+    .bind(order_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(journal, (5, decimal("0")));
+    let pending: BigDecimal = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND account_code = 'platform_seconds_pending_liability'",
+    )
+    .bind(order_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(pending, decimal("0"));
 
     let (ledger_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type LIKE 'seconds_contract_settle%'",

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"Money invariants"}
+{"file":".trellis/spec/backend/numeric-safety.md","reason":"Numeric regression matrix and permitted presentation floats"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Cross-layer regression"}
+{"file":".trellis/spec/admin/index.md","reason":"Admin quality gates"}
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile release gates"}

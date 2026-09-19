@@ -47,6 +47,8 @@ struct SpotOrderLockRow {
     order_type: String,
     price: Option<BigDecimal>,
     trigger_price: Option<BigDecimal>,
+    trigger_direction: Option<crate::modules::spot::TriggerDirection>,
+    triggered_at: Option<chrono::DateTime<chrono::Utc>>,
     quantity: BigDecimal,
     filled_quantity: BigDecimal,
     status: String,
@@ -62,6 +64,8 @@ struct IdempotentSpotOrderRow {
     order_type: String,
     price: Option<BigDecimal>,
     trigger_price: Option<BigDecimal>,
+    trigger_direction: Option<crate::modules::spot::TriggerDirection>,
+    triggered_at: Option<chrono::DateTime<chrono::Utc>>,
     quantity: BigDecimal,
     filled_quantity: BigDecimal,
     status: String,
@@ -161,6 +165,7 @@ where
     let row = sqlx::query_as::<_, IdempotentSpotOrderRow>(
         r#"SELECT orders.id, orders.user_id, orders.pair_id AS pair_db_id,
                   pairs.symbol AS pair_id, orders.side, orders.order_type, orders.price, orders.trigger_price,
+                  orders.trigger_direction, orders.triggered_at,
                   orders.quantity, orders.filled_quantity, orders.status, orders.created_at,
                   orders.reserved_amount, orders.request_reference_price, orders.request_price,
                   orders.request_fingerprint, orders.idempotency_attempt_token,
@@ -188,6 +193,19 @@ pub(crate) async fn insert_spot_order_in_tx(
     request_identity: SpotOrderRequestIdentity<'_>,
     reservation: &CreateSpotOrderReservation,
 ) -> AppResult<(SpotOrder, bool)> {
+    for (value, label) in [
+        (Some(&new_order.quantity), "quantity"),
+        (Some(&new_order.filled_quantity), "filled_quantity"),
+        (Some(&reservation.amount), "reserved_amount"),
+        (new_order.price.as_ref(), "price"),
+        (new_order.trigger_price.as_ref(), "trigger_price"),
+        (request_identity.request_price, "request_price"),
+        (request_identity.request_reference_price, "reference_price"),
+    ] {
+        if let Some(value) = value {
+            crate::numeric::ensure_amount_storage(value, label)?;
+        }
+    }
     // 下单记录和钱包冻结必须同事务提交；ON DUPLICATE KEY 会串行化同键竞争，
     // 避免多个失败 INSERT 持有外键共享锁后再升级订单锁所形成的死锁环。
     let user_id = new_order
@@ -200,8 +218,8 @@ pub(crate) async fn insert_spot_order_in_tx(
            (user_id, pair_id, side, order_type, price, trigger_price, quantity, filled_quantity, status,
             idempotency_key, request_fingerprint, idempotency_attempt_token,
             reserved_asset, reserved_amount,
-            request_reference_price, request_price)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            request_reference_price, request_price, trigger_direction, triggered_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
     )
     .bind(user_id)
@@ -223,6 +241,8 @@ pub(crate) async fn insert_spot_order_in_tx(
         OrderType::Market => request_identity.request_reference_price,
     })
     .bind(request_identity.request_price)
+    .bind(new_order.trigger_direction.map(|value| value.as_str()))
+    .bind(new_order.triggered_at)
     .execute(&mut **tx)
     .await;
 
@@ -301,6 +321,8 @@ pub(crate) async fn insert_spot_liquidity_sell_order_in_tx(
         order_type: OrderType::Limit,
         price: Some(execution_price.clone()),
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity: fill_quantity.clone(),
         filled_quantity: BigDecimal::from(0),
         status: OrderStatus::Pending,
@@ -338,7 +360,13 @@ pub(crate) async fn insert_spot_liquidity_buy_order_in_tx(
     execution_price: &BigDecimal,
     fill_quantity: &BigDecimal,
 ) -> AppResult<SpotOrder> {
-    let fill_quote_amount = execution_price.clone() * fill_quantity.clone();
+    let assets = pair_assets_in_tx(tx, &sell_order.pair_id).await?;
+    assets.ensure_fill(execution_price, fill_quantity)?;
+    let fill_quote_amount = crate::modules::spot::service::spot_quote_amount(
+        execution_price,
+        fill_quantity,
+        assets.quote_precision,
+    )?;
     let new_order = NewOrder {
         user_id: liquidity_user_id.to_string(),
         pair_id: sell_order.pair_id.clone(),
@@ -346,14 +374,14 @@ pub(crate) async fn insert_spot_liquidity_buy_order_in_tx(
         order_type: OrderType::Limit,
         price: Some(execution_price.clone()),
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity: fill_quantity.clone(),
         filled_quantity: BigDecimal::from(0),
         status: OrderStatus::Pending,
     };
     let reservation = CreateSpotOrderReservation {
-        asset_id: pair_assets_in_tx(tx, &sell_order.pair_id)
-            .await?
-            .quote_asset_id,
+        asset_id: assets.quote_asset_id,
         amount: fill_quote_amount,
     };
     let pair_db_id = spot_pair_db_id_in_tx(tx, &sell_order.pair_id).await?;
@@ -408,7 +436,7 @@ pub(crate) async fn lock_spot_order_by_db_id(
 ) -> AppResult<SpotOrder> {
     let row = sqlx::query_as::<_, SpotOrderLockRow>(
         r#"SELECT id, user_id, pair_id, side, order_type, price, trigger_price, quantity,
-                  filled_quantity, status
+                  filled_quantity, status, trigger_direction, triggered_at
            FROM spot_orders
            WHERE id = ?
            LIMIT 1
@@ -427,6 +455,8 @@ pub(crate) async fn lock_spot_order_by_db_id(
         order_type: parse_order_type(&row.order_type),
         price: row.price,
         trigger_price: row.trigger_price,
+        trigger_direction: row.trigger_direction,
+        triggered_at: row.triggered_at,
         quantity: row.quantity,
         filled_quantity: row.filled_quantity,
         status: parse_order_status(&row.status),
@@ -547,6 +577,8 @@ impl From<IdempotentSpotOrderRow> for SpotIdempotentOrderRecord {
             order_type: parse_order_type(&order.order_type),
             price: order.price,
             trigger_price: order.trigger_price,
+            trigger_direction: order.trigger_direction,
+            triggered_at: order.triggered_at,
             quantity: order.quantity,
             filled_quantity: order.filled_quantity,
             status: parse_order_status(&order.status),
@@ -572,6 +604,8 @@ impl From<SpotIdempotentOrderRecord> for SpotOrderResponse {
             order_type: order.order_type,
             price: order.price,
             trigger_price: order.trigger_price,
+            trigger_direction: order.trigger_direction,
+            triggered_at: order.triggered_at,
             quantity: order.quantity,
             filled_quantity: order.filled_quantity,
             average_price: None,
@@ -579,4 +613,19 @@ impl From<SpotIdempotentOrderRecord> for SpotOrderResponse {
             created_at: Some(order.created_at),
         }
     }
+}
+
+/// 调用方已锁定并验证可激活的显式订单；只写首次触发时间，不更新资金或覆盖历史/终态。
+/// 激活事务独立提交，后续成交失败不撤销该事实；重复更新不改变原时间。
+pub(crate) async fn mark_spot_order_triggered_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    order_id: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE spot_orders SET triggered_at = CURRENT_TIMESTAMP(6) WHERE id = ? AND trigger_direction IS NOT NULL AND triggered_at IS NULL AND order_type = 'stop_limit' AND status IN ('pending', 'open', 'partially_filled')",
+    )
+    .bind(order_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }

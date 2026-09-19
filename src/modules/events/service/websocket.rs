@@ -26,6 +26,10 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::HashSet;
 use tokio::sync::broadcast::{self, error::RecvError};
 
+/// 由应用层注入的实时会话校验端口；服务层不持有数据库或应用状态。
+pub(crate) type SocketSessionValidator =
+    Box<dyn Fn() -> futures_util::future::BoxFuture<'static, bool> + Send + Sync>;
+
 /// 一个广播频道的标识，由命名空间与主题两段构成，是订阅匹配与消息路由的键。
 /// 实现了哈希与相等，因此可直接放进集合表示某条连接当前的订阅集。
 /// 公共频道的两段都经过安全字符校验；私有频道的命名空间固定，主题由用户编号生成。
@@ -259,7 +263,7 @@ pub(crate) async fn run_public_socket(
     confirmation: String,
 ) {
     let subscription = hub.map(|hub| hub.subscribe(&channel));
-    run_subscription_socket(socket, confirmation, subscription).await;
+    run_subscription_socket(socket, confirmation, subscription, None).await;
 }
 
 /// 为已鉴权用户订阅唯一 `private:user:<id>` 频道并转发提交后产生的进程内私有事件。
@@ -268,10 +272,17 @@ pub(crate) async fn run_private_socket(
     socket: WebSocket,
     auth: PrivateWsAuth,
     hub: Option<EventBroadcastHub>,
+    validator: SocketSessionValidator,
 ) {
     let channel = WebSocketChannel::private_user(auth.user_id);
     let subscription = hub.map(|hub| hub.subscribe(&channel));
-    run_subscription_socket(socket, public_ws_confirmation_text(&channel), subscription).await;
+    run_subscription_socket(
+        socket,
+        public_ws_confirmation_text(&channel),
+        subscription,
+        Some(validator),
+    )
+    .await;
 }
 
 /// 为已在升级前鉴权的代理订阅唯一 `private:agent:<id>` 频道。
@@ -281,51 +292,85 @@ pub(crate) async fn run_agent_private_socket(
     socket: WebSocket,
     auth: AgentPrivateWsAuth,
     hub: Option<EventBroadcastHub>,
+    validator: SocketSessionValidator,
 ) {
     let channel = WebSocketChannel::private_agent(auth.agent_id);
     let subscription = hub.map(|hub| hub.subscribe(&channel));
-    run_subscription_socket(socket, public_ws_confirmation_text(&channel), subscription).await;
+    run_subscription_socket(
+        socket,
+        public_ws_confirmation_text(&channel),
+        subscription,
+        Some(validator),
+    )
+    .await;
 }
 
 /// 运行单频道 socket 生命周期；先发送确认，再在客户端帧与广播之间并发转发。
 /// 确认帧发送失败即直接返回，不进入循环，因为连接已不可用。
-/// 有订阅时用二选一等待同时照看客户端输入与广播输出，两侧任一出错即结束会话；
-/// 未配置广播 hub 时退化为只处理保活帧的循环，连接仍能维持但永远收不到数据。
-/// 该实现被公共单频道与私有连接共用，两者仅在订阅目标与确认文案上不同。
+/// 同时照看客户端输入、广播与私有会话复核；每次发送前复核，空闲时每五秒复核。
+/// 未配置广播 hub 时仍检查私有会话，停用、过期、代际变化或验证后端故障均关闭。
+/// 公共单频道不注入验证端口，仍保持原公开广播合同。
 /// 全程无持久化，断线期间的消息不会缓存，重连后的状态补齐由客户端自行完成。
 async fn run_subscription_socket(
     socket: WebSocket,
     confirmation: String,
-    subscription: Option<EventBroadcastSubscription>,
+    mut subscription: Option<EventBroadcastSubscription>,
+    validator: Option<SocketSessionValidator>,
 ) {
     let (mut sender, mut receiver) = socket.split();
+    if let Some(check) = &validator
+        && !check().await
+    {
+        let _ = sender.send(Message::Close(None)).await;
+        return;
+    }
     if sender.send(Message::Text(confirmation)).await.is_err() {
         return;
     }
 
-    match subscription {
-        Some(mut subscription) => loop {
-            tokio::select! {
-                message = receiver.next() => {
-                    if !handle_client_message(message, &mut sender).await {
-                        break;
-                    }
-                }
-                broadcast = subscription.recv() => {
-                    let Ok(message) = broadcast else {
-                        break;
-                    };
-                    if sender
-                        .send(Message::Text(message.payload().to_owned()))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
+    let mut recheck = tokio::time::interval(std::time::Duration::from_secs(5));
+    loop {
+        tokio::select! {
+            _ = recheck.tick(), if validator.is_some() => {
+                if let Some(check) = &validator
+                    && !check().await {
+                    let _ = sender.send(Message::Close(None)).await;
+                    break;
                 }
             }
-        },
-        None => while handle_client_message(receiver.next().await, &mut sender).await {},
+            message = receiver.next() => {
+                if let Some(check) = &validator
+                    && !check().await {
+                    let _ = sender.send(Message::Close(None)).await;
+                    break;
+                }
+                if !handle_client_message(message, &mut sender).await {
+                    break;
+                }
+            }
+            broadcast = async {
+                match subscription.as_mut() {
+                    Some(subscription) => subscription.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let Ok(message) = broadcast else {
+                    break;
+                };
+                if let Some(check) = &validator
+                    && !check().await {
+                    let _ = sender.send(Message::Close(None)).await;
+                    break;
+                }
+                if sender
+                    .send(Message::Text(message.payload().to_owned()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
     }
 }
 

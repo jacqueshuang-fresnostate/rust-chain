@@ -3,7 +3,7 @@
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
 //! 本文件只保存杠杆的资金口径计算：逐仓返还额、全仓账户组合风险、条件强平价与强平清算政策。
 //! 所有函数都是纯计算，不访问数据库、Redis 或行情，也不发布事件；调用方需自行保证输入取自同一时点快照。
-//! 金额一律以 `with_scale(18)` 归一到十八位小数，与 `DECIMAL(38,18)` 资金列精度保持一致。
+//! 风险展示保留十八位；新增结算金额由调用方按资产精度量化，历史金额与剩余值不得重新量化。
 
 use bigdecimal::{BigDecimal, RoundingMode};
 use std::str::FromStr;
@@ -55,9 +55,11 @@ pub(crate) fn validate_margin_limit_price(
     if price <= &BigDecimal::from(0) {
         return Err("margin limit price must be positive");
     }
-    if price_precision < 0 {
+    if !(0..=18).contains(&price_precision) {
         return Err("margin pair price precision is invalid");
     }
+    crate::numeric::ensure_amount_storage(price, "margin limit price")
+        .map_err(|_| "margin limit price exceeds decimal storage precision")?;
     let (_, scale) = price.normalized().as_bigint_and_exponent();
     if scale.max(0) > i64::from(price_precision) {
         return Err("margin limit price exceeds pair price precision");
@@ -150,10 +152,11 @@ pub(crate) struct MarginCloseSlice {
     pub(crate) remaining_interest_amount: BigDecimal,
 }
 
-/// 按整数百分比从已锁定仓位分配一次平仓切片，并以十八位小数向下截取关闭份额。
+/// 为十八位资产的领域回归保留默认切片入口；生产调用必须显式传入权威资产精度。
 /// 剩余金额始终用「原金额减关闭金额」得到，因此四类金额分别严格守恒；100% 直接消费原值，
 /// 避免先乘除再圆整造成末位残留。1..99% 若把正保证金或正名义价值截成零，或使剩余值为零，
 /// 则拒绝该请求，调用方必须在任何钱包、流水或仓位写入之前返回参数错误。
+#[cfg(test)]
 pub(crate) fn allocate_margin_close_slice(
     margin_amount: &BigDecimal,
     notional_amount: &BigDecimal,
@@ -161,6 +164,37 @@ pub(crate) fn allocate_margin_close_slice(
     interest_amount: &BigDecimal,
     close_percentage: u16,
 ) -> Result<MarginCloseSlice, &'static str> {
+    allocate_margin_close_slice_at_precision(
+        margin_amount,
+        notional_amount,
+        borrowed_amount,
+        interest_amount,
+        close_percentage,
+        18,
+    )
+}
+
+/// 按权威资产精度分配新关闭份额，历史尾差留在原值减切片的剩余值，最终全平完整释放。
+pub(crate) fn allocate_margin_close_slice_at_precision(
+    margin_amount: &BigDecimal,
+    notional_amount: &BigDecimal,
+    borrowed_amount: &BigDecimal,
+    interest_amount: &BigDecimal,
+    close_percentage: u16,
+    precision: i32,
+) -> Result<MarginCloseSlice, &'static str> {
+    if !(0..=18).contains(&precision) {
+        return Err("invalid margin asset precision");
+    }
+    for amount in [
+        margin_amount,
+        notional_amount,
+        borrowed_amount,
+        interest_amount,
+    ] {
+        crate::numeric::ensure_amount_storage(amount, "margin close amount")
+            .map_err(|_| "margin close amount exceeds decimal storage precision")?;
+    }
     let zero = BigDecimal::from(0).with_scale(18);
     if !(1..=100).contains(&close_percentage) {
         return Err("margin close percentage must be between 1 and 100");
@@ -178,7 +212,7 @@ pub(crate) fn allocate_margin_close_slice(
             amount.clone().with_scale(18)
         } else {
             (amount.clone() * BigDecimal::from(close_percentage) / BigDecimal::from(100))
-                .with_scale_round(18, RoundingMode::Down)
+                .with_scale_round(i64::from(precision), RoundingMode::Down)
         }
     };
     let close_margin_amount = allocate(margin_amount);
@@ -230,7 +264,7 @@ pub struct MarginPositionRiskState {
     pub realized_pnl: BigDecimal,
 }
 
-/// 按方向和同一标记价计算单仓盈亏，是主动平仓与账户风险评估共用的唯一价差公式。
+/// 按方向和同一标记价计算原始单仓盈亏；主动结算按资产量化，风险展示按十八位表达。
 pub(crate) fn margin_mark_pnl(
     direction: &str,
     notional_amount: &BigDecimal,
@@ -248,7 +282,7 @@ pub(crate) fn margin_mark_pnl(
         "short" => entry_price.clone() - mark_price.clone(),
         _ => return Err("margin direction must be long or short"),
     };
-    Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
+    Ok(notional_amount.clone() * price_delta / entry_price.clone())
 }
 
 /// 计算逐仓风险；账户级查询和强平会复用其中的盈亏与维持保证金结果再做组合聚合。
@@ -268,7 +302,8 @@ pub fn evaluate_margin_position_risk(
     {
         return Err("margin risk amounts and rate must be non-negative");
     }
-    let realized_pnl = margin_mark_pnl(direction, notional_amount, entry_price, mark_price)?;
+    let realized_pnl =
+        margin_mark_pnl(direction, notional_amount, entry_price, mark_price)?.with_scale(18);
     let equity =
         (margin_amount.clone() + realized_pnl.clone() - interest_amount.clone()).with_scale(18);
     let maintenance_margin =

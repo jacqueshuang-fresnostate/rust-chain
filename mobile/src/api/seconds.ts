@@ -4,7 +4,7 @@ import {
   referenceRequestRegistry,
   type ReferenceRequestOptions,
 } from './requestCache'
-import { asNumber } from '@/core/format'
+import { requiredId, requiredSafeInteger } from '@/core/numeric'
 import {
   mapSecondsHistoryPage,
   mapSecondsOrder,
@@ -62,9 +62,9 @@ export async function fetchSecondsProducts(limit = 50, options: ReferenceRequest
         mappedCycles.push(mapSecondsCycle(product))
       }
       return {
-        id: asNumber(product.id),
+        id: requiredId(product.id),
         symbol: String(product.symbol || ''),
-        stakeAssetId: asNumber(product.stake_asset),
+        stakeAssetId: requiredId(product.stake_asset),
         stakeAssetSymbol: String(product.stake_asset_symbol || '').toUpperCase(),
         cycles: mappedCycles,
         status: String(product.status || ''),
@@ -97,8 +97,8 @@ export interface OpenSecondsOrderInput {
 
 export async function openSecondsOrder(input: OpenSecondsOrderInput): Promise<SecondsOrder> {
   const response = await client.post<{ order?: Record<string, unknown> }>(requestUrl('/seconds-contracts/orders'), {
-    product_id: input.productId,
-    duration_seconds: input.durationSeconds,
+    product_id: requiredId(input.productId),
+    duration_seconds: requiredSafeInteger(input.durationSeconds, 'duration_seconds', 1),
     direction: input.direction,
     stake_amount: normalizeDecimalText(input.stakeAmount),
     idempotency_key: input.idempotencyKey || createSecondsOrderIdempotencyKey(),
@@ -116,8 +116,8 @@ export function mapSecondsCycle(cycle: Record<string, unknown>): SecondsCycle {
   const minStakeText = productDecimal(cycle.min_stake, 'min_stake')
   const maxStakeText = nullableProductDecimal(cycle.max_stake, 'max_stake')
   return {
-    id: asNumber(cycle.id),
-    durationSeconds: asNumber(cycle.duration_seconds),
+    id: requiredId(cycle.id),
+    durationSeconds: requiredSafeInteger(cycle.duration_seconds, 'duration_seconds', 1),
     payoutRate: decimalDisplayNumber(payoutRateText),
     payoutRateText,
     minStake: decimalDisplayNumber(minStakeText),

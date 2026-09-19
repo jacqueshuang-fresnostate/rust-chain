@@ -162,12 +162,38 @@ test('现货 yzOPc/bo8k5 模板仅定向调整订单类型入口与持仓归属�
   )
   // Source provenance is the only new chart input; retain the original
   // fingerprint for every other byte of the approved spot template.
-  assert.match(spotTemplate, /<MobileMarketChart :market-type="ticker\?\.marketType"/)
+  assert.match(spotTemplate, /<MobileMarketChart :ticker="ticker" :market-type="ticker\?\.marketType"/)
   normalizedSpotTemplate = replaceExactlyOnce(
     normalizedSpotTemplate,
-    '<MobileMarketChart :market-type="ticker?.marketType"',
+    '<MobileMarketChart :ticker="ticker" :market-type="ticker?.marketType"',
     '<MobileMarketChart',
     'generated market source metadata',
+  )
+  // E04 adds per-snapshot evidence and extracts only the trade row for source-size
+  // budgets. Restore those exact additions before guarding the original layout.
+  normalizedSpotTemplate = replaceExactlyOnce(
+    normalizedSpotTemplate,
+    '<OrderBookPanel\n          :provenance="depthProvenance"',
+    '<OrderBookPanel',
+    'mini book provenance',
+  )
+  normalizedSpotTemplate = replaceExactlyOnce(
+    normalizedSpotTemplate,
+    'v-if="marketDataPanel === \'orderBook\'"\n          :provenance="depthProvenance"',
+    'v-if="marketDataPanel === \'orderBook\'"',
+    'panel book provenance',
+  )
+  normalizedSpotTemplate = replaceExactlyOnce(
+    normalizedSpotTemplate,
+    '<MarketTradeRow v-for="trade in trades.slice(0, 8)" :key="marketTradeIdentity(trade)" :trade="trade" :format-value="moneyText" />',
+    `<div v-for="trade in trades.slice(0, 8)" :key="trade.id" class="spot-recent-trades__row">
+              <strong class="numeric" :class="trade.side === 'buy' ? 'positive' : 'negative'">
+                {{ moneyText(trade.price) }}
+              </strong>
+              <span class="numeric">{{ moneyText(trade.quantity) }}</span>
+              <time class="numeric" :datetime="new Date(trade.time).toISOString()">{{ formatTradeTime(trade.time) }}</time>
+            </div>`,
+    'provenance-aware recent trade row',
   )
   const priorSpotDigest = createHash('sha256').update(normalizedSpotTemplate).digest('hex')
 

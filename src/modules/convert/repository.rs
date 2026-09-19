@@ -206,6 +206,8 @@ pub(crate) struct ConvertSettlementOrderRecord {
     pub(crate) from_amount: BigDecimal,
     /// 需向目标资产 available 增加的数量。
     pub(crate) to_amount: BigDecimal,
+    /// 报价时已计入源资产扣款的手续费，不得二次扣费。
+    pub(crate) fee_amount: BigDecimal,
 }
 
 /// 结算事务内以 `FOR UPDATE` 锁定的钱包三段余额，frozen 与 locked 在闪兑中保持不变，只用于写流水快照。

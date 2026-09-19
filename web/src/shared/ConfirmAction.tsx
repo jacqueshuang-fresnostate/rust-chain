@@ -11,11 +11,12 @@ type ConfirmActionProps = {
   dangerous?: boolean;
   disabled?: boolean;
   description?: string;
+  modalWidth?: number | string;
   onConfirm: (reason: string) => Promise<void> | void;
   title: string;
 };
 
-export function ConfirmAction({ actionAriaLabel, actionText = '执行', confirmText = '确认', dangerous, description, disabled, onConfirm, title }: ConfirmActionProps) {
+export function ConfirmAction({ actionAriaLabel, actionText = '执行', confirmText = '确认', dangerous, description, disabled, modalWidth, onConfirm, title }: ConfirmActionProps) {
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [visible, setVisible] = useState(false);
@@ -68,6 +69,7 @@ export function ConfirmAction({ actionAriaLabel, actionText = '执行', confirmT
         onOk={handleConfirm}
         title={title}
         visible={visible}
+        width={modalWidth}
       >
         {description ? <p>{description}</p> : null}
         <Text type="secondary">请输入非空原因后继续。</Text>

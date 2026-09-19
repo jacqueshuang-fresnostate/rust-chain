@@ -92,6 +92,8 @@ pub(crate) async fn open_margin_position(
     };
     validate_positive_decimal(&request.margin_amount, "margin amount")?;
     validate_positive_decimal(&request.leverage, "leverage")?;
+    crate::numeric::ensure_amount_storage(&request.margin_amount, "margin amount")?;
+    crate::numeric::ensure_decimal_storage(&request.leverage, 18, 8, "margin leverage")?;
     let idempotency_intent = MarginOpenIdempotencyIntent {
         product_id: request.product_id,
         direction: &direction,
@@ -177,8 +179,13 @@ pub(crate) async fn open_margin_position(
         validate_margin_limit_price(limit_price, product.price_precision)
             .map_err(|message| AppError::Validation(message.to_owned()))?;
     }
-    let notional_amount = request.margin_amount.clone() * request.leverage.clone();
+    let notional_amount = crate::modules::margin::amounts::generated_amount(
+        &(&request.margin_amount * &request.leverage),
+        product.precision_scale,
+        "margin notional amount",
+    )?;
     let borrowed_amount = margin_borrowed_amount(&notional_amount, &request.margin_amount);
+    crate::numeric::ensure_amount_storage(&borrowed_amount, "margin borrowed amount")?;
     let market_price =
         cached_margin_entry_price(redis, product.pair_id, product.symbol.as_str()).await?;
     let entry_price = match order.order_type {
@@ -368,6 +375,11 @@ fn validate_product_margin(
     if product.status != "active" {
         return Err(AppError::NotFound);
     }
+    crate::modules::margin::amounts::validate_input_amount(
+        margin_amount,
+        product.precision_scale,
+        "margin amount",
+    )?;
     if margin_amount < &product.min_margin {
         return Err(AppError::Validation(
             "margin amount is below product minimum".to_owned(),

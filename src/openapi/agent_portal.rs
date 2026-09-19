@@ -139,6 +139,44 @@ pub(super) struct AgentUserMarginPositionsResponse {
 }
 
 #[derive(ToSchema)]
+pub(super) struct AgentUserMarginOrdersResponse {
+    orders: Vec<AgentUserMarginPositionResponse>,
+    #[schema(minimum = 0)]
+    total: i64,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserSpotOrderResponse {
+    id: u64,
+    user_id: u64,
+    pair_id: u64,
+    symbol: String,
+    #[schema(pattern = "^(buy|sell)$")]
+    side: String,
+    #[schema(pattern = "^(market|limit|stop_limit)$")]
+    order_type: String,
+    #[schema(required = true)]
+    price: Option<String>,
+    #[schema(required = true)]
+    trigger_price: Option<String>,
+    quantity: String,
+    filled_quantity: String,
+    #[schema(pattern = "^(pending|open|partially_filled|filled|cancelled|rejected)$")]
+    status: String,
+    #[schema(format = Int64)]
+    created_at: i64,
+    #[schema(format = Int64)]
+    updated_at: i64,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AgentUserSpotOrdersResponse {
+    orders: Vec<AgentUserSpotOrderResponse>,
+    #[schema(minimum = 0)]
+    total: i64,
+}
+
+#[derive(ToSchema)]
 pub(super) struct AgentUserSecondsContractOrderResponse {
     id: u64,
     user_id: u64,
@@ -367,7 +405,7 @@ fn list_agent_users() {}
 )]
 fn list_agent_user_assets() {}
 
-/// 分页查询团队用户的杠杆仓位持久化快照，可按四种仓位状态筛选。
+/// 分页查询团队用户的已成交杠杆仓位快照，只返回 entry_price 非空的记录。
 /// 行集与 total 共用筛选和子树谓词；路径不包含 agent ID，越权与不存在均返回 404。
 /// 接口不读行情、不计息、不平仓或强平，也不写账务流水。
 #[utoipa::path(
@@ -392,6 +430,57 @@ fn list_agent_user_assets() {}
     )
 )]
 fn list_agent_user_margin_positions() {}
+
+/// 杠杆订单包含待成交委托与历史记录；pending 为 opened 且 entry_price 为空，
+/// opened 筛选只包含已成交持仓。返回的 status 保留存储枚举，不生成新的账本状态。
+/// 列表与总数分别约束令牌子树，全程只读。
+#[utoipa::path(
+    get,
+    path = "/agent/api/v1/users/{user_id}/margin-orders",
+    tag = "agent-portal",
+    summary = "查询团队用户杠杆订单",
+    params(
+        ("user_id" = u64, Path, description = "团队用户 ID"),
+        ("status" = Option<String>, Query, description = "pending 待成交 | opened 已成交持仓 | closed | canceled | liquidated；缺省全部"),
+        ("limit" = Option<u32>, Query, description = "默认 20，最大 100"),
+        ("offset" = Option<u32>, Query, description = "默认 0，最大 100000")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = AgentUserMarginOrdersResponse),
+        (status = 400, description = "状态或分页参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录或代理已停用", body = ErrorResponse),
+        (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),
+        (status = 404, description = "用户不存在或不在可见子树", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn list_agent_user_margin_orders() {}
+
+/// 现货订单只读查询包含进行中与历史委托，不触发撮合、撤单或余额变更。
+/// 行集与总数重复同一用户、状态和代理子树过滤，金额保持十进制字符串。
+#[utoipa::path(
+    get,
+    path = "/agent/api/v1/users/{user_id}/spot-orders",
+    tag = "agent-portal",
+    summary = "查询团队用户现货订单",
+    params(
+        ("user_id" = u64, Path, description = "团队用户 ID"),
+        ("status" = Option<String>, Query, description = "pending | open | partially_filled | filled | cancelled | rejected；缺省全部"),
+        ("limit" = Option<u32>, Query, description = "默认 20，最大 100"),
+        ("offset" = Option<u32>, Query, description = "默认 0，最大 100000")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = AgentUserSpotOrdersResponse),
+        (status = 400, description = "状态或分页参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录或代理已停用", body = ErrorResponse),
+        (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),
+        (status = 404, description = "用户不存在或不在可见子树", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn list_agent_user_spot_orders() {}
 
 /// 分页查询团队用户的秒合约订单，缺省不限状态，因而直接包含进行中 opened 订单。
 /// opened、settled 或 manual_review 筛选同时作用于行集与 total，范围只来自令牌对应子树。

@@ -17,7 +17,6 @@ use crate::{
                 SpotOrderRequestIdentity, ensure_market_price_within_reference,
                 limit_order_reaches_execution_price, map_spot_error, normalize_idempotency_key,
                 publish_spot_created_private_events_if_needed, spot_order_request_fingerprint,
-                stop_limit_order_reaches_execution_price,
             },
         },
     },
@@ -45,6 +44,17 @@ pub(crate) async fn create_spot_order_with_events(
     user_id: u64,
     mut request: CreateSpotOrderRequest,
 ) -> AppResult<SpotOrderResponse> {
+    crate::numeric::ensure_amount_storage(&request.quantity, "quantity")?;
+    for value in [
+        &request.price,
+        &request.trigger_price,
+        &request.reference_price,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        crate::numeric::ensure_amount_storage(value, "spot price")?;
+    }
     // 创建现货订单时同时处理幂等重放、撮合触发、下单提交与事件发布，避免路由层承担编排。
     request.idempotency_key = normalize_idempotency_key(&request.idempotency_key)?;
     request.pair_id = request.pair_id.trim().to_ascii_uppercase();
@@ -60,9 +70,10 @@ pub(crate) async fn create_spot_order_with_events(
         .load_pair_rule_async(&request.pair_id)
         .await
         .map_err(map_spot_error)?;
-    let triggered_execution_price =
+    let mut new_order = build_create_spot_order(user_id, &request, &pair)?;
+    let (triggered_execution_price, triggered_at) =
         resolve_spot_order_execution_price(redis, &request, &pair.pair_id).await?;
-    let new_order = build_create_spot_order(user_id, &request, &pair)?;
+    new_order.triggered_at = triggered_at;
     enforce_spot_order_risk_control(
         pool,
         redis,
@@ -182,7 +193,17 @@ pub(crate) fn build_create_spot_order(
     pair: &TradingPairRule,
 ) -> AppResult<NewOrder> {
     // 建单规则集中在应用层入口，路由只负责传输协议，避免下单校验在多处漂移。
-    match request.order_type {
+    if request.order_type == OrderType::StopLimit && request.trigger_direction.is_none() {
+        return Err(AppError::Validation(
+            "trigger_direction is required for new stop limit orders".to_owned(),
+        ));
+    }
+    if request.order_type != OrderType::StopLimit && request.trigger_direction.is_some() {
+        return Err(AppError::Validation(
+            "trigger_direction is only valid for stop limit orders".to_owned(),
+        ));
+    }
+    let mut order = match request.order_type {
         OrderType::Limit => create_limit_order(
             user_id.to_string(),
             request.side,
@@ -214,17 +235,20 @@ pub(crate) fn build_create_spot_order(
             pair,
         ),
     }
-    .map_err(|error| AppError::Validation(format!("invalid spot order: {error:?}")))
+    .map_err(|error| AppError::Validation(format!("invalid spot order: {error:?}")))?;
+    order.trigger_direction = request.trigger_direction;
+    Ok(order)
 }
 
 /// 解析现货订单的权威执行价：市价单必须使用新鲜 Redis 行情，客户端参考价只参与滑点保护。
 /// 限价/止盈止损限价仅在服务端最新价触发价格条件时返回执行价；行情缺失时保持挂单而不使用客户端价格兜底。
+/// 显式止限价阈值命中独立返回激活时间，即使尚未达到限价；建单事务将该事实与订单及预留一起保存。
 /// 本函数只读取行情并执行纯价格校验，不建单、不冻结资金，也不产生事件，调用方必须在后续事务前再次承担状态一致性。
 pub(crate) async fn resolve_spot_order_execution_price(
     redis: Option<&ConnectionManager>,
     request: &CreateSpotOrderRequest,
     pair_symbol: &str,
-) -> AppResult<Option<BigDecimal>> {
+) -> AppResult<(Option<BigDecimal>, Option<chrono::DateTime<chrono::Utc>>)> {
     match request.order_type {
         OrderType::Market => {
             let reference_price = request.reference_price.as_ref().ok_or_else(|| {
@@ -235,19 +259,20 @@ pub(crate) async fn resolve_spot_order_execution_price(
             let execution_price =
                 resolve_market_execution_price(redis, pair_symbol, reference_price).await?;
             ensure_market_price_within_reference(request.side, &execution_price, reference_price)?;
-            Ok(Some(execution_price))
+            Ok((Some(execution_price), None))
         }
         OrderType::Limit => {
             let limit_price = request.price.as_ref().ok_or_else(|| {
                 crate::error::AppError::Validation("price is required for limit orders".to_owned())
             })?;
             let Some(execution_price) = latest_spot_market_price(redis, pair_symbol).await? else {
-                return Ok(None);
+                return Ok((None, None));
             };
-            Ok(
+            Ok((
                 limit_order_reaches_execution_price(request.side, &execution_price, limit_price)
                     .then_some(execution_price),
-            )
+                None,
+            ))
         }
         OrderType::StopLimit => {
             let trigger_price = request.trigger_price.as_ref().ok_or_else(|| {
@@ -261,15 +286,24 @@ pub(crate) async fn resolve_spot_order_execution_price(
                 )
             })?;
             let Some(execution_price) = latest_spot_market_price(redis, pair_symbol).await? else {
-                return Ok(None);
+                return Ok((None, None));
             };
-            Ok(stop_limit_order_reaches_execution_price(
-                request.side,
-                &execution_price,
-                trigger_price,
-                limit_price,
-            )
-            .then_some(execution_price))
+            let direction = request.trigger_direction.ok_or_else(|| {
+                AppError::Validation(
+                    "trigger_direction is required for new stop limit orders".to_owned(),
+                )
+            })?;
+            let activated = direction.reached(&execution_price, trigger_price);
+            Ok((
+                (activated
+                    && limit_order_reaches_execution_price(
+                        request.side,
+                        &execution_price,
+                        limit_price,
+                    ))
+                .then_some(execution_price),
+                activated.then(chrono::Utc::now),
+            ))
         }
     }
 }
@@ -287,7 +321,7 @@ async fn resolve_market_execution_price(
         })
 }
 /// 原子插入未立即成交的现货订单并冻结钱包；调用前订单已通过交易对、价格、数量、风控和执行条件校验。
-/// 事务计算预留：买单按限价/参考价预留报价资产 `price * quantity`，卖单预留基础资产数量；插单后锁钱包完成 available→frozen 与流水。
+/// 买单按限价/参考价乘数量并向零量化到真实报价资产精度；卖单预留精度合法的基础数量，再等额冻结并记流水。
 /// 幂等键已存在时返回原订单且不重复冻结；余额不足、参数冲突或任一数据库步骤失败会回滚订单和资金，本函数不发布事件。
 pub(crate) async fn insert_order_and_freeze_wallet(
     pool: &Pool<MySql>,

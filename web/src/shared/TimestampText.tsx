@@ -1,3 +1,5 @@
+import { isUnixMillis } from './integer';
+
 type TimestampTextProps = {
   value?: number | null;
 };
@@ -13,7 +15,7 @@ const formatter = new Intl.DateTimeFormat('zh-CN', {
 });
 
 export function formatAdminTimestamp(value?: number | null): string | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (!isUnixMillis(value)) {
     return null;
   }
 

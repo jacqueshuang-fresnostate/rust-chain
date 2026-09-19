@@ -236,6 +236,10 @@ async fn wallet_chain_worker_broadcasts_and_confirms_withdrawal_once() -> Result
         .bind(asset_id)
         .execute(&pool)
         .await?;
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
         .execute(&pool)
@@ -812,6 +816,10 @@ async fn ambiguous_broadcast_keeps_funds_frozen_and_reconciles_by_stable_request
         .bind(asset_id)
         .execute(&pool)
         .await?;
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
         .execute(&pool)
@@ -959,6 +967,10 @@ async fn deterministic_broadcast_rejection_releases_reservation_exactly_once()
         .await?;
     sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
         .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
         .bind(asset_id)
         .execute(&pool)
         .await?;
@@ -1300,6 +1312,10 @@ async fn wallet_chain_worker_dead_letters_poison_deposit_but_halts_on_transient_
     )
     .execute(&pool)
     .await?;
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
         .execute(&pool)

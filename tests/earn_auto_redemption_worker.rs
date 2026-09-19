@@ -228,6 +228,14 @@ async fn seed_matured_subscription(
 }
 
 async fn cleanup_fixture(pool: &MySqlPool, fixture: EarnFixture) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
+        .bind(fixture.asset_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM financial_worker_retries WHERE task_kind = 'earn' AND item_id = ?")
+        .bind(fixture.subscription_id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'earn_subscription' AND ref_id = ?")
         .bind(fixture.subscription_id.to_string())
         .execute(pool)
@@ -378,6 +386,62 @@ async fn earn_auto_redemption_worker_scans_past_broken_rows() -> Result<(), Box<
             .await?;
     assert_eq!(healthy_status, "redeemed");
 
+    cleanup_fixture(&pool, broken).await?;
+    cleanup_fixture(&pool, healthy).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn earn_retry_queue_moves_beyond_scan_window_and_recovers() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    close_previous_earn_worker_subscriptions(&pool).await?;
+    let now = Utc.with_ymd_and_hms(1990, 1, 3, 12, 0, 0).unwrap();
+    let broken = seed_matured_subscription(&pool, now, now - chrono::TimeDelta::seconds(2)).await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ?")
+        .bind(broken.user_id)
+        .execute(&pool)
+        .await?;
+    for _ in 0..500 {
+        sqlx::query(
+            r#"INSERT INTO earn_subscriptions
+               (user_id, product_id, asset_id, amount, apr_rate, term_days, status, idempotency_key, subscribed_at, matures_at)
+               SELECT user_id, product_id, asset_id, amount, apr_rate, term_days, status, ?, subscribed_at, matures_at
+               FROM earn_subscriptions WHERE id = ?"#,
+        ).bind(uuid::Uuid::now_v7().to_string()).bind(broken.subscription_id).execute(&pool).await?;
+    }
+    let healthy =
+        seed_matured_subscription(&pool, now, now - chrono::TimeDelta::seconds(1)).await?;
+    let first = run_once_with_dependencies(&pool, now, 100).await?;
+    assert_eq!(first.failed, 500);
+    assert_eq!(first.redeemed, 0);
+    let second = run_once_with_dependencies(&pool, now, 100).await?;
+    assert_eq!(second.failed, 1);
+    assert_eq!(second.redeemed, 1);
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 0)")
+        .bind(broken.user_id)
+        .bind(broken.asset_id)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        run_once_with_dependencies(&pool, now, 100).await?.scanned,
+        0
+    );
+    assert_eq!(
+        run_once_with_dependencies(&pool, now + chrono::TimeDelta::seconds(61), 1)
+            .await?
+            .redeemed,
+        1
+    );
+    sqlx::query("DELETE r FROM financial_worker_retries r JOIN earn_subscriptions s ON s.id = r.item_id WHERE r.task_kind = 'earn' AND s.user_id = ?")
+        .bind(broken.user_id).execute(&pool).await?;
+    sqlx::query("DELETE FROM earn_subscriptions WHERE user_id = ? AND id <> ?")
+        .bind(broken.user_id)
+        .bind(broken.subscription_id)
+        .execute(&pool)
+        .await?;
     cleanup_fixture(&pool, broken).await?;
     cleanup_fixture(&pool, healthy).await?;
     Ok(())

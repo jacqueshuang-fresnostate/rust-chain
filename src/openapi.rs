@@ -18,33 +18,44 @@ use crate::{HealthResponse, error::ErrorResponse, state::AppState};
 mod agent_portal;
 mod agents;
 mod auth;
+mod financial_reconciliation;
+mod financial_retries;
+mod loan;
 mod news;
 mod quick_recharge;
+mod seconds_refund;
 mod support;
 mod system_config;
 mod user_security;
 mod wallet;
+mod withdrawal_policy;
 
 use self::agent_portal::*;
 use self::agents::*;
 use self::auth::*;
+use self::financial_retries::*;
 use self::news::*;
 use self::quick_recharge::*;
 use self::support::*;
 use self::system_config::*;
 use self::user_security::*;
 use self::wallet::*;
+use self::withdrawal_policy::*;
 
 /// 构建 Swagger UI 与 OpenAPI JSON 的只读文档路由，供联调和前端生成客户端时直接访问。
 /// 同一份文档被挂载在两处：根路径下的 `/docs` 与 `/openapi.json`，以及带 API 前缀的 `/api/docs` 与 `/api/openapi.json`。
 /// 保留两套地址是为了兼容只把 `/api` 前缀转发给本服务的网关配置，两者内容完全相同，不存在版本差异。
 /// 文档在每次请求时由派生实现生成，不做鉴权也不读取共享状态，因此生产环境需要在网关侧决定是否对外开放。
 pub fn routes() -> Router<AppState> {
+    let mut document = ApiDoc::openapi();
+    document.merge(loan::LoanApiDoc::openapi());
+    document.merge(financial_reconciliation::ReconciliationApiDoc::openapi());
+    document.merge(seconds_refund::SecondsRefundApiDoc::openapi());
     let docs: Router<AppState> = SwaggerUi::new("/docs")
-        .url("/openapi.json", ApiDoc::openapi())
+        .url("/openapi.json", document.clone())
         .into();
     let api_docs: Router<AppState> = SwaggerUi::new("/api/docs")
-        .url("/api/openapi.json", ApiDoc::openapi())
+        .url("/api/openapi.json", document)
         .into();
 
     docs.merge(api_docs)
@@ -54,6 +65,13 @@ pub fn routes() -> Router<AppState> {
 #[openapi(
     paths(
         health,
+        get_withdrawal_policy,
+        save_withdrawal_policy,
+        get_withdrawal_addresses,
+        register_withdrawal_address,
+        list_admin_financial_retries,
+        requeue_admin_financial_retry,
+        update_admin_financial_incident,
         get_register_config,
         get_login_config,
         get_admin_login_config,
@@ -78,6 +96,8 @@ pub fn routes() -> Router<AppState> {
         list_agent_users,
         list_agent_user_assets,
         list_agent_user_margin_positions,
+        list_agent_user_margin_orders,
+        list_agent_user_spot_orders,
         list_agent_user_seconds_contract_orders,
         list_agent_invite_codes,
         create_agent_invite_code,
@@ -190,6 +210,13 @@ pub fn routes() -> Router<AppState> {
     ),
     components(schemas(
         ErrorResponse,
+        FinancialRetriesResponse,
+        FinancialRetryResponse,
+        FinancialRetrySchedule,
+        FinancialRetryCount,
+        RequeueFinancialRetryRequest,
+        FinancialRetryIncident,
+        UpdateFinancialRetryIncidentRequest,
         HealthResponse,
         UserAuthRequest,
         RegisterConfigResponse,
@@ -329,6 +356,9 @@ pub fn routes() -> Router<AppState> {
         AgentUserAssetsResponse,
         AgentUserMarginPositionResponse,
         AgentUserMarginPositionsResponse,
+        AgentUserMarginOrdersResponse,
+        AgentUserSpotOrderResponse,
+        AgentUserSpotOrdersResponse,
         AgentUserSecondsContractOrderResponse,
         AgentUserSecondsContractOrdersResponse,
         CreateAgentInviteCodeRequest,
@@ -354,6 +384,7 @@ pub fn routes() -> Router<AppState> {
     )),
     tags(
         (name = "health", description = "服务健康检查"),
+        (name = "admin-financial-retries", description = "资金异常只读查询与审计重新排期"),
         (name = "auth", description = "用户、管理员和代理认证"),
         (name = "countries", description = "用户端可注册国家和默认语言配置"),
         (name = "platform", description = "用户端公开平台品牌配置"),

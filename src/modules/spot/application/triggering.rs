@@ -8,9 +8,10 @@ use crate::{
             SpotLedgerMetadata, apply_spot_wallet_settlement_leg,
             ensure_spot_liquidity_inventory_in_tx, ensure_spot_liquidity_user_in_tx,
             ensure_wallet_account_in_tx, freeze_wallet_for_inserted_order_in_tx,
-            insert_spot_liquidity_buy_order_in_tx, insert_spot_liquidity_sell_order_in_tx,
-            insert_spot_order_in_tx, insert_spot_trade, load_spot_pair_db_id,
-            lock_spot_fill_wallet_rows_in_order, lock_spot_order_by_db_id, pair_assets_in_tx,
+            insert_spot_fill_journal_in_tx, insert_spot_liquidity_buy_order_in_tx,
+            insert_spot_liquidity_sell_order_in_tx, insert_spot_order_in_tx, insert_spot_trade,
+            load_spot_pair_db_id, lock_spot_fill_wallet_rows_in_order, lock_spot_order_by_db_id,
+            mark_spot_order_triggered_in_tx, pair_assets_in_tx,
             release_buy_order_surplus_reservation_after_fill,
             remaining_spot_fill_reservation_before_trade_in_tx, save_spot_order_fill_state,
             spot_order_reservation_in_tx, store_spot_order_idempotency_response_in_tx,
@@ -23,7 +24,7 @@ use crate::{
             ensure_spot_fill_within_order_reservation, is_triggerable_limit_buy_order,
             is_triggerable_limit_sell_order, is_triggerable_stop_limit_buy_order,
             is_triggerable_stop_limit_sell_order, market_buy_reservation_price,
-            publish_spot_fill_private_events_if_needed,
+            publish_spot_fill_private_events_if_needed, should_activate_stop_limit_order,
         },
     },
 };
@@ -40,6 +41,7 @@ pub(crate) async fn execute_triggered_spot_limit_orders(
     pair_symbol: &str,
     market_price: &BigDecimal,
 ) -> AppResult<Vec<(SpotOrder, SpotOrder, SpotTrade, &'static str)>> {
+    crate::numeric::ensure_amount_storage(market_price, "market price")?;
     if market_price <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
             "market price must be positive".to_owned(),
@@ -272,14 +274,16 @@ pub(crate) async fn execute_triggered_limit_sell_order(
     Ok(Some(result))
 }
 
-/// 在独立事务中尝试执行止损限价买单；锁定订单后必须同时满足 `market_price <= trigger_price` 与 `market_price <= limit_price`。
+/// 显式买单先独立持久化阈值激活，再重新锁定订单按限价成交；旧单保留原双重 <= 条件。
 /// 条件不满足或状态已变化时返回 `None` 且不触碰钱包；满足时复用买向流动性对手单和稳定钱包锁序，以既有报价预留完成结算。
 /// 重复行情对已处理订单幂等，库存/余额/结算失败回滚订单、钱包、流水和佣金；事件由事务提交后的上层入口发布。
+/// 显式激活已独立提交，不随结算失败回滚；两次事务之间的撤单会在第二次行锁复核时阻止成交。
 pub(crate) async fn execute_triggered_stop_limit_buy_order(
     pool: &Pool<MySql>,
     order_id: u64,
     market_price: &BigDecimal,
 ) -> AppResult<Option<(SpotOrder, SpotOrder, SpotTrade)>> {
+    persist_stop_limit_activation(pool, order_id, market_price).await?;
     let mut tx = pool.begin().await?;
     let order = lock_spot_order_by_db_id(&mut tx, order_id).await?;
     if !is_triggerable_stop_limit_buy_order(&order, market_price) {
@@ -291,14 +295,16 @@ pub(crate) async fn execute_triggered_stop_limit_buy_order(
     Ok(Some(result))
 }
 
-/// 在独立事务中尝试执行止损限价卖单；锁定订单后必须同时满足 `market_price >= trigger_price` 与 `market_price >= limit_price`。
+/// 显式卖单先独立持久化阈值激活，再重新锁定订单按限价成交；旧单保留原双重 >= 条件。
 /// 条件不满足或订单不可触发时返回 `None` 且不解冻/结算；满足时按基础资产预留和稳定钱包锁序完成流动性买单及双边资金流水。
 /// 重复行情幂等跳过已处理订单，任一失败整体回滚且不发布事件，事件仅由上层在提交成功后广播。
+/// 显式激活事实不随结算回滚，第二次行锁必须重新检查取消/终态，不能沿用激活事务的旧快照。
 pub(crate) async fn execute_triggered_stop_limit_sell_order(
     pool: &Pool<MySql>,
     order_id: u64,
     market_price: &BigDecimal,
 ) -> AppResult<Option<(SpotOrder, SpotOrder, SpotTrade)>> {
+    persist_stop_limit_activation(pool, order_id, market_price).await?;
     let mut tx = pool.begin().await?;
     let order = lock_spot_order_by_db_id(&mut tx, order_id).await?;
     if !is_triggerable_stop_limit_sell_order(&order, market_price) {
@@ -308,6 +314,20 @@ pub(crate) async fn execute_triggered_stop_limit_sell_order(
     let result = execute_triggered_sell_order_in_tx(&mut tx, order, market_price).await?;
     tx.commit().await?;
     Ok(Some(result))
+}
+
+async fn persist_stop_limit_activation(
+    pool: &Pool<MySql>,
+    order_id: u64,
+    market_price: &BigDecimal,
+) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+    let order = lock_spot_order_by_db_id(&mut tx, order_id).await?;
+    if should_activate_stop_limit_order(&order, market_price) {
+        mark_spot_order_triggered_in_tx(&mut tx, order_id).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn execute_triggered_buy_order_in_tx(
@@ -334,6 +354,12 @@ async fn execute_triggered_buy_order_in_tx(
         ));
     }
     let assets = pair_assets_in_tx(tx, &buy_order.pair_id).await?;
+    assets.ensure_fill(execution_price, &fill_quantity)?;
+    let fill_quote_amount = crate::modules::spot::service::spot_quote_amount(
+        execution_price,
+        &fill_quantity,
+        assets.quote_precision,
+    )?;
     let buyer_id = buy_order
         .user_id
         .parse::<u64>()
@@ -384,7 +410,6 @@ async fn execute_triggered_buy_order_in_tx(
     )
     .await?;
 
-    let fill_quote_amount = execution_price.clone() * fill_quantity.clone();
     let buy_order_remaining_reservation =
         remaining_spot_fill_reservation_before_trade_in_tx(tx, &buy_order, &trade.id).await?;
     ensure_spot_fill_within_order_reservation(
@@ -455,6 +480,16 @@ async fn execute_triggered_buy_order_in_tx(
         &ref_id,
     )
     .await?;
+    insert_spot_fill_journal_in_tx(
+        tx,
+        &trade,
+        buyer_id,
+        liquidity_user_id,
+        assets.base_asset_id,
+        assets.quote_asset_id,
+        &fill_quote_amount,
+    )
+    .await?;
     insert_spot_fill_commissions_in_tx(
         tx,
         &trade,
@@ -494,13 +529,18 @@ async fn execute_triggered_sell_order_in_tx(
         ));
     }
     let assets = pair_assets_in_tx(tx, &sell_order.pair_id).await?;
+    assets.ensure_fill(execution_price, &fill_quantity)?;
     let seller_id = sell_order
         .user_id
         .parse::<u64>()
         .map_err(|_| AppError::Unauthorized)?;
     ensure_wallet_account_in_tx(tx, seller_id, assets.quote_asset_id).await?;
     let liquidity_user_id = ensure_spot_liquidity_user_in_tx(tx).await?;
-    let fill_quote_amount = execution_price.clone() * fill_quantity.clone();
+    let fill_quote_amount = crate::modules::spot::service::spot_quote_amount(
+        execution_price,
+        &fill_quantity,
+        assets.quote_precision,
+    )?;
     ensure_spot_liquidity_inventory_in_tx(
         tx,
         liquidity_user_id,
@@ -615,6 +655,16 @@ async fn execute_triggered_sell_order_in_tx(
         &ref_id,
     )
     .await?;
+    insert_spot_fill_journal_in_tx(
+        tx,
+        &trade,
+        liquidity_user_id,
+        seller_id,
+        assets.base_asset_id,
+        assets.quote_asset_id,
+        &fill_quote_amount,
+    )
+    .await?;
     insert_spot_fill_commissions_in_tx(
         tx,
         &trade,
@@ -650,7 +700,11 @@ fn ensure_limit_buy_price_reached(order: &NewOrder, execution_price: &BigDecimal
         let trigger_price = order.trigger_price.as_ref().ok_or_else(|| {
             AppError::Validation("trigger_price is required for stop limit orders".to_owned())
         })?;
-        if execution_price > trigger_price {
+        let reached = match order.trigger_direction {
+            Some(_) => order.triggered_at.is_some(),
+            None => execution_price <= trigger_price,
+        };
+        if !reached {
             return Err(AppError::Validation(
                 "market price is above buy trigger".to_owned(),
             ));
@@ -683,7 +737,11 @@ fn ensure_limit_sell_price_reached(
         let trigger_price = order.trigger_price.as_ref().ok_or_else(|| {
             AppError::Validation("trigger_price is required for stop limit orders".to_owned())
         })?;
-        if execution_price < trigger_price {
+        let reached = match order.trigger_direction {
+            Some(_) => order.triggered_at.is_some(),
+            None => execution_price >= trigger_price,
+        };
+        if !reached {
             return Err(AppError::Validation(
                 "market price is below sell trigger".to_owned(),
             ));

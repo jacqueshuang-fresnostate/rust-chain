@@ -36,7 +36,8 @@ async fn authorize_private_ws_accepts_user_token_from_query() {
         .await
         .unwrap();
 
-    assert_eq!(auth.user_id, 42);
+    assert_eq!(auth.0.user_id, 42);
+    assert!((auth.1)().await);
 }
 
 #[tokio::test]

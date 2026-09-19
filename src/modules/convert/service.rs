@@ -149,6 +149,9 @@ pub(crate) fn convert_pair_rule_from_record(
 /// 费率上界取开区间是因为费率达到 1 会把净额吃光，后续目标额必然非正。
 /// 该纯校验不处理小数位、不读钱包、不冻结 available，失败时不生成报价行也不写缓存。
 pub(crate) fn validate_quote_amount(amount: &BigDecimal, pair: &ConvertPairRule) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, "convert amount")?;
+    crate::numeric::ensure_decimal_storage(&pair.fee_rate, 18, 8, "convert fee_rate")?;
+    crate::numeric::ensure_decimal_storage(&pair.spread_rate, 18, 8, "convert spread_rate")?;
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
             "convert amount must be positive".to_owned(),
@@ -201,6 +204,7 @@ pub(crate) fn ensure_convert_amount_precision(
     precision_scale: i32,
     field: &str,
 ) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, field)?;
     // 资产精度校验必须在落库前完成，避免 BigDecimal 细度超限导致后续账务差分难以复现。
     if amount_fits_asset_precision(amount, precision_scale) {
         Ok(())
@@ -248,6 +252,8 @@ pub(crate) fn convert_quote_amounts(
     }
     let raw_to_amount = net_from_amount * effective_rate;
     let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_precision_scale);
+    crate::numeric::ensure_amount_storage(&fee_amount, "convert fee_amount")?;
+    crate::numeric::ensure_amount_storage(&to_amount, "convert to_amount")?;
     if to_amount <= 0 {
         return Err(AppError::Validation(
             "convert quote amount must be positive".to_owned(),
@@ -319,6 +325,7 @@ pub(crate) fn resolve_market_convert_rate(
 /// 反向报价的除法可能产生超过 18 位小数；若先按高精度算指纹、再由 MySQL 隐式量化，确认回读会误判篡改。
 pub(crate) fn normalize_convert_rate_for_storage(rate: &BigDecimal) -> AppResult<BigDecimal> {
     let normalized = truncate_amount_to_asset_precision(rate, MAX_ASSET_PRECISION_SCALE);
+    crate::numeric::ensure_amount_storage(&normalized, "convert rate")?;
     if normalized <= 0 {
         return Err(AppError::Validation(
             "convert rate is below persistent precision".to_owned(),

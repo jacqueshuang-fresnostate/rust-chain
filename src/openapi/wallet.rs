@@ -82,6 +82,8 @@ pub(super) struct WalletWithdrawalResponse {
     #[schema(format = Int64)]
     acceptance_evidence_at: Option<i64>,
     review_reason: Option<String>,
+    required_approvals: u32,
+    approval_count: i64,
     reviewed_by: Option<u64>,
     broadcasted_by: Option<u64>,
     confirmed_by: Option<u64>,

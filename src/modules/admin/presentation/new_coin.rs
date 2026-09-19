@@ -78,7 +78,9 @@ pub(crate) struct CreateNewCoinProjectRequest {
     pub(crate) asset_id: u64,
     pub(crate) symbol: String,
     pub(crate) lifecycle_status: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) total_supply: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) issue_price: BigDecimal,
     pub(crate) quote_asset_id: u64,
     #[serde(default, with = "option_unix_millis")]
@@ -88,6 +90,10 @@ pub(crate) struct CreateNewCoinProjectRequest {
     pub(crate) fixed_unlock_at: Option<DateTime<Utc>>,
     pub(crate) relative_unlock_seconds: Option<u64>,
     pub(crate) unlock_fee_enabled: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) unlock_fee_rate: Option<BigDecimal>,
     pub(crate) unlock_fee_basis: Option<String>,
     pub(crate) unlock_fee_asset: Option<u64>,
@@ -111,6 +117,7 @@ impl PresentationLayer for UpdateNewCoinLifecycleRequest {}
 pub(crate) struct DistributeNewCoinRequest {
     pub(crate) user_id: u64,
     pub(crate) subscription_id: Option<u64>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) quantity: BigDecimal,
     pub(crate) idempotency_key: String,
     pub(crate) reason: Option<String>,
@@ -136,6 +143,10 @@ impl PresentationLayer for UpdateNewCoinUnlockRuleRequest {}
 pub(crate) struct UpdateNewCoinUnlockFeeRuleRequest {
     pub(crate) expected_config: Option<String>,
     pub(crate) unlock_fee_enabled: bool,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) unlock_fee_rate: Option<BigDecimal>,
     pub(crate) unlock_fee_basis: Option<String>,
     pub(crate) unlock_fee_asset: Option<u64>,
@@ -158,6 +169,10 @@ impl PresentationLayer for UpdateNewCoinPostListingPurchaseRequest {}
 pub(crate) struct UpsertNewCoinConvertRuleRequest {
     pub(crate) convert_pair_id: u64,
     pub(crate) rate_source: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) fixed_rate: Option<BigDecimal>,
     pub(crate) floating_rate_json: Option<Value>,
     pub(crate) status: Option<String>,
@@ -377,9 +392,13 @@ pub(crate) struct NewCoinProjectCenterResponse {
 /// 发行参数仅允许在预热且没有订单或供给占用时修改；原值用于拒绝陈旧编辑。
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateNewCoinIssuanceRequest {
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) total_supply: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) issue_price: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) expected_total_supply: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) expected_issue_price: BigDecimal,
     pub(crate) reason: Option<String>,
 }

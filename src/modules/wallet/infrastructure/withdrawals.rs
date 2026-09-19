@@ -345,6 +345,9 @@ pub(crate) async fn insert_withdrawal_quote_in_tx(
     let fee = asset.fee.clone().with_scale(18);
     let net = amount.clone().with_scale(18);
     let total_reserved = (amount.clone() + fee.clone()).with_scale(18);
+    crate::numeric::ensure_amount_storage(amount, "withdrawal amount")?;
+    crate::numeric::ensure_amount_storage(&fee, "withdrawal fee")?;
+    crate::numeric::ensure_amount_storage(&total_reserved, "withdrawal total_reserved")?;
     let fingerprint =
         withdrawal_quote_fingerprint(user_id, asset.id, asset_symbol, network, amount);
     sqlx::query(
@@ -570,6 +573,18 @@ pub(crate) async fn reserve_withdrawal_request(
         ));
     }
 
+    let (policy, required_approvals) = super::withdrawal_policy::check_creation_in_tx(
+        &mut tx,
+        asset.id,
+        asset.precision_scale,
+        user_id,
+        network,
+        address,
+        amount,
+        &quote.total_reserved,
+    )
+    .await?;
+
     let result = sqlx::query(
         r#"INSERT INTO wallet_withdrawal_requests
               (user_id, asset_id, asset_symbol, network, address, amount, fee, total_reserved,
@@ -598,6 +613,13 @@ pub(crate) async fn reserve_withdrawal_request(
         }
     };
 
+    super::withdrawal_policy::insert_receipt_in_tx(
+        &mut tx,
+        withdrawal_id,
+        &policy,
+        required_approvals,
+    )
+    .await?;
     let wallet = lock_wallet_balance(&mut tx, user_id, asset.id).await?;
     if wallet.available < quote.total_reserved {
         return Err(AppError::Validation(format!(
@@ -605,8 +627,8 @@ pub(crate) async fn reserve_withdrawal_request(
             quote.total_reserved, wallet.available
         )));
     }
-    let available_after = (wallet.available.clone() - quote.total_reserved.clone()).with_scale(18);
-    let frozen_after = (wallet.frozen.clone() + quote.total_reserved.clone()).with_scale(18);
+    let available_after = wallet.available.clone() - quote.total_reserved.clone();
+    let frozen_after = wallet.frozen.clone() + quote.total_reserved.clone();
     update_wallet_balance(
         &mut tx,
         user_id,
@@ -746,6 +768,19 @@ pub(crate) async fn approve_withdrawal_in_tx(
             withdrawal.status
         )));
     }
+    if !super::withdrawal_policy::record_review_in_tx(
+        tx,
+        withdrawal_id,
+        withdrawal.user_id,
+        withdrawal.network.as_deref().unwrap_or(""),
+        &withdrawal.address,
+        admin_id,
+        reason,
+    )
+    .await?
+    {
+        return load_withdrawal_by_id_in_tx(tx, withdrawal_id).await;
+    }
     sqlx::query(
         r#"UPDATE wallet_withdrawal_requests
            SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP(6),
@@ -802,9 +837,8 @@ pub(crate) async fn release_withdrawal_in_tx(
             "withdrawal frozen balance is lower than reserved amount".to_owned(),
         ));
     }
-    let available_after =
-        (wallet.available.clone() + withdrawal.total_reserved.clone()).with_scale(18);
-    let frozen_after = (wallet.frozen.clone() - withdrawal.total_reserved.clone()).with_scale(18);
+    let available_after = wallet.available.clone() + withdrawal.total_reserved.clone();
+    let frozen_after = wallet.frozen.clone() - withdrawal.total_reserved.clone();
     update_wallet_balance(
         tx,
         withdrawal.user_id,
@@ -1173,7 +1207,7 @@ pub(crate) async fn confirm_withdrawal_in_tx(
             "withdrawal frozen balance is lower than reserved amount".to_owned(),
         ));
     }
-    let frozen_after = (wallet.frozen.clone() - withdrawal.total_reserved.clone()).with_scale(18);
+    let frozen_after = wallet.frozen.clone() - withdrawal.total_reserved.clone();
     update_wallet_balance(
         tx,
         withdrawal.user_id,
@@ -1340,6 +1374,10 @@ fn wallet_withdrawal_select_sql() -> &'static str {
               requests.broadcast_error_class, requests.broadcast_last_error,
               requests.broadcast_resolution, requests.acceptance_evidence_at,
               requests.review_reason,
+              CAST(COALESCE((SELECT required_approvals FROM wallet_withdrawal_policy_receipts
+                             WHERE withdrawal_id = requests.id), 1) AS UNSIGNED) AS required_approvals,
+              CAST(GREATEST((SELECT COUNT(*) FROM wallet_withdrawal_reviews WHERE withdrawal_id = requests.id),
+                            IF(requests.reviewed_by IS NULL, 0, 1)) AS SIGNED) AS approval_count,
               requests.reviewed_by, requests.broadcasted_by, requests.confirmed_by,
               requests.failed_by, requests.retry_count, requests.gateway_query_count,
               requests.reviewed_at, requests.broadcast_at,

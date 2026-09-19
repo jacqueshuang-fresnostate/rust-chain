@@ -216,7 +216,7 @@ test('借贷页保持原型申请与生命周期结构且沿用真实订单接�
   assert.match(sources.loan, /router\.push\(\{ name: 'login', query: \{ redirect: '\/products\/loan' \} \}\)/)
   assert.match(sources.loan, /class="confirmation-layer loan-mask"/)
   assert.match(sources.loan, /role="dialog"/)
-  assert.match(sources.loan, /return decimalMultiply\(amountText\.value, decimalTextFromFiniteNumber\(product\.interestRate\)\)/)
+  assert.match(sources.loan, /return decimalMultiply\(amountText\.value, product\.interestRate\)/)
   assert.doesNotMatch(sources.loan, /product\.interestRate \* product\.termDays \/ 365/)
   assert.match(sources.loan, /function statusLabel\(status: string\)/)
   assert.doesNotMatch(sources.loan, /loan-access-pencil/)

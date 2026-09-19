@@ -1,4 +1,4 @@
-import type { KlinePoint, OrderBookLevel, TradePrint } from '../core/types.ts'
+import type { KlinePoint, MarketDepthSnapshot, TradePrint } from '../core/types.ts'
 import {
   DEFAULT_MARKET_KLINE_LIMIT,
   depthSubscriptionFrame,
@@ -52,7 +52,7 @@ export interface MarketDetailStreamOptions {
   interval: string
   url: string
   channels?: readonly MarketDetailStreamChannel[]
-  onDepth(snapshot: { bids: OrderBookLevel[]; asks: OrderBookLevel[] }): void
+  onDepth(snapshot: MarketDepthSnapshot): void
   onTrade(trade: TradePrint): void
   onKline(point: KlinePoint): void
   createSocket?: (url: string) => MarketDetailSocket | null
@@ -83,7 +83,7 @@ export interface MarketDetailStreamSessionOptions {
   channels?: readonly MarketDetailStreamChannel[]
   onDepth(
     context: MarketDetailStreamContext,
-    snapshot: { bids: OrderBookLevel[]; asks: OrderBookLevel[] },
+    snapshot: MarketDepthSnapshot,
   ): void
   onTrade(context: MarketDetailStreamContext, trade: TradePrint): void
   onKlines(context: MarketDetailStreamContext, points: KlinePoint[]): void
@@ -161,7 +161,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
   let heartbeatTimer: unknown = null
   let depthFrame: unknown = null
   let depthFrameToken: object | null = null
-  let pendingDepth: { bids: OrderBookLevel[]; asks: OrderBookLevel[] } | null = null
+  let pendingDepth: MarketDepthSnapshot | null = null
   let klineFrame: unknown = null
   let klineFrameToken: object | null = null
   const pendingKlines = new Map<number, KlinePoint>()
@@ -283,7 +283,10 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       const frame = parseMarketSocketFrame(event.data)
       if (!frame || normalizeFrameSymbol(frame) !== symbol) return
       if (frame.type === 'depth' && channels.has('depth')) {
-        pendingDepth = { bids: frame.bids, asks: frame.asks }
+        pendingDepth = {
+          bids: frame.bids, asks: frame.asks,
+          ...(frame.provenance ? { provenance: frame.provenance } : {}),
+        }
         if (depthFrameToken !== null) return
         const frameToken = {}
         depthFrameToken = frameToken

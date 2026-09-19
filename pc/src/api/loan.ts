@@ -1,5 +1,7 @@
 import request from './request'
 import { backendApiUrl, type PcApiResponse, type PcPageData } from './backendAdapters'
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
+import { readAuthSessionScope } from '@/utils/authStorage'
 
 export type LoanType = 'credit' | 'collateralized'
 export type InterestCalculationMode = 'full_term' | 'actual_days'
@@ -96,7 +98,16 @@ interface BackendLoanOrderActionResponse {
     changed: boolean
 }
 
-let loanRequestSequence = 0
+const applicationKeys = new RetryStableIdempotencyKeys('pc-loan', undefined, () => globalThis.sessionStorage)
+
+function canonicalLoanAmount(value: string | number): string {
+    const text = String(value).trim()
+    if (!/^\+?(?:\d+(?:\.\d+)?|\.\d+)$/.test(text)) throw new TypeError('invalid loan amount')
+    const [whole = '', fraction = ''] = text.replace(/^\+/, '').split('.')
+    const integer = whole.replace(/^0+/, '') || '0'
+    const decimals = fraction.replace(/0+$/, '')
+    return `${integer}${decimals ? `.${decimals}` : ''}`
+}
 
 function decimalField(value: unknown, fallback = '0'): string | number {
     if (typeof value === 'string' || typeof value === 'number') return value
@@ -139,12 +150,14 @@ export async function fetchLoanProducts(): Promise<{ data: PcApiResponse<LoanPro
 export async function applyLoan(data: ApplyLoanPayload): Promise<{ data: PcApiResponse<BackendLoanOrderActionResponse> }> {
     const payload = {
         product_id: data.productId,
-        amount: String(data.amount),
+        amount: canonicalLoanAmount(data.amount),
         collateral_asset_id: data.collateralAssetId,
-        collateral_amount: data.collateralAmount === undefined ? undefined : String(data.collateralAmount),
-        idempotency_key: `pc-loan-${Date.now()}-${loanRequestSequence += 1}`,
+        collateral_amount: data.collateralAmount === undefined ? undefined : canonicalLoanAmount(data.collateralAmount),
     }
-    const res = await request.instance.post<BackendLoanOrderActionResponse>(backendApiUrl('/loan/orders'), payload)
+    const intent = canonicalRequestIntent({ ...payload, scope: readAuthSessionScope() })
+    const key = applicationKeys.acquire(intent)
+    const res = await request.instance.post<BackendLoanOrderActionResponse>(backendApiUrl('/loan/orders'), { ...payload, idempotency_key: key })
+    applicationKeys.complete(intent, key)
     return {
         data: {
             code: 0,

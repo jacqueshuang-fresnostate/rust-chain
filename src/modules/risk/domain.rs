@@ -3,7 +3,7 @@
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
 //! 本文件定义风控的判定内核：把已取得的请求事实与后台折算出的阈值对照，得出放行或带具体原因的拒绝。
 //! 判定按操作黑名单、限频、金额上限、价格偏离的固定顺序短路，先命中者决定拒绝原因；
-//! 任一维度缺少事实或未配置阈值即跳过该项，因此风控的缺省行为是放行。
+//! 未配置阈值时跳过该项；提现配置限频却无法取得计数时拒绝，其他维度沿用缺事实跳过策略。
 //! 这里不读数据库、不累加计数、不写事件，限频计数与命中留痕都由应用层在调用前后完成。
 
 use crate::architecture::DomainLayer;
@@ -15,6 +15,8 @@ use thiserror::Error;
 pub enum RiskReject {
     #[error("rate limit exceeded")]
     RateLimit,
+    #[error("withdrawal rate limit is unavailable")]
+    RateLimitUnavailable,
     #[error("amount exceeds limit")]
     AmountLimit,
     #[error("price deviation exceeded")]
@@ -30,6 +32,7 @@ impl RiskReject {
     pub fn code(&self) -> &'static str {
         match self {
             Self::RateLimit => "risk_rate_limit",
+            Self::RateLimitUnavailable => "risk_rate_limit_unavailable",
             Self::AmountLimit => "risk_amount_limit",
             Self::PriceDeviation => "risk_price_deviation",
             Self::OperationNotAllowed => "risk_operation_not_allowed",
@@ -42,6 +45,7 @@ impl RiskReject {
     pub fn message(&self) -> &'static str {
         match self {
             Self::RateLimit => "操作过于频繁，请稍后再试",
+            Self::RateLimitUnavailable => "提现风控服务暂不可用，请稍后重试",
             Self::AmountLimit => "金额超出风控限额",
             Self::PriceDeviation => "价格偏离市场价过大",
             Self::OperationNotAllowed => "该操作已被风控规则限制",
@@ -90,7 +94,7 @@ impl RiskRules {
     }
 }
 
-/// 待评估的业务请求；`None` 表示该路径无法诚实取到对应事实，相应校验必须跳过。
+/// 待评估的业务请求；`None` 表示事实不可用，提现配置限频时缺失计数必须拒绝。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RiskRequest {
     pub operation: String,
@@ -103,7 +107,7 @@ pub struct RiskRequest {
 impl DomainLayer for RiskRequest {}
 
 /// 按操作黑名单、限频、金额上限和价格偏离的稳定优先级评估请求。
-/// 评估仅消费已取得的事实；缺少某维度时跳过该规则，不执行 I/O 或资金副作用。
+/// 评估不执行 I/O 或资金副作用；提现限频缺少计数时失败关闭，其他缺失事实沿用跳过策略。
 /// 四项判定短路执行，先命中者即为最终拒绝原因，因此黑名单必须排在最前，否则会被限频等次要维度盖掉。
 /// 阈值比较一律为严格大于，等于上限视为合规；价格偏离先折算成基点再比较，币种价格量级不影响判定口径。
 pub fn evaluate_risk(request: &RiskRequest, rules: &RiskRules) -> RiskDecision {
@@ -114,6 +118,15 @@ pub fn evaluate_risk(request: &RiskRequest, rules: &RiskRules) -> RiskDecision {
             .any(|operation| operation.eq_ignore_ascii_case(&request.operation))
     {
         return RiskDecision::Rejected(RiskReject::OperationNotAllowed);
+    }
+
+    if request
+        .operation
+        .eq_ignore_ascii_case("wallet.withdrawal.create")
+        && rules.max_requests.is_some()
+        && request.request_count.is_none()
+    {
+        return RiskDecision::Rejected(RiskReject::RateLimitUnavailable);
     }
 
     if let (Some(max_requests), Some(request_count)) = (rules.max_requests, request.request_count)

@@ -20,6 +20,12 @@ use std::{error::Error, str::FromStr};
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "wallet_routes/rate_limits.rs"]
+mod rate_limits;
+
+#[path = "wallet_routes/withdrawal_policy.rs"]
+mod withdrawal_policy;
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -473,6 +479,18 @@ async fn cleanup_wallet_route_fixture(
         .bind(user_id)
         .execute(pool)
         .await?;
+    sqlx::query("DELETE r FROM wallet_withdrawal_reviews r JOIN wallet_withdrawal_requests w ON w.id = r.withdrawal_id WHERE w.user_id = ?")
+        .bind(user_id).execute(pool).await?;
+    sqlx::query("DELETE r FROM wallet_withdrawal_policy_receipts r JOIN wallet_withdrawal_requests w ON w.id = r.withdrawal_id WHERE w.user_id = ?")
+        .bind(user_id).execute(pool).await?;
+    sqlx::query("DELETE FROM wallet_withdrawal_addresses WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_withdrawal_policies WHERE asset_id = ?")
+        .bind(asset_id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_withdrawal_requests WHERE user_id = ?")
         .bind(user_id)
         .execute(pool)
@@ -501,6 +519,10 @@ async fn cleanup_wallet_route_fixture(
         .execute(pool)
         .await?;
     }
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
+        .bind(asset_id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
         .execute(pool)
@@ -1092,7 +1114,8 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
         )
         .bind(user_id)
         .bind(prediction_market_id)
-        .bind(format!("today-return-refund-quote-{key}-{suffix}"))
+        // prediction_orders.quote_id is VARCHAR(64); retain the UUID's unique tail.
+        .bind(format!("today-return-refund-quote-{key}-{}", &suffix[12..]))
         .bind(format!("today-return-refund-{key}-{suffix}"))
         .bind(usdt_asset_id)
         .bind(decimal(stake))
@@ -1129,7 +1152,10 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     )
     .bind(other_user_id)
     .bind(prediction_market_id)
-    .bind(format!("today-return-other-prediction-quote-{suffix}"))
+    .bind(format!(
+        "today-return-other-prediction-quote-{}",
+        &suffix[12..]
+    ))
     .bind(format!("today-return-other-prediction-{suffix}"))
     .bind(usdt_asset_id)
     .bind(period_start_at)
@@ -1395,15 +1421,16 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     assert_eq!(history_payload["reporting_asset"], "USDT");
     assert_eq!(history_payload["period_days"], 7);
     assert_eq!(history_payload["status"], "complete");
+    // The seven-day window includes yesterday's 100 stake / 80 realized win.
     assert_eq!(
         history_payload["summary"]["amount"],
-        complete_payload["amount"]
+        "98.500000000000000000"
     );
     assert_eq!(
         history_payload["summary"]["basis_amount"],
-        complete_payload["basis_amount"]
+        "431.000000000000000000"
     );
-    assert_eq!(history_payload["summary"]["rate"], complete_payload["rate"]);
+    assert_eq!(history_payload["summary"]["rate"], "0.228538283062645011");
     assert_eq!(history_points.len(), 7);
     for points in history_points.windows(2) {
         assert_eq!(
@@ -1412,14 +1439,27 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
             86_400_000
         );
     }
-    for point in &history_points[..6] {
+    for point in &history_points[..5] {
         assert_eq!(point["amount"], "0.000000000000000000");
         assert_eq!(point["status"], "complete");
     }
+    assert_eq!(history_points[5]["amount"], "80.000000000000000000");
+    assert_eq!(history_points[5]["basis_amount"], "100.000000000000000000");
+    assert_eq!(history_points[5]["rate"], "0.800000000000000000");
+    assert_eq!(
+        history_points[5]["cumulative_amount"],
+        "80.000000000000000000"
+    );
+    assert_eq!(history_points[5]["status"], "complete");
     assert_eq!(history_points[6]["amount"], complete_payload["amount"]);
     assert_eq!(
+        history_points[6]["basis_amount"],
+        complete_payload["basis_amount"]
+    );
+    assert_eq!(history_points[6]["rate"], complete_payload["rate"]);
+    assert_eq!(
         history_points[6]["cumulative_amount"],
-        complete_payload["amount"]
+        history_payload["summary"]["amount"]
     );
 
     sqlx::query(
@@ -2096,6 +2136,10 @@ async fn wallet_deposit_observation_credits_once_and_reorg_reverses_once()
         .await?;
     sqlx::query("DELETE FROM deposit_address_pool WHERE address = ?")
         .bind(&address)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM platform_financial_journal WHERE asset_id = ?")
+        .bind(asset_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")

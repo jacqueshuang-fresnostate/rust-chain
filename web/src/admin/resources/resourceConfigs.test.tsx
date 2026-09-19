@@ -478,11 +478,18 @@ describe('resourceConfigs create actions', () => {
   });
 
   it('shows spot order user email and localized order fields without internal ID columns', () => {
-    const config = resourceConfigs.spotOrders;
+    const config: ResourceConfig = resourceConfigs.spotOrders;
     const columnKeys = config.columns.map((column) => column.key);
 
     expect(columnKeys).toContain('user_email');
     expect(columnKeys).toContain('average_price');
+    expect(columnKeys).toEqual(expect.arrayContaining(['trigger_price', 'trigger_direction', 'triggered_at']));
+    const triggerDirection = config.columns.find(column => column.key === 'trigger_direction')!;
+    if (!('render' in triggerDirection)) throw new Error('Missing trigger direction renderer');
+    expect(triggerDirection.render?.({ order_type: 'stop_limit', trigger_direction: 'rising' })).toBe('上涨至触发价');
+    expect(triggerDirection.render?.({ order_type: 'stop_limit', trigger_direction: 'falling' })).toBe('下跌至触发价');
+    expect(triggerDirection.render?.({ order_type: 'stop_limit', trigger_direction: null })).toBe('旧版条件');
+    expect(triggerDirection.render?.({ order_type: 'limit', trigger_direction: null })).toBe('-');
     expect(columnKeys).not.toContain('id');
     expect(columnKeys).not.toContain('user_id');
     expect(config.columns.find((column) => column.key === 'user_email')).toMatchObject({
@@ -1670,6 +1677,7 @@ describe('resourceConfigs create actions', () => {
     expect(within(dialog).getByLabelText('允许转入杠杆账户')).not.toBeChecked();
     await user.type(within(dialog).getByLabelText('资产符号'), 'btc');
     await user.type(within(dialog).getByLabelText('资产名称'), 'Bitcoin');
+    await user.clear(within(dialog).getByLabelText('资产精度'));
     await user.type(within(dialog).getByLabelText('资产精度'), '8');
     await selectSemiOption(user, dialog, '资产类型', '稳定币');
     await user.click(within(dialog).getByRole('button', { name: '提交添加资产' }));
@@ -2022,6 +2030,7 @@ describe('resourceConfigs create actions', () => {
     expect(requests[0]).toEqual({
       pair_id: 31,
       stake_asset: 32,
+      open_payout_capacity: null,
       cycles: [
         {
           duration_seconds: 60,
@@ -2719,6 +2728,7 @@ describe('resourceConfigs create actions', () => {
       options: [
         { label: '待结算', value: 'pending' },
         { label: '已结算', value: 'settled' },
+        { label: '已冲正', value: 'reversed' },
         { label: '已拒绝', value: 'rejected' }
       ]
     });
@@ -3445,6 +3455,7 @@ describe('resourceConfigs create actions', () => {
             equity: '2.7500',
             interest_amount: '1.2500',
             payout_amount: '2.7500',
+            bad_debt_amount: '0.0000',
             reason: 'maintenance_margin',
             liquidated_at: 1_735_732_800_000
           },
@@ -3458,6 +3469,7 @@ describe('resourceConfigs create actions', () => {
             equity: '0.0000',
             interest_amount: '2.5000',
             payout_amount: '0.0000',
+            bad_debt_amount: '0.0000',
             reason: 'cross_margin',
             liquidated_at: 1_735_732_860_000
           }
@@ -3486,7 +3498,8 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByText('BTC-USDT')).toBeInTheDocument();
     const nullableEmailRow = screen.getByText('ETH-USDT').closest('tr');
     expect(nullableEmailRow).toBeInTheDocument();
-    expect(within(nullableEmailRow as HTMLElement).getByText('-')).toBeInTheDocument();
+    const emailColumnIndex = screen.getAllByRole('columnheader').indexOf(screen.getByRole('columnheader', { name: '邮箱' }));
+    expect(within(nullableEmailRow as HTMLElement).getAllByRole('gridcell')[emailColumnIndex]).toHaveTextContent(/^-\s*$/);
     expect(screen.getByText('maintenance_margin')).toBeInTheDocument();
     await waitForLazyResourceActions();
     await user.click(screen.getAllByRole('button', { name: '查看详情' })[0]);
@@ -3520,6 +3533,7 @@ describe('resourceConfigs create actions', () => {
             symbol: 'ETH-USDT',
             stake_asset: 12,
             stake_asset_symbol: 'USDT',
+            open_payout_capacity: null,
             duration_seconds: 60,
             payout_rate: '0.85000000',
             min_stake: '10.0000',
@@ -3615,6 +3629,7 @@ describe('resourceConfigs create actions', () => {
     expect(editBody).toEqual({
       pair_id: 1,
       stake_asset: 12,
+      open_payout_capacity: null,
       cycles: [
         {
           duration_seconds: 180,
@@ -3970,6 +3985,8 @@ describe('resourceConfigs create actions', () => {
               early_redeem_fee_rate: '0.02000000',
               min_subscribe: '10.0000',
               max_subscribe: '1000.0000',
+              principal_capacity: null,
+              liability_capacity: null,
               status: 'active'
             }
           ];

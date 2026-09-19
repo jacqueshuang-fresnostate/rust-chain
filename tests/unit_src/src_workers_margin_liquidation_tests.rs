@@ -145,3 +145,13 @@ fn liquidation_mark_is_rechecked_after_waiting_for_database_locks() {
             .contains("future")
     );
 }
+#[test]
+fn margin_liquidation_schedule_rejects_datetime_overflow() {
+    assert!(super::checked_schedule_time(chrono::DateTime::<chrono::Utc>::MAX_UTC, 60).is_err());
+    let now = chrono::Utc::now();
+    assert_eq!(
+        super::checked_schedule_time(now, 60).unwrap() - now,
+        chrono::TimeDelta::seconds(60),
+    );
+    assert!(super::checked_schedule_time(now, i64::MAX).is_err());
+}

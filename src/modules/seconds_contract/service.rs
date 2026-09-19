@@ -32,6 +32,17 @@ use std::collections::HashSet;
 /// 结算价格事件窗口长度；可选历史范围为 `[expires_at, expires_at + 5s)`。
 pub(crate) const SETTLEMENT_PRICE_WINDOW_SECONDS: i64 = 5;
 
+/// 人工审核单只能请求按历史证据自动判定，不能用指定胜负的旧入口解除审核。
+/// 已结算重放由调用方读取原结果；其他非持仓状态均拒绝且不进入资金事务写入。
+pub(crate) fn ensure_manual_settlement_allowed(status: &str, automatic: bool) -> AppResult<()> {
+    if status == "opened" || status == "settled" || (status == "manual_review" && automatic) {
+        return Ok(());
+    }
+    Err(AppError::Conflict(
+        "seconds contract manual review requires evidence-based automatic settlement".to_owned(),
+    ))
+}
+
 /// 对选中的结算行情做完整证据校验，防止损坏的历史行进入资金结算。
 /// 交易对去除常见分隔符后比较；价格必须为正，来源必须是已知归档 provider，
 /// 含外部行情、策略以及开仓能力检查已认可的 `default` 生成器快照；
@@ -120,9 +131,38 @@ pub(crate) fn product_audit_json(product: &SecondsContractProductResponse) -> Va
         "payout_rate": product.payout_rate,
         "min_stake": product.min_stake,
         "max_stake": product.max_stake,
+        "open_payout_capacity": product.open_payout_capacity,
         "cycles": product.cycles,
         "status": product.status,
     })
+}
+
+/// 赢单返本加净收益是现有产品结果中的最高兑付；逐笔向上取18位，绝不低估低精度钱包支出。
+/// 只用于准入预算，不改变结算向零量化、赔率快照或胜负规则。
+pub(crate) fn maximum_gross_payout(stake: &BigDecimal, net_rate: &BigDecimal) -> BigDecimal {
+    (stake * (BigDecimal::from(1) + net_rate))
+        .with_scale_round(18, bigdecimal::RoundingMode::Ceiling)
+}
+
+/// 可空毛兑付预算默认关闭；零合法，非空须非负且符合资产与DECIMAL(38,18)精度。
+pub(crate) fn validate_payout_capacity(
+    capacity: Option<&BigDecimal>,
+    precision: i32,
+) -> AppResult<()> {
+    if let Some(capacity) = capacity {
+        let (_, scale) = capacity.normalized().as_bigint_and_exponent();
+        let max: BigDecimal = "100000000000000000000".parse().expect("decimal constant");
+        if capacity < &BigDecimal::from(0)
+            || capacity >= &max
+            || scale > 18
+            || !crate::modules::wallet::amount_fits_asset_precision(capacity, precision)
+        {
+            return Err(AppError::Validation(
+                "seconds payout capacity must be nonnegative and fit asset precision".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 将一笔秒合约订单连同赔付金额摊平为审计快照，用于后台人工结算与自动结算的留痕对账。
@@ -255,6 +295,30 @@ pub(crate) fn publish_seconds_contract_order_settled_event_if_needed(
 ) {
     if is_new_settlement && let Some(hub) = hub {
         publish_seconds_contract_order_settled_event(hub, user_id, response);
+    }
+}
+
+/// 仅首次退款提交后推送原用户私有刷新事件，原金额是本金不是盈利，不编造结算价格或胜负。
+/// 重放和失败不会发布，沿用现有非持久化 hub 投递语义，不引入额外通知产品。
+pub(crate) fn publish_seconds_principal_refund_if_needed(
+    hub: Option<&EventBroadcastHub>,
+    receipt: &super::presentation::refund::PrincipalRefundReceipt,
+    is_new: bool,
+) {
+    if is_new && let Some(hub) = hub {
+        hub.publish(EventBroadcastMessage::private_user(
+            receipt.user_id,
+            json!({
+                "type": "seconds_contract.order.refunded",
+                "order_id": receipt.order_id,
+                "stake_asset": receipt.asset_id,
+                "refund_amount": receipt.amount,
+                "status": "refunded",
+                "result": null,
+                "settlement_price": null,
+            })
+            .to_string(),
+        ));
     }
 }
 
@@ -643,9 +707,7 @@ pub(crate) fn validate_stake_amount(amount: &BigDecimal) -> AppResult<()> {
 }
 
 /// 判断一个 `BigDecimal` 能否被目标 DECIMAL 列无损保存，是赔率与金额校验共用的容量检查。
-/// 先取出内部整数部分与十进制指数，指数即小数位数，超过 `max_scale` 直接判失败。
-/// 整数位数由有效数字位数推算：去掉负号和前导零后得到有效位数，指数非负时减去小数位数，
-/// 指数为负表示数值被放大了对应量级，此时改为加上其绝对值，`saturating` 运算避免边界下溢。
+/// 共享存储守卫按有效小数位与整数容量检查，尾随零不占额外精度。
 /// 超出 `max_integer_digits` 返回 `AppError::Validation`，错误信息用 `label` 指明是赔率还是金额，
 /// 使后台能定位到具体字段。本函数不修改入参，也不做任何舍入或截断，只判定能否原样存储。
 fn validate_decimal_storage(
@@ -654,29 +716,22 @@ fn validate_decimal_storage(
     max_integer_digits: usize,
     label: &str,
 ) -> AppResult<()> {
-    let (digits, scale) = value.as_bigint_and_exponent();
-    if scale > max_scale {
-        return Err(AppError::Validation(format!(
-            "{label} supports at most {max_scale} decimal places"
-        )));
-    }
-
-    let significant_digits = digits
-        .to_str_radix(10)
-        .trim_start_matches('-')
-        .trim_start_matches('0')
-        .len();
-    let integer_digits = if scale >= 0 {
-        significant_digits.saturating_sub(scale as usize)
-    } else {
-        significant_digits.saturating_add(scale.unsigned_abs() as usize)
-    };
-    if integer_digits > max_integer_digits {
-        return Err(AppError::Validation(format!(
-            "{label} exceeds decimal storage precision"
-        )));
-    }
-    Ok(())
+    crate::numeric::ensure_decimal_storage(
+        value,
+        max_integer_digits as u64 + max_scale as u64,
+        max_scale,
+        label,
+    )
+    .map_err(|_| {
+        let fits_scale = i32::try_from(max_scale)
+            .ok()
+            .is_some_and(|scale| amount_fits_asset_precision(value, scale));
+        AppError::Validation(if fits_scale {
+            format!("{label} exceeds decimal storage precision")
+        } else {
+            format!("{label} supports at most {max_scale} decimal places")
+        })
+    })
 }
 
 /// 归一化下单幂等键：裁剪首尾空白后要求非空且不超过 255 字节，与订单表唯一索引的列宽保持一致。

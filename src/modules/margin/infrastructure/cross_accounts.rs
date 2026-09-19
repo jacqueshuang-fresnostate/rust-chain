@@ -62,6 +62,31 @@ pub(crate) async fn ensure_and_lock_cross_margin_account(
         .map(|(account, _)| account)
 }
 
+/// 仅主动平仓使用的账户排他认领：缺行沿用惰性创建，已存在时直接取得 X 锁，避免 INSERT IGNORE 的 S→X 升级死锁。
+/// 重复键分支只令 id 保持原值，不重置状态、版本、风险快照或 updated_at；不返回开仓路径的创建标记。
+/// 后续当前读保持事务首次一致性快照尚未建立，供仓位锁后的执行幂等复查看到等待期间已提交的记录。
+pub(crate) async fn claim_cross_margin_account_for_close(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    margin_asset: u64,
+) -> AppResult<CrossMarginAccountLock> {
+    sqlx::query(
+        "INSERT INTO margin_cross_accounts (user_id, margin_asset) VALUES (?, ?) ON DUPLICATE KEY UPDATE id = id",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query_as(
+        "SELECT status, version FROM margin_cross_accounts WHERE user_id = ? AND margin_asset = ? FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
 /// 与普通账户锁入口相同，但同时告知调用方本事务是否新建了账户行。
 ///
 /// 仅开仓路径需要这个标记：未成交的 cross 限价挂单不能留下账户行，因此它会在持锁事务结束前
@@ -173,6 +198,9 @@ pub(crate) async fn bump_cross_margin_account_version(
     margin_asset: u64,
     expected_version: u64,
 ) -> AppResult<u64> {
+    let next_version = expected_version
+        .checked_add(1)
+        .ok_or_else(|| AppError::Conflict("cross margin risk version exhausted".to_owned()))?;
     let update = sqlx::query(
         r#"UPDATE margin_cross_accounts
            SET version = version + 1
@@ -188,7 +216,7 @@ pub(crate) async fn bump_cross_margin_account_version(
             "cross margin account version changed concurrently".to_owned(),
         ));
     }
-    Ok(expected_version + 1)
+    Ok(next_version)
 }
 
 /// 在持有账户锁时写入同一批行情算出的风险字段并递增版本，状态保持不变。
@@ -200,6 +228,20 @@ pub(crate) async fn update_locked_cross_margin_risk(
     risk: &CrossMarginRiskState,
     observed_at: DateTime<Utc>,
 ) -> AppResult<u64> {
+    let next_version = expected_version
+        .checked_add(1)
+        .ok_or_else(|| AppError::Conflict("cross margin risk version exhausted".to_owned()))?;
+    for amount in [
+        &risk.equity,
+        &risk.unrealized_pnl,
+        &risk.interest_amount,
+        &risk.maintenance_margin,
+    ] {
+        crate::numeric::ensure_amount_storage(amount, "cross margin risk")?;
+    }
+    if let Some(ratio) = &risk.margin_ratio {
+        crate::numeric::ensure_amount_storage(ratio, "cross margin ratio")?;
+    }
     let update = sqlx::query(
         r#"UPDATE margin_cross_accounts
            SET last_equity = ?, last_unrealized_pnl = ?, last_interest_amount = ?,
@@ -223,7 +265,7 @@ pub(crate) async fn update_locked_cross_margin_risk(
             "cross margin account risk version changed concurrently".to_owned(),
         ));
     }
-    Ok(expected_version + 1)
+    Ok(next_version)
 }
 
 /// 按主键稳定顺序锁住账户中全部已成交仓位及其利息负债，并联出风险公式所需产品参数。

@@ -118,7 +118,16 @@ async fn avatar_upload_keeps_existing_missing_content_type_error() {
         "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"avatar.gif\"\r\n\r\nGIF89a\r\n--{boundary}--\r\n"
     );
 
-    let response = routes()
+    // 此用例只覆盖 multipart 解析；真实路由的数据库鉴权另由会话回归测试覆盖。
+    let claims = crate::modules::auth::decode_claims(&state.settings, &token).unwrap();
+    let response = axum::Router::new()
+        .route(
+            "/user/avatar",
+            post(move |state: State<AppState>, multipart: Multipart| {
+                let claims = claims.clone();
+                async move { upload_avatar(UserAuth(claims), state, multipart).await }
+            }),
+        )
         .with_state(state.with_mysql(pool))
         .oneshot(
             Request::builder()

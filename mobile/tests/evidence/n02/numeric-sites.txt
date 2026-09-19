@@ -1,0 +1,260 @@
+mobile/src/pwa/update.ts:178:  const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
+mobile/src/pwa/update.ts:179:    ? Number(options.timeoutMs)
+mobile/src/pwa/index.ts:59:    const value = Number(window.localStorage.getItem(key))
+mobile/src/pwa/eligibility.ts:43:  if (!Number.isFinite(timestamp) || Number(timestamp) <= 0) return false
+mobile/src/pwa/eligibility.ts:44:  return now - Number(timestamp) < PWA_INSTALL_FREQUENCY_CAP_MS
+mobile/src/api/marketSocketProtocol.ts:136:  const open = positiveNumber(payload.open)
+mobile/src/api/marketSocketProtocol.ts:137:  const high = positiveNumber(payload.high)
+mobile/src/api/marketSocketProtocol.ts:138:  const low = positiveNumber(payload.low)
+mobile/src/api/marketSocketProtocol.ts:139:  const close = positiveNumber(payload.close)
+mobile/src/api/marketSocketProtocol.ts:140:  const volume = nonNegativeNumber(payload.volume)
+mobile/src/api/marketSocketProtocol.ts:217:  const price = positiveNumber(payload.price)
+mobile/src/api/marketSocketProtocol.ts:218:  const quantity = positiveNumber(payload.quantity ?? payload.amount)
+mobile/src/api/marketSocketProtocol.ts:334:    const lastPrice = positiveNumber(payload.last_price)
+mobile/src/api/marketSocketProtocol.ts:336:    const highPrice = optionalPositiveNumber(payload.high_24h)
+mobile/src/api/marketSocketProtocol.ts:337:    const lowPrice = optionalPositiveNumber(payload.low_24h)
+mobile/src/api/marketSocketProtocol.ts:338:    const volume = optionalNonNegativeNumber(payload.volume_24h)
+mobile/src/api/marketSocketProtocol.ts:339:    const changePercent = optionalFiniteNumber(payload.price_change_percent_24h)
+mobile/src/api/marketSocketProtocol.ts:372:      price: decimalDisplayNumber(priceText, `${side}[${index}].price`),
+mobile/src/api/marketSocketProtocol.ts:373:      quantity: decimalDisplayNumber(quantityText, `${side}[${index}].quantity`),
+mobile/src/api/marketSocketProtocol.ts:416:function positiveNumber(value: unknown): number | null {
+mobile/src/api/marketSocketProtocol.ts:423:  const numberValue = Number(value)
+mobile/src/api/marketSocketProtocol.ts:427:function nonNegativeNumber(value: unknown): number | null {
+mobile/src/api/marketSocketProtocol.ts:434:  const numberValue = Number(value)
+mobile/src/api/marketSocketProtocol.ts:438:function optionalPositiveNumber(value: unknown): number | null | undefined {
+mobile/src/api/marketSocketProtocol.ts:439:  return value === undefined ? undefined : positiveNumber(value)
+mobile/src/api/marketSocketProtocol.ts:442:function optionalNonNegativeNumber(value: unknown): number | null | undefined {
+mobile/src/api/marketSocketProtocol.ts:443:  return value === undefined ? undefined : nonNegativeNumber(value)
+mobile/src/api/marketSocketProtocol.ts:446:function optionalFiniteNumber(value: unknown): number | null | undefined {
+mobile/src/api/marketSocketProtocol.ts:454:  const numberValue = Number(value)
+mobile/src/api/marketSocketProtocol.ts:464:  return isDecimalString(value) && Number(value) >= 0
+mobile/src/api/marketSocketProtocol.ts:470:  return Number.isFinite(Number(value))
+mobile/src/api/marketSocketProtocol.ts:486:function decimalDisplayNumber(value: DecimalText, field: string): number {
+mobile/src/api/marketSocketProtocol.ts:487:  const parsed = Number(value)
+mobile/src/api/marketSocketProtocol.ts:506:  const numberValue = Number(value)
+mobile/src/api/marketSocketProtocol.ts:529:  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback
+mobile/src/api/privateUserStream.ts:412:    ? Math.floor(value)
+mobile/src/api/privateUserStream.ts:437:  return Math.max(1, Math.min(maximumDelay, Math.round(baseDelay * factor)))
+mobile/src/api/privateUserStream.ts:443:    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+mobile/src/core/returnHistory.ts:123:  const todayStartAt = Math.floor(calculatedAt / RETURN_HISTORY_DAY_MS) * RETURN_HISTORY_DAY_MS
+mobile/src/core/returnHistory.ts:365:  const dayOrder = Number(leftDay) - Number(rightDay)
+mobile/src/api/seconds.ts:121:    payoutRate: decimalDisplayNumber(payoutRateText),
+mobile/src/api/seconds.ts:123:    minStake: decimalDisplayNumber(minStakeText),
+mobile/src/api/seconds.ts:124:    maxStake: maxStakeText ? decimalDisplayNumber(maxStakeText) : undefined,
+mobile/src/api/seconds.ts:143:function decimalDisplayNumber(value: DecimalText): number {
+mobile/src/api/seconds.ts:144:  const parsed = Number(value)
+mobile/src/core/marginClose.ts:17:    Math.max(MARGIN_CLOSE_MIN_PERCENTAGE, Math.round(value)),
+mobile/src/core/marginClose.ts:34:  return Number(result.toPrecision(15))
+mobile/src/components/ContractTradeSheets.vue:357:                <span class="contract-leverage-value numeric contract-leverage-value--long" :aria-label="t('trade.currentLongLeverage', { leverage: draftLongLeverage.toFixed(2) })">
+mobile/src/components/ContractTradeSheets.vue:358:                  <strong>{{ draftLongLeverage.toFixed(2) }}</strong><small>x</small>
+mobile/src/components/ContractTradeSheets.vue:418:                <span class="contract-leverage-value numeric contract-leverage-value--short" :aria-label="t('trade.currentShortLeverage', { leverage: draftShortLeverage.toFixed(2) })">
+mobile/src/components/ContractTradeSheets.vue:419:                  <strong>{{ draftShortLeverage.toFixed(2) }}</strong><small>x</small>
+mobile/src/components/ContractTradeSheets.vue:568:                    {{ row.ticker.changePercent >= 0 ? '+' : '' }}{{ row.ticker.changePercent.toFixed(2) }}%
+mobile/src/components/PageHeader.vue:25:const showBack = computed(() => props.back ?? (Number(route.meta.depth || 0) > 0))
+mobile/src/api/wallet.ts:339:            minAmount: decimalDisplayNumber(minAmountText, 'withdraw tier minimum'),
+mobile/src/api/wallet.ts:340:            maxAmount: maxAmountText ? decimalDisplayNumber(maxAmountText, 'withdraw tier maximum') : undefined,
+mobile/src/api/wallet.ts:341:            feeRatePercent: decimalDisplayNumber(feeRatePercentText, 'withdraw tier rate'),
+mobile/src/api/wallet.ts:350:          withdrawFee: decimalDisplayNumber(withdrawFeeText, 'withdraw fixed fee'),
+mobile/src/api/wallet.ts:491:  const id = asNumber(raw.id)
+mobile/src/api/wallet.ts:549:      amount: decimalDisplayNumber(amountText, 'withdrawal amount'),
+mobile/src/api/wallet.ts:550:      fee: decimalDisplayNumber(feeText, 'withdrawal fee'),
+mobile/src/api/wallet.ts:585:    minAmount: decimalDisplayNumber(minAmountText, 'quick-recharge min amount'),
+mobile/src/api/wallet.ts:586:    maxAmount: maxAmountText ? decimalDisplayNumber(maxAmountText, 'quick-recharge max amount') : undefined,
+mobile/src/api/wallet.ts:665:    fiatAmount: decimalDisplayNumber(fiatAmountText, 'quick-recharge fiat amount'),
+mobile/src/api/wallet.ts:666:    actualAmount: actualAmountText ? decimalDisplayNumber(actualAmountText, 'quick-recharge actual amount') : undefined,
+mobile/src/api/wallet.ts:684:    minDepositAmount: decimalDisplayNumber(minDepositAmountText, 'min deposit amount'),
+mobile/src/api/wallet.ts:686:    depositFee: decimalDisplayNumber(depositFeeText, 'deposit fee'),
+mobile/src/api/wallet.ts:702:    available: decimalDisplayNumber(availableText, 'account available'),
+mobile/src/api/wallet.ts:703:    frozen: decimalDisplayNumber(frozenText, 'account frozen'),
+mobile/src/api/wallet.ts:704:    locked: decimalDisplayNumber(lockedText, 'account locked'),
+mobile/src/api/wallet.ts:724:function decimalDisplayNumber(value: DecimalText, field: string): number {
+mobile/src/api/wallet.ts:725:  const parsed = Number(value)
+mobile/src/api/wallet.ts:731:  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
+mobile/src/api/wallet.ts:739:  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
+mobile/src/components/SignalField.vue:56:    canvas.width = Math.max(1, Math.floor(width * ratio))
+mobile/src/components/SignalField.vue:57:    canvas.height = Math.max(1, Math.floor(height * ratio))
+mobile/src/components/MarketProvenanceLabel.vue:11:const validTime = computed(() => Number.isFinite(props.observedAt) && Number(props.observedAt) > 0)
+mobile/src/components/MarketProvenanceLabel.vue:12:const stale = computed(() => props.live && validTime.value && (now.value - Number(props.observedAt) > 60_000 || Number(props.observedAt) > now.value))
+mobile/src/components/MarketProvenanceLabel.vue:13:const timeText = computed(() => validTime.value ? new Date(Number(props.observedAt)).toLocaleTimeString() : '')
+mobile/src/core/sessionOwner.ts:334:    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+mobile/src/components/new-coin/NewCoinOpportunityCard.vue:38:    days: Math.max(0, Math.floor((props.now - listedAt) / 86_400_000)),
+mobile/src/components/MarginCloseSheet.vue:285:            v-model.number="closePercentage"
+mobile/src/components/MarginCloseSheet.vue:326:          :aria-valuenow="Math.round(slideProgress * 100)"
+mobile/src/components/MarginCloseSheet.vue:327:          :aria-valuetext="t('trade.marginCloseSlideProgress', { progress: Math.round(slideProgress * 100) })"
+mobile/src/components/OrderBookPanel.vue:69:  return total > 0 ? Math.round((bidTotal / total) * 100) : 50
+mobile/src/core/returnHistoryGeometry.ts:52:      : CHART_PADDING_Y + decimalUnitRatioToNumber(
+mobile/src/core/returnHistoryGeometry.ts:64:      .map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+mobile/src/core/walletLedger.ts:535:  const expectedTotalPages = Math.max(1, Math.ceil(mappedPage.totalElements / mappedPage.size))
+mobile/src/core/navigation.ts:164:  const nextDepth = Number(toDepth || 0)
+mobile/src/core/navigation.ts:165:  const previousDepth = Number(fromDepth || 0)
+mobile/src/core/marginLeverage.ts:97:  const safeStart = Math.max(0, Math.min(Math.trunc(start), maximumStart))
+mobile/src/core/marginLeverage.ts:152:  const parsed = decimal === null ? NaN : Number(decimal)
+mobile/src/components/new-coin/NewCoinProjectCard.vue:58:  const remainingSeconds = Math.max(0, Math.ceil((props.project.listedAt - props.now) / 1000))
+mobile/src/components/new-coin/NewCoinProjectCard.vue:60:  const days = Math.floor(remainingSeconds / 86400)
+mobile/src/components/new-coin/NewCoinProjectCard.vue:61:  const hours = Math.floor((remainingSeconds % 86400) / 3600)
+mobile/src/components/new-coin/NewCoinProjectCard.vue:62:  const minutes = Math.floor((remainingSeconds % 3600) / 60)
+mobile/src/components/new-coin/NewCoinProjectCard.vue:68:    return t('newCoin.days', { days: Math.ceil(props.project.relativeUnlockSeconds / 86400) })
+mobile/src/core/homeMarketBrief.ts:30:  const advancingPercent = Math.round((rising / validTickers.length) * 100)
+mobile/src/core/homeMarketBrief.ts:78:  const value = Number(ticker.observedAt)
+mobile/src/core/marginOrderConfirmation.ts:96:  const estimatedNotional = displayNumber(estimatedNotionalText)
+mobile/src/core/marginOrderConfirmation.ts:97:  const estimatedQuantity = displayNumber(estimatedQuantityText)
+mobile/src/core/marginOrderConfirmation.ts:132:function displayNumber(value: DecimalText): number {
+mobile/src/core/marginOrderConfirmation.ts:133:  const parsed = Number(value)
+mobile/src/core/apiError.ts:65:  const status = readFiniteNumber(response?.status)
+mobile/src/core/apiError.ts:210:function readFiniteNumber(value: unknown): number | undefined {
+mobile/src/api/trading.ts:357:    price: priceText ? decimalDisplayNumber(priceText, 'spot order price') : Number.NaN,
+mobile/src/api/trading.ts:358:    quantity: decimalDisplayNumber(quantityText, 'spot order quantity'),
+mobile/src/api/trading.ts:359:    filledQuantity: decimalDisplayNumber(filledQuantityText, 'spot order filled_quantity'),
+mobile/src/api/trading.ts:463:        minMargin: decimalDisplayNumber(minMarginText, 'margin product min_margin'),
+mobile/src/api/trading.ts:464:        maxMargin: nullableDecimalDisplayNumber(maxMarginText),
+mobile/src/api/trading.ts:467:        maintenanceMarginRate: decimalDisplayNumber(maintenanceMarginRateText, 'margin product maintenance_margin_rate'),
+mobile/src/api/trading.ts:469:        hourlyInterestRate: decimalDisplayNumber(hourlyInterestRateText, 'margin product hourly_interest_rate'),
+mobile/src/api/trading.ts:616:    marginAmount: decimalDisplayNumber(marginAmountText, 'position risk margin_amount'),
+mobile/src/api/trading.ts:617:    notionalAmount: decimalDisplayNumber(notionalAmountText, 'position risk notional_amount'),
+mobile/src/api/trading.ts:618:    interestAmount: decimalDisplayNumber(interestAmountText, 'position risk interest_amount'),
+mobile/src/api/trading.ts:619:    entryPrice: decimalDisplayNumber(entryPriceText, 'position risk entry_price'),
+mobile/src/api/trading.ts:620:    markPrice: decimalDisplayNumber(markPriceText, 'position risk mark_price'),
+mobile/src/api/trading.ts:621:    maintenanceMarginRate: decimalDisplayNumber(maintenanceMarginRateText, 'position risk maintenance_margin_rate'),
+mobile/src/api/trading.ts:622:    unrealizedPnl: decimalDisplayNumber(unrealizedPnlText, 'position risk unrealized_pnl'),
+mobile/src/api/trading.ts:623:    equity: decimalDisplayNumber(equityText, 'position risk equity'),
+mobile/src/api/trading.ts:624:    maintenanceMargin: decimalDisplayNumber(maintenanceMarginText, 'position risk maintenance_margin'),
+mobile/src/api/trading.ts:625:    positionQuantity: decimalDisplayNumber(positionQuantityText, 'position risk position_quantity'),
+mobile/src/api/trading.ts:626:    returnRate: nullableDecimalDisplayNumber(returnRateText),
+mobile/src/api/trading.ts:627:    marginRatio: nullableDecimalDisplayNumber(marginRatioText),
+mobile/src/api/trading.ts:628:    estimatedLiquidationPrice: nullableDecimalDisplayNumber(estimatedLiquidationPriceText),
+mobile/src/api/trading.ts:629:    liquidationDistanceRate: nullableDecimalDisplayNumber(liquidationDistanceRateText),
+mobile/src/api/trading.ts:770:  const number = decimal === null ? NaN : Number(decimal)
+mobile/src/api/trading.ts:817:    marginAmount: decimalDisplayNumber(marginAmountText, 'margin position margin_amount'),
+mobile/src/api/trading.ts:818:    notionalAmount: decimalDisplayNumber(notionalAmountText, 'margin position notional_amount'),
+mobile/src/api/trading.ts:819:    borrowedAmount: decimalDisplayNumber(borrowedAmountText, 'margin position borrowed_amount'),
+mobile/src/api/trading.ts:825:    entryPrice: nullableDecimalDisplayNumber(entryPriceText),
+mobile/src/api/trading.ts:827:    exitPrice: nullableDecimalDisplayNumber(exitPriceText),
+mobile/src/api/trading.ts:831:    realizedPnl: realizedPnlText ? decimalDisplayNumber(realizedPnlText, 'margin position realized_pnl') : Number.NaN,
+mobile/src/api/trading.ts:832:    interestAmount: decimalDisplayNumber(interestAmountText, 'margin position interest_amount'),
+mobile/src/api/trading.ts:848:    : Number(execution.close_percentage)
+mobile/src/api/trading.ts:891:  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
+mobile/src/api/trading.ts:922:    available: decimalDisplayNumber(availableText, 'margin wallet available'),
+mobile/src/api/trading.ts:923:    frozen: decimalDisplayNumber(frozenText, 'margin wallet frozen'),
+mobile/src/api/trading.ts:924:    locked: decimalDisplayNumber(lockedText, 'margin wallet locked'),
+mobile/src/api/trading.ts:928:    maxTransferableToSpot: decimalDisplayNumber(maxTransferableToSpotText, 'margin wallet max_transferable_to_spot'),
+mobile/src/api/trading.ts:930:    transferRiskEquity: nullableDecimalDisplayNumber(transferRiskEquityText),
+mobile/src/api/trading.ts:932:    transferRiskMaintenanceMargin: nullableDecimalDisplayNumber(transferRiskMaintenanceMarginText),
+mobile/src/api/trading.ts:946:    equity: decimalDisplayNumber(equityText, 'margin cross account equity'),
+mobile/src/api/trading.ts:947:    unrealizedPnl: decimalDisplayNumber(unrealizedPnlText, 'margin cross account unrealized_pnl'),
+mobile/src/api/trading.ts:948:    interestAmount: decimalDisplayNumber(interestAmountText, 'margin cross account interest_amount'),
+mobile/src/api/trading.ts:949:    maintenanceMargin: decimalDisplayNumber(maintenanceMarginText, 'margin cross account maintenance_margin'),
+mobile/src/api/trading.ts:950:    marginRatio: nullableDecimalDisplayNumber(marginRatioText),
+mobile/src/api/trading.ts:1028:function decimalDisplayNumber(value: DecimalText, field: string): number {
+mobile/src/api/trading.ts:1029:  const parsed = Number(value)
+mobile/src/api/trading.ts:1034:function nullableDecimalDisplayNumber(value: DecimalText | null): number | null {
+mobile/src/api/trading.ts:1035:  return value ? decimalDisplayNumber(value, 'decimal display value') : null
+mobile/src/core/marginRiskMetrics.ts:152:export function parseMarginRiskNumber(value: unknown): number | null {
+mobile/src/core/marginRiskMetrics.ts:159:  const parsed = Number(normalized)
+mobile/src/core/marginRiskMetrics.ts:188:    equity: strictMarginRiskNumber(value.equity, 'equity'),
+mobile/src/core/marginRiskMetrics.ts:189:    maintenanceMargin: strictMarginRiskNumber(value.maintenance_margin, 'maintenance_margin'),
+mobile/src/core/marginRiskMetrics.ts:190:    liquidationBuffer: strictMarginRiskNumber(value.liquidation_buffer, 'liquidation_buffer'),
+mobile/src/core/marginRiskMetrics.ts:191:    marginRatio: strictNullableMarginRiskNumber(value.margin_ratio, 'margin_ratio'),
+mobile/src/core/marginRiskMetrics.ts:192:    unrealizedPnl: strictMarginRiskNumber(value.unrealized_pnl, 'unrealized_pnl'),
+mobile/src/core/marginRiskMetrics.ts:193:    interestAmount: strictMarginRiskNumber(value.interest_amount, 'interest_amount'),
+mobile/src/core/marginRiskMetrics.ts:195:    netQuantity: strictMarginRiskNumber(value.net_quantity, 'net_quantity'),
+mobile/src/core/marginRiskMetrics.ts:196:    grossQuantity: strictMarginRiskNumber(value.gross_quantity, 'gross_quantity'),
+mobile/src/core/marginRiskMetrics.ts:198:    conditionalLiquidationPrice: strictNullableMarginRiskNumber(
+mobile/src/core/marginRiskMetrics.ts:202:    conditionalLiquidationDistanceRate: strictNullableMarginRiskNumber(
+mobile/src/core/marginRiskMetrics.ts:215:  return finiteNonNegativeNumber(serverValue) ?? finiteNonNegativeNumber(productValue)
+mobile/src/core/marginRiskMetrics.ts:221:  const entryPrice = finitePositiveNumber(input.entryPrice)
+mobile/src/core/marginRiskMetrics.ts:222:  const notionalAmount = finitePositiveNumber(input.notionalAmount)
+mobile/src/core/marginRiskMetrics.ts:223:  const marginAmount = finitePositiveNumber(input.marginAmount)
+mobile/src/core/marginRiskMetrics.ts:224:  const interestAmount = finiteNonNegativeNumber(input.interestAmount)
+mobile/src/core/marginRiskMetrics.ts:225:  const maintenanceMarginRate = finiteNonNegativeNumber(input.maintenanceMarginRate)
+mobile/src/core/marginRiskMetrics.ts:240:  return finitePositiveNumber(entryPrice * multiplier)
+mobile/src/core/marginRiskMetrics.ts:262:    const conditionalLiquidationPrice = finitePositiveNumber(
+mobile/src/core/marginRiskMetrics.ts:271:        ? finiteNonNegativeNumber(input.crossAccountRisk.conditionalLiquidationDistanceRate)
+mobile/src/core/marginRiskMetrics.ts:278:  const serverEstimatedLiquidationPrice = finitePositiveNumber(
+mobile/src/core/marginRiskMetrics.ts:295:    liquidationDistanceRate: finiteNonNegativeNumber(input.serverLiquidationDistanceRate),
+mobile/src/core/marginRiskMetrics.ts:301:function finiteNonNegativeNumber(value: unknown): number | null {
+mobile/src/core/marginRiskMetrics.ts:307:function finitePositiveNumber(value: unknown): number | null {
+mobile/src/core/marginRiskMetrics.ts:325:function strictMarginRiskNumber(value: unknown, field: string): number {
+mobile/src/core/marginRiskMetrics.ts:326:  const parsed = parseMarginRiskNumber(value)
+mobile/src/core/marginRiskMetrics.ts:331:function strictNullableMarginRiskNumber(value: unknown, field: string): number | null {
+mobile/src/core/marginRiskMetrics.ts:333:  return strictMarginRiskNumber(value, field)
+mobile/src/core/marginRiskMetrics.ts:337:  const parsed = strictMarginRiskNumber(value, field)
+mobile/src/core/marginRiskMetrics.ts:345:  const parsed = strictMarginRiskNumber(value, field)
+mobile/src/core/newCoinPresentation.ts:76:  return { ratio, percentage: decimalUnitRatioToNumber(ratio) * 100 }
+mobile/src/views/MarketsView.vue:61:const marketTemperature = computed(() => Math.round(positiveRate.value))
+mobile/src/core/marketMapper.ts:31:  const lastPrice = asNumber(ticker.last_price)
+mobile/src/core/marketMapper.ts:32:  const explicitOpenPrice = optionalFiniteNumber(ticker.open_24h)
+mobile/src/core/marketMapper.ts:33:  const explicitChangePercent = optionalFiniteNumber(ticker.price_change_percent_24h)
+mobile/src/core/marketMapper.ts:34:  const priceChange = asNumber(ticker.price_change_24h)
+mobile/src/core/marketMapper.ts:56:    highPrice: asNumber(ticker.high_24h, lastPrice),
+mobile/src/core/marketMapper.ts:57:    lowPrice: asNumber(ticker.low_24h, lastPrice),
+mobile/src/core/marketMapper.ts:58:    volume: asNumber(ticker.volume_24h),
+mobile/src/core/marketMapper.ts:76:function optionalFiniteNumber(value: unknown): number | null {
+mobile/src/core/marketMapper.ts:84:  const parsed = Number(value)
+mobile/src/core/withdrawalQuote.ts:247:  return Math.trunc(scaled + Math.sign(scaled) * tolerance) / factor
+mobile/src/core/realizedReturn.ts:39:      ? Number(value.trim())
+mobile/src/api/marketTickerStream.ts:322:    ? Math.floor(value)
+mobile/src/core/tradeForm.ts:91:    minMargin: legacyDisplayNumber(minMarginText),
+mobile/src/core/tradeForm.ts:92:    maxMargin: maxMarginText ? legacyDisplayNumber(maxMarginText) : null,
+mobile/src/core/tradeForm.ts:144:  const ratio = decimalTextFromFiniteNumber(Math.min(input.percentage, 1))
+mobile/src/core/tradeForm.ts:189:function legacyDisplayNumber(value: DecimalText): number {
+mobile/src/core/tradeForm.ts:190:  const parsed = Number(value)
+mobile/src/core/privateUserStreamManager.ts:196:            lastFrameAt = Math.floor(receivedAt)
+mobile/src/api/marketDetailStream.ts:507:    ? Math.floor(value)
+mobile/src/core/marketChart.ts:17:      precision = Math.max(precision, Math.min(18, fraction - Number(exponent)))
+mobile/src/core/marketChart.ts:26:  return Math.floor(milliseconds / 1000)
+mobile/src/core/predictionLocale.ts:114:      return localizedMonth ? `${year ? `${year}年` : ''}${localizedMonth}${Number(day)}日` : match
+mobile/src/core/marketTickerFreshness.ts:99:  if (!Number.isSafeInteger(value) || Number(value) <= 0 || Number(value) > 8_640_000_000_000_000) return 0
+mobile/src/core/marketTickerFreshness.ts:100:  const timestamp = Number(value)
+mobile/src/core/decimal.ts:124:export function decimalTextFromFiniteNumber(value: number): DecimalText {
+mobile/src/core/decimal.ts:138:    return normalizeDecimalText(decimalTextFromFiniteNumber(value), constraints)
+mobile/src/core/decimal.ts:187:    decimalMultiply(value, decimalTextFromFiniteNumber(numerator)),
+mobile/src/core/decimal.ts:188:    decimalTextFromFiniteNumber(denominator),
+mobile/src/core/decimal.ts:345:export function decimalUnitRatioToNumber(value: DecimalText): number {
+mobile/src/core/decimal.ts:351:  return Number(value)
+mobile/src/core/decimal.ts:393:  const exponent = Number(match[4])
+mobile/src/core/marketChartTheme.ts:56:    return `rgba(${Number.parseInt(value.slice(0, 2), 16)}, ${Number.parseInt(value.slice(2, 4), 16)}, ${Number.parseInt(value.slice(4, 6), 16)}, ${alpha})`
+mobile/src/core/numeric.ts:6:  const parsed = typeof value === 'string' ? Number(value.trim()) : value
+mobile/src/views/TradeView.vue:2483:      :available-balance="legacyNumber(availableBalance)"
+mobile/src/views/TradeView.vue:2484:      :reference-price="legacyNumber(tickerPrice)"
+mobile/src/views/TradeView.vue:2485:      :margin-amount="legacyNumber(quantity)"
+mobile/src/views/LoanView.vue:118:    .sort((left, right) => Number(heldSymbols.has(right)) - Number(heldSymbols.has(left)) || left.localeCompare(right))
+mobile/src/core/marketChartRuntime.ts:64:    Math.max(0, Math.ceil(range.to) - 1),
+mobile/src/core/marketChartRuntime.ts:74:    ...(Math.floor(range.from) <= rows.length - 1 && Math.ceil(range.to) >= rows.length - 1 ? {
+mobile/src/core/supportChat.ts:56:  return `mobile-${Math.max(0, Math.trunc(now)).toString(36)}-${safeEntropy}`.slice(0, 64)
+mobile/src/core/format.ts:5:export function asNumber(value: unknown, fallback = 0): number {
+mobile/src/core/format.ts:6:  const numberValue = typeof value === 'number' ? value : Number(value)
+mobile/src/core/format.ts:79:  const approximate = asNumber(value, Number.NaN)
+mobile/src/views/NewsDetailView.vue:24:  const id = Number(props.id)
+mobile/src/core/marketLifecycle.ts:268:    ? Math.floor(value)
+mobile/src/core/secondsOrder.ts:223:    if (!Number.isSafeInteger(row.id) || Number(row.id) <= 0) {
+mobile/src/core/secondsOrder.ts:525:    const amount = amountText ? decimalDisplayNumber(amountText) : undefined
+mobile/src/core/secondsOrder.ts:536:    const amount = amountText ? decimalDisplayNumber(amountText) : undefined
+mobile/src/core/secondsOrder.ts:683:    stakeAmount: decimalDisplayNumber(stakeAmountText),
+mobile/src/core/secondsOrder.ts:686:    payoutRate: decimalDisplayNumber(payoutRateText),
+mobile/src/core/secondsOrder.ts:688:    entryPrice: entryPriceText ? decimalDisplayNumber(entryPriceText) : undefined,
+mobile/src/core/secondsOrder.ts:690:    settlementPrice: settlementPriceText ? decimalDisplayNumber(settlementPriceText) : undefined,
+mobile/src/core/secondsOrder.ts:742:function decimalDisplayNumber(value: DecimalText): number {
+mobile/src/core/secondsOrder.ts:743:  const parsed = Number(value)
+mobile/src/views/SecurityView.vue:92:const protectionPercent = computed(() => Math.round((protectionCount.value / 3) * 100))
+mobile/src/core/slideToConfirm.ts:51:    return clampUnitInterval(Number((current + step).toFixed(6)))
+mobile/src/core/slideToConfirm.ts:54:    return clampUnitInterval(Number((current - step).toFixed(6)))
+mobile/src/views/KycView.vue:73:const maxDocumentSizeMb = computed(() => Math.max(1, Math.round(maxDocumentSize.value / 1024 / 1024)))
+mobile/src/core/tradeFinancial.ts:353:export function legacyTradeDisplayNumber(value: DecimalBoundary): number {
+mobile/src/core/tradeFinancial.ts:356:  const display = Number(normalized)
+mobile/src/core/performanceTier.ts:15:  const deviceMemory = positiveFiniteNumber(signals.deviceMemory)
+mobile/src/core/performanceTier.ts:16:  const hardwareConcurrency = positiveFiniteNumber(signals.hardwareConcurrency)
+mobile/src/core/performanceTier.ts:43:function positiveFiniteNumber(value: unknown): number | null {
+mobile/src/views/ProfileView.vue:71:  return Number(profile.value.emailVerified) + Number(Boolean(profile.value.phone)) + Number(profile.value.fundPasswordSet)
+mobile/src/views/NewCoinDetailView.vue:125:    return t('newCoin.days', { days: Math.ceil(current.relativeUnlockSeconds / 86400) })
+mobile/src/core/secondsFinancial.ts:387:    const legacyLivePrice = positiveLegacyDisplayNumber(liveTicker?.lastPrice)
+mobile/src/core/secondsFinancial.ts:390:      const candlePrice = positiveLegacyDisplayNumber(options.selectedCandleClose())
+mobile/src/core/secondsFinancial.ts:395:      ?? positiveLegacyDisplayNumber(ticker?.lastPrice)
+mobile/src/core/secondsFinancial.ts:401:    finiteDisplayNumber(liveTicker?.changePercent)
+mobile/src/core/secondsFinancial.ts:402:    ?? finiteDisplayNumber(snapshotTicker?.changePercent)
+mobile/src/core/secondsFinancial.ts:405:    const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000))
+mobile/src/core/secondsFinancial.ts:406:    const minutes = Math.floor(totalSeconds / 60)
+mobile/src/core/secondsFinancial.ts:463:function finiteDisplayNumber(value: unknown): number | null {
+mobile/src/core/secondsFinancial.ts:467:function positiveLegacyDisplayNumber(value: unknown): number | null {
+mobile/src/core/secondsFinancial.ts:468:  const display = finiteDisplayNumber(value)
+mobile/src/views/SecondsView.vue:424:  canvas.width = Math.round(width * dpr)
+mobile/src/views/SecondsView.vue:425:  canvas.height = Math.round(height * dpr)

@@ -21,6 +21,7 @@ export interface OrderParams {
   symbol: string
   price?: number
   triggerPrice?: number
+  triggerDirection?: 'rising' | 'falling'
   amount: number // For LIMIT/MARKET SELL, and MARKET BUY (USDT amount)
   direction: OrderDirection
   type: OrderType

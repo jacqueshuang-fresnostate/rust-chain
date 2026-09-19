@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Financial implementation and architecture contracts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Immutable SQL migrations and Decimal/text metadata"}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Legacy compatibility, explicit activation and manual fill contract"}
+{"file": ".trellis/spec/backend/risk-configuration.md", "reason": "Withdrawal fail-closed and inactive configurable policy"}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Evidence settlement and prospective-only refund boundaries"}
+{"file": ".trellis/spec/backend/financial-journals.md", "reason": "Transaction-owned journal integrations"}
+{"file": ".trellis/spec/backend/market-provenance.md", "reason": "REST/WS/cache/client provenance contracts"}
+{"file": ".trellis/tasks/09-18-exchange-business-gap-review/research/exchange-business-review.md", "reason": "Eight prioritized business gaps and non-goals"}

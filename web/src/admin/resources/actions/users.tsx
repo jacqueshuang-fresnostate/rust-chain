@@ -6,7 +6,7 @@ import type { ApiRecord } from '../../../api/types';
 import { AdminReferenceSelect, isReferenceSelectable, useAdminReferenceOptions } from '../../referenceOptions';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminPasswordInput, AdminTextInput } from '../../../shared/SemiFormControls';
-import { canonicalDecimalText, decimalFitsPrecision, isPositiveDecimalText } from '../../../shared/decimal';
+import { canonicalDecimalText, decimalFitsPrecision, decimalFitsStorage, isPositiveDecimalText } from '../../../shared/decimal';
 import {
   financialCommandIntents,
   financialCommandScopeFromSession,
@@ -70,7 +70,7 @@ function isUserCreatable(values: UserValues): boolean {
 }
 
 function isUserRechargeSubmittable(values: UserRechargeValues): boolean {
-  return Boolean(values.assetId.trim() && isPositiveDecimalText(values.amount));
+  return Boolean(values.assetId.trim() && decimalFitsStorage(values.amount) && isPositiveDecimalText(values.amount));
 }
 
 function isDefinitiveRechargeFailure(error: unknown): boolean {
@@ -122,7 +122,7 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
               title="确认用户充值"
               onConfirm={async (reason) => {
                 const amount = canonicalDecimalText(recharge.amount);
-                if (amount === null || !isPositiveDecimalText(amount)) throw new Error('充值金额必须为正数');
+                if (amount === null || !decimalFitsStorage(amount) || !isPositiveDecimalText(amount)) throw new Error('充值金额必须为存储范围内的正数');
                 const session = authStore.getSession('admin');
                 if (!session) throw new Error('管理员会话已失效，请重新登录');
                 const businessIntent = {

@@ -1,4 +1,5 @@
 import type { RichTextLeaf, RichTextTextBlock, RichTextValue } from '../../../shared/QuillRichTextEditor';
+import { requiredSafeInteger } from '../../../shared/integer';
 import type {
   ConfigForm,
   SaveSmtpConfigPayload,
@@ -211,8 +212,8 @@ export function payloadFromForm(form: ConfigForm, reason: string): SaveSmtpConfi
     from_email: form.fromEmail.trim(),
     host: form.host.trim(),
     name: form.name.trim(),
-    port: Number.parseInt(form.port, 10) || 0,
-    priority: Number.parseInt(form.priority, 10) || 0,
+    port: requiredSafeInteger(form.port, 'SMTP 端口', 1, 65535),
+    priority: requiredSafeInteger(form.priority, '优先级', 0, 2_147_483_647),
     reason,
     security: form.security,
     verification_code_template_html: legacyTemplate,

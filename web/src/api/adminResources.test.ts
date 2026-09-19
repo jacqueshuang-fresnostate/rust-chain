@@ -62,4 +62,12 @@ describe('listAdminResource 合约', () => {
       })
     ).resolves.toMatchObject({ rows });
   });
+  it.each([JSON.parse('0.123456789123456789'), '1e9999', '0e9999', '1e-19', 'NaN', 'Infinity'])(
+    '拒绝已丢失源文本或越界的金额 %s', async (amount) => {
+      apiRequestMock.mockResolvedValue({ assets: [{ id: 1, amount }] });
+      await expect(listAdminResource('/admin/api/v1/assets', 'assets', {}, {
+        rowContract: { decimalFields: ['amount'] }
+      })).rejects.toThrow('amount 必须是 Decimal text');
+    }
+  );
 });

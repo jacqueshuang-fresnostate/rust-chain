@@ -4,7 +4,7 @@ function valueText(value: unknown): string {
   if (typeof value === 'string') {
     return value.trim();
   }
-  if (typeof value === 'number' && Number.isFinite(value)) {
+  if (typeof value === 'number' && Number.isSafeInteger(value)) {
     return String(value);
   }
   return '';
@@ -12,7 +12,7 @@ function valueText(value: unknown): string {
 
 function timestampToken(value: unknown): string {
   const raw = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  if (!Number.isFinite(raw) || raw <= 0) {
+  if (!Number.isSafeInteger(raw) || raw <= 0) {
     return '00000000';
   }
   const millis = raw < 10_000_000_000 ? raw * 1000 : raw;
@@ -31,9 +31,8 @@ function idToken(value: unknown): string {
   if (!text) {
     return '000000';
   }
-  const numeric = Number(text);
-  if (Number.isInteger(numeric) && numeric >= 0) {
-    return numeric.toString(36).toUpperCase().padStart(6, '0').slice(-6);
+  if (/^\d+$/.test(text) && text.length <= 20) {
+    return BigInt(text).toString(36).toUpperCase().padStart(6, '0').slice(-6);
   }
   let hash = 0;
   for (const char of text) {

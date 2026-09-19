@@ -1,4 +1,5 @@
-import type { KlinePoint, OrderBookLevel, TradePrint } from '../core/types.ts'
+import type { KlinePoint, MarketDepthSnapshot, OrderBookLevel, TradePrint } from '../core/types.ts'
+import { mapMarketProvenance, marketTradeIdentity, type MarketProvenance } from '../core/marketProvenance.ts'
 import {
   decimalCompare,
   decimalTextFromBoundary,
@@ -33,6 +34,8 @@ export type MarketSocketFrame =
   | { type: 'subscribed'; channel: string }
   | {
       type: 'ticker'
+      source?: string
+      provider?: string
       symbol: string
       lastPrice: number
       lastPriceText?: DecimalText
@@ -47,6 +50,7 @@ export type MarketSocketFrame =
       symbol: string
       bids: OrderBookLevel[]
       asks: OrderBookLevel[]
+      provenance?: MarketProvenance
       observedAt?: number
     }
   | { type: 'trade'; symbol: string; trade: TradePrint }
@@ -145,7 +149,12 @@ export function mapMarketKline(payload: unknown): KlinePoint | null {
     return null
   }
 
-  return normalizeKlinePoint({ time, open, high, low, close, volume })
+  const observedAt = optionalTimestamp(payload.observed_at)
+  return normalizeKlinePoint({
+    time, open, high, low, close, volume,
+    ...mapMarketProvenance(payload),
+    ...(observedAt ? { observedAt } : {}),
+  })
 }
 
 export function mapMarketKlines(
@@ -178,14 +187,16 @@ export function mergeMarketKlines(
 }
 
 export function mapMarketDepthSnapshot(
-  payload: { bids?: unknown; asks?: unknown },
+  payload: { bids?: unknown; asks?: unknown; source?: unknown; provider?: unknown },
   limit = 12,
-): { bids: OrderBookLevel[]; asks: OrderBookLevel[] } {
+): MarketDepthSnapshot {
   if (!Array.isArray(payload.bids) || !Array.isArray(payload.asks)) {
     throw new MarketDepthContractError('snapshot')
   }
   const normalizedLimit = normalizeLimit(limit, 12)
   return {
+    ...(payload.source !== undefined || payload.provider !== undefined
+      ? { provenance: mapMarketProvenance(payload) } : {}),
     bids: mapDepthLevels(payload.bids, 'bids')
       .sort((left, right) => right.price - left.price)
       .slice(0, normalizedLimit),
@@ -212,6 +223,7 @@ export function mapMarketTrade(payload: unknown, fallbackId = ''): TradePrint | 
   }
 
   return {
+    ...mapMarketProvenance(payload),
     id,
     side,
     price,
@@ -238,8 +250,9 @@ export function mergeMarketTradeHistory(
   const seen = new Set<string>()
   return [...primary, ...secondary]
     .filter((trade) => {
-      if (!isValidTradePrint(trade) || seen.has(trade.id)) return false
-      seen.add(trade.id)
+      const identity = marketTradeIdentity(trade)
+      if (!isValidTradePrint(trade) || seen.has(identity)) return false
+      seen.add(identity)
       return true
     })
     .slice(0, normalizeLimit(limit, 16))
@@ -253,7 +266,7 @@ export function mergeMarketTrades(
   const normalizedCurrent = mergeMarketTradeHistory(current, [], limit)
   if (
     !isValidTradePrint(incoming)
-    || normalizedCurrent.some((trade) => trade.id === incoming.id)
+    || normalizedCurrent.some((trade) => marketTradeIdentity(trade) === marketTradeIdentity(incoming))
   ) {
     return normalizedCurrent
   }
@@ -285,6 +298,7 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
         symbol,
         bids: snapshot.bids,
         asks: snapshot.asks,
+        ...(snapshot.provenance ? { provenance: snapshot.provenance } : {}),
         ...(observedAt === undefined ? {} : { observedAt }),
       }
     }
@@ -334,6 +348,7 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
     return {
       type: 'ticker',
       symbol,
+      ...mapMarketProvenance(payload),
       lastPrice,
       lastPriceText,
       ...(highPrice === undefined ? {} : { highPrice }),
@@ -478,6 +493,7 @@ function isUnixMillisecondTimestamp(value: unknown): value is number {
   return typeof value === 'number'
     && Number.isSafeInteger(value)
     && value >= 1_000_000_000_000
+    && value <= 8_640_000_000_000_000
 }
 
 function normalizeMarketTimestamp(value: unknown): number | null {
@@ -490,7 +506,7 @@ function normalizeMarketTimestamp(value: unknown): number | null {
   const numberValue = Number(value)
   if (!Number.isSafeInteger(numberValue) || numberValue <= 0) return null
   const milliseconds = numberValue < 1_000_000_000_000 ? numberValue * 1_000 : numberValue
-  return Number.isSafeInteger(milliseconds) ? milliseconds : null
+  return Number.isSafeInteger(milliseconds) && milliseconds <= 8_640_000_000_000_000 ? milliseconds : null
 }
 
 function optionalTimestamp(value: unknown): number | null | undefined {

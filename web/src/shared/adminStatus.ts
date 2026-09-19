@@ -68,6 +68,7 @@ export const ADMIN_STATUS_META: Record<string, StatusMeta> = {
   needs_reload: { label: '待重载', color: 'orange' },
   redeemed: { label: '已赎回', color: 'green' },
   rejected: { label: '已拒绝', color: 'red' },
+  reversed: { label: '已冲正', color: 'orange' },
   review: { label: '人工复核', color: 'orange' },
   settled: { label: '已结算', color: 'green' },
   short: { label: '做空', color: 'red' },

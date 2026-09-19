@@ -491,6 +491,7 @@ test('方向与日期筛选、兼容分类以及全部已知变动类型均有�
     'prediction_stake_refund',
     'quick_recharge',
     'seconds_contract_open',
+    'seconds_contract_principal_refund',
     'seconds_contract_settle_win',
     'spot_fill',
     'spot_freeze',

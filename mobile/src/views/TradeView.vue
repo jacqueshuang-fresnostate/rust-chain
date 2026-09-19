@@ -27,6 +27,8 @@ import ContractTradeSheets from '@/components/ContractTradeSheets.vue'
 import MarginCloseSheet from '@/components/MarginCloseSheet.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
+import MarketTradeRow from '@/components/MarketTradeRow.vue'
+import { marketTradeIdentity, type MarketProvenance } from '@/core/marketProvenance'
 import { apiErrorMessage } from '@/api/client'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
 import { loadMarketDetailSnapshot } from '@/api/marketDetailSnapshot'
@@ -62,7 +64,7 @@ import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
 import { usePrivateUserStreamLease } from '@/composables/usePrivateUserStreamLease'
 import { normalizeSymbol } from '@/core/format'
-import { normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { decimalSign, normalizeDecimalText, type DecimalText } from '@/core/decimal'
 import {
   classifyMarginOrderBackendBoundaryError,
   createMarginOrderReview,
@@ -167,6 +169,7 @@ const marginPositions = ref<MarginPosition[]>([])
 const marginRiskSnapshots = ref<Record<string, MarginPositionRisk>>({})
 const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
+const depthProvenance = ref<MarketProvenance>()
 const points = ref<KlinePoint[]>([])
 const trades = ref<TradePrint[]>([])
 const interval = ref<MarketKlineInterval>(DEFAULT_MARKET_KLINE_INTERVAL)
@@ -249,8 +252,7 @@ const favoriteSaving = computed(() => marketFavorites.isPending(pairSymbol.value
 const spotVisibleBalances = computed(() => spotWallets.value.filter((wallet) => (
   [baseAsset.value, quoteAsset.value].includes(wallet.symbol)
   && wallet.availableText && wallet.frozenText && wallet.lockedText
-  && hasBalance(wallet.availableText ?? wallet.available,
-    wallet.frozenText ?? wallet.frozen, wallet.lockedText ?? wallet.locked)
+  && hasBalance(wallet.availableText, wallet.frozenText, wallet.lockedText)
 )))
 const selectedProduct = computed(() => products.value.find((product) => (
   normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value) && bounds(product).isExact
@@ -329,8 +331,8 @@ function createCurrentMarginOrderReview(idempotencyKey?: string): MarginOrderRev
     limitPrice: contractLimitPrice.value,
     pricePrecision: selectedProduct.value?.pricePrecision,
     idempotencyKey,
-    minMargin: selectedProduct.value?.minMarginText ?? selectedProduct.value?.minMargin,
-    maxMargin: selectedProduct.value?.maxMarginText ?? selectedProduct.value?.maxMargin,
+    minMargin: selectedProduct.value?.minMarginText,
+    maxMargin: selectedProduct.value?.maxMarginText,
     referencePrice: currentPrice.value,
     referencePriceText: tickerPrice.value,
   })
@@ -374,6 +376,7 @@ const detailStreamSession = createMarketDetailStreamSession({
     liveDetailUpdatedAt.value = Date.now()
     bids.value = snapshot.bids
     asks.value = snapshot.asks
+    depthProvenance.value = snapshot.provenance
     depthError.value = false
     depthLoading.value = false
   },
@@ -454,6 +457,7 @@ async function loadMarketData(forceMarket = false): Promise<void> {
   liveDepthReceived.value = false
   bids.value = []
   asks.value = []
+  depthProvenance.value = undefined
   trades.value = []
   points.value = []
   const liveContext = detailStreamSession.replace(symbol, selectedInterval, version)
@@ -470,7 +474,7 @@ async function loadMarketData(forceMarket = false): Promise<void> {
       chartLoading.value = false
     },
     onDepth: (snapshot, failed) => {
-      if (snapshot) { bids.value = snapshot.bids; asks.value = snapshot.asks }
+      if (snapshot) { bids.value = snapshot.bids; asks.value = snapshot.asks; depthProvenance.value = snapshot.provenance }
       depthError.value = failed
       depthLoading.value = false
     },
@@ -706,7 +710,7 @@ function setQuantity(percent: number): void {
   const nextQuantity = portion({
     available: availableBalance.value,
     maximum: mode.value === 'contract'
-      ? selectedProduct.value?.maxMarginText ?? selectedProduct.value?.maxMargin
+      ? selectedProduct.value?.maxMarginText
       : null,
     mode: mode.value,
     percentagePoints: normalizedPercent,
@@ -735,17 +739,6 @@ function chooseInterval(value: string): void {
 
 function selectMarketDataPanel(panel: 'orderBook' | 'trades'): void {
   marketDataPanel.value = panel
-}
-
-function formatTradeTime(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '--'
-  const timestamp = value < 1_000_000_000_000 ? value * 1000 : value
-  return new Intl.DateTimeFormat(currentIntlLocale(), {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(new Date(timestamp))
 }
 
 function openPairPicker(): void {
@@ -1010,20 +1003,18 @@ const marginCloseRisk = computed(() => marginClosePosition.value
   ? riskForPosition(marginClosePosition.value)
   : undefined)
 const marginCloseMarkPrice = computed(() => {
-  const riskPrice = marginCloseRisk.value?.markPrice
-  if (typeof riskPrice === 'number' && Number.isFinite(riskPrice) && riskPrice > 0) return riskPrice
-  const marketPrice = marketStore.tickerFor(marginCloseSymbol.value)?.lastPrice
-  return typeof marketPrice === 'number' && Number.isFinite(marketPrice) && marketPrice > 0
+  const riskPrice = marginCloseRisk.value?.markPriceText
+  if (riskPrice && decimalSign(riskPrice) > 0) return riskPrice
+  const marketPrice = marketStore.tickerFor(marginCloseSymbol.value)?.lastPriceText
+  return marketPrice && decimalSign(marketPrice) > 0
     ? marketPrice
     : null
 })
 const marginCloseQuantity = computed(() => {
-  const value = marginCloseRisk.value?.positionQuantity
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+  return marginCloseRisk.value?.positionQuantityText ?? null
 })
 const marginCloseEstimatedPnl = computed(() => {
-  const value = marginCloseRisk.value?.unrealizedPnl
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
+  return marginCloseRisk.value?.unrealizedPnlText ?? null
 })
 
 function resolvePositionRiskDisplayMetrics(position: MarginPosition): MarginPositionRiskMetrics {
@@ -1429,8 +1420,8 @@ async function submitOrder(): Promise<void> {
     }
     const requestMarginValidation = validateMarginAmount({
       amount: review.request.marginAmount,
-      minMargin: product.minMarginText ?? product.minMargin,
-      maxMargin: product.maxMarginText ?? product.maxMargin,
+      minMargin: product.minMarginText,
+      maxMargin: product.maxMarginText,
     })
     if (!requestMarginValidation.isValid) {
       setFeedback(marginAmountValidationMessage(requestMarginValidation))
@@ -1751,6 +1742,7 @@ onBeforeUnmount(() => {
         </div>
 
         <OrderBookPanel
+          :provenance="depthProvenance"
           class="spot-mini-book"
           :asks="asks"
           :bids="bids"
@@ -1857,7 +1849,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="spot-chart-canvas" :aria-busy="chartLoading">
-          <MobileMarketChart :market-type="ticker?.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" />
+          <MobileMarketChart :ticker="ticker" :market-type="ticker?.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" />
         </div>
         <div class="spot-market-data__tabs" role="tablist" :aria-label="t('marketDetail.marketData')">
           <button
@@ -1885,6 +1877,7 @@ onBeforeUnmount(() => {
         </div>
         <OrderBookPanel
           v-if="marketDataPanel === 'orderBook'"
+          :provenance="depthProvenance"
           id="spot-order-book-panel"
           class="trade-order-book"
           role="tabpanel"
@@ -1910,13 +1903,7 @@ onBeforeUnmount(() => {
             <span>{{ t('trade.tradeTime') }}</span>
           </header>
           <div v-if="trades.length" class="spot-recent-trades__rows">
-            <div v-for="trade in trades.slice(0, 8)" :key="trade.id" class="spot-recent-trades__row">
-              <strong class="numeric" :class="trade.side === 'buy' ? 'positive' : 'negative'">
-                {{ moneyText(trade.price) }}
-              </strong>
-              <span class="numeric">{{ moneyText(trade.quantity) }}</span>
-              <time class="numeric" :datetime="new Date(trade.time).toISOString()">{{ formatTradeTime(trade.time) }}</time>
-            </div>
+            <MarketTradeRow v-for="trade in trades.slice(0, 8)" :key="marketTradeIdentity(trade)" :trade="trade" :format-value="moneyText" />
           </div>
           <p v-else class="spot-recent-trades__empty" role="status">
             {{ tradesLoading ? t('common.loading') : t('trade.noRecentTrades') }}
@@ -2035,6 +2022,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="trade-order-book">
               <OrderBookPanel
+                :provenance="depthProvenance"
                 class="contract-mini-book"
                 :asks="asks"
                 :bids="bids"
@@ -3926,8 +3914,7 @@ onBeforeUnmount(() => {
   padding: 0 12px 12px;
 }
 
-.spot-recent-trades header,
-.spot-recent-trades__row {
+.spot-recent-trades header {
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) minmax(0, .8fr) minmax(72px, .72fr);
@@ -3942,8 +3929,7 @@ onBeforeUnmount(() => {
   min-height: 42px;
 }
 
-.spot-recent-trades header span:nth-child(n + 2),
-.spot-recent-trades__row > :nth-child(n + 2) {
+.spot-recent-trades header span:nth-child(n + 2) {
   text-align: right;
 }
 
@@ -3952,26 +3938,6 @@ onBeforeUnmount(() => {
   display: block;
   font-size: 8px;
   margin-top: 2px;
-}
-
-.spot-recent-trades__row {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  font-size: 10px;
-  min-height: 32px;
-}
-
-.spot-recent-trades__row strong,
-.spot-recent-trades__row span,
-.spot-recent-trades__row time {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.spot-recent-trades__row time {
-  color: var(--muted);
 }
 
 .spot-recent-trades__empty {

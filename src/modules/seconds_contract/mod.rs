@@ -13,6 +13,7 @@
 //! 绝不采纳客户端上送；开仓以幂等键、结算以订单终态各自保证重放不会造成重复扣款或重复派奖。
 pub mod application;
 pub mod infrastructure;
+pub(crate) mod journal;
 pub mod presentation;
 pub mod repository;
 pub mod routes;

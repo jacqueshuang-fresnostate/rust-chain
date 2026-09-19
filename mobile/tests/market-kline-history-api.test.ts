@@ -67,10 +67,15 @@ test('historical pages use exclusive millisecond cursor and omit start across sp
 
 test('K-line request limits reflect the backend cap without changing bounded sparkline requests', async () => {
   const api = apiHarness(() => [])
-  for (const [requested, expected] of [[24, 24], [300, 100], [0, 1], [-1, 1], [8.8, 8], [NaN, 100], [Infinity, 100]]) {
+  for (const [requested, expected] of [[24, 24], [300, 100], [0, 1], [-1, 1]]) {
     await api.fetchKlines('BTCUSDT', '15m', requested)
     assert.equal(api.requests.at(-1)!.params.limit, expected)
   }
+  const requestCount = api.requests.length
+  for (const limit of [8.8, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(api.fetchKlines('BTCUSDT', '15m', limit), /invalid kline limit/)
+  }
+  assert.equal(api.requests.length, requestCount)
 })
 
 test('invalid or exhausted historical cursors never dispatch a request', async () => {

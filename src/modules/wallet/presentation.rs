@@ -66,6 +66,7 @@ pub struct DepositAddressResponse {
 pub struct CreateWithdrawalQuoteRequest {
     pub asset_symbol: String,
     pub network: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub amount: BigDecimal,
 }
 
@@ -89,7 +90,9 @@ pub struct CreateWithdrawalRequest {
     pub asset_symbol: String,
     pub network: Option<String>,
     pub address: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub amount: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub fee: BigDecimal,
     pub idempotency_key: String,
     pub fund_password: Option<String>,
@@ -166,6 +169,8 @@ pub struct WalletWithdrawalResponse {
     #[serde(default, with = "option_unix_millis")]
     pub acceptance_evidence_at: Option<DateTime<Utc>>,
     pub review_reason: Option<String>,
+    pub required_approvals: u32,
+    pub approval_count: i64,
     pub reviewed_by: Option<u64>,
     pub broadcasted_by: Option<u64>,
     pub confirmed_by: Option<u64>,
@@ -222,6 +227,7 @@ pub struct ObserveDepositRequest {
     pub tx_hash: String,
     #[serde(default)]
     pub event_index: u32,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub amount: BigDecimal,
     pub block_height: Option<u64>,
     #[serde(default)]
@@ -451,3 +457,4 @@ pub struct DepositAssetResponse {
     pub withdraw_fee: BigDecimal,
     pub withdraw_fee_tiers: Vec<WithdrawFeeTier>,
 }
+pub(crate) mod withdrawal_policy;

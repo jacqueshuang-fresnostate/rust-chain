@@ -11,6 +11,8 @@ mod countries;
 mod dashboard_audit;
 mod default_market;
 mod deposit_networks;
+pub(crate) mod financial_reconciliation;
+mod financial_retries;
 mod market;
 mod market_feed;
 mod new_coin;
@@ -21,6 +23,7 @@ mod system_config;
 mod users;
 mod wallet_assets;
 
+pub(crate) use self::financial_retries::*;
 pub(crate) use self::{
     access_control::*, agents::*, config_center::*, config_changes::*, convert::*, countries::*,
     dashboard_audit::*, default_market::*, deposit_networks::*, market::*, new_coin::*,
@@ -42,18 +45,9 @@ use crate::{
 use axum::extract::Multipart;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use sqlx::types::Json as SqlxJson;
-
-/// 区分「字段缺省」与「显式 null」：缺省 → None（保持原值），null → Some(None)（清空）。
-fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
-}
 
 fn serialize_decimal_amount<S>(amount: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>
 where

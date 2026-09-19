@@ -6,7 +6,13 @@
 //! 批量佣金处理刻意为每条记录开独立事务，以失败隔离换取整体原子性，因此可能出现部分成功。
 
 use super::*;
+use crate::modules::admin::infrastructure::{
+    commission_source_hint, lock_agent_commission_with_source_in_tx,
+};
 use crate::modules::auth::domain::login_failure_key;
+
+mod reversal;
+pub(crate) use reversal::reverse_admin_agent_commission;
 
 /// 按代理/用户/父级/根代理/层级、代理码、邮箱和状态筛选代理，并返回当前页与匹配总数。
 /// 代理码和状态会去除空白，limit 裁剪到 1～100、offset 上限 100000；查询不加锁也不写审计。
@@ -124,7 +130,7 @@ pub(crate) async fn create_admin_agent(
 /// 更新代理及其全部门户账号的目标状态，并返回同步后的代理快照。
 /// 调用方提供管理员 ID；状态只接受 active、suspended 或 disabled，本函数不执行权限判断。
 /// 事务先锁代理行，再更新代理主表、批量同步门户账号、回读并写 before/after 审计；记录缺失或 SQL 失败整体回滚。
-/// 相同状态重放仍会执行更新并新增审计，不撤销现有登录会话。
+/// 相同状态重放仍写审计；停用在同事务内递增子树会话代际，旧令牌不依赖外部撤销即失效。
 pub(crate) async fn update_admin_agent_status(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -552,9 +558,10 @@ pub(crate) async fn apply_admin_agent_commission_status(
     status: &str,
     reason: Option<String>,
 ) -> AppResult<AdminAgentCommissionResponse> {
-    // 锁定佣金记录后只允许 pending 进入结算/拒绝，防止重复给代理钱包入账。
+    // 秒合约先锁来源再锁佣金，与本金退款共用锁序；其他来源保留原生命周期。
+    let hint = commission_source_hint(pool, commission_id).await?;
     let mut tx = pool.begin().await?;
-    let before = lock_agent_commission_in_tx(&mut tx, commission_id).await?;
+    let before = lock_agent_commission_with_source_in_tx(&mut tx, commission_id, hint).await?;
     if before.status != "pending" {
         return Err(AppError::Conflict(
             "agent commission status can only be updated from pending".to_owned(),
@@ -627,6 +634,11 @@ async fn settle_agent_commission_payout_in_tx(
     tx: &mut sqlx::Transaction<'_, MySql>,
     commission: &AdminAgentCommissionResponse,
 ) -> AppResult<()> {
+    if commission.commission_amount <= 0 {
+        return Err(AppError::Conflict(
+            "agent commission payout amount must be positive".to_owned(),
+        ));
+    }
     let target = load_agent_commission_payout_target_in_tx(tx, commission.id)
         .await
         .map_err(|error| match error {
@@ -643,6 +655,14 @@ async fn settle_agent_commission_payout_in_tx(
         "agent_commission_payout",
         "agent_commission",
         &commission.id.to_string(),
+    )
+    .await?;
+    reversal::write_commission_journal_in_tx(
+        tx,
+        commission.id,
+        target.asset_id,
+        &commission.commission_amount,
+        false,
     )
     .await
 }

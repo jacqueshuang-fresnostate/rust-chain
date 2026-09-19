@@ -187,3 +187,37 @@ await helpers.loadDetail(async (signal) => ({
   title: '详情', data: await apiRequest(path, { signal }),
 }));
 ```
+
+## Numeric Wire Boundaries
+
+- Monetary wire fields are decimal strings, never JSON numbers. A finite
+  fractional Number may already have lost digits before validation; converting
+  it back to a string does not restore precision. `decimalFitsStorage` rejects
+  all numbers, including apparently harmless `0.5`. `canonicalDecimalText` and
+  formatting helpers retain numeric compatibility for display, not ingress.
+- Nested financial form drafts follow the same rule: leverage arrays and
+  withdrawal-fee tiers must not stringify numeric response values. Retain
+  malformed entries as invalid drafts that block saving, rather than filtering
+  them away and accidentally removing a configured restriction.
+- Generic API JSON rejects nonfinite numbers and unsafe integer Numbers.
+  Domain contracts additionally validate integer role, sign, range and required
+  fields. This generic check is not a money parser or a schema replacement.
+- Resource decimal columns allow a read-side DECIMAL(65,18) envelope for SQL
+  aggregates; commands use the actual narrower column envelope, normally
+  DECIMAL(38,18), rates/leverage DECIMAL(18,8), recharge DECIMAL(36,18).
+  Decimal source text is bounded to 256 characters and exponent -256..256.
+  Reject excess effective scale or integer digits; trailing zeros are allowed.
+- Resource limit/offset and Agent financial pagination validate safe integers
+  in u32 ranges before URL serialization. Non-string money, unsafe counts/IDs,
+  and invalid Unix-millisecond dates fail closed instead of becoming zeros.
+- Agent commissions are grouped by authoritative payout asset. Loaded rows are
+  labelled as loaded-page amounts and summed using decimal-text helpers.
+  Missing asset identity is not a shared synthetic currency. Dashboard totals
+  use `commission_assets`; legacy cross-currency scalar totals are not shown.
+  Convert amount totals remain unavailable until an asset-grouped API exists.
+- Resource CSV keeps source decimal text and explicitly exports only loaded
+  rows. Rendered rounding, threshold text and synthesized business order numbers
+  must not become mutation amounts or authoritative identifiers.
+- Regression coverage must include fractional JSON monetary numbers, >2^53
+  decimal strings, 1e-18, 19 fractional digits, storage overflow, huge zero
+  exponents, invalid integer lexical forms, currency grouping and page scope.

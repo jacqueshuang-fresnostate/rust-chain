@@ -1,4 +1,5 @@
 import { adminErrorMessage } from '../../shared/adminErrorMessage';
+import { requiredSafeInteger } from '../../shared/integer';
 import { Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 
@@ -125,7 +126,7 @@ function payloadFromForm(form: ConfigForm, reason: string): SaveUploadConfigPayl
   const payload: SaveUploadConfigPayload = {
     allowed_mime_types: form.allowedMimeTypes.split(',').map((item) => item.trim()).filter(Boolean),
     enabled: form.enabled,
-    max_file_size_bytes: Number.parseInt(form.maxFileSizeBytes, 10) || 0,
+    max_file_size_bytes: requiredSafeInteger(form.maxFileSizeBytes, '文件字节数', 1),
     provider: form.provider,
     reason
   };

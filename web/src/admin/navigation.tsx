@@ -57,6 +57,7 @@ export const adminNavItems: AdminNavItem[] = [
       { path: '/admin/wallet/quick-recharge-orders', label: '快速充值订单' },
       { path: '/admin/wallet/deposits', label: '充值记录' },
       { path: '/admin/wallet/withdrawals', label: '提现审核' },
+      { path: '/admin/wallet/withdrawal-policies', label: '提现策略' },
       { path: '/admin/wallet/ledger', label: '钱包流水' }
     ]
   },
@@ -151,6 +152,8 @@ export const adminNavItems: AdminNavItem[] = [
     icon: <IconShieldStroked aria-hidden="true" />,
     children: [
       { path: '/admin/governance/financial-idempotency', label: '资金与结算审计' },
+      { path: '/admin/governance/financial-retries', label: '资金异常工作台' },
+      { path: '/admin/financial-reconciliation', label: '资产对账与敞口' },
       { path: '/admin/risk', label: '风控规则' },
       { path: '/admin/risk/events', label: '风控事件' }
     ]

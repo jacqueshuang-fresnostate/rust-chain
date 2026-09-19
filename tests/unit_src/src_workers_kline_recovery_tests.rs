@@ -2,6 +2,42 @@ use super::*;
 use chrono::{TimeDelta, TimeZone, Utc};
 
 #[test]
+fn recovery_alignment_uses_exact_milliseconds_and_checked_time_bounds() {
+    let before_epoch = DateTime::from_timestamp_millis(-1).unwrap();
+    assert_eq!(
+        align_open_time(before_epoch, TimeDelta::minutes(1)).unwrap(),
+        DateTime::from_timestamp_millis(-60_000).unwrap()
+    );
+    let fractional = DateTime::from_timestamp_millis(1_234).unwrap();
+    assert_eq!(
+        align_open_time(fractional, TimeDelta::milliseconds(500)).unwrap(),
+        DateTime::from_timestamp_millis(1_000).unwrap()
+    );
+    for interval in [TimeDelta::zero(), TimeDelta::nanoseconds(1)] {
+        assert_eq!(
+            align_open_time(fractional, interval).unwrap_err(),
+            KlineRecoveryGapError::InvalidInterval
+        );
+    }
+    let latest = DateTime::<Utc>::MAX_UTC;
+    assert!(
+        kline_recovery_gap(latest, latest, TimeDelta::minutes(1))
+            .unwrap()
+            .missing_open_times()
+            .is_empty()
+    );
+    assert!(last_closed_open_time(DateTime::<Utc>::MIN_UTC, TimeDelta::days(1)).is_err());
+}
+
+#[test]
+fn recovery_decimal_ingress_rejects_unstorable_or_pathological_values() {
+    assert!(parse_decimal("1e-18").is_ok());
+    for value in ["1e-19", "1e10000000", "100000000000000000000", "NaN"] {
+        assert!(parse_decimal(value).is_err(), "{value}");
+    }
+}
+
+#[test]
 fn manual_recovery_error_keeps_the_result_error_path_compact() {
     assert!(std::mem::size_of::<ManualKlineRecoveryError>() <= 64);
 }

@@ -98,6 +98,9 @@ pub(crate) async fn apply_spot_to_margin_transfer(
     let margin_wallet = wallets.margin;
     let spot_available_after = spot_wallet.available.clone() - amount.clone();
     let margin_available_after = margin_wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(amount, "margin transfer amount")?;
+    crate::numeric::ensure_amount_storage(&spot_available_after, "spot wallet available")?;
+    crate::numeric::ensure_amount_storage(&margin_available_after, "margin wallet available")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&spot_available_after)
         .bind(user_id)
@@ -178,6 +181,9 @@ pub(crate) async fn apply_margin_to_spot_transfer(
     }
     let margin_available_after = margin_wallet.available.clone() - amount.clone();
     let spot_available_after = spot_wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(amount, "margin transfer amount")?;
+    crate::numeric::ensure_amount_storage(&spot_available_after, "spot wallet available")?;
+    crate::numeric::ensure_amount_storage(&margin_available_after, "margin wallet available")?;
     sqlx::query(
         "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
     )

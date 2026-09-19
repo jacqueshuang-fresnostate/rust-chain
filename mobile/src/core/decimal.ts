@@ -40,12 +40,15 @@ interface ParsedDecimal {
 // `12.` are in-progress form drafts, not transport-safe DecimalText values.
 const DECIMAL_PATTERN = /^([+-]?)(?:(\d+)(?:\.(\d+))?|\.(\d+))$/
 const POWERS_OF_TEN = new Map<number, bigint>([[0, 1n]])
+const MAX_DECIMAL_SOURCE_LENGTH = 1024
+const MAX_DECIMAL_DIGITS = 100
 
 export function normalizeDecimalText(
   value: string,
   constraints: DecimalTextConstraints = {},
 ): DecimalText {
   if (typeof value !== 'string') throw new TypeError('decimal value must be text')
+  if (value.length > MAX_DECIMAL_SOURCE_LENGTH) throw new RangeError('decimal text exceeds limit')
   const source = value.trim()
   const match = DECIMAL_PATTERN.exec(source)
   if (!match) throw new TypeError('invalid decimal text')
@@ -57,15 +60,16 @@ export function normalizeDecimalText(
   const isZero = integer === '0' && fraction.length === 0
   const negative = match[1] === '-' && !isZero
 
-  const maxScale = constraints.maxScale
+  const maxScale = constraints.maxScale ?? MAX_DECIMAL_DIGITS
   if (maxScale !== undefined
-    && (!Number.isSafeInteger(maxScale) || maxScale < 0 || fraction.length > maxScale)) {
+    && (!Number.isSafeInteger(maxScale) || maxScale < 0 || maxScale > MAX_DECIMAL_DIGITS || fraction.length > maxScale)) {
     throw new RangeError('decimal scale exceeds limit')
   }
-  const maxIntegerDigits = constraints.maxIntegerDigits
+  const maxIntegerDigits = constraints.maxIntegerDigits ?? MAX_DECIMAL_DIGITS
   if (maxIntegerDigits !== undefined
     && (!Number.isSafeInteger(maxIntegerDigits)
       || maxIntegerDigits < 1
+      || maxIntegerDigits > MAX_DECIMAL_DIGITS
       || integer.length > maxIntegerDigits)) {
     throw new RangeError('decimal integer digits exceed limit')
   }
@@ -119,6 +123,7 @@ export function nullableDecimalText(
 /** Number adapter for legacy read models only. Mutation contracts must accept DecimalText. */
 export function decimalTextFromFiniteNumber(value: number): DecimalText {
   if (!Number.isFinite(value)) throw new TypeError('decimal number must be finite')
+  if (Math.abs(value) > Number.MAX_SAFE_INTEGER) throw new RangeError('unsafe decimal number')
   return normalizeDecimalText(expandExponentialNotation(value.toString()))
 }
 
@@ -150,6 +155,8 @@ export function decimalWithinRange(value: DecimalText | null, range: DecimalRang
   const minimum = decimalTextFromBoundary(range.minimum)
   const maximum = decimalTextFromBoundary(range.maximum)
   const available = decimalTextFromBoundary(range.available)
+  if ((range.minimum != null && !minimum) || (range.maximum != null && !maximum)
+    || ('available' in range && !available)) return false
   return (!minimum || decimalCompare(value, minimum) >= 0)
     && (!maximum || decimalCompare(value, maximum) <= 0)
     && (!available || decimalCompare(value, available) <= 0)
@@ -161,6 +168,7 @@ export function decimalMinimum(
 ): DecimalText | null {
   const normalizedLeft = decimalTextFromBoundary(left)
   const normalizedRight = decimalTextFromBoundary(right)
+  if ((left != null && !normalizedLeft) || (right != null && !normalizedRight)) return null
   if (!normalizedLeft) return normalizedRight
   if (!normalizedRight) return normalizedLeft
   return decimalCompare(normalizedLeft, normalizedRight) <= 0 ? normalizedLeft : normalizedRight
@@ -288,7 +296,7 @@ export function decimalRoundHalfUp(value: DecimalText, scale: number): DecimalTe
 }
 
 export function decimalFractionDigits(value: string): number {
-  if (typeof value !== 'string') throw new TypeError('decimal value must be text')
+  normalizeDecimalText(value)
   const match = DECIMAL_PATTERN.exec(value.trim())
   if (!match) throw new TypeError('invalid decimal text')
   return (match[3] ?? match[4] ?? '').length
@@ -344,7 +352,7 @@ export function decimalUnitRatioToNumber(value: DecimalText): number {
 }
 
 function parseDecimal(value: DecimalText): ParsedDecimal {
-  const source = value as string
+  const source = normalizeDecimalText(value)
   const negative = source.startsWith('-')
   const unsigned = negative ? source.slice(1) : source
   const [integer = '0', fraction = ''] = unsigned.split('.')
@@ -353,13 +361,16 @@ function parseDecimal(value: DecimalText): ParsedDecimal {
 }
 
 function renderDecimal(value: ParsedDecimal): DecimalText {
+  if (!Number.isSafeInteger(value.scale) || value.scale < 0 || value.scale > MAX_DECIMAL_DIGITS * 2) {
+    throw new RangeError('invalid decimal arithmetic scale')
+  }
   if (value.coefficient === 0n) return '0' as DecimalText
   const negative = value.coefficient < 0n
   const absolute = negative ? -value.coefficient : value.coefficient
   const digits = absolute.toString().padStart(value.scale + 1, '0')
   const integer = value.scale ? digits.slice(0, -value.scale) || '0' : digits
   const fraction = value.scale ? digits.slice(-value.scale).replace(/0+$/, '') : ''
-  return `${negative ? '-' : ''}${integer}${fraction ? `.${fraction}` : ''}` as DecimalText
+  return normalizeDecimalText(`${negative ? '-' : ''}${integer}${fraction ? `.${fraction}` : ''}`)
 }
 
 function powerOfTen(exponent: number): bigint {
@@ -380,7 +391,7 @@ function expandExponentialNotation(value: string): string {
   const whole = match[2] || '0'
   const fraction = match[3] || ''
   const exponent = Number(match[4])
-  if (!Number.isSafeInteger(exponent)) throw new TypeError('invalid decimal exponent')
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > MAX_DECIMAL_DIGITS) throw new TypeError('invalid decimal exponent')
   const digits = `${whole}${fraction}`
   const point = whole.length + exponent
   if (point <= 0) return `${sign}0.${'0'.repeat(-point)}${digits}`

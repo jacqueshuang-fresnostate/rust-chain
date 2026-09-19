@@ -36,6 +36,8 @@ use crate::{
     },
     state::AppState,
 };
+
+pub(crate) mod withdrawal_policy;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeDelta, Utc};
 use mongodb::Database;
@@ -804,6 +806,7 @@ pub(crate) async fn create_withdrawal_quote(
 /// 本函数不广播链上交易，后续审核与网关 worker 只能消费已提交的申请状态。
 pub(crate) async fn create_withdrawal_request(
     pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
     settings: &Settings,
     user_id: u64,
     request: CreateWithdrawalRequest,
@@ -874,10 +877,10 @@ pub(crate) async fn create_withdrawal_request(
         ));
     }
     // 风控闸门先于安全校验和冻结执行，命中拒绝时不消耗验证凭据、也不产生任何资金状态。
-    // 提现用例不持有 Redis 句柄，限频规则在该路径不生效。
+    // 已成功请求在前面直接重放；新申请消费限频，已配置限频却无法计数时拒绝提现。
     enforce_risk_control(
         pool,
-        None,
+        redis,
         RiskGuardInput {
             user_id,
             operation: "wallet.withdrawal.create",

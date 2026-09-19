@@ -57,12 +57,17 @@ impl ConvertQuote {
         if ttl_seconds <= 0 {
             return Err(ConvertQuoteError::InvalidTtl);
         }
+        let expires_at = TimeDelta::try_seconds(ttl_seconds)
+            .and_then(|duration| created_at.checked_add_signed(duration))
+            .ok_or(ConvertQuoteError::InvalidTtl)?;
+        crate::time::ensure_timestamp_storage(&expires_at, "convert expires_at")
+            .map_err(|_| ConvertQuoteError::InvalidTtl)?;
 
         let idempotency_key = format!("convert:quote:{}", quote_id.0);
         Ok(Self {
             ttl: QuoteTtl {
                 quote_id,
-                expires_at: created_at + TimeDelta::seconds(ttl_seconds),
+                expires_at,
             },
             idempotency_key,
         })

@@ -127,10 +127,10 @@ onMounted(() => { void load() })
             <div class="record-row__copy">
               <strong>
                 <span>{{ record.assetSymbol }}</span>
-                <span class="numeric">{{ formatAmount(record.amount) }} {{ record.assetSymbol }}</span>
+                <span class="numeric">{{ formatAmount(record.amountText) }} {{ record.assetSymbol }}</span>
               </strong>
               <small>{{ record.network || t('withdraw.reviewedNetwork') }} · {{ shortAddress(record.address) }}</small>
-              <small>{{ formatDateTime(record.createdAt) }} · {{ t('common.fee') }} {{ formatAmount(record.fee) }} {{ record.assetSymbol }}</small>
+              <small>{{ formatDateTime(record.createdAt) }} · {{ t('common.fee') }} {{ formatAmount(record.feeText) }} {{ record.assetSymbol }}</small>
               <small v-if="record.txHash" class="numeric">{{ t('withdrawRecords.txHash') }} · {{ shortAddress(record.txHash) }}</small>
               <small v-if="record.failureReason || record.reviewReason" class="record-row__reason">{{ record.failureReason || record.reviewReason }}</small>
             </div>

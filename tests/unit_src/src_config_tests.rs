@@ -4,6 +4,16 @@ use std::{env, sync::Mutex};
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn timer_config_rejects_overflow_without_rewriting_valid_values() {
+    for seconds in [0, 1, 60, 86_400, u64::from(u32::MAX)] {
+        assert!(validate_timer_seconds("interval", seconds).is_ok());
+    }
+    for seconds in [u64::MAX, i64::MAX as u64] {
+        assert!(validate_timer_seconds("interval", seconds).is_err());
+    }
+}
+
+#[test]
 fn settings_from_env_parses_market_feed_lists() {
     let _guard = ENV_LOCK
         .lock()

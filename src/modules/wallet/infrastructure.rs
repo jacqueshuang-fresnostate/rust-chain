@@ -7,6 +7,7 @@ mod accounts_ledger;
 mod deposits;
 mod returns;
 mod shared;
+pub(crate) mod withdrawal_policy;
 mod withdrawals;
 
 pub use accounts_ledger::{
@@ -15,6 +16,9 @@ pub use accounts_ledger::{
 pub use deposits::{
     NewWalletChainEventDeadLetter, WalletChainEventDeadLetterRecord,
     insert_wallet_chain_event_dead_letter, list_wallet_chain_event_dead_letters,
+};
+pub(crate) use shared::{
+    insert_platform_journal_with_reference_in_tx, insert_wallet_platform_journal_legs_in_tx,
 };
 pub use withdrawals::HttpWalletChainGateway;
 

@@ -70,6 +70,8 @@ pub(crate) struct SpotIdempotentOrderRecord {
     pub(crate) order_type: OrderType,
     pub(crate) price: Option<BigDecimal>,
     pub(crate) trigger_price: Option<BigDecimal>,
+    pub(crate) trigger_direction: Option<crate::modules::spot::TriggerDirection>,
+    pub(crate) triggered_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) quantity: BigDecimal,
     pub(crate) filled_quantity: BigDecimal,
     pub(crate) status: OrderStatus,

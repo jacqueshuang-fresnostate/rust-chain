@@ -26,6 +26,14 @@ use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "spot/explicit_trigger.rs"]
+mod explicit_trigger;
+#[path = "spot/fill_journal.rs"]
+mod fill_journal;
+#[path = "spot/manual_fill.rs"]
+mod manual_fill;
+#[path = "spot/numeric.rs"]
+mod numeric;
 mod support;
 
 fn decimal(value: &str) -> BigDecimal {
@@ -191,6 +199,26 @@ async fn create_admin_user(pool: &MySqlPool) -> (u64, u64) {
     (role_id, admin_id)
 }
 
+async fn cleanup_manual_fill_admin(
+    pool: &MySqlPool,
+    role_id: u64,
+    admin_id: u64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 #[derive(sqlx::FromRow)]
 struct AdminAuditRow {
     action: String,
@@ -244,14 +272,18 @@ async fn fund_system_spot_liquidity(
     asset_id: u64,
     amount: &BigDecimal,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query(
+    sqlx::query(
         r#"INSERT INTO users (email, password_hash, status)
            VALUES ('__system_spot_liquidity@internal.local', '!test-internal-account!', 'active')
            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
     )
     .execute(pool)
     .await?;
-    let system_user_id = result.last_insert_id();
+    let system_user_id: u64 = sqlx::query_scalar(
+        "SELECT id FROM users WHERE email = '__system_spot_liquidity@internal.local'",
+    )
+    .fetch_one(pool)
+    .await?;
     sqlx::query(
         r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
            VALUES (?, ?, ?, 0, 0)
@@ -278,19 +310,7 @@ async fn seed_open_buy_order(
     user_id: u64,
     pair_symbol: &str,
 ) -> Result<String, sqlx::Error> {
-    Ok(sqlx::query(
-        r#"INSERT INTO spot_orders
-           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status)
-           VALUES (?, ?, 'buy', 'limit', ?, ?, 0, 'open')"#,
-    )
-    .bind(user_id)
-    .bind(pair_id(pool, pair_symbol).await?)
-    .bind(decimal("10.000000000000000000"))
-    .bind(decimal("2.0000"))
-    .execute(pool)
-    .await?
-    .last_insert_id()
-    .to_string())
+    seed_open_order(pool, user_id, pair_symbol, "buy", "10", "2").await
 }
 
 async fn seed_open_order(
@@ -301,16 +321,29 @@ async fn seed_open_order(
     price: &str,
     quantity: &str,
 ) -> Result<String, sqlx::Error> {
+    let (base, quote): (u64, u64) =
+        sqlx::query_as("SELECT base_asset, quote_asset FROM trading_pairs WHERE symbol = ?")
+            .bind(pair_symbol)
+            .fetch_one(pool)
+            .await?;
+    let (asset, amount) = if side == "buy" {
+        (quote, decimal(price) * decimal(quantity))
+    } else {
+        (base, decimal(quantity))
+    };
     Ok(sqlx::query(
         r#"INSERT INTO spot_orders
-           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status)
-           VALUES (?, ?, ?, 'limit', ?, ?, 0, 'open')"#,
+           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status,
+            reserved_asset, reserved_amount)
+           VALUES (?, ?, ?, 'limit', ?, ?, 0, 'open', ?, ?)"#,
     )
     .bind(user_id)
     .bind(pair_id(pool, pair_symbol).await?)
     .bind(side)
     .bind(decimal(price))
     .bind(decimal(quantity))
+    .bind(asset)
+    .bind(amount)
     .execute(pool)
     .await?
     .last_insert_id()
@@ -872,6 +905,7 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
         return Ok(());
     };
     let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
     let buyer_email = format!("spot-admin-filter-{}@example.test", Uuid::now_v7().simple());
     let buyer_id = create_user_with_email(&pool, buyer_email.clone()).await;
     let seller_id = create_user(&pool).await;
@@ -927,14 +961,18 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     .await?
     .last_insert_id()
     .to_string();
-    let system_user_id = sqlx::query(
+    sqlx::query(
         r#"INSERT INTO users (email, password_hash, status)
            VALUES ('__system_spot_liquidity@internal.local', 'system-liquidity', 'active')
            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
     )
     .execute(&pool)
-    .await?
-    .last_insert_id();
+    .await?;
+    let system_user_id: u64 = sqlx::query_scalar(
+        "SELECT id FROM users WHERE email = '__system_spot_liquidity@internal.local'",
+    )
+    .fetch_one(&pool)
+    .await?;
     let system_order_id = sqlx::query(
         r#"INSERT INTO spot_orders
            (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status, created_at)
@@ -1000,7 +1038,12 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     .await?
     .last_insert_id()
     .to_string();
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
     let user_token =
         issue_token(&settings, format!("user:{buyer_id}"), TokenScope::User, 900).unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
@@ -1218,6 +1261,7 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
         .bind(&system_order_id)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -1234,6 +1278,7 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
         .execute(&pool)
         .await?;
 
+    cleanup_manual_fill_admin(&pool, role_id, admin_id).await?;
     assert_eq!(forbidden_response.status(), StatusCode::FORBIDDEN);
     Ok(())
 }
@@ -1513,6 +1558,7 @@ async fn spot_limit_buy_order_fills_when_market_price_reaches_limit() -> Result<
         .execute(&pool)
         .await?;
     support::cleanup_direct_agent_commission(&pool, user_id, commission_fixture).await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -1869,6 +1915,7 @@ async fn spot_create_market_buy_order_fills_immediately_at_market_price()
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -2004,6 +2051,7 @@ async fn spot_market_buy_accepts_small_cached_price_uptick_and_reserves_executio
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -2174,6 +2222,7 @@ async fn spot_create_market_sell_order_fills_immediately_at_market_price()
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -2352,6 +2401,7 @@ async fn spot_limit_sell_order_fills_when_market_price_reaches_limit() -> Result
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -4435,7 +4485,14 @@ async fn spot_fill_settles_pending_buyer_and_seller_wallets() -> Result<(), Box<
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
@@ -4446,7 +4503,7 @@ async fn spot_fill_settles_pending_buyer_and_seller_wallets() -> Result<(), Box<
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -4586,6 +4643,7 @@ async fn spot_fill_settles_pending_buyer_and_seller_wallets() -> Result<(), Box<
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -4649,7 +4707,14 @@ async fn spot_fill_is_idempotent_for_repeated_request_key() -> Result<(), Box<dy
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let hub = EventBroadcastHub::new(16);
     let _keepalive_hub = hub.clone();
     let mut buyer_events = hub.subscribe(&WebSocketChannel::private_user(buyer_id));
@@ -4661,7 +4726,7 @@ async fn spot_fill_is_idempotent_for_repeated_request_key() -> Result<(), Box<dy
     );
     let idempotency_key = format!("spot-fill-{}", Uuid::now_v7().simple());
     let request_body = format!(
-        r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+        r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
 
     let first_response = app
@@ -4804,6 +4869,7 @@ async fn spot_fill_is_idempotent_for_repeated_request_key() -> Result<(), Box<dy
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -4867,13 +4933,20 @@ async fn spot_fill_replays_leading_zero_order_ids_idempotently() -> Result<(), B
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let idempotency_key = format!("spot-fill-zero-{}", Uuid::now_v7().simple());
     let padded_buy_order_id = format!("{:0>12}", buy_order_id.parse::<u64>()?);
     let padded_sell_order_id = format!("{:0>12}", sell_order_id.parse::<u64>()?);
     let request_body = format!(
-        r#"{{"buy_order_id":"{padded_buy_order_id}","sell_order_id":"{padded_sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+        r#"{{"reason":"manual fill fixture","buy_order_id":"{padded_buy_order_id}","sell_order_id":"{padded_sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
 
     let first_response = app
@@ -4941,6 +5014,7 @@ async fn spot_fill_replays_leading_zero_order_ids_idempotently() -> Result<(), B
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -5005,7 +5079,14 @@ async fn spot_fill_allows_multiple_partial_fills_for_same_order_pair() -> Result
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let first_key = format!("spot-fill-{}", Uuid::now_v7().simple());
     let second_key = format!("spot-fill-{}", Uuid::now_v7().simple());
@@ -5019,7 +5100,7 @@ async fn spot_fill_allows_multiple_partial_fills_for_same_order_pair() -> Result
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{first_key}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{first_key}"}}"#
                 )))
                 .unwrap(),
         )
@@ -5045,7 +5126,7 @@ async fn spot_fill_allows_multiple_partial_fills_for_same_order_pair() -> Result
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{second_key}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{second_key}"}}"#
                 )))
                 .unwrap(),
         )
@@ -5119,6 +5200,7 @@ async fn spot_fill_allows_multiple_partial_fills_for_same_order_pair() -> Result
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -5207,7 +5289,14 @@ async fn spot_fill_releases_limit_buy_price_improvement_reserve() -> Result<(), 
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
@@ -5218,7 +5307,7 @@ async fn spot_fill_releases_limit_buy_price_improvement_reserve() -> Result<(), 
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"9.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"9.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -5279,6 +5368,7 @@ async fn spot_fill_releases_limit_buy_price_improvement_reserve() -> Result<(), 
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -5342,7 +5432,14 @@ async fn spot_fill_rejects_price_below_sell_limit() -> Result<(), Box<dyn Error>
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
@@ -5353,7 +5450,7 @@ async fn spot_fill_rejects_price_below_sell_limit() -> Result<(), Box<dyn Error>
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -5388,6 +5485,7 @@ async fn spot_fill_rejects_price_below_sell_limit() -> Result<(), Box<dyn Error>
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -5451,7 +5549,14 @@ async fn spot_fill_rejects_price_above_buy_limit() -> Result<(), Box<dyn Error>>
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
@@ -5462,7 +5567,7 @@ async fn spot_fill_rejects_price_above_buy_limit() -> Result<(), Box<dyn Error>>
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"11.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"11.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -5497,6 +5602,7 @@ async fn spot_fill_rejects_price_above_buy_limit() -> Result<(), Box<dyn Error>>
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -5627,6 +5733,7 @@ async fn spot_cancel_one_of_two_reserved_orders_unfreezes_only_that_order()
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -5773,7 +5880,14 @@ async fn spot_cancel_market_buy_after_below_reference_partial_fill_unfreezes_all
         .await?;
     let user_token =
         issue_token(&settings, format!("user:{buyer_id}"), TokenScope::User, 900).unwrap();
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let buy_order_id = seed_historical_market_buy_order(
@@ -5803,7 +5917,7 @@ async fn spot_cancel_market_buy_after_below_reference_partial_fill_unfreezes_all
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -5868,6 +5982,7 @@ async fn spot_cancel_market_buy_after_below_reference_partial_fill_unfreezes_all
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -5913,7 +6028,14 @@ async fn spot_cancel_market_buy_after_above_reference_partial_fill_unfreezes_rem
         .await?;
     let user_token =
         issue_token(&settings, format!("user:{buyer_id}"), TokenScope::User, 900).unwrap();
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let buy_order_id = seed_historical_market_buy_order(
@@ -5943,7 +6065,7 @@ async fn spot_cancel_market_buy_after_above_reference_partial_fill_unfreezes_rem
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"12.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"12.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -6008,6 +6130,7 @@ async fn spot_cancel_market_buy_after_above_reference_partial_fill_unfreezes_rem
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -6053,7 +6176,14 @@ async fn spot_fill_rejects_market_buy_that_exceeds_order_reservation() -> Result
         .await?;
     let user_token =
         issue_token(&settings, format!("user:{buyer_id}"), TokenScope::User, 900).unwrap();
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let other_key = format!("spot-route-{}", Uuid::now_v7().simple());
@@ -6110,7 +6240,7 @@ async fn spot_fill_rejects_market_buy_that_exceeds_order_reservation() -> Result
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{market_order_id}","sell_order_id":"{sell_order_id}","price":"15.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{market_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{market_order_id}","sell_order_id":"{sell_order_id}","price":"15.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{market_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -6150,6 +6280,7 @@ async fn spot_fill_rejects_market_buy_that_exceeds_order_reservation() -> Result
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -6193,7 +6324,14 @@ async fn spot_fill_full_market_buy_below_reference_releases_surplus_quote()
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let buy_order_id = seed_historical_market_buy_order(
         &pool,
@@ -6222,7 +6360,7 @@ async fn spot_fill_full_market_buy_below_reference_releases_surplus_quote()
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -6264,6 +6402,7 @@ async fn spot_fill_full_market_buy_below_reference_releases_surplus_quote()
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -6309,7 +6448,14 @@ async fn spot_cancel_limit_buy_after_price_improvement_fill_unfreezes_remaining_
         .await?;
     let user_token =
         issue_token(&settings, format!("user:{buyer_id}"), TokenScope::User, 900).unwrap();
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
@@ -6361,7 +6507,7 @@ async fn spot_cancel_limit_buy_after_price_improvement_fill_unfreezes_remaining_
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"8.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -6423,6 +6569,7 @@ async fn spot_cancel_limit_buy_after_price_improvement_fill_unfreezes_remaining_
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -6473,7 +6620,14 @@ async fn spot_cancel_sell_after_partial_fill_unfreezes_only_remaining_base()
         900,
     )
     .unwrap();
-    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
@@ -6525,7 +6679,7 @@ async fn spot_cancel_sell_after_partial_fill_unfreezes_only_remaining_base()
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -6605,6 +6759,7 @@ async fn spot_cancel_sell_after_partial_fill_unfreezes_only_remaining_base()
         &sell_order_id,
     )
     .await?;
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -6890,7 +7045,14 @@ async fn spot_fill_rejects_sell_order_that_exceeds_order_reservation() -> Result
     .await?
     .last_insert_id()
     .to_string();
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
@@ -6901,7 +7063,7 @@ async fn spot_fill_rejects_sell_order_that_exceeds_order_reservation() -> Result
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"spot-fill-{buy_order_id}-{sell_order_id}"}}"#
                 )))
                 .unwrap(),
         )
@@ -6932,6 +7094,7 @@ async fn spot_fill_rejects_sell_order_that_exceeds_order_reservation() -> Result
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -6948,10 +7111,18 @@ async fn spot_fill_rejects_sell_order_that_exceeds_order_reservation() -> Result
         .await?;
     assert_eq!(
         status,
-        StatusCode::BAD_REQUEST,
+        StatusCode::CONFLICT,
         "payload: {}",
         String::from_utf8_lossy(&body)
     );
+    let error: Value = serde_json::from_slice(&body)?;
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("no positive stored freeze evidence")
+    );
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -7046,7 +7217,14 @@ async fn spot_fill_idempotency_key_rejects_mismatched_replay() -> Result<(), Box
     .bind(&replay_sell_order_id)
     .execute(&pool)
     .await?;
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let idempotency_key = format!("spot-fill-replay-{}", Uuid::now_v7().simple());
 
@@ -7059,7 +7237,7 @@ async fn spot_fill_idempotency_key_rejects_mismatched_replay() -> Result<(), Box
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{buy_order_id}","sell_order_id":"{sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
                 )))
                 .unwrap(),
         )
@@ -7082,7 +7260,7 @@ async fn spot_fill_idempotency_key_rejects_mismatched_replay() -> Result<(), Box
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    r#"{{"buy_order_id":"{replay_buy_order_id}","sell_order_id":"{replay_sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                    r#"{{"reason":"manual fill fixture","buy_order_id":"{replay_buy_order_id}","sell_order_id":"{replay_sell_order_id}","price":"10.000000000000000000","quantity":"1.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
                 )))
                 .unwrap(),
         )
@@ -7117,6 +7295,7 @@ async fn spot_fill_idempotency_key_rejects_mismatched_replay() -> Result<(), Box
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -7137,6 +7316,7 @@ async fn spot_fill_idempotency_key_rejects_mismatched_replay() -> Result<(), Box
         "payload: {}",
         String::from_utf8_lossy(&replay_body)
     );
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -7257,7 +7437,14 @@ async fn spot_fill_concurrent_duplicate_key_rejects_mismatched_request_without_5
     .last_insert_id()
     .to_string();
 
-    let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let (fill_role_id, fill_admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{fill_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let idempotency_key = format!("spot-fill-race-{}", Uuid::now_v7().simple());
     let mut blocker = pool.begin().await?;
@@ -7270,7 +7457,7 @@ async fn spot_fill_concurrent_duplicate_key_rejects_mismatched_request_without_5
     let first_app = app.clone();
     let first_token = token.clone();
     let first_body = format!(
-        r#"{{"buy_order_id":"{first_buy_order_id}","sell_order_id":"{first_sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+        r#"{{"reason":"manual fill fixture","buy_order_id":"{first_buy_order_id}","sell_order_id":"{first_sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
     let first_fill = tokio::spawn(async move {
         first_app
@@ -7291,7 +7478,7 @@ async fn spot_fill_concurrent_duplicate_key_rejects_mismatched_request_without_5
     let replay_app = app.clone();
     let replay_token = token.clone();
     let replay_body = format!(
-        r#"{{"buy_order_id":"{second_buy_order_id}","sell_order_id":"{second_sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+        r#"{{"reason":"manual fill fixture","buy_order_id":"{second_buy_order_id}","sell_order_id":"{second_sell_order_id}","price":"10.000000000000000000","quantity":"2.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
     let replay_fill = tokio::spawn(async move {
         replay_app
@@ -7376,6 +7563,7 @@ async fn spot_fill_concurrent_duplicate_key_rejects_mismatched_request_without_5
         .bind(quote_asset)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)
@@ -7421,6 +7609,7 @@ async fn spot_fill_concurrent_duplicate_key_rejects_mismatched_request_without_5
         second_buyer_quote_frozen.normalized(),
         decimal("20.000000000000000000").normalized()
     );
+    cleanup_manual_fill_admin(&pool, fill_role_id, fill_admin_id).await?;
     Ok(())
 }
 
@@ -7461,6 +7650,7 @@ async fn cleanup_fill_fixture(
         .bind(quote_asset)
         .execute(pool)
         .await?;
+    fill_journal::cleanup_pair_journal(pool, pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(pair_symbol)
         .execute(pool)
@@ -7684,6 +7874,7 @@ async fn cleanup_fixture(
             .execute(pool)
             .await?;
     }
+    fill_journal::cleanup_pair_journal(pool, pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(pair_symbol)
         .execute(pool)
@@ -7805,6 +7996,7 @@ async fn admin_spot_orders_offset_paging_returns_disjoint_pages_and_filtered_tot
         .bind(user_id)
         .execute(&pool)
         .await?;
+    fill_journal::cleanup_pair_journal(&pool, &pair_symbol).await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&pair_symbol)
         .execute(&pool)

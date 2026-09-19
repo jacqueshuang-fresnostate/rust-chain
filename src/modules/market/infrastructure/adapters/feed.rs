@@ -973,6 +973,7 @@ impl MarketFeedEvent {
                     "price_change_percent_24h": snapshot.price_change_percent_24h().to_string(),
                     "observed_at": snapshot.observed_at().timestamp_millis(),
                     "provider": provider_name(snapshot.provider()),
+                    "source": crate::modules::market::presentation::MarketProvenance::from_provider(snapshot.provider()).source,
                 }),
             }),
             ParsedMarketFeed::Depth(snapshot) => Ok(Self {
@@ -994,6 +995,7 @@ impl MarketFeedEvent {
                     "asks": snapshot.asks(),
                     "observed_at": snapshot.observed_at().timestamp_millis(),
                     "provider": provider_name(snapshot.provider()),
+                    "source": crate::modules::market::presentation::MarketProvenance::from_provider(snapshot.provider()).source,
                 }),
             }),
             ParsedMarketFeed::Kline(snapshot) => Ok(Self {
@@ -1029,6 +1031,7 @@ impl MarketFeedEvent {
                     "volume": snapshot.volume().to_string(),
                     "observed_at": snapshot.observed_at().timestamp_millis(),
                     "provider": provider_name(snapshot.provider()),
+                    "source": crate::modules::market::presentation::MarketProvenance::from_provider(snapshot.provider()).source,
                 }),
             }),
             ParsedMarketFeed::Trade(tick) => Ok(Self {
@@ -1052,9 +1055,16 @@ impl MarketFeedEvent {
                     "quantity": tick.quantity().to_string(),
                     "traded_at": tick.traded_at().timestamp_millis(),
                     "provider": provider_name(tick.provider()),
+                    "source": crate::modules::market::presentation::MarketProvenance::from_tick(tick).source,
                 }),
             }),
         }
+    }
+
+    /// 为已验证且同秒的生成盘口附加逐笔来源；仅改变展示元数据，不改事件身份。
+    pub(crate) fn with_depth_provenance(mut self, source: &str) -> Self {
+        self.payload["source"] = json!(source);
+        self
     }
 
     /// 返回 outbox/指标使用的行情聚合类型，取值为 `market_ticker`、`market_depth`、`market_kline` 或 `market_trade`。

@@ -3,6 +3,8 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { decimalFitsStorage, isNonNegativeDecimalText, requiredDecimalText } from '../../../shared/decimal';
+import { parseSafeInteger } from '../../../shared/integer';
 import { AdminRequestActionBoundary } from '../../access';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
@@ -15,7 +17,6 @@ import {
   activeStatusOptions,
   completeCreate,
   createModalProps,
-  isNonNegativeIntegerInput,
   openRecordDetail,
   optionalString,
   recordString,
@@ -69,14 +70,13 @@ function isSpotPairCreatable(values: SpotPairValues): boolean {
     values.baseAssetId.trim() &&
       values.quoteAssetId.trim() &&
       values.symbol.trim() &&
-      isNonNegativeIntegerInput(values.pricePrecision) &&
-      isNonNegativeIntegerInput(values.qtyPrecision) &&
-      values.minOrderValue.trim()
+      isMarketPairConfigUpdatable(values)
   );
 }
 
 function isMarketPairConfigUpdatable(values: MarketPairConfigValues): boolean {
-  return Boolean(isNonNegativeIntegerInput(values.pricePrecision) && isNonNegativeIntegerInput(values.qtyPrecision) && values.minOrderValue.trim() && values.marketType.trim() && values.status.trim());
+  return Boolean(parseSafeInteger(values.pricePrecision, 0, 18) !== null && parseSafeInteger(values.qtyPrecision, 0, 18) !== null &&
+    decimalFitsStorage(values.minOrderValue) && isNonNegativeDecimalText(values.minOrderValue) && values.marketType.trim() && values.status.trim());
 }
 
 function canCancelSpotOrder(status: string): boolean {
@@ -135,9 +135,9 @@ function MarketPairEditAction({ helpers, pairId, record }: { helpers: RowActionH
                     method: 'PATCH',
                     body: JSON.stringify({
                       logo_url: optionalString(config.logoUrl),
-                      price_precision: requiredNonNegativeInteger(config.pricePrecision, '价格精度'),
-                      qty_precision: requiredNonNegativeInteger(config.qtyPrecision, '数量精度'),
-                      min_order_value: requiredString(config.minOrderValue, '最小下单额'),
+                      price_precision: requiredNonNegativeInteger(config.pricePrecision, '价格精度', 18),
+                      qty_precision: requiredNonNegativeInteger(config.qtyPrecision, '数量精度', 18),
+                      min_order_value: requiredDecimalText(config.minOrderValue, '最小下单额'),
                       status: requiredString(config.status, '状态'),
                       market_type: requiredString(config.marketType, '市场类型'),
                       reason
@@ -267,9 +267,9 @@ export function CreateSpotPairAction({ onCreated }: CreateActionProps = {}) {
                     quote_asset_id: requiredPositiveInteger(spotPair.quoteAssetId, '计价资产ID'),
                     symbol: requiredString(spotPair.symbol, '交易对符号'),
                     logo_url: optionalString(spotPair.logoUrl),
-                    price_precision: requiredNonNegativeInteger(spotPair.pricePrecision, '价格精度'),
-                    qty_precision: requiredNonNegativeInteger(spotPair.qtyPrecision, '数量精度'),
-                    min_order_value: requiredString(spotPair.minOrderValue, '最小下单额'),
+                    price_precision: requiredNonNegativeInteger(spotPair.pricePrecision, '价格精度', 18),
+                    qty_precision: requiredNonNegativeInteger(spotPair.qtyPrecision, '数量精度', 18),
+                    min_order_value: requiredDecimalText(spotPair.minOrderValue, '最小下单额'),
                     status: spotPair.status,
                     market_type: spotPair.marketType,
                     reason

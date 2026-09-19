@@ -280,6 +280,7 @@ const CHANGE_TYPE_TRANSLATION_KEYS = {
   margin_cross_account_liquidate: 'ledger.typeMarginCrossLiquidate',
   seconds_contract_open: 'ledger.typeSecondsOpen',
   seconds_contract_settle_win: 'ledger.typeSecondsSettleWin',
+  seconds_contract_principal_refund: 'ledger.typeSecondsPrincipalRefund',
   convert_settlement: 'ledger.typeConvertSettlement',
   earn_subscribe: 'ledger.typeEarnSubscribe',
   earn_redeem: 'ledger.typeEarnRedeem',

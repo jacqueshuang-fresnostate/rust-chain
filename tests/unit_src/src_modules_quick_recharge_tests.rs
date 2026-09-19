@@ -12,6 +12,35 @@ use crate::modules::quick_recharge::{
     },
 };
 use serde_json::json;
+
+#[test]
+fn numeric_safety_quick_recharge_preserves_narrow_storage_and_exact_json() {
+    let config = quick_recharge_runtime_config("https://pay.example".to_owned());
+    for value in ["1e18", "1e-19", "1e100000", "NaN", "Infinity"] {
+        let payload = json!({ "actual_amount": value });
+        assert!(
+            service::required_json_decimal(payload.as_object().unwrap(), "actual_amount").is_err()
+        );
+    }
+    for value in [
+        "1e-18",
+        "9007199254740993.000000000000000001",
+        "1.230000000000000000000",
+    ] {
+        let payload = json!({ "actual_amount": value });
+        assert_eq!(
+            service::required_json_decimal(payload.as_object().unwrap(), "actual_amount").unwrap(),
+            value.parse::<BigDecimal>().unwrap(),
+        );
+    }
+    assert!(
+        service::validate_recharge_amount(&BigDecimal::from_str("1e18").unwrap(), &config).is_err()
+    );
+    assert!(service::validate_recharge_credit_amount(&"1.001".parse().unwrap(), 2).is_err());
+    assert!(service::validate_recharge_credit_amount(&"1".parse().unwrap(), 19).is_err());
+    assert!(service::validate_recharge_credit_amount(&"1.2300".parse().unwrap(), 2).is_ok());
+}
+
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{body_string_contains, method, path},

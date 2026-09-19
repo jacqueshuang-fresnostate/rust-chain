@@ -4,8 +4,6 @@
 //! [`SyntheticStrategySnapshot`]，再经本模块构造领域配置。这里兼容历史 JSON 的时间与十进制写法，
 //! 但不会用当前配置覆盖快照中已经存在却损坏的字段，避免不同消费路径产生口径漂移。
 
-use std::str::FromStr;
-
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -267,7 +265,7 @@ fn value_decimal(value: &Value, key: &str) -> Result<BigDecimal, SyntheticStrate
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| value.to_string());
-    BigDecimal::from_str(&raw)
+    crate::numeric::parse_decimal_input(&raw)
         .map_err(|_| SyntheticStrategySnapshotError::InvalidField(key.to_owned()))
 }
 

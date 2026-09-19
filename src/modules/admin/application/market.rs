@@ -98,8 +98,18 @@ pub(crate) async fn create_admin_trading_pair(
 
     // 创建交易对前锁定两个启用资产，避免资产状态变更与交易对创建竞态。
     let mut tx = pool.begin().await?;
-    ensure_trading_pair_asset_in_tx(&mut tx, request.base_asset_id).await?;
-    ensure_trading_pair_asset_in_tx(&mut tx, request.quote_asset_id).await?;
+    ensure_trading_pair_asset_in_tx(&mut tx, request.base_asset_id.min(request.quote_asset_id))
+        .await?;
+    ensure_trading_pair_asset_in_tx(&mut tx, request.base_asset_id.max(request.quote_asset_id))
+        .await?;
+    crate::modules::admin::infrastructure::ensure_trading_pair_precision_in_tx(
+        &mut tx,
+        request.base_asset_id,
+        request.quote_asset_id,
+        request.qty_precision,
+        &request.min_order_value,
+    )
+    .await?;
     let pair_id = insert_admin_trading_pair_in_tx(
         &mut tx,
         AdminTradingPairInsert {
@@ -153,6 +163,14 @@ pub(crate) async fn update_admin_trading_pair(
     // 先锁定交易对旧值再更新，确保后台审计 before/after 对应同一次事务。
     let mut tx = pool.begin().await?;
     let before = lock_admin_trading_pair_in_tx(&mut tx, pair_id).await?;
+    crate::modules::admin::infrastructure::ensure_trading_pair_precision_in_tx(
+        &mut tx,
+        before.base_asset_id,
+        before.quote_asset_id,
+        request.qty_precision,
+        &request.min_order_value,
+    )
+    .await?;
     update_admin_trading_pair_in_tx(
         &mut tx,
         pair_id,

@@ -18,6 +18,8 @@ import {
 import AssetMark from '@/components/AssetMark.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
+import MarketProvenanceLabel from '@/components/MarketProvenanceLabel.vue'
+import { marketTradeIdentity, type MarketProvenance } from '@/core/marketProvenance'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
 import { loadMarketDetailSnapshot } from '@/api/marketDetailSnapshot'
 import {
@@ -64,6 +66,7 @@ const tradesError = ref(false)
 const points = ref<KlinePoint[]>([])
 const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
+const depthProvenance = ref<MarketProvenance>()
 const trades = ref<TradePrint[]>([])
 const liveDetailActive = ref(false)
 const liveDepthReceived = ref(false)
@@ -123,6 +126,7 @@ const detailStreamSession = createMarketDetailStreamSession({
     liveDetailUpdatedAt.value = Date.now()
     bids.value = snapshot.bids
     asks.value = snapshot.asks
+    depthProvenance.value = snapshot.provenance
     depthError.value = false
   },
   onTrade: (_context, trade) => {
@@ -178,6 +182,7 @@ async function load(forceMarket = false): Promise<void> {
   liveDepthReceived.value = false
   bids.value = []
   asks.value = []
+  depthProvenance.value = undefined
   trades.value = []
   const liveState = startLiveDetail(symbol, selectedInterval, version)
   const isCurrent = () => viewActive && version === requestVersion && symbol === pairSymbol.value
@@ -194,7 +199,7 @@ async function load(forceMarket = false): Promise<void> {
       chartLoading.value = false
     },
     onDepth: (snapshot, failed) => {
-      if (snapshot) { bids.value = snapshot.bids; asks.value = snapshot.asks }
+      if (snapshot) { bids.value = snapshot.bids; asks.value = snapshot.asks; depthProvenance.value = snapshot.provenance }
       depthError.value = failed
       depthLoading.value = false
     },
@@ -546,6 +551,7 @@ onUnmounted(() => {
           </b>
         </p>
         <p v-else>{{ marketStore.loading ? t('common.loading') : t('common.marketUnavailable') }}</p>
+        <MarketProvenanceLabel :provenance="ticker" :observed-at="ticker?.sourceObservedAt" live />
       </div>
       <dl>
         <div>
@@ -684,6 +690,7 @@ onUnmounted(() => {
         tabindex="0"
       >
         <OrderBookPanel
+          :provenance="depthProvenance"
           layout="paired"
           :bids="bids"
           :asks="asks"
@@ -715,9 +722,10 @@ onUnmounted(() => {
           {{ t('common.marketUnavailable') }}
         </div>
         <div v-else>
-          <div v-for="trade in trades.slice(0, 7)" :key="trade.id" class="market-detail__trade">
+          <div v-for="trade in trades.slice(0, 7)" :key="marketTradeIdentity(trade)" class="market-detail__trade">
             <span class="numeric" :class="trade.side === 'buy' ? 'up' : 'down'">
               {{ formatPrice(trade.price) }}
+              <MarketProvenanceLabel :provenance="trade" />
             </span>
             <span class="numeric">{{ formatAmount(trade.quantity) }}</span>
             <span class="numeric">
@@ -1254,7 +1262,7 @@ onUnmounted(() => {
 .market-detail__trade-head {
   color: var(--detail-muted);
   font-size: 8px;
-  height: 34px;
+  min-height: 34px;
 }
 
 .market-detail__trade-head span,

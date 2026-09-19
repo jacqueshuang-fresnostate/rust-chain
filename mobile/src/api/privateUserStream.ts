@@ -1,3 +1,5 @@
+import { assertSafeJsonNumbers } from '../core/numeric.ts'
+
 const SOCKET_OPEN = 1
 
 export const PRIVATE_USER_RECONNECT_BASE_MS = 1_000
@@ -94,6 +96,7 @@ export function parsePrivateUserFrame(data: unknown): PrivateUserEvent | null {
   let payload: unknown
   try {
     payload = JSON.parse(text)
+    assertSafeJsonNumbers(payload)
   } catch {
     return null
   }

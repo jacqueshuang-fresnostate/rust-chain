@@ -63,7 +63,9 @@ pub(crate) struct NewCoinProjectsResponse {
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateSubscriptionRequest {
     pub(crate) quote_asset_id: u64,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) quote_amount: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) quantity: BigDecimal,
     pub(crate) idempotency_key: String,
 }
@@ -71,7 +73,9 @@ pub(crate) struct CreateSubscriptionRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreatePurchaseRequest {
     pub(crate) pair_id: u64,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) price: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) quantity: BigDecimal,
     pub(crate) idempotency_key: String,
 }
@@ -179,6 +183,7 @@ pub(crate) struct NewCoinUnlocksResponse {
 #[derive(Debug, Deserialize)]
 pub(crate) struct PayUnlockFeeRequest {
     pub(crate) payment_asset_id: u64,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
 }
 

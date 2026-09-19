@@ -14,6 +14,14 @@ fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
 
+#[test]
+fn numeric_safety_asset_scale_never_wraps_into_valid_precision() {
+    let tiny = BigDecimal::new(1.into(), i64::from(u32::MAX) + 2);
+    assert_eq!(asset_amount_fractional_scale(&tiny), u32::MAX);
+    assert!(!amount_fits_asset_precision(&tiny, 18));
+    assert!(amount_fits_asset_precision(&decimal("1e-18"), 18));
+}
+
 fn source(id: &str, value: i64, unlock_at: chrono::DateTime<chrono::Utc>) -> LockPositionSource {
     LockPositionSource {
         source_id: id.to_owned(),

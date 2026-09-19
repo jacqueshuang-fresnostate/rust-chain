@@ -33,7 +33,7 @@ use crate::{
 };
 use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool};
-use std::{env, str::FromStr};
+use std::env;
 use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
 
@@ -996,7 +996,7 @@ async fn process_deposit_observation(
             "deposit event network {observed_network} does not match gateway {expected_network}"
         )));
     }
-    let amount = BigDecimal::from_str(&observation.amount)
+    let amount = crate::numeric::parse_decimal_input(&observation.amount)
         .map_err(|_| AppError::Validation("wallet gateway deposit amount is invalid".to_owned()))?;
     observe_deposit(
         pool,
@@ -1178,21 +1178,10 @@ async fn load_withdrawal_candidates(
 /// 更新条件重复校验状态与下次尝试时刻，因此读取候选到实际认领之间的竞态会体现为受影响行数为零。
 /// 认领同时把状态置为广播中、尝试次数加一并把下次可见时刻推后三十秒，形成崩溃后可自动重试的可见性窗口。
 /// 尝试次数在此自增而非广播失败时才加，意味着进程在广播过程中崩溃同样会消耗一次尝试额度。
-/// 该更新不开显式事务，单语句自身即为原子操作，也不触碰任何余额或流水。
+/// 认领事务同时复核申请快照的冷静期；安全变更仅推迟待广播单，不触碰余额和不明广播的对账合同。
 async fn claim_withdrawal_for_broadcast(pool: &Pool<MySql>, withdrawal_id: u64) -> AppResult<bool> {
-    let result = sqlx::query(
-        r#"UPDATE wallet_withdrawal_requests
-           SET status = 'broadcasting', broadcasting_at = CURRENT_TIMESTAMP(6),
-               retry_count = retry_count + 1,
-               next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND)
-           WHERE id = ?
-             AND status = 'approved'
-             AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP(6))"#,
-    )
-    .bind(withdrawal_id)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() == 1)
+    crate::modules::wallet::infrastructure::withdrawal_policy::claim_broadcast(pool, withdrawal_id)
+        .await
 }
 
 /// 认领广播结果待对账的请求。此路径只增加查询计数，绝不增加广播次数也不重发请求。

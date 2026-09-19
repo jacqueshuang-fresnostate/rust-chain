@@ -3,7 +3,9 @@
 //! 表现层：负责请求/响应 DTO 与传输层格式转换。
 //! 现货接口的 JSON 结构集中放在这里，避免路由层继续承载业务数据形状。
 
-use crate::modules::spot::{OrderSide, OrderStatus, OrderType, SpotOrder, SpotTrade};
+use crate::modules::spot::{
+    OrderSide, OrderStatus, OrderType, SpotOrder, SpotTrade, TriggerDirection,
+};
 use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
@@ -13,9 +15,23 @@ pub(crate) struct CreateSpotOrderRequest {
     pub(crate) pair_id: String,
     pub(crate) side: OrderSide,
     pub(crate) order_type: OrderType,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) price: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) trigger_price: Option<BigDecimal>,
+    pub(crate) trigger_direction: Option<TriggerDirection>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) quantity: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) reference_price: Option<BigDecimal>,
     pub(crate) idempotency_key: String,
 }
@@ -36,9 +52,12 @@ pub(crate) struct CancelAllSpotOrdersQuery {
 pub(crate) struct FillSpotOrdersRequest {
     pub(crate) buy_order_id: String,
     pub(crate) sell_order_id: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) price: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) quantity: BigDecimal,
     pub(crate) idempotency_key: String,
+    pub(crate) reason: String,
 }
 
 impl FillSpotOrdersRequest {}
@@ -87,6 +106,10 @@ pub(crate) struct SpotOrderResponse {
     pub(crate) order_type: OrderType,
     pub(crate) price: Option<BigDecimal>,
     pub(crate) trigger_price: Option<BigDecimal>,
+    #[serde(default)]
+    pub(crate) trigger_direction: Option<TriggerDirection>,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) triggered_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) quantity: BigDecimal,
     pub(crate) filled_quantity: BigDecimal,
     pub(crate) average_price: Option<BigDecimal>,
@@ -167,6 +190,8 @@ impl From<SpotOrder> for SpotOrderResponse {
             order_type: order.order_type,
             price: order.price,
             trigger_price: order.trigger_price,
+            trigger_direction: order.trigger_direction,
+            triggered_at: order.triggered_at,
             quantity: order.quantity,
             filled_quantity: order.filled_quantity,
             average_price: None,
@@ -201,6 +226,8 @@ impl From<SpotOrderResponse> for SpotOrder {
             order_type: order.order_type,
             price: order.price,
             trigger_price: order.trigger_price,
+            trigger_direction: order.trigger_direction,
+            triggered_at: order.triggered_at,
             quantity: order.quantity,
             filled_quantity: order.filled_quantity,
             status: order.status,

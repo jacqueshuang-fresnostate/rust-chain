@@ -1,0 +1,742 @@
+{
+  "fixture": "tests/fixtures/numeric-browser.html",
+  "viewportHeight": 900,
+  "environment": "local HTTP/WebSocket mocks; no commits",
+  "results": [
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "闪兑\n确认闪兑，获得 0.000000000000000001 BTC\n登录后可获取实时闪兑报价并完成资产兑换。\n支付\n9,007,199,254,740,993.000000000000000001 USDT\n获得\n0.000000000000000001 BTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费\n0.000000000000000001 USDT\n取消\n确认",
+      "bodyText": "跳至主要内容\n\n已进入闪兑\n\n闪兑\n支付\n可用 9,007,199,254,740,993.000000000000000001 USDT\n全部\nU\nUSDT\n获得\n实时到账数量\n0.000000000000000001\nB\nBTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费率\n0.0000000000000001%\n报价有效至\n2026-09-19 08:57\n确认闪兑，获得 0.000000000000000001 BTC\n\n使用现货钱包余额 · 余额不足时按钮保持禁用\n\n闪兑记录\n全部\n暂无闪兑记录。\n闪兑\n确认闪兑，获得 0.000000000000000001 BTC\n登录后可获取实时闪兑报价并完成资产兑换。\n支付\n9,007,199,254,740,993.000000000000000001 USDT\n获得\n0.000000000000000001 BTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费\n0.000000000000000001 USDT\n取消\n确认",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/convert/pairs",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/convert/orders",
+          "method": "get"
+        },
+        {
+          "path": "/convert/quote",
+          "method": "post",
+          "data": "{\"from_asset_id\":1,\"to_asset_id\":2,\"from_amount\":\"9007199254740993.000000000000000001\"}"
+        }
+      ],
+      "surface": "swap"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "闪兑\n确认闪兑，获得 0.000000000000000001 BTC\n登录后可获取实时闪兑报价并完成资产兑换。\n支付\n9,007,199,254,740,993.000000000000000001 USDT\n获得\n0.000000000000000001 BTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费\n0.000000000000000001 USDT\n取消\n确认",
+      "bodyText": "跳至主要内容\n\n已进入闪兑\n\n闪兑\n支付\n可用 9,007,199,254,740,993.000000000000000001 USDT\n全部\nU\nUSDT\n获得\n实时到账数量\n0.000000000000000001\nB\nBTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费率\n0.0000000000000001%\n报价有效至\n2026-09-19 08:57\n确认闪兑，获得 0.000000000000000001 BTC\n\n使用现货钱包余额 · 余额不足时按钮保持禁用\n\n闪兑记录\n全部\n暂无闪兑记录。\n闪兑\n确认闪兑，获得 0.000000000000000001 BTC\n登录后可获取实时闪兑报价并完成资产兑换。\n支付\n9,007,199,254,740,993.000000000000000001 USDT\n获得\n0.000000000000000001 BTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费\n0.000000000000000001 USDT\n取消\n确认",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/convert/pairs",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/convert/orders",
+          "method": "get"
+        },
+        {
+          "path": "/convert/quote",
+          "method": "post",
+          "data": "{\"from_asset_id\":1,\"to_asset_id\":2,\"from_amount\":\"9007199254740993.000000000000000001\"}"
+        }
+      ],
+      "surface": "swap"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "闪兑\n确认闪兑，获得 0.000000000000000001 BTC\n登录后可获取实时闪兑报价并完成资产兑换。\n支付\n9,007,199,254,740,993.000000000000000001 USDT\n获得\n0.000000000000000001 BTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费\n0.000000000000000001 USDT\n取消\n确认",
+      "bodyText": "跳至主要内容\n\n已进入闪兑\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n闪兑\n支付\n可用 9,007,199,254,740,993.000000000000000001 USDT\n全部\nU\nUSDT\n获得\n实时到账数量\n0.000000000000000001\nB\nBTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费率\n0.0000000000000001%\n报价有效至\n2026-09-19 08:57\n确认闪兑，获得 0.000000000000000001 BTC\n\n使用现货钱包余额 · 余额不足时按钮保持禁用\n\n闪兑记录\n全部\n暂无闪兑记录。\n闪兑\n确认闪兑，获得 0.000000000000000001 BTC\n登录后可获取实时闪兑报价并完成资产兑换。\n支付\n9,007,199,254,740,993.000000000000000001 USDT\n获得\n0.000000000000000001 BTC\n参考汇率\n1 USDT = 0.000000000000000001 BTC\n手续费\n0.000000000000000001 USDT\n取消\n确认",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/convert/pairs",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/convert/orders",
+          "method": "get"
+        },
+        {
+          "path": "/convert/quote",
+          "method": "post",
+          "data": "{\"from_asset_id\":1,\"to_asset_id\":2,\"from_amount\":\"9007199254740993.000000000000000001\"}"
+        }
+      ],
+      "surface": "swap"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "还款\n\nPrecision loan · 9,007,199,254,740,993.000000000000000001 USDT\n\n借款金额\n9,007,199,254,740,993.000000000000000001 USDT\n待还 9,007,199,254,740,993.000000000000000001\n已放款\n取消\n还款",
+      "bodyText": "跳至主要内容\n\n已进入借贷\n\n借贷\n先看抵押率和可用额度\n\n确认风险后再决定是否申请\n\n全部\nUSDT\nU\nPrecision product\n信用借贷 · 7 天\n0.0000000000000001%\n年利率\n借款金额\n0.000000000000000001–9,007,199,254,740,993.000000000000000001 USDT\n最低认证等级\n0\n我的借款\n1\nU\nPrecision loan\n2026-09-19 07:57 · 已放款\n9,007,199,254,740,993.000000000000000001 USDT\n还款\n借贷涉及抵押和清算风险，请先阅读产品规则。\n还款\n\nPrecision loan · 9,007,199,254,740,993.000000000000000001 USDT\n\n借款金额\n9,007,199,254,740,993.000000000000000001 USDT\n待还 9,007,199,254,740,993.000000000000000001\n已放款\n取消\n还款",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/loan/products",
+          "method": "get"
+        },
+        {
+          "path": "/loan/orders",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "loan"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "还款\n\nPrecision loan · 9,007,199,254,740,993.000000000000000001 USDT\n\n借款金额\n9,007,199,254,740,993.000000000000000001 USDT\n待还 9,007,199,254,740,993.000000000000000001\n已放款\n取消\n还款",
+      "bodyText": "跳至主要内容\n\n已进入借贷\n\n借贷\n先看抵押率和可用额度\n\n确认风险后再决定是否申请\n\n全部\nUSDT\nU\nPrecision product\n信用借贷 · 7 天\n0.0000000000000001%\n年利率\n借款金额\n0.000000000000000001–9,007,199,254,740,993.000000000000000001 USDT\n最低认证等级\n0\n我的借款\n1\nU\nPrecision loan\n2026-09-19 07:57 · 已放款\n9,007,199,254,740,993.000000000000000001 USDT\n还款\n借贷涉及抵押和清算风险，请先阅读产品规则。\n还款\n\nPrecision loan · 9,007,199,254,740,993.000000000000000001 USDT\n\n借款金额\n9,007,199,254,740,993.000000000000000001 USDT\n待还 9,007,199,254,740,993.000000000000000001\n已放款\n取消\n还款",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/loan/products",
+          "method": "get"
+        },
+        {
+          "path": "/loan/orders",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "loan"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "还款\n\nPrecision loan · 9,007,199,254,740,993.000000000000000001 USDT\n\n借款金额\n9,007,199,254,740,993.000000000000000001 USDT\n待还 9,007,199,254,740,993.000000000000000001\n已放款\n取消\n还款",
+      "bodyText": "跳至主要内容\n\n已进入借贷\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n借贷\n先看抵押率和可用额度\n\n确认风险后再决定是否申请\n\n全部\nUSDT\nU\nPrecision product\n信用借贷 · 7 天\n0.0000000000000001%\n年利率\n借款金额\n0.000000000000000001–9,007,199,254,740,993.000000000000000001 USDT\n最低认证等级\n0\n我的借款\n1\nU\nPrecision loan\n2026-09-19 07:57 · 已放款\n9,007,199,254,740,993.000000000000000001 USDT\n还款\n借贷涉及抵押和清算风险，请先阅读产品规则。\n还款\n\nPrecision loan · 9,007,199,254,740,993.000000000000000001 USDT\n\n借款金额\n9,007,199,254,740,993.000000000000000001 USDT\n待还 9,007,199,254,740,993.000000000000000001\n已放款\n取消\n还款",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/loan/products",
+          "method": "get"
+        },
+        {
+          "path": "/loan/orders",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "loan"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n理财\n让闲置资产有清晰的去处\n\n收益、额度和期限以后台返回为准\n\n全部\n定期\nPrecision product\n7 天\n预计年化\n0.0000000000000001%\n起投\n0.000000000000000001 USDT\n风险\n以平台规则为准\n\n定期 · 收益与赎回规则以后台配置为准。\n\n查看可用产品\n我的持仓\n1\n9,007,199,254,740,993.000000000000000001 · 7 天\n2026-09-19 07:57 申购\n进行中\n赎回",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/earn/products",
+          "method": "get"
+        },
+        {
+          "path": "/earn/subscriptions",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "earn-list"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n理财\n让闲置资产有清晰的去处\n\n收益、额度和期限以后台返回为准\n\n全部\n定期\nPrecision product\n7 天\n预计年化\n0.0000000000000001%\n起投\n0.000000000000000001 USDT\n风险\n以平台规则为准\n\n定期 · 收益与赎回规则以后台配置为准。\n\n查看可用产品\n我的持仓\n1\n9,007,199,254,740,993.000000000000000001 · 7 天\n2026-09-19 07:57 申购\n进行中\n赎回",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/earn/products",
+          "method": "get"
+        },
+        {
+          "path": "/earn/subscriptions",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "earn-list"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n已进入理财\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n理财\n让闲置资产有清晰的去处\n\n收益、额度和期限以后台返回为准\n\n全部\n定期\nPrecision product\n7 天\n预计年化\n0.0000000000000001%\n起投\n0.000000000000000001 USDT\n风险\n以平台规则为准\n\n定期 · 收益与赎回规则以后台配置为准。\n\n查看可用产品\n我的持仓\n1\n9,007,199,254,740,993.000000000000000001 · 7 天\n2026-09-19 07:57 申购\n进行中\n赎回",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/earn/products",
+          "method": "get"
+        },
+        {
+          "path": "/earn/subscriptions",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "earn-list"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "理财申购\nfixed / USDT\nPrecision product\n\n参考年化 0.0000000000000001%\n\n7 天\n申购数量\nUSDT\n全部\n\n可用 9,007,199,254,740,993.000000000000000001 USDT · 最低 <0.01 · 最高 9,007,199,254,740,993\n\n参考日收益\n<0.01 USDT\n起息规则\n产品接口未提供\n赎回规则\n赎回费 0.0000000000000001% · 提前赎回 0.0000000000000001%（基准：本金） · 到期收益费 0.0000000000000001%\n\n收益、额度、起息与赎回规则均以产品接口和最终订单结果为准。\n\n确认申购",
+      "bodyText": "跳至主要内容\n\n已进入理财\n\n理财\n让闲置资产有清晰的去处\n\n收益、额度和期限以后台返回为准\n\n全部\n定期\nPrecision product\n7 天\n预计年化\n0.0000000000000001%\n起投\n0.000000000000000001 USDT\n风险\n以平台规则为准\n\n定期 · 收益与赎回规则以后台配置为准。\n\n查看可用产品\n我的持仓\n1\n9,007,199,254,740,993.000000000000000001 · 7 天\n2026-09-19 07:57 申购\n进行中\n赎回\n理财申购\nfixed / USDT\nPrecision product\n\n参考年化 0.0000000000000001%\n\n7 天\n申购数量\nUSDT\n全部\n\n可用 9,007,199,254,740,993.000000000000000001 USDT · 最低 <0.01 · 最高 9,007,199,254,740,993\n\n参考日收益\n<0.01 USDT\n起息规则\n产品接口未提供\n赎回规则\n赎回费 0.0000000000000001% · 提前赎回 0.0000000000000001%（基准：本金） · 到期收益费 0.0000000000000001%\n\n收益、额度、起息与赎回规则均以产品接口和最终订单结果为准。\n\n确认申购",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/earn/products",
+          "method": "get"
+        },
+        {
+          "path": "/earn/subscriptions",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "earn"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "理财申购\nfixed / USDT\nPrecision product\n\n参考年化 0.0000000000000001%\n\n7 天\n申购数量\nUSDT\n全部\n\n可用 9,007,199,254,740,993.000000000000000001 USDT · 最低 <0.01 · 最高 9,007,199,254,740,993\n\n参考日收益\n<0.01 USDT\n起息规则\n产品接口未提供\n赎回规则\n赎回费 0.0000000000000001% · 提前赎回 0.0000000000000001%（基准：本金） · 到期收益费 0.0000000000000001%\n\n收益、额度、起息与赎回规则均以产品接口和最终订单结果为准。\n\n确认申购",
+      "bodyText": "跳至主要内容\n\n已进入理财\n\n理财\n让闲置资产有清晰的去处\n\n收益、额度和期限以后台返回为准\n\n全部\n定期\nPrecision product\n7 天\n预计年化\n0.0000000000000001%\n起投\n0.000000000000000001 USDT\n风险\n以平台规则为准\n\n定期 · 收益与赎回规则以后台配置为准。\n\n查看可用产品\n我的持仓\n1\n9,007,199,254,740,993.000000000000000001 · 7 天\n2026-09-19 07:57 申购\n进行中\n赎回\n理财申购\nfixed / USDT\nPrecision product\n\n参考年化 0.0000000000000001%\n\n7 天\n申购数量\nUSDT\n全部\n\n可用 9,007,199,254,740,993.000000000000000001 USDT · 最低 <0.01 · 最高 9,007,199,254,740,993\n\n参考日收益\n<0.01 USDT\n起息规则\n产品接口未提供\n赎回规则\n赎回费 0.0000000000000001% · 提前赎回 0.0000000000000001%（基准：本金） · 到期收益费 0.0000000000000001%\n\n收益、额度、起息与赎回规则均以产品接口和最终订单结果为准。\n\n确认申购",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/earn/products",
+          "method": "get"
+        },
+        {
+          "path": "/earn/subscriptions",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "earn"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "理财申购\nfixed / USDT\nPrecision product\n\n参考年化 0.0000000000000001%\n\n7 天\n申购数量\nUSDT\n全部\n\n可用 9,007,199,254,740,993.000000000000000001 USDT · 最低 <0.01 · 最高 9,007,199,254,740,993\n\n参考日收益\n<0.01 USDT\n起息规则\n产品接口未提供\n赎回规则\n赎回费 0.0000000000000001% · 提前赎回 0.0000000000000001%（基准：本金） · 到期收益费 0.0000000000000001%\n\n收益、额度、起息与赎回规则均以产品接口和最终订单结果为准。\n\n确认申购",
+      "bodyText": "跳至主要内容\n\n已进入理财\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n理财\n让闲置资产有清晰的去处\n\n收益、额度和期限以后台返回为准\n\n全部\n定期\nPrecision product\n7 天\n预计年化\n0.0000000000000001%\n起投\n0.000000000000000001 USDT\n风险\n以平台规则为准\n\n定期 · 收益与赎回规则以后台配置为准。\n\n查看可用产品\n我的持仓\n1\n9,007,199,254,740,993.000000000000000001 · 7 天\n2026-09-19 07:57 申购\n进行中\n赎回\n理财申购\nfixed / USDT\nPrecision product\n\n参考年化 0.0000000000000001%\n\n7 天\n申购数量\nUSDT\n全部\n\n可用 9,007,199,254,740,993.000000000000000001 USDT · 最低 <0.01 · 最高 9,007,199,254,740,993\n\n参考日收益\n<0.01 USDT\n起息规则\n产品接口未提供\n赎回规则\n赎回费 0.0000000000000001% · 提前赎回 0.0000000000000001%（基准：本金） · 到期收益费 0.0000000000000001%\n\n收益、额度、起息与赎回规则均以产品接口和最终订单结果为准。\n\n确认申购",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/earn/products",
+          "method": "get"
+        },
+        {
+          "path": "/earn/subscriptions",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        }
+      ],
+      "surface": "earn"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "确认预测\n市场 · 2026-09-19 08:57\nPrecision 市场\n是\n50%\n否\n50%\n支付资产\nUSDT · 可用 9,007,199,254,740,993.000000000000000001\n投入金额\nUSDT\n预计份额\n9,007,199,254,740,993.000000000000000001\n潜在回报\n9,007,199,254,740,993.000000000000000001 USDT\n手续费\n0.000000000000000001 USDT\n结算状态\n待处理\n\n预测结果按平台市场配置结算，订单提交后请以最终订单状态为准。\n\n确认订单",
+      "bodyText": "跳至主要内容\n\n已进入预测\n\n预测市场\n进行中\n已结算\n市场\n进行中\nPrecision 市场\n是\n50%\n否\n50%\n\n2026-09-19 08:57\n\n成交报价、费率和赔付上限均由后台实时校验。\n\n我的预测\n0\n暂无预测订单。\n确认预测\n市场 · 2026-09-19 08:57\nPrecision 市场\n是\n50%\n否\n50%\n支付资产\nUSDT · 可用 9,007,199,254,740,993.000000000000000001\n投入金额\nUSDT\n预计份额\n9,007,199,254,740,993.000000000000000001\n潜在回报\n9,007,199,254,740,993.000000000000000001 USDT\n手续费\n0.000000000000000001 USDT\n结算状态\n待处理\n\n预测结果按平台市场配置结算，订单提交后请以最终订单状态为准。\n\n确认订单",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/markets",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/config",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/orders",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/quotes",
+          "method": "post",
+          "data": "{\"market_id\":1,\"outcome\":\"yes\",\"asset_id\":1,\"stake_amount\":\"9007199254740993.000000000000000001\"}"
+        }
+      ],
+      "surface": "prediction"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "确认预测\n市场 · 2026-09-19 08:57\nPrecision 市场\n是\n50%\n否\n50%\n支付资产\nUSDT · 可用 9,007,199,254,740,993.000000000000000001\n投入金额\nUSDT\n预计份额\n9,007,199,254,740,993.000000000000000001\n潜在回报\n9,007,199,254,740,993.000000000000000001 USDT\n手续费\n0.000000000000000001 USDT\n结算状态\n待处理\n\n预测结果按平台市场配置结算，订单提交后请以最终订单状态为准。\n\n确认订单",
+      "bodyText": "跳至主要内容\n\n已进入预测\n\n预测市场\n进行中\n已结算\n市场\n进行中\nPrecision 市场\n是\n50%\n否\n50%\n\n2026-09-19 08:57\n\n成交报价、费率和赔付上限均由后台实时校验。\n\n我的预测\n0\n暂无预测订单。\n确认预测\n市场 · 2026-09-19 08:57\nPrecision 市场\n是\n50%\n否\n50%\n支付资产\nUSDT · 可用 9,007,199,254,740,993.000000000000000001\n投入金额\nUSDT\n预计份额\n9,007,199,254,740,993.000000000000000001\n潜在回报\n9,007,199,254,740,993.000000000000000001 USDT\n手续费\n0.000000000000000001 USDT\n结算状态\n待处理\n\n预测结果按平台市场配置结算，订单提交后请以最终订单状态为准。\n\n确认订单",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/markets",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/config",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/orders",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/quotes",
+          "method": "post",
+          "data": "{\"market_id\":1,\"outcome\":\"yes\",\"asset_id\":1,\"stake_amount\":\"9007199254740993.000000000000000001\"}"
+        }
+      ],
+      "surface": "prediction"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "确认预测\n市场 · 2026-09-19 08:57\nPrecision 市场\n是\n50%\n否\n50%\n支付资产\nUSDT · 可用 9,007,199,254,740,993.000000000000000001\n投入金额\nUSDT\n预计份额\n9,007,199,254,740,993.000000000000000001\n潜在回报\n9,007,199,254,740,993.000000000000000001 USDT\n手续费\n0.000000000000000001 USDT\n结算状态\n待处理\n\n预测结果按平台市场配置结算，订单提交后请以最终订单状态为准。\n\n确认订单",
+      "bodyText": "跳至主要内容\n\n已进入预测\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n预测市场\n进行中\n已结算\n市场\n进行中\nPrecision 市场\n是\n50%\n否\n50%\n\n2026-09-19 08:57\n\n成交报价、费率和赔付上限均由后台实时校验。\n\n我的预测\n0\n暂无预测订单。\n确认预测\n市场 · 2026-09-19 08:57\nPrecision 市场\n是\n50%\n否\n50%\n支付资产\nUSDT · 可用 9,007,199,254,740,993.000000000000000001\n投入金额\nUSDT\n预计份额\n9,007,199,254,740,993.000000000000000001\n潜在回报\n9,007,199,254,740,993.000000000000000001 USDT\n手续费\n0.000000000000000001 USDT\n结算状态\n待处理\n\n预测结果按平台市场配置结算，订单提交后请以最终订单状态为准。\n\n确认订单",
+      "inputs": [
+        {
+          "type": "text",
+          "value": "9007199254740993.000000000000000001"
+        }
+      ],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/markets",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/config",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/orders",
+          "method": "get"
+        },
+        {
+          "path": "/prediction/quotes",
+          "method": "post",
+          "data": "{\"market_id\":1,\"outcome\":\"yes\",\"asset_id\":1,\"stake_amount\":\"9007199254740993.000000000000000001\"}"
+        }
+      ],
+      "surface": "prediction"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "平仓\nBTCUSDT 永续\n做多\n逐仓\n2x\n价格 (USDT)\n9,007,199,254,740,993.000000000000000001\n市价\n最新价格\n9,007,199,254,740,993.000000000000000001USDT\n数量 (BTC)\n1%\n持仓量\n9,007,199,254,740,993.000000000000000001 BTC\n可平量\n90,071,992,547,409.93000000000000000001 BTC\n预计收益\n+0.00000000000000000001 USDT\n\n将按市价平掉当前仓位的 1%\n\n拖动平仓\n≈ 90,071,992,547,409.93000000000000000001 BTC",
+      "bodyText": "平仓\nBTCUSDT 永续\n做多\n逐仓\n2x\n价格 (USDT)\n9,007,199,254,740,993.000000000000000001\n市价\n最新价格\n9,007,199,254,740,993.000000000000000001USDT\n数量 (BTC)\n1%\n持仓量\n9,007,199,254,740,993.000000000000000001 BTC\n可平量\n90,071,992,547,409.93000000000000000001 BTC\n预计收益\n+0.00000000000000000001 USDT\n\n将按市价平掉当前仓位的 1%\n\n拖动平仓\n≈ 90,071,992,547,409.93000000000000000001 BTC",
+      "inputs": [
+        {
+          "type": "range",
+          "value": "1"
+        }
+      ],
+      "requests": [],
+      "surface": "margin-close"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "平仓\nBTCUSDT 永续\n做多\n逐仓\n2x\n价格 (USDT)\n9,007,199,254,740,993.000000000000000001\n市价\n最新价格\n9,007,199,254,740,993.000000000000000001USDT\n数量 (BTC)\n1%\n持仓量\n9,007,199,254,740,993.000000000000000001 BTC\n可平量\n90,071,992,547,409.93000000000000000001 BTC\n预计收益\n+0.00000000000000000001 USDT\n\n将按市价平掉当前仓位的 1%\n\n拖动平仓\n≈ 90,071,992,547,409.93000000000000000001 BTC",
+      "bodyText": "平仓\nBTCUSDT 永续\n做多\n逐仓\n2x\n价格 (USDT)\n9,007,199,254,740,993.000000000000000001\n市价\n最新价格\n9,007,199,254,740,993.000000000000000001USDT\n数量 (BTC)\n1%\n持仓量\n9,007,199,254,740,993.000000000000000001 BTC\n可平量\n90,071,992,547,409.93000000000000000001 BTC\n预计收益\n+0.00000000000000000001 USDT\n\n将按市价平掉当前仓位的 1%\n\n拖动平仓\n≈ 90,071,992,547,409.93000000000000000001 BTC",
+      "inputs": [
+        {
+          "type": "range",
+          "value": "1"
+        }
+      ],
+      "requests": [],
+      "surface": "margin-close"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": "平仓\nBTCUSDT 永续\n做多\n逐仓\n2x\n价格 (USDT)\n9,007,199,254,740,993.000000000000000001\n市价\n最新价格\n9,007,199,254,740,993.000000000000000001USDT\n数量 (BTC)\n1%\n持仓量\n9,007,199,254,740,993.000000000000000001 BTC\n可平量\n90,071,992,547,409.93000000000000000001 BTC\n预计收益\n+0.00000000000000000001 USDT\n\n将按市价平掉当前仓位的 1%\n\n拖动平仓\n≈ 90,071,992,547,409.93000000000000000001 BTC",
+      "bodyText": "平仓\nBTCUSDT 永续\n做多\n逐仓\n2x\n价格 (USDT)\n9,007,199,254,740,993.000000000000000001\n市价\n最新价格\n9,007,199,254,740,993.000000000000000001USDT\n数量 (BTC)\n1%\n持仓量\n9,007,199,254,740,993.000000000000000001 BTC\n可平量\n90,071,992,547,409.93000000000000000001 BTC\n预计收益\n+0.00000000000000000001 USDT\n\n将按市价平掉当前仓位的 1%\n\n拖动平仓\n≈ 90,071,992,547,409.93000000000000000001 BTC",
+      "inputs": [
+        {
+          "type": "range",
+          "value": "1"
+        }
+      ],
+      "requests": [],
+      "surface": "margin-close"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n资产\n总资产估值\n9,007,199,254,740,993.00\nUSDT\n今日收益\n--\n收益暂不可用\n充币\n提币\n划转\n交易记录\n账户余额\n全部账户\n现货账户\n9,007,199,254,740,993.00\nUSDT\n1 个持仓币种\n杠杆账户\n0.00\nUSDT\n0 个持仓币种\n我的持仓\n1 个币种\nU\nUSDT\n可用 9,007,199,254,740,993 · 冻结 0.000000000000000002\n9,007,199,254,740,993\n≈ US$9,007,199,254,740,993.00\n资金工具\n交易记录\n按币种、交易类型与日期查看真实记录\n提币记录\n查看处理状态和链上哈希\n快捷充值\n使用已配置的充值渠道\n首页\n行情\n交易\n资产\n我的",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/markets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/margin/wallets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/today-return",
+          "method": "get"
+        }
+      ],
+      "surface": "assets"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n已进入资产\n\n资产\n总资产估值\n9,007,199,254,740,993.00\nUSDT\n今日收益\n--\n收益暂不可用\n充币\n提币\n划转\n交易记录\n账户余额\n全部账户\n现货账户\n9,007,199,254,740,993.00\nUSDT\n1 个持仓币种\n杠杆账户\n0.00\nUSDT\n0 个持仓币种\n我的持仓\n1 个币种\nU\nUSDT\n可用 9,007,199,254,740,993 · 冻结 0.000000000000000002\n9,007,199,254,740,993\n≈ US$9,007,199,254,740,993.00\n资金工具\n交易记录\n按币种、交易类型与日期查看真实记录\n提币记录\n查看处理状态和链上哈希\n快捷充值\n使用已配置的充值渠道\n首页\n行情\n交易\n资产\n我的",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/markets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/margin/wallets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/today-return",
+          "method": "get"
+        }
+      ],
+      "surface": "assets"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n已进入资产\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n资产\n总资产估值\n9,007,199,254,740,993.00\nUSDT\n今日收益\n--\n收益暂不可用\n充币\n提币\n划转\n交易记录\n账户余额\n全部账户\n现货账户\n9,007,199,254,740,993.00\nUSDT\n1 个持仓币种\n杠杆账户\n0.00\nUSDT\n0 个持仓币种\n我的持仓\n1 个币种\nU\nUSDT\n可用 9,007,199,254,740,993 · 冻结 0.000000000000000002\n9,007,199,254,740,993\n≈ US$9,007,199,254,740,993.00\n资金工具\n交易记录\n按币种、交易类型与日期查看真实记录\n提币记录\n查看处理状态和链上哈希\n快捷充值\n使用已配置的充值渠道\n首页\n行情\n交易\n资产\n我的",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/markets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/margin/wallets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/today-return",
+          "method": "get"
+        }
+      ],
+      "surface": "assets"
+    },
+    {
+      "width": 320,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n搜索币种、产品或功能\n总资产估值\n9,007,199,254,740,993 USDT\n今日收益\n--\n收益暂不可用\n收益历史暂不可用\n重试\n1 天\n7 天\n30 天\n180 天\n买币\n充币\n闪兑\n现货\n合约\n理财\n借贷\n新币\n秒合约\n更多\n市场脉搏\n实时\n市场简报暂不可用\n点击重新加载行情\n行情\n更多\n自选\n主流\n热门\n涨幅榜\n新币认购\n交易对\n最新价\n24h 涨跌\n行情加载失败，请重试。\n重试\n首页\n行情\n交易\n资产\n我的",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/margin/wallets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/today-return",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/return-history",
+          "method": "get"
+        },
+        {
+          "path": "/markets",
+          "method": "get"
+        }
+      ],
+      "surface": "home"
+    },
+    {
+      "width": 390,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n搜索币种、产品或功能\n总资产估值\n9,007,199,254,740,993 USDT\n今日收益\n--\n收益暂不可用\n收益历史暂不可用\n重试\n1 天\n7 天\n30 天\n180 天\n买币\n充币\n闪兑\n现货\n合约\n理财\n借贷\n新币\n秒合约\n更多\n市场脉搏\n实时\n市场简报暂不可用\n点击重新加载行情\n行情\n更多\n自选\n主流\n热门\n涨幅榜\n新币认购\n交易对\n最新价\n24h 涨跌\n行情加载失败，请重试。\n重试\n首页\n行情\n交易\n资产\n我的",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/margin/wallets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/today-return",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/return-history",
+          "method": "get"
+        },
+        {
+          "path": "/markets",
+          "method": "get"
+        }
+      ],
+      "surface": "home"
+    },
+    {
+      "width": 1440,
+      "documentOverflow": 0,
+      "dialogOverflow": 0,
+      "dialogText": null,
+      "bodyText": "跳至主要内容\n\n信号剧场 / 01 — 06\n\n信号\n自有\n方向\n\nBTC / USDT\nETH / USDT\nSOL / USDT\n实时交易仪器\n香港 / 2026\n搜索币种、产品或功能\n总资产估值\n9,007,199,254,740,993 USDT\n今日收益\n--\n收益暂不可用\n收益历史暂不可用\n重试\n1 天\n7 天\n30 天\n180 天\n买币\n充币\n闪兑\n现货\n合约\n理财\n借贷\n新币\n秒合约\n更多\n市场脉搏\n实时\n市场简报暂不可用\n点击重新加载行情\n行情\n更多\n自选\n主流\n热门\n涨幅榜\n新币认购\n交易对\n最新价\n24h 涨跌\n行情加载失败，请重试。\n重试\n首页\n行情\n交易\n资产\n我的",
+      "inputs": [],
+      "requests": [
+        {
+          "path": "/user/market-favorites",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/accounts",
+          "method": "get"
+        },
+        {
+          "path": "/margin/wallets",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/today-return",
+          "method": "get"
+        },
+        {
+          "path": "/wallet/return-history",
+          "method": "get"
+        },
+        {
+          "path": "/markets",
+          "method": "get"
+        }
+      ],
+      "surface": "home"
+    }
+  ]
+}

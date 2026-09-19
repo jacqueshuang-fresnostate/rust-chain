@@ -256,7 +256,7 @@ function optionalInteger(value: unknown, field: string): number | undefined {
 }
 
 function requiredTimestamp(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > 8_640_000_000_000_000) {
     throw new NewCoinContractError(field)
   }
   return value < 1_000_000_000_000 ? value * 1000 : value

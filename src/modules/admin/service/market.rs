@@ -695,17 +695,17 @@ pub(crate) fn market_strategy_audit_json(strategy: &AdminMarketStrategyResponse)
     })
 }
 
-/// 校验交易对的数值不变量：价格精度与数量精度均不得为负，最小下单额必须严格大于零。
+/// 校验交易对的数值不变量：精度必须在存储支持的 0..=18，最小下单额必须正且可无损存储。
 /// 创建与更新两条路径共用本判定，因此二者对精度和下单额的要求完全一致。
-/// 这里只设下界不设上界，精度过大导致的展示或撮合问题由数据库列类型和上层配置约定兜住。
+/// 实际资产精度由事务读取资产后校验；此处不访问数据库或替配置值舍入。
 fn validate_trading_pair_config(
     price_precision: i32,
     qty_precision: i32,
     min_order_value: &BigDecimal,
 ) -> AppResult<()> {
-    if price_precision < 0 || qty_precision < 0 {
+    if !(0..=18).contains(&price_precision) || !(0..=18).contains(&qty_precision) {
         return Err(AppError::Validation(
-            "trading pair precision must be non-negative".to_owned(),
+            "trading pair precision must be between 0 and 18".to_owned(),
         ));
     }
     if min_order_value <= &BigDecimal::from(0) {
@@ -713,6 +713,7 @@ fn validate_trading_pair_config(
             "min_order_value must be positive".to_owned(),
         ));
     }
+    crate::numeric::ensure_amount_storage(min_order_value, "min_order_value")?;
     Ok(())
 }
 

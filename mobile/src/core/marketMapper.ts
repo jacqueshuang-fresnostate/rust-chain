@@ -1,6 +1,8 @@
 import { asNumber, splitSymbol } from './format.ts'
 import { tryNormalizeDecimalText } from './decimal.ts'
 import type { MarketTicker } from './types.ts'
+import { mapMarketProvenance, type MarketProvenance } from './marketProvenance.ts'
+import { requiredId, normalizeTimestamp } from './numeric.ts'
 
 export interface BackendMarketRecord {
   market_type?: string | null
@@ -13,7 +15,7 @@ export interface BackendMarketRecord {
   quote_asset?: string
 }
 
-export interface BackendTickerRecord {
+export interface BackendTickerRecord extends MarketProvenance {
   symbol?: string
   last_price?: string | number | null
   open_24h?: string | number | null
@@ -38,7 +40,8 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
   const observedAt = normalizeTimestamp(ticker.observed_at)
 
   return {
-    id: asNumber(market.id) || undefined,
+    ...mapMarketProvenance(ticker),
+    id: market.id == null ? undefined : requiredId(market.id),
     marketType: market.market_type === 'strategy' || market.market_type === 'internal' || market.market_type === 'external'
       ? market.market_type : undefined,
     symbol: `${pair.base}/${pair.quote}`,
@@ -56,6 +59,7 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
     changePercent:
       explicitChangePercent ?? (openPrice ? ((lastPrice - openPrice) / openPrice) * 100 : 0),
     observedAt,
+    sourceObservedAt: observedAt > 0 ? observedAt : undefined,
   }
 }
 
@@ -79,9 +83,4 @@ function optionalFiniteNumber(value: unknown): number | null {
 
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
-}
-
-function normalizeTimestamp(value: unknown): number {
-  const time = asNumber(value)
-  return time > 0 && time < 1_000_000_000_000 ? time * 1000 : time
 }

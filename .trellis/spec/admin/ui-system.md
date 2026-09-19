@@ -1,5 +1,27 @@
 # Admin UI System Contract
 
+## Numeric Form Controls
+
+- Monetary/rate drafts use text-valued Semi Input wrappers, not InputNumber or
+  a `Number(value)` onChange adapter. Preserve exact source text through
+  confirmation and JSON serialization; use shared decimal helpers for checks.
+  Effective precision excludes trailing zeros. No silent rounding or clamping.
+- Integer drafts that can exceed the safe range also retain raw text. Validate
+  integer lexical form before conversion, then safe-integer and domain bounds.
+  `9007199254740991.1`, `1e3` and `0x10` are not valid integer-form input.
+- Optional restriction fields distinguish blank/null from invalid nonblank
+  text. Invalid input must block saving, never silently remove a restriction.
+  Revalidate at the payload/save boundary, not only the button disabled state.
+- Authoritative amount input requires strings and actual storage/asset bounds.
+  Display-only helpers may accept legacy finite Numbers; they cannot certify
+  exact money or recover digits already lost by JSON parsing.
+- Keep finite numeric geometry, chart coordinates, resize dimensions, bounded
+  timing/reconnect jitter and explicit minute-grid scheduling as Numbers.
+  Chart conversion never overwrites exact OHLCV source text or feeds execution.
+- Test real form controls and real payload builders, not validators alone.
+  Include narrow/desktop local mocks and assert both disabled invalid inputs
+  and exact valid request bodies. Do not use production writes for verification.
+
 ## Platform Pair Default Market
 
 - `strategy/internal` pair rows expose a separate 默认行情 SideSheet. Load only

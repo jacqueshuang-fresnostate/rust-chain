@@ -1,0 +1,39 @@
+.agent-user-portfolio .semi-space,
+.agent-user-portfolio .semi-typography {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.agent-user-portfolio .semi-table-pagination-outer {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.agent-user-portfolio .semi-table-pagination-info {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.agent-user-portfolio .agent-order-countdown {
+  display: inline-block;
+  min-width: 8ch;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .agent-user-portfolio .page-header h2 {
+    font-size: 22px;
+  }
+
+  .agent-user-portfolio .semi-table-pagination-outer {
+    padding: 12px 8px;
+  }
+
+  .agent-user-portfolio .semi-page {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 0;
+    max-width: 100%;
+  }
+}

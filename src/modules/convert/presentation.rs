@@ -35,6 +35,7 @@ pub(crate) struct CreateConvertQuoteRequest {
     /// 目标资产编号。
     pub(crate) to_asset_id: u64,
     /// 源资产扣减数量，须为正、落在该方向限额内且有效小数位不超过源资产精度。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) from_amount: BigDecimal,
 }
 

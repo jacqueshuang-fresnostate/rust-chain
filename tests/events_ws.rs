@@ -287,6 +287,57 @@ async fn private_ws_receives_only_authenticated_user_broadcasts() {
 }
 
 #[tokio::test]
+async fn private_ws_closes_revoked_generation_before_delivering_events()
+-> Result<(), Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        return Ok(());
+    };
+    let pool = sqlx::mysql::MySqlPoolOptions::new().connect(&url).await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, 'unused')")
+        .bind(format!(
+            "ws-generation-{}@example.test",
+            uuid::Uuid::now_v7()
+        ))
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+    let settings = test_settings();
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let hub = EventBroadcastHub::new(16);
+    let app = routes::routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_event_broadcast_hub(hub.clone()),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let url = format!("ws://{address}/ws/private?token={token}");
+    let (mut socket, _) = connect_async(&url).await?;
+    assert!(socket.next().await.unwrap()?.is_text());
+    sqlx::query("UPDATE users SET auth_session_version = auth_session_version + 1 WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    hub.publish(EventBroadcastMessage::private_user(
+        user_id,
+        r#"{"secret":"must not deliver"}"#,
+    ));
+    assert!(matches!(
+        timeout(Duration::from_secs(7), socket.next()).await?,
+        Some(Ok(Message::Close(_))) | None
+    ));
+    assert!(
+        connect_async(&url).await.is_err(),
+        "old token must also fail a new handshake"
+    );
+    server.abort();
+    let _ = server.await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn public_ws_receives_broadcast_messages_after_subscription_confirmation() {
     let (address, hub, shutdown_tx) = spawn_events_app().await;
 

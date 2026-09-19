@@ -56,6 +56,7 @@ pub(crate) fn calculate_interest_amount(
     ensure_asset_precision_scale(precision_scale)?;
     ensure_amount_precision(principal, precision_scale, "principal")?;
     ensure_amount_precision(interest_rate, 8, "interest_rate")?;
+    crate::numeric::ensure_decimal_storage(interest_rate, 18, 8, "interest_rate")?;
     let raw_interest = match mode {
         INTEREST_MODE_FULL_TERM => principal.clone() * interest_rate.clone(),
         INTEREST_MODE_ACTUAL_DAYS => {
@@ -71,10 +72,10 @@ pub(crate) fn calculate_interest_amount(
             ));
         }
     };
-    Ok(truncate_amount_to_asset_precision(
-        &raw_interest,
-        precision_scale,
-    ))
+    let interest = truncate_amount_to_asset_precision(&raw_interest, precision_scale);
+    crate::numeric::ensure_amount_storage(&interest, "loan interest")?;
+    crate::numeric::ensure_amount_storage(&(principal + &interest), "loan repayment")?;
+    Ok(interest)
 }
 
 /// 校验并返回抵押贷的三档 LTV 阈值；信用贷则要求三项全部留空。
@@ -128,7 +129,9 @@ pub(crate) fn calculate_loan_ltv(
     ensure_positive_amount(collateral_price, "collateral_price")?;
     let collateral_value = collateral_amount.clone() * collateral_price.clone();
     ensure_positive_amount(&collateral_value, "collateral_value")?;
-    Ok((debt_amount.clone() / collateral_value).with_scale_round(18, RoundingMode::Ceiling))
+    let ltv = (debt_amount.clone() / collateral_value).with_scale_round(18, RoundingMode::Ceiling);
+    crate::numeric::ensure_amount_storage(&ltv, "loan LTV")?;
+    Ok(ltv)
 }
 
 /// 用不含除法舍入的乘法关系校验 LTV 不超过初始线。
@@ -224,6 +227,59 @@ pub(crate) fn ensure_amount_within_product_limits(
     Ok(())
 }
 
+/// 精确比较本金敞口加候选本金与可空上限；等于上限允许，零拒绝新增，null 不启用该项。
+/// 调用方审批时先排除候选自身再传入本金，禁止双计待审预留；利息、费用与其他币种不参与。
+pub(crate) fn ensure_loan_principal_exposure(
+    amount: &BigDecimal,
+    user_total: &BigDecimal,
+    product_total: &BigDecimal,
+    user_limit: Option<&BigDecimal>,
+    product_capacity: Option<&BigDecimal>,
+    overdue: bool,
+) -> AppResult<()> {
+    if overdue {
+        return Err(AppError::Validation(
+            "new borrowing is disabled while a loan is overdue".to_owned(),
+        ));
+    }
+    for (total, limit, field) in [
+        (user_total, user_limit, "user_principal_limit"),
+        (
+            product_total,
+            product_capacity,
+            "product_principal_capacity",
+        ),
+    ] {
+        if let Some(limit) = limit
+            && total + amount > *limit
+        {
+            return Err(AppError::Validation(format!(
+                "loan exposure exceeds {field}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 配置本金限额只能为非负且可无损写入 DECIMAL(38,18) 的值，不替运营选择阈值。
+/// 有效小数位由资产决定，整数部分最多二十位；null 原样保持为未启用。
+pub(crate) fn validate_loan_principal_limit(
+    value: Option<&BigDecimal>,
+    precision: i32,
+    field: &str,
+) -> AppResult<()> {
+    if let Some(value) = value {
+        ensure_non_negative_amount(value, field)?;
+        ensure_amount_precision(value, precision, field)?;
+        if value >= &BigDecimal::from(10_u64).powi(20) {
+            return Err(AppError::Validation(format!(
+                "{field} exceeds storage precision"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// 归一并校验借贷类型，先裁剪首尾空白，纯空白按缺失必填项拒绝。
 /// 只接受 credit 与 collateralized 两种取值，其中后者会在下单时强制要求抵押资产和抵押金额。
 /// 返回裁剪后的字符串供落库使用，调用方不应再使用原始未裁剪值。
@@ -309,6 +365,7 @@ pub(crate) fn ensure_amount_precision(
     field: &str,
 ) -> AppResult<()> {
     ensure_asset_precision_scale(precision_scale)?;
+    crate::numeric::ensure_amount_storage(amount, field)?;
     if amount_fits_asset_precision(amount, precision_scale) {
         return Ok(());
     }

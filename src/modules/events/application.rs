@@ -33,7 +33,7 @@ use crate::{
             service::{
                 AgentPrivateWsAuth, EventInboxConsumerService, EventInboxProductionHandler,
                 EventOutboxService, InboxRetryPolicy, PrivateWsAuth, PublishedOutboxBatch,
-                RabbitMqOutboxPublisher,
+                RabbitMqOutboxPublisher, SocketSessionValidator,
             },
         },
     },
@@ -48,14 +48,17 @@ use std::sync::Arc;
 pub(crate) async fn authorize_private_ws(
     state: &AppState,
     query: PrivateWsQuery,
-) -> AppResult<PrivateWsAuth> {
+) -> AppResult<(PrivateWsAuth, SocketSessionValidator)> {
     let token = query
         .token
         .as_deref()
         .filter(|value| !value.is_empty())
         .ok_or(AppError::Unauthorized)?;
     let claims = claims_from_bearer_token(state, token, TokenScope::User).await?;
-    PrivateWsAuth::from_user_subject(&claims.sub)
+    Ok((
+        PrivateWsAuth::from_user_subject(&claims.sub)?,
+        socket_session_validator(state.clone(), token.to_owned(), TokenScope::User),
+    ))
 }
 
 /// 校验代理私有 WebSocket 查询令牌，并回查代理账号、自身节点与全部祖先均为 active。
@@ -64,7 +67,7 @@ pub(crate) async fn authorize_private_ws(
 pub(crate) async fn authorize_agent_private_ws(
     state: &AppState,
     query: PrivateWsQuery,
-) -> AppResult<AgentPrivateWsAuth> {
+) -> AppResult<(AgentPrivateWsAuth, SocketSessionValidator)> {
     let token = query
         .token
         .as_deref()
@@ -72,7 +75,27 @@ pub(crate) async fn authorize_agent_private_ws(
         .ok_or(AppError::Unauthorized)?;
     let claims = claims_from_bearer_token(state, token, TokenScope::Agent).await?;
     let agent_id = resolve_active_agent_id(state.mysql.clone(), &claims.sub).await?;
-    Ok(AgentPrivateWsAuth { agent_id })
+    Ok((
+        AgentPrivateWsAuth { agent_id },
+        socket_session_validator(state.clone(), token.to_owned(), TokenScope::Agent),
+    ))
+}
+
+/// 将令牌验证装配为连接生命周期端口；后端不可用即关闭连接，不以缓存身份继续推送私有数据。
+fn socket_session_validator(
+    state: AppState,
+    token: String,
+    scope: TokenScope,
+) -> SocketSessionValidator {
+    Box::new(move || {
+        let state = state.clone();
+        let token = token.clone();
+        Box::pin(async move {
+            claims_from_bearer_token(&state, &token, scope)
+                .await
+                .is_ok()
+        })
+    })
 }
 
 impl PrivateWsAuth {

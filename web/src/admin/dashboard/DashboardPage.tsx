@@ -166,6 +166,7 @@ function custodyText(status: string) {
 }
 
 function displayNumber(value: number) {
+  if (!Number.isSafeInteger(value) || value < 0) return '-';
   return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(value);
 }
 

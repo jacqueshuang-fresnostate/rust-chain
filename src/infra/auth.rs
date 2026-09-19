@@ -19,6 +19,11 @@ pub const SA_TOKEN_STORAGE_KEY_PREFIX: &str = "auth:";
 /// 连接 Redis 并构造全局认证会话管理器；生产访问令牌、登录态与互斥会话均以该存储为权威来源。
 /// Redis 初始化失败必须阻止认证基础设施启动，禁止静默回退到内存存储而使旧会话失效或多实例状态分裂。
 pub async fn connect(settings: &Settings) -> AppResult<Arc<SaTokenManager>> {
+    crate::time::checked_expiry(
+        chrono::Utc::now(),
+        settings.jwt_access_ttl_seconds,
+        "access token TTL",
+    )?;
     let storage = RedisStorage::new(settings.exposed_redis_url(), SA_TOKEN_REDIS_KEY_PREFIX)
         .await
         .map_err(|error| AppError::Internal(format!("sa-token redis init failed: {error}")))?;
@@ -45,8 +50,17 @@ fn auth_manager(settings: &Settings, storage: Arc<dyn SaStorage>) -> Arc<SaToken
 /// 允许同一账号并发在线且不复用同一枚令牌，因此多设备登录会各自签发独立令牌而非共享一份。
 /// 自动续期被关闭，会话到点即失效，续期只能由客户端显式走刷新接口完成，避免长期在线绕过有效期约束。
 fn sa_token_config(settings: &Settings) -> sa_token_core::config::SaTokenConfigBuilder {
+    // 生产连接和签发都会拒绝非法 TTL；直接构造测试管理器时也不能将 u64 回绕成负数永久会话。
+    let timeout = crate::time::checked_expiry(
+        chrono::Utc::now(),
+        settings.jwt_access_ttl_seconds,
+        "access token TTL",
+    )
+    .ok()
+    .and_then(|_| i64::try_from(settings.jwt_access_ttl_seconds).ok())
+    .unwrap_or(1);
     SaTokenConfig::builder()
-        .timeout(settings.jwt_access_ttl_seconds as i64)
+        .timeout(timeout)
         .token_style(TokenStyle::Random64)
         .storage_key_prefix(SA_TOKEN_STORAGE_KEY_PREFIX)
         .is_concurrent(true)

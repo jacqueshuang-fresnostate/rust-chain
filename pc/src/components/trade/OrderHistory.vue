@@ -35,6 +35,8 @@
             <th class="pb-2">{{ $t('trade.type') }}</th>
             <th class="pb-2">{{ $t('trade.side') }}</th>
             <th class="pb-2">{{ $t('trade.trigger_price') }}</th>
+            <th class="pb-2">{{ $t('trade.trigger_direction') }}</th>
+            <th class="pb-2">{{ $t('trade.triggered_at') }}</th>
             <th class="pb-2">{{ $t('trade.price') }}</th>
             <th v-if="activeTab === 'order_history'" class="pb-2">{{ $t('trade.filled_price') }}</th>
             <th class="pb-2">{{ $t('trade.amount') }}</th>
@@ -49,6 +51,8 @@
             <td class="py-2">{{ formatOrderType(order.type) }}</td>
             <td class="py-2" :class="getOrderSideClass(order.direction)">{{ formatOrderSide(order.direction) }}</td>
             <td class="py-2">{{ formatTriggerPrice(order) }}</td>
+            <td class="py-2">{{ formatTriggerDirection(order) }}</td>
+            <td class="py-2">{{ order.triggeredAt ? formatTime(order.triggeredAt) : '--' }}</td>
             <td class="py-2">{{ formatOrderPrice(order) }}</td>
             <td v-if="activeTab === 'order_history'" class="py-2">{{ formatOptionalNumber(order.filledPrice) }}</td>
             <td class="py-2">{{ order.amount }}</td>
@@ -72,6 +76,7 @@
           <div class="flex justify-between"><span>{{ t('trade.symbol') }}</span><span class="font-mono font-medium text-foreground">{{ cancelingOrder.symbol }}</span></div>
           <div class="flex justify-between"><span>{{ t('trade.side') }}</span><span :class="getOrderSideClass(cancelingOrder.direction)" class="font-medium">{{ formatOrderSide(cancelingOrder.direction) }}</span></div>
           <div class="flex justify-between"><span>{{ t('trade.trigger_price') }}</span><span class="font-mono text-foreground">{{ formatTriggerPrice(cancelingOrder) }}</span></div>
+          <div class="flex justify-between gap-2"><span>{{ t('trade.trigger_direction') }}</span><span class="text-right text-foreground">{{ formatTriggerDirection(cancelingOrder) }}</span></div>
           <div class="flex justify-between"><span>{{ t('trade.price') }}</span><span class="font-mono text-foreground">{{ formatOrderPrice(cancelingOrder) }}</span></div>
           <div class="flex justify-between"><span>{{ t('trade.amount') }}</span><span class="font-mono text-foreground">{{ cancelingOrder.amount }}</span></div>
         </div>
@@ -187,6 +192,13 @@ const formatTriggerPrice = (order: { type?: unknown; triggerPrice?: unknown } | 
 const formatOptionalNumber = (value: unknown) => {
     const number = Number(value)
     return Number.isFinite(number) && number > 0 ? String(value) : '--'
+}
+
+const formatTriggerDirection = (order: { type?: unknown; triggerDirection?: string | null }) => {
+    if (!isStopLimitOrder(order.type)) return '--'
+    if (order.triggerDirection === 'rising') return t('trade.trigger_rising')
+    if (order.triggerDirection === 'falling') return t('trade.trigger_falling')
+    return t('trade.trigger_legacy')
 }
 
 const formatTime = (ts: number) => {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { computed, ref } from 'vue'
+import { normalizeDecimalText } from '../src/core/decimal.ts'
 import {
   assetMarkImageSourceAt,
   buildAssetMarkImageSources,
@@ -34,9 +35,9 @@ function pair(overrides: Partial<ConvertPair> = {}): ConvertPair {
     toAssetId: 20,
     toAssetSymbol: 'USDT',
     toAssetLogoUrl: 'https://cdn.example.test/usdt.png',
-    minAmount: 0.001,
+    minAmount: normalizeDecimalText('0.001'),
     maxAmount: undefined,
-    feeRate: 0.001,
+    feeRate: normalizeDecimalText('0.001'),
     enabled: true,
     ...overrides,
   }
@@ -63,11 +64,11 @@ test('闪兑交易对适配器执行双方可空 Logo 与 symbol 边界归一化
     toAssetId: 12,
     toAssetSymbol: 'USDT',
     toAssetLogoUrl: undefined,
-    minAmount: 0.001,
+    minAmount: '0.001',
     maxAmount: undefined,
     minAmountText: '0.001',
     maxAmountText: undefined,
-    feeRate: 0.002,
+    feeRate: '0.002',
     enabled: true,
   })
 
@@ -78,7 +79,8 @@ test('闪兑交易对适配器执行双方可空 Logo 与 symbol 边界归一化
     from_asset_logo_url: null,
     to_asset_id: 14,
     to_asset_symbol: 'USDC',
-    min_amount: 1,
+    min_amount: '1',
+    fee_rate: '0',
   })
   assert.equal(missingLogos.fromAssetLogoUrl, undefined)
   assert.equal(missingLogos.toAssetLogoUrl, undefined)
@@ -140,11 +142,11 @@ test('单条后端闪兑配置投影为双向选择，并为反向使用目标�
     toAssetId: 20,
     toAssetSymbol: 'USDT',
     toAssetLogoUrl: 'https://cdn.example.test/usdt.png',
-    minAmount: 0.001,
-    maxAmount: 2,
+    minAmount: '0.001',
+    maxAmount: '2',
     minAmountText: '0.001',
     maxAmountText: '2',
-    feeRate: 0.002,
+    feeRate: '0.002',
     enabled: true,
   })
   assert.deepEqual(directions[1], {
@@ -155,11 +157,11 @@ test('单条后端闪兑配置投影为双向选择，并为反向使用目标�
     toAssetId: 10,
     toAssetSymbol: 'BTC',
     toAssetLogoUrl: 'https://cdn.example.test/btc.png',
-    minAmount: 10,
-    maxAmount: 5000,
+    minAmount: '10',
+    maxAmount: '5000',
     minAmountText: '10',
     maxAmountText: '5000',
-    feeRate: 0.002,
+    feeRate: '0.002',
     enabled: true,
   })
 
@@ -178,9 +180,9 @@ test('后端显式反向配置优先于另一行的反向投影', () => {
       from_asset_symbol: 'BTC',
       to_asset_id: 20,
       to_asset_symbol: 'USDT',
-      min_amount: 0.001,
-      target_min_amount: 10,
-      fee_rate: 0.001,
+      min_amount: '0.001',
+      target_min_amount: '10',
+      fee_rate: '0.001',
       enabled: true,
     },
     {
@@ -189,9 +191,9 @@ test('后端显式反向配置优先于另一行的反向投影', () => {
       from_asset_symbol: 'USDT',
       to_asset_id: 10,
       to_asset_symbol: 'BTC',
-      min_amount: 25,
-      target_min_amount: 0.002,
-      fee_rate: 0.009,
+      min_amount: '25',
+      target_min_amount: '0.002',
+      fee_rate: '0.009',
       enabled: true,
     },
   ]
@@ -199,8 +201,8 @@ test('后端显式反向配置优先于另一行的反向投影', () => {
   const directions = mapDirectionalConvertPairs(rows)
   assert.equal(directions.length, 2)
   assert.deepEqual(directions.map((item) => [item.id, item.fromAssetSymbol, item.toAssetSymbol, item.minAmount, item.feeRate]), [
-    [51, 'BTC', 'USDT', 0.001, 0.001],
-    [52, 'USDT', 'BTC', 25, 0.009],
+    [51, 'BTC', 'USDT', '0.001', '0.001'],
+    [52, 'USDT', 'BTC', '25', '0.009'],
   ])
 })
 
@@ -348,5 +350,5 @@ test('闪兑调换按钮使用方向选择键并清理旧报价反馈', () => {
   assert.match(swapSource, /function swapDirection\(\): void \{[\s\S]*?resolveReverseSwapPair\(pairs\.value, pair\)[\s\S]*?pairSelectionKey\.value = swapPairSelectionKey\(reversed\)[\s\S]*?quote\.value = null[\s\S]*?error\.value = ''[\s\S]*?success\.value = ''/)
   assert.match(swapSource, /@click="swapDirection"/)
   assert.doesNotMatch(swapSource, /const pairId = ref/)
-  assert.match(swapApiSource, /from_asset_id: pair\.fromAssetId,[\s\S]*?to_asset_id: pair\.toAssetId,[\s\S]*?from_amount: normalizeDecimalText\(amount\)/)
+  assert.match(swapApiSource, /from_asset_id: requiredId\(pair\.fromAssetId\),[\s\S]*?to_asset_id: requiredId\(pair\.toAssetId\),[\s\S]*?from_amount: normalizeDecimalText\(amount\)/)
 })

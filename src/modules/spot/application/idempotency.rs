@@ -50,6 +50,7 @@ fn spot_order_idempotency_check_for_request(
             OrderType::Market => None,
         },
         trigger_price: request.trigger_price.clone(),
+        trigger_direction: request.trigger_direction,
         quantity: request.quantity.clone(),
         reserved_amount: expected_reservation_price
             .map(|price| spot_reservation_amount(request.side, price, &request.quantity)),

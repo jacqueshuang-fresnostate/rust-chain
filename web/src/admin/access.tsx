@@ -40,6 +40,7 @@ const frontendPathResources: Array<[string, string]> = [
   ['/admin/wallet/deposit-network-configs', 'wallet.networks'],
   ['/admin/wallet/deposit-address-pool', 'wallet.address_pool'],
   ['/admin/wallet/withdrawals', 'wallet.withdrawals'],
+  ['/admin/wallet/withdrawal-policies', 'system.security'],
   ['/admin/wallet/deposits', 'wallet.deposits'],
   ['/admin/wallet/accounts', 'wallet.accounts'],
   ['/admin/wallet/ledger', 'wallet.ledger'],
@@ -100,6 +101,7 @@ const apiPathResources: Array<[string, string]> = [
   ['/seconds-contracts/products', 'seconds.products'],
   ['/seconds-contracts/orders', 'seconds.orders'],
   ['/wallet/withdrawals', 'wallet.withdrawals'],
+  ['/wallet/withdrawal-policies', 'system.security'],
   ['/wallet/deposits', 'wallet.deposits'],
   ['/wallet/accounts', 'wallet.accounts'],
   ['/wallet/ledger', 'wallet.ledger'],
@@ -171,6 +173,13 @@ export function hasAdminPermission(access: AdminAccess, permission: string): boo
 
 export function adminReadPermissionForPath(path: string): string {
   const pathname = path.split('?')[0];
+  if (pathname.startsWith('/admin/financial-reconciliation')) {
+    return pathname === '/admin/financial-reconciliation' ? 'governance.financial.read' : 'admin.unmapped.read';
+  }
+  if (pathname.startsWith('/admin/governance/financial-retries')) {
+    return pathname === '/admin/governance/financial-retries'
+      ? 'governance.financial.read' : 'admin.unmapped.read';
+  }
   const resource = frontendPathResources.find(([prefix]) => pathMatchesPermissionPrefix(pathname, prefix))?.[1] ?? 'admin.unmapped';
   return `${resource}.read`;
 }
@@ -183,6 +192,16 @@ export function adminPermissionForEndpoint(endpoint: string, action: AdminMutati
 
 function apiPermissionResource(path: string): string {
   const pathname = path.split('?')[0];
+  if (pathname.startsWith('/financial-reconciliation')) {
+    return financialReconciliationPathKind(pathname) ? 'governance.financial' : 'admin.unmapped';
+  }
+  if (pathname.startsWith('/agent-commissions/') && pathname.includes('/reversal')) {
+    return isCommissionReversal(pathname) ? 'agents.commissions' : 'admin.unmapped';
+  }
+  if (pathname.startsWith('/governance/financial-retries')) {
+    return pathname === '/governance/financial-retries' || isFinancialRetryRequeue(pathname) || isFinancialRetryIncident(pathname)
+      ? 'governance.financial' : 'admin.unmapped';
+  }
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 3 && segments[0] === 'new-coins' && segments[2] === 'reconciliation') {
     return /^[1-9]\d*$/.test(segments[1]) ? 'new_coin.distributions' : 'admin.unmapped';
@@ -199,6 +218,11 @@ export function adminActionForRequest(endpoint: string, method: AdminHttpMethod)
   const path = endpoint.replace(/^\/admin\/api\/v1/, '').split('?')[0];
   if (path.startsWith('/auth/') || path === '/auth' || path === '/access/me') return null;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return 'read';
+  if (method === 'POST' && isCommissionReversal(path)) return 'settle';
+  if (method === 'POST') {
+    const kind = financialReconciliationPathKind(path);
+    if (kind === 'snapshots' || kind === 'followups') return 'operate';
+  }
   if (
     path.includes('/approve') ||
     path.includes('/reject') ||
@@ -224,6 +248,46 @@ export function adminActionForRequest(endpoint: string, method: AdminHttpMethod)
 }
 
 export function adminPermissionForRequest(endpoint: string, method: AdminHttpMethod): string | null {
+  const path = endpoint.replace(/^\/admin\/api\/v1/, '').split('?')[0];
+  if (path.startsWith('/seconds-contracts/') && (path.includes('/refund-policy') || path.includes('/principal-refund'))) {
+    const read = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const match = /^\/seconds-contracts\/(products|orders)\/([1-9]\d*)\/(refund-policy|principal-refund)$/.exec(path);
+    if (match && BigInt(match[2]) <= 18446744073709551615n) {
+      if (match[1] === 'products' && match[3] === 'refund-policy') {
+        if (read) return 'seconds.products.read';
+        if (method === 'PATCH') return 'seconds.products.write';
+      }
+      if (match[1] === 'orders' && match[3] === 'principal-refund') {
+        if (read) return 'seconds.orders.read';
+        if (method === 'POST') return 'seconds.orders.settle';
+      }
+    }
+    return `admin.unmapped.${read ? 'read' : 'write'}`;
+  }
+  if (path.startsWith('/financial-reconciliation')) {
+    const read = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const kind = financialReconciliationPathKind(path);
+    if ((kind === 'report' && read) || (kind && method === 'GET')) return 'governance.financial.read';
+    if (method === 'POST' && (kind === 'snapshots' || kind === 'followups')) return 'governance.financial.operate';
+    return `admin.unmapped.${read ? 'read' : 'write'}`;
+  }
+  if (path.startsWith('/wallet/withdrawal-policies')) {
+    const read = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const match = /^\/wallet\/withdrawal-policies\/([1-9]\d*)$/.exec(path);
+    const valid = Boolean(match && BigInt(match[1]) <= 18446744073709551615n);
+    return `${valid && (read || method === 'PATCH') ? 'system.security' : 'admin.unmapped'}.${read ? 'read' : 'write'}`;
+  }
+  if (path.startsWith('/agent-commissions/') && path.includes('/reversal')) {
+    if (method === 'POST' && isCommissionReversal(path)) return 'agents.commissions.settle';
+    return `admin.unmapped.${['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'read' : 'write'}`;
+  }
+  if (path.startsWith('/governance/financial-retries')) {
+    const read = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+    if (read && path === '/governance/financial-retries') return 'governance.financial.read';
+    if (method === 'POST' && isFinancialRetryRequeue(path)) return 'governance.financial.operate';
+    if (method === 'PATCH' && isFinancialRetryIncident(path)) return 'governance.financial.operate';
+    return `admin.unmapped.${read ? 'read' : 'write'}`;
+  }
   const action = adminActionForRequest(endpoint, method);
   if (!action) return null;
   if (action === 'read') {
@@ -232,6 +296,29 @@ export function adminPermissionForRequest(endpoint: string, method: AdminHttpMet
     return `${resource}.read`;
   }
   return adminPermissionForEndpoint(endpoint, action);
+}
+
+function financialReconciliationPathKind(path: string): 'report' | 'snapshots' | 'snapshot' | 'followups' | null {
+  if (path === '/financial-reconciliation') return 'report';
+  if (path === '/financial-reconciliation/snapshots') return 'snapshots';
+  const match = /^\/financial-reconciliation\/snapshots\/([1-9]\d{0,19})(\/follow-ups)?$/.exec(path);
+  if (!match || match[0] !== path || BigInt(match[1]) > 18446744073709551615n) return null;
+  return match[2] ? 'followups' : 'snapshot';
+}
+
+function isFinancialRetryRequeue(path: string): boolean {
+  const match = /^\/governance\/financial-retries\/(earn|loan|commission)\/([1-9]\d*)\/requeue$/.exec(path);
+  return Boolean(match && BigInt(match[2]) <= 18446744073709551615n);
+}
+
+function isFinancialRetryIncident(path: string): boolean {
+  const match = /^\/governance\/financial-retries\/(earn|loan|commission|seconds)\/([1-9]\d*)\/incident$/.exec(path);
+  return Boolean(match && BigInt(match[2]) <= 18446744073709551615n);
+}
+
+function isCommissionReversal(path: string): boolean {
+  const match = /^\/agent-commissions\/([1-9]\d*)\/reversal$/.exec(path);
+  return Boolean(match && BigInt(match[1]) <= 18446744073709551615n);
 }
 
 function parseAdminAccess(value: unknown): AdminAccess {

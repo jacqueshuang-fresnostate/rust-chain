@@ -1,3 +1,5 @@
+import { decimalDivide, decimalMultiply, normalizeDecimalText, type DecimalText } from './decimal.ts'
+
 /** 手机端部分平仓允许的最小整数比例。 */
 export const MARGIN_CLOSE_MIN_PERCENTAGE = 1
 /** 手机端部分平仓允许的最大整数比例。 */
@@ -30,4 +32,18 @@ export function marginClosePreviewAmount(
   const normalizedPercentage = normalizeMarginClosePercentage(percentage)
   const result = amount * normalizedPercentage / 100
   return Number(result.toPrecision(15))
+}
+
+/** Preserve exact source digits in confirmation previews, including sub-asset dust. */
+export function marginClosePreviewText(
+  amount: DecimalText | null | undefined,
+  percentage: number,
+): DecimalText | null {
+  if (amount == null) return null
+  const ratio = decimalDivide(
+    normalizeDecimalText(String(normalizeMarginClosePercentage(percentage))),
+    normalizeDecimalText('100'),
+    2,
+  )
+  return decimalMultiply(amount, ratio)
 }

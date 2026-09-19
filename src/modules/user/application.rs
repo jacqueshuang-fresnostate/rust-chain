@@ -553,7 +553,8 @@ pub(crate) async fn change_user_password(
     tx.commit().await?;
 
     // 密码变更后必须撤销旧会话并签发新 token，避免旧凭证继续访问用户资产相关接口。
-    let actor = AuthActor::new(ActorType::User, user.id, Some(user.id));
+    let actor = AuthActor::new(ActorType::User, user.id, Some(user.id))
+        .with_auth_session_version(user.auth_session_version + 1);
     revoke_actor_auth_sessions(state, &actor).await?;
     let project_refresh_tokens = state.redis.clone().map(|manager| {
         Arc::new(RedisProjectRefreshTokenRepository::new(manager))

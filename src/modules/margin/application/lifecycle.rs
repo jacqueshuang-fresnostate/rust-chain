@@ -15,18 +15,18 @@ use crate::{
         events::EventBroadcastHub,
         margin::{
             domain::{
-                accumulate_margin_realized_pnl, allocate_margin_close_slice, margin_mark_pnl,
-                margin_position_payout_amount,
+                accumulate_margin_realized_pnl, allocate_margin_close_slice_at_precision,
+                margin_mark_pnl, margin_position_payout_amount,
             },
             infrastructure::{
                 LockedMarginPositionRow, MarginCloseExecutionWrite,
                 MarginPositionPartialCloseWrite, apply_cross_margin_position_settlement,
                 bump_cross_margin_account_version, cached_margin_mark_price,
-                credit_margin_position_amount, ensure_and_lock_cross_margin_account,
+                claim_cross_margin_account_for_close, credit_margin_position_amount,
                 insert_margin_close_execution, load_cancelable_position_ids,
-                load_margin_close_execution_by_id, load_margin_close_execution_by_key_readonly,
-                load_open_position_ids, load_position_by_id, load_user_position_by_id,
-                lock_margin_close_execution_by_key, lock_user_position_by_id,
+                load_margin_close_execution_by_id, load_margin_close_execution_by_key_in_tx,
+                load_margin_close_execution_by_key_readonly, load_open_position_ids,
+                load_position_by_id, load_user_position_by_id, lock_user_position_by_id,
                 mark_position_canceled, mark_position_closed, mark_position_partially_closed,
                 require_active_cross_margin_account,
             },
@@ -57,6 +57,8 @@ struct NormalizedCloseRequest {
 /// 显式请求按加锁后的剩余仓位切出 1..=100% 并先占用用户级幂等键；部分执行缩减四类敞口，
 /// 100% 才进入 closed。全仓以有符号切片权益更新共享钱包，逐仓按资金域返还非负切片权益。
 /// 执行记录、余额、流水、仓位剩余值和全仓版本在同一事务提交；唯一键并发败方先回滚再重放。
+/// 幂等复查必须是事务内首次一致性读；前置账户创建/账户锁/仓位锁均为当前读或写入，
+/// 保证等待同仓位前序提交后可见其执行记录，同时不给不存在的用户级幂等键加间隙锁。
 pub(crate) async fn close_margin_position(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -81,16 +83,16 @@ pub(crate) async fn close_margin_position(
         .ok_or(AppError::NotFound)?;
     let mut tx = pool.begin().await?;
     let cross_account = if scope.margin_mode == "cross" {
-        Some(ensure_and_lock_cross_margin_account(&mut tx, user_id, scope.margin_asset).await?)
+        Some(claim_cross_margin_account_for_close(&mut tx, user_id, scope.margin_asset).await?)
     } else {
         None
     };
-    let Some(position) = lock_user_position_by_id(&mut tx, user_id, position_id).await? else {
+    let Some(mut position) = lock_user_position_by_id(&mut tx, user_id, position_id).await? else {
         return Err(AppError::NotFound);
     };
     if let Some(idempotency_key) = request.idempotency_key.as_deref()
         && let Some(execution) =
-            lock_margin_close_execution_by_key(&mut tx, user_id, idempotency_key).await?
+            load_margin_close_execution_by_key_in_tx(&mut tx, user_id, idempotency_key).await?
     {
         ensure_close_execution_matches(&execution, position_id, request.percentage)?;
         let position = load_position_by_id(&mut tx, position.id).await?;
@@ -135,21 +137,41 @@ pub(crate) async fn close_margin_position(
         require_active_cross_margin_account(account)?;
     }
     let mark_price = cached_margin_mark_price(redis, position.pair_id, &position.symbol).await?;
-    let close_slice = allocate_margin_close_slice(
+    let precision = crate::modules::margin::infrastructure::load_margin_asset_precision(
+        &mut tx,
+        position.margin_asset,
+    )
+    .await?;
+    if let Some(interest) = crate::modules::margin::infrastructure::accrue_locked_position_interest(
+        &mut tx,
+        position.id,
+        Utc::now(),
+    )
+    .await?
+    {
+        position.interest_amount = interest;
+    }
+    let close_slice = allocate_margin_close_slice_at_precision(
         &position.margin_amount,
         &position.notional_amount,
         &position.borrowed_amount,
         &position.interest_amount,
         request.percentage,
+        precision,
     )
     .map_err(|message| AppError::Validation(message.to_owned()))?;
-    let realized_pnl = margin_mark_pnl(
+    let raw_realized_pnl = margin_mark_pnl(
         &position.direction,
         &close_slice.close_notional_amount,
         entry_price,
         &mark_price,
     )
     .map_err(|message| AppError::Validation(message.to_owned()))?;
+    let realized_pnl = crate::modules::margin::amounts::generated_amount(
+        &raw_realized_pnl,
+        precision,
+        "margin realized pnl",
+    )?;
     let cumulative_realized_pnl =
         accumulate_margin_realized_pnl(position.realized_pnl.as_ref(), &realized_pnl);
     let position_equity = (close_slice.close_margin_amount.clone() + realized_pnl.clone()
@@ -165,6 +187,13 @@ pub(crate) async fn close_margin_position(
     } else {
         payout_amount.clone()
     };
+    for amount in [
+        &cumulative_realized_pnl,
+        &position_equity,
+        &settlement_amount,
+    ] {
+        crate::numeric::ensure_amount_storage(amount, "margin close settlement")?;
+    }
     let execution_id = if let Some(idempotency_key) = request.idempotency_key.as_deref() {
         match insert_margin_close_execution(
             &mut tx,
@@ -233,6 +262,25 @@ pub(crate) async fn close_margin_position(
         )
         .await?;
     }
+    let journal_key = match execution_id {
+        Some(id) => format!("margin:execution:{id}:close"),
+        None => format!("margin:{}:close", position.id),
+    };
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        &mut tx,
+        "margin",
+        &journal_key,
+        position.margin_asset,
+        "margin_position",
+        position.id,
+        &crate::modules::margin::journal::closing_legs(
+            &close_slice.close_margin_amount,
+            &settlement_amount,
+            &realized_pnl,
+            &close_slice.close_interest_amount,
+        ),
+    )
+    .await?;
     if close_slice.fully_closed {
         mark_position_closed(
             &mut tx,
@@ -447,6 +495,16 @@ pub(crate) async fn cancel_margin_position(
     )
     .await?;
     mark_position_canceled(&mut tx, user_id, position.id, Utc::now()).await?;
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        &mut tx,
+        "margin",
+        &format!("margin:{}:cancel", position.id),
+        position.margin_asset,
+        "margin_position",
+        position.id,
+        &crate::modules::margin::journal::cancellation_legs(&position.margin_amount),
+    )
+    .await?;
     let position = load_position_by_id(&mut tx, position.id).await?;
     tx.commit().await?;
     Ok((position, true))

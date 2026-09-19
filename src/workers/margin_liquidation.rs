@@ -16,8 +16,8 @@ use crate::{
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
         margin::domain::{
-            MarkedCrossMarginPosition, accumulate_margin_realized_pnl,
-            evaluate_margin_position_risk, evaluate_marked_cross_margin,
+            CrossMarginPositionRisk, MarkedCrossMarginPosition, accumulate_margin_realized_pnl,
+            evaluate_cross_margin, evaluate_margin_position_risk, evaluate_marked_cross_margin,
         },
         margin::infrastructure::{
             apply_cross_margin_account_settlement, credit_margin_position_amount,
@@ -166,6 +166,7 @@ struct LockedMarginPosition {
 /// Redis ticker 缓存中强平关心的两个字段，其余字段反序列化时忽略。
 #[derive(Debug, Deserialize)]
 struct CachedTickerPayload {
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     last_price: BigDecimal,
     #[serde(with = "unix_millis")]
     observed_at: DateTime<Utc>,
@@ -326,7 +327,7 @@ async fn run_once_with_dependencies_and_events(
                         schedule_next_liquidation_attempt(
                             pool,
                             position_id,
-                            now + chrono::TimeDelta::seconds(60),
+                            checked_schedule_time(now, 60)?,
                         )
                         .await?;
                     }
@@ -406,7 +407,13 @@ async fn run_once_with_dependencies_and_events(
 /// 循环永不返回 Ok，只会在被外部取消时结束；轮次级错误只写日志，不会让任务退出。
 /// 使用 tokio 的 `interval`，若某轮执行超过间隔时长，下一次 tick 会立即触发而不是累积补齐。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
-    let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
+    let duration = Duration::from_secs(interval_seconds.max(1));
+    if Instant::now().checked_add(duration).is_none() {
+        return Err(AppError::Validation(
+            "margin liquidation interval overflow".to_owned(),
+        ));
+    }
+    let mut ticker = interval(duration);
 
     loop {
         ticker.tick().await;
@@ -447,7 +454,7 @@ async fn fetch_open_positions(
            LIMIT ?"#,
     )
     .bind(now.naive_utc())
-    .bind(limit.clamp(1, 500) as i64)
+    .bind(i64::from(limit.clamp(1, 500)))
     .fetch_all(pool)
     .await
     .map_err(AppError::from)
@@ -474,7 +481,7 @@ async fn fetch_open_cross_accounts(
            LIMIT ?"#,
     )
     .bind(now.naive_utc())
-    .bind(limit.clamp(1, 100) as i64)
+    .bind(i64::from(limit.clamp(1, 100)))
     .fetch_all(pool)
     .await
     .map_err(AppError::from)
@@ -548,7 +555,9 @@ async fn cached_ticker_price(
             "margin ticker is from the future".to_owned(),
         ));
     }
-    if ticker.observed_at < validated_logical_at - chrono::TimeDelta::seconds(60) {
+    if validated_logical_at.signed_duration_since(ticker.observed_at)
+        > chrono::TimeDelta::seconds(60)
+    {
         return Err(AppError::Validation("margin ticker is stale".to_owned()));
     }
     Ok(Some(MarginLiquidationMark {
@@ -568,7 +577,9 @@ fn logical_time_after(
             "margin ticker elapsed time is out of range: {error}"
         ))
     })?;
-    Ok(logical_time + elapsed)
+    logical_time
+        .checked_add_signed(elapsed)
+        .ok_or_else(|| AppError::Validation("margin liquidation clock overflow".to_owned()))
 }
 
 /// 把扫描使用的逻辑时钟加上真实等锁时长，避免原本新鲜的价格在事务阻塞后陈旧却仍被提交。
@@ -579,7 +590,7 @@ fn ensure_liquidation_mark_fresh(mark: &MarginLiquidationMark) -> AppResult<()> 
             "margin ticker is from the future".to_owned(),
         ));
     }
-    if mark.observed_at < effective_now - chrono::TimeDelta::seconds(60) {
+    if effective_now.signed_duration_since(mark.observed_at) > chrono::TimeDelta::seconds(60) {
         return Err(AppError::Validation("margin ticker is stale".to_owned()));
     }
     Ok(())
@@ -603,7 +614,7 @@ async fn liquidate_position_by_id(
     now: DateTime<Utc>,
 ) -> AppResult<LiquidationOutcome> {
     let mut tx = pool.begin().await?;
-    let Some(position) = lock_position_by_id(&mut tx, position_id).await? else {
+    let Some(mut position) = lock_position_by_id(&mut tx, position_id).await? else {
         tx.rollback().await?;
         return Ok(LiquidationOutcome::Skipped);
     };
@@ -611,13 +622,22 @@ async fn liquidate_position_by_id(
         tx.rollback().await?;
         return Ok(LiquidationOutcome::Skipped);
     }
+    if let Some(interest) = crate::modules::margin::infrastructure::accrue_locked_position_interest(
+        &mut tx,
+        position.id,
+        now,
+    )
+    .await?
+    {
+        position.interest_amount = interest;
+    }
     let Some(entry_price) = position.entry_price.as_ref() else {
         return Err(AppError::Validation(
             "margin entry price is required for liquidation".to_owned(),
         ));
     };
     ensure_liquidation_mark_fresh(mark)?;
-    let risk_state = margin_liquidation_risk_state(
+    let mut risk_state = margin_liquidation_risk_state(
         &position.direction,
         &position.margin_amount,
         &position.notional_amount,
@@ -630,11 +650,38 @@ async fn liquidate_position_by_id(
         tx.rollback().await?;
         return Ok(LiquidationOutcome::Skipped);
     }
+    let precision = crate::modules::margin::infrastructure::load_margin_asset_precision(
+        &mut tx,
+        position.margin_asset,
+    )
+    .await?;
+    crate::modules::margin::amounts::quantize_settlement_risk(
+        &mut risk_state,
+        &position.margin_amount,
+        &position.interest_amount,
+        precision,
+    )?;
     let cumulative_realized_pnl =
         accumulate_margin_realized_pnl(position.realized_pnl.as_ref(), &risk_state.realized_pnl);
+    crate::numeric::ensure_amount_storage(&cumulative_realized_pnl, "margin cumulative pnl")?;
 
     let payout_amount = non_negative_amount(&risk_state.equity);
     let bad_debt_amount = isolated_liquidation_bad_debt_amount(&risk_state.equity);
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        &mut tx,
+        "margin",
+        &format!("margin:{}:liquidate", position.id),
+        position.margin_asset,
+        "margin_position",
+        position.id,
+        &crate::modules::margin::journal::closing_legs(
+            &position.margin_amount,
+            &payout_amount,
+            &risk_state.realized_pnl,
+            &position.interest_amount,
+        ),
+    )
+    .await?;
     credit_margin_position_amount(
         &mut tx,
         position.user_id,
@@ -724,7 +771,7 @@ async fn liquidate_cross_account(
 ) -> AppResult<LiquidationOutcome> {
     let mut tx = pool.begin().await?;
     let account = ensure_and_lock_cross_margin_account(&mut tx, user_id, margin_asset).await?;
-    let positions = sqlx::query_as::<_, LockedCrossMarginPosition>(
+    let mut positions = sqlx::query_as::<_, LockedCrossMarginPosition>(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
                   positions.margin_asset, positions.wallet_scope, positions.direction,
                   positions.margin_amount, positions.notional_amount, positions.interest_amount,
@@ -749,6 +796,18 @@ async fn liquidate_cross_account(
         return Err(AppError::Conflict(
             "liquidated cross margin account still has opened positions".to_owned(),
         ));
+    }
+    for position in &mut positions {
+        if let Some(interest) =
+            crate::modules::margin::infrastructure::accrue_locked_position_interest(
+                &mut tx,
+                position.id,
+                now,
+            )
+            .await?
+        {
+            position.interest_amount = interest;
+        }
     }
 
     let wallet_equity = sqlx::query_scalar::<_, BigDecimal>(
@@ -793,8 +852,35 @@ async fn liquidate_cross_account(
         });
         mark_snapshots.push((entry_price.clone(), mark.price.clone()));
     }
-    let evaluated = evaluate_marked_cross_margin(&wallet_equity, &marked_positions)
+    let mut evaluated = evaluate_marked_cross_margin(&wallet_equity, &marked_positions)
         .map_err(|message| AppError::Validation(message.to_owned()))?;
+    if evaluated.account.should_liquidate {
+        let precision = crate::modules::margin::infrastructure::load_margin_asset_precision(
+            &mut tx,
+            margin_asset,
+        )
+        .await?;
+        let mut settlement_positions = Vec::with_capacity(positions.len());
+        let mut collateral = BigDecimal::from(0);
+        for (position, risk) in positions.iter().zip(&mut evaluated.positions) {
+            crate::modules::margin::amounts::quantize_settlement_risk(
+                risk,
+                &position.margin_amount,
+                &position.interest_amount,
+                precision,
+            )?;
+            collateral += &position.margin_amount;
+            settlement_positions.push(CrossMarginPositionRisk {
+                unrealized_pnl: risk.realized_pnl.clone(),
+                interest_amount: position.interest_amount.clone(),
+                maintenance_margin: risk.maintenance_margin.clone(),
+            });
+        }
+        evaluated.account =
+            evaluate_cross_margin(&wallet_equity, &collateral, &settlement_positions);
+        // 是否触发仍按未量化风险判定，结算审计和坏账则使用各仓实际量化后的同一金额。
+        evaluated.account.should_liquidate = true;
+    }
     let account_risk = evaluated.account;
     let risk_version = update_locked_cross_margin_risk(
         &mut tx,
@@ -828,6 +914,24 @@ async fn liquidate_cross_account(
         &reference_id,
     )
     .await?;
+    let collateral = positions.iter().fold(BigDecimal::from(0), |sum, position| {
+        sum + &position.margin_amount
+    });
+    crate::modules::wallet::infrastructure::insert_platform_journal_with_reference_in_tx(
+        &mut tx,
+        "margin",
+        &format!("margin:cross:{reference_id}:liquidate"),
+        margin_asset,
+        "margin_cross_account",
+        &reference_id,
+        &crate::modules::margin::journal::cross_liquidation_legs(
+            &collateral,
+            &wallet_equity,
+            &account_risk.unrealized_pnl,
+            &account_risk.interest_amount,
+        ),
+    )
+    .await?;
 
     let mut events = Vec::with_capacity(positions.len());
     for ((position, risk_state), (entry_price, mark_price)) in positions
@@ -838,6 +942,7 @@ async fn liquidate_cross_account(
         let realized_pnl = risk_state.realized_pnl;
         let cumulative_realized_pnl =
             accumulate_margin_realized_pnl(position.realized_pnl.as_ref(), &realized_pnl);
+        crate::numeric::ensure_amount_storage(&cumulative_realized_pnl, "margin cumulative pnl")?;
         let maintenance_margin = risk_state.maintenance_margin;
         let payout_amount = BigDecimal::from(0).with_scale(18);
         let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
@@ -1074,7 +1179,7 @@ async fn reschedule_liquidation_attempt(
     position_id: u64,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
-    schedule_next_liquidation_attempt(pool, position_id, now + chrono::TimeDelta::seconds(60)).await
+    schedule_next_liquidation_attempt(pool, position_id, checked_schedule_time(now, 60)?).await
 }
 
 /// 把风险已恢复的安全仓位推迟五秒后再查，退避远短于异常路径的六十秒。
@@ -1085,7 +1190,18 @@ async fn reschedule_safe_liquidation_check(
     position_id: u64,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
-    schedule_next_liquidation_attempt(pool, position_id, now + chrono::TimeDelta::seconds(5)).await
+    schedule_next_liquidation_attempt(pool, position_id, checked_schedule_time(now, 5)?).await
+}
+
+/// 调度时间越界直接失败，不允许溢出 panic 或回绕后进入紧密重试。
+fn checked_schedule_time(now: DateTime<Utc>, seconds: i64) -> AppResult<DateTime<Utc>> {
+    let duration = chrono::TimeDelta::try_seconds(seconds)
+        .ok_or_else(|| AppError::Validation("margin liquidation schedule overflow".to_owned()))?;
+    let next = now
+        .checked_add_signed(duration)
+        .ok_or_else(|| AppError::Validation("margin liquidation schedule overflow".to_owned()))?;
+    crate::time::ensure_timestamp_storage(&next, "margin liquidation schedule")?;
+    Ok(next)
 }
 
 /// 直接在连接池上更新仓位的下次强平检查时间，不参与任何强平事务。
@@ -1140,6 +1256,7 @@ fn decimal_amount_string(amount: &BigDecimal) -> String {
 /// 校验入场价或标记价严格大于零，`label` 只用于拼出可定位的错误文案。
 /// 零价会让盈亏公式除零，负价会算出方向相反的结果，两者都必须在参与结算前拦下。
 fn validate_positive_decimal(amount: &BigDecimal, label: &str) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, label)?;
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(format!("{label} must be positive")));
     }
@@ -1171,11 +1288,20 @@ fn env_bool(key: &str, default: bool) -> bool {
 }
 
 /// 读取无符号 64 位整型环境变量，用于强平扫描周期秒数，负值和非数字都回落默认。
-/// 这里不夹范围，配置成零时由运行循环用 `max(1)` 兜底为至少一秒，不会变成忙轮询。
+/// 越过有符号时长或单调时钟范围时回落默认；配置成零仍兼容为至少一秒。
 fn env_u64(key: &str, default: u64) -> u64 {
     env::var(key)
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| {
+            i64::try_from(*seconds)
+                .ok()
+                .and_then(chrono::TimeDelta::try_seconds)
+                .is_some()
+                && Instant::now()
+                    .checked_add(Duration::from_secs(*seconds))
+                    .is_some()
+        })
         .unwrap_or(default)
 }
 

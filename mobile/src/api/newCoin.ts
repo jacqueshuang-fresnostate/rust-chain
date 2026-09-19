@@ -1,4 +1,5 @@
 import { client, publicApiRequestConfig, requestUrl } from './client'
+import { requiredId } from '@/core/numeric'
 import {
   createReferenceRequestKey,
   referenceRequestRegistry,
@@ -56,6 +57,7 @@ export async function subscribeNewCoin(input: {
   quoteAmount: DecimalText
   issuePrice: DecimalText
 }): Promise<void> {
+  requiredId(input.quoteAssetId)
   const quoteAmount = normalizeDecimalText(input.quoteAmount)
   const issuePrice = normalizeDecimalText(input.issuePrice)
   if (decimalCompare(issuePrice, normalizeDecimalText('0')) <= 0) {
@@ -95,6 +97,7 @@ export async function createNewCoinPurchase(input: {
   price: DecimalText
   quantity: DecimalText
 }): Promise<void> {
+  requiredId(input.pairId)
   await client.post(requestUrl(`/new-coins/${encodeURIComponent(input.symbol)}/purchase`), {
     pair_id: input.pairId,
     price: normalizeDecimalText(input.price),
@@ -108,6 +111,7 @@ export async function payNewCoinUnlockFee(input: {
   paymentAssetId: number
   amount: DecimalText
 }): Promise<void> {
+  requiredId(input.paymentAssetId)
   await client.post(requestUrl(`/new-coins/unlocks/${encodeURIComponent(input.idempotencyKey)}/pay-fee`), {
     payment_asset_id: input.paymentAssetId,
     amount: normalizeDecimalText(input.amount),

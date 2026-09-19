@@ -622,6 +622,43 @@ async fn collateral_loan_risk_is_authoritative_atomic_and_single_terminal()
     assert_eq!(loan_wallet_count, 0);
 
     cache_ticker(&redis, &oracle_symbol, "1", Utc::now()).await?;
+    sqlx::query("UPDATE loan_orders SET term_days = ? WHERE id = ?")
+        .bind(u32::MAX)
+        .bind(authority_order_id)
+        .execute(&pool)
+        .await?;
+    let (overflow_status, overflow_payload) = request_json(
+        admin_app.clone(),
+        "POST",
+        format!("/loan/orders/{authority_order_id}/approve"),
+        &admin_token,
+        None,
+    )
+    .await?;
+    assert_eq!(
+        overflow_status,
+        StatusCode::BAD_REQUEST,
+        "{overflow_payload}"
+    );
+    let (pending_status, disbursement_rows, loan_wallet_rows): (String, i64, i64) = sqlx::query_as(
+        r#"SELECT orders.status,
+                  (SELECT COUNT(*) FROM wallet_ledger
+                   WHERE ref_type = 'loan_order' AND ref_id = CAST(orders.id AS CHAR)
+                     AND change_type = 'loan_disbursement'),
+                  (SELECT COUNT(*) FROM wallet_accounts
+                   WHERE user_id = orders.user_id AND asset_id = orders.asset_id)
+           FROM loan_orders orders WHERE id = ?"#,
+    )
+    .bind(authority_order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(pending_status, "pending");
+    assert_eq!(disbursement_rows, 0);
+    assert_eq!(loan_wallet_rows, 0);
+    sqlx::query("UPDATE loan_orders SET term_days = 30 WHERE id = ?")
+        .bind(authority_order_id)
+        .execute(&pool)
+        .await?;
     let (approval_status, approval_payload) = request_json(
         admin_app.clone(),
         "POST",

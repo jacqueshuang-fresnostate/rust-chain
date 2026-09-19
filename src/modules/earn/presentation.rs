@@ -59,6 +59,7 @@ pub(crate) struct SubscribeEarnRequest {
     /// 目标产品编号，申购事务内会锁定该产品并复制其费率快照。
     pub(crate) product_id: u64,
     /// 申购本金，须为正、落在产品额度区间，且小数位不超过 18 位、整数位不超过 20 位。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
     /// 用户维度幂等键，裁剪后非空且不超过 255 字节；重放时会核对产品与金额是否一致。
     pub(crate) idempotency_key: String,
@@ -82,19 +83,49 @@ pub(crate) struct CreateEarnProductRequest {
     /// 期限天数，须为正且不超过 3650。
     pub(crate) term_days: u32,
     /// 年化收益率，不得为负，最多 8 位小数、整数位不超过 10 位。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) apr_rate: BigDecimal,
     /// 通用赎回费率，省略按零处理；须落在 0..=1 且最多 8 位小数。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) redemption_fee_rate: Option<BigDecimal>,
     /// 到期利润手续费率，省略按零处理，取值约束同上。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) maturity_profit_fee_rate: Option<BigDecimal>,
     /// 提前赎回费基准，省略按 none 处理，仅接受 none、principal、profit。
     pub(crate) early_redeem_fee_basis: Option<String>,
     /// 提前赎回费率，基准为 none 时会被强制归零而非报错。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) early_redeem_fee_rate: Option<BigDecimal>,
     /// 单笔最小申购额，须为正。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_subscribe: BigDecimal,
     /// 单笔最大申购额，省略表示不限；给出时须为正且不小于最小额。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_subscribe: Option<BigDecimal>,
+    /// 同币种在持本金总容量，null 不启用，零停止新增申购。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) principal_capacity: Option<BigDecimal>,
+    /// 本金加全期毛收益的保守兑付预算，null 不启用，不代表外部现金。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) liability_capacity: Option<BigDecimal>,
     /// 上下架状态，省略时默认 active。
     pub(crate) status: Option<String>,
     /// 管理员操作原因，序列化上可空但应用层视为必填，裁剪后非空且不超过 512 字符。
@@ -112,13 +143,41 @@ pub(crate) struct UpdateEarnProductRequest {
     pub(crate) category: Option<String>,
     pub(crate) introduction_json: Option<Value>,
     pub(crate) term_days: u32,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) apr_rate: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) redemption_fee_rate: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) maturity_profit_fee_rate: Option<BigDecimal>,
     pub(crate) early_redeem_fee_basis: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) early_redeem_fee_rate: Option<BigDecimal>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_subscribe: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_subscribe: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) principal_capacity: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) liability_capacity: Option<BigDecimal>,
     /// 上下架状态，此处必填，不再有默认值。
     pub(crate) status: String,
     pub(crate) reason: Option<String>,
@@ -219,6 +278,8 @@ pub(crate) struct EarnProductResponse {
     pub(crate) early_redeem_fee_rate: BigDecimal,
     pub(crate) min_subscribe: BigDecimal,
     pub(crate) max_subscribe: Option<BigDecimal>,
+    pub(crate) principal_capacity: Option<BigDecimal>,
+    pub(crate) liability_capacity: Option<BigDecimal>,
     pub(crate) status: String,
 }
 

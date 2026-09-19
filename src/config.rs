@@ -109,7 +109,7 @@ impl Settings {
     pub fn from_env() -> Result<Self, ConfigError> {
         dotenvy::dotenv().ok();
 
-        Config::builder()
+        let settings: Self = Config::builder()
             .add_source(
                 Environment::default()
                     .list_separator(",")
@@ -119,7 +119,75 @@ impl Settings {
                     .try_parsing(true),
             )
             .build()?
-            .try_deserialize()
+            .try_deserialize()?;
+        settings.validate_numeric_ranges()?;
+        Ok(settings)
+    }
+
+    /// 启动前验证所有时间配置可用于单调时钟与有符号秒数；JWT 到期时间还须可持久化，非法值不静默回绕。
+    pub fn validate_numeric_ranges(&self) -> Result<(), ConfigError> {
+        for (name, seconds) in [
+            ("jwt_access_ttl_seconds", self.jwt_access_ttl_seconds),
+            ("jwt_refresh_ttl_seconds", self.jwt_refresh_ttl_seconds),
+            (
+                "market_feed_reconnect_seconds",
+                self.market_feed_reconnect_seconds,
+            ),
+            (
+                "market_feed_rest_fallback_timeout_seconds",
+                self.market_feed_rest_fallback_timeout_seconds,
+            ),
+            (
+                "event_inbox_retry_scan_seconds",
+                self.event_inbox_retry_scan_seconds,
+            ),
+            (
+                "event_outbox_publisher_interval_seconds",
+                self.event_outbox_publisher_interval_seconds,
+            ),
+            (
+                "unlock_scanner_interval_seconds",
+                self.unlock_scanner_interval_seconds,
+            ),
+            (
+                "kline_recovery_interval_seconds",
+                self.kline_recovery_interval_seconds,
+            ),
+            (
+                "seconds_contract_settlement_interval_seconds",
+                self.seconds_contract_settlement_interval_seconds,
+            ),
+            (
+                "earn_auto_redemption_interval_seconds",
+                self.earn_auto_redemption_interval_seconds,
+            ),
+            (
+                "margin_liquidation_interval_seconds",
+                self.margin_liquidation_interval_seconds,
+            ),
+            (
+                "margin_interest_interval_seconds",
+                self.margin_interest_interval_seconds,
+            ),
+            (
+                "agent_commission_auto_settle_interval_seconds",
+                self.agent_commission_auto_settle_interval_seconds,
+            ),
+            (
+                "agent_commission_auto_settle_min_age_seconds",
+                self.agent_commission_auto_settle_min_age_seconds,
+            ),
+        ] {
+            validate_timer_seconds(name, seconds)?;
+        }
+        for (name, seconds) in [
+            ("jwt_access_ttl_seconds", self.jwt_access_ttl_seconds),
+            ("jwt_refresh_ttl_seconds", self.jwt_refresh_ttl_seconds),
+        ] {
+            crate::time::checked_expiry(chrono::Utc::now(), seconds, name)
+                .map_err(|error| ConfigError::Message(error.to_string()))?;
+        }
+        Ok(())
     }
 
     /// 组合监听地址与端口，得到 HTTP 服务实际绑定的套接字地址，供启动流程建立 TCP 监听器。
@@ -160,6 +228,20 @@ impl Settings {
             .map(SecretString::expose_secret)
             .map(String::as_str)
     }
+}
+
+fn validate_timer_seconds(name: &str, seconds: u64) -> Result<(), ConfigError> {
+    let signed_duration = i64::try_from(seconds)
+        .ok()
+        .and_then(chrono::Duration::try_seconds);
+    let monotonic_deadline =
+        std::time::Instant::now().checked_add(std::time::Duration::from_secs(seconds));
+    if signed_duration.is_none() || monotonic_deadline.is_none() {
+        return Err(ConfigError::Message(format!(
+            "{name} is out of timer range"
+        )));
+    }
+    Ok(())
 }
 
 /// 把行情类列表配置规整成干净的字符串数组：先接受 serde 交来的字符串序列，再对每个元素按逗号做二次切分。

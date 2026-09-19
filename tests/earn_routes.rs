@@ -21,6 +21,9 @@ use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "earn_routes/exposure.rs"]
+mod exposure;
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -1403,10 +1406,14 @@ async fn admin_earn_product_create_rolls_back_when_audit_fails() -> Result<(), B
     let (asset_id, _asset_symbol) = create_asset(&mut fixture_tx, "AR").await;
     fixture_tx.commit().await?;
 
-    let missing_admin_id = 999_999_999_u64;
+    let admin_id = create_admin(&pool).await;
+    let role_id: u64 = sqlx::query_scalar("SELECT role_id FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .fetch_one(&pool)
+        .await?;
     let admin_token = issue_token(
         &settings,
-        format!("admin:{missing_admin_id}"),
+        format!("admin:{admin_id}"),
         TokenScope::Admin,
         900,
     )
@@ -1417,6 +1424,16 @@ async fn admin_earn_product_create_rolls_back_when_audit_fails() -> Result<(), B
         r#"{{"asset_id":{asset_id},"name":"{product_name}","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"audit should fail"}}"#
     );
 
+    // 通过真实鉴权后，仅使本测试管理员的产品创建审计失败。
+    let trigger = format!("earn_create_audit_{}", Uuid::now_v7().simple());
+    sqlx::raw_sql(&format!(
+        "CREATE TRIGGER {trigger} BEFORE INSERT ON admin_audit_logs FOR EACH ROW \
+         BEGIN IF NEW.admin_id = {admin_id} AND NEW.action = 'earn_product.create' \
+         THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test earn create audit failure'; \
+         END IF; END"
+    ))
+    .execute(&pool)
+    .await?;
     let response = app
         .oneshot(
             Request::builder()
@@ -1427,20 +1444,49 @@ async fn admin_earn_product_create_rolls_back_when_audit_fails() -> Result<(), B
                 .body(Body::from(create_body))
                 .unwrap(),
         )
+        .await;
+    // 请求报错或断言失败前移除注入，避免影响并行测试。
+    sqlx::raw_sql(&format!("DROP TRIGGER {trigger}"))
+        .execute(&pool)
         .await?;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let response = response?;
+    let status = response.status();
 
     let (product_count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM earn_products WHERE name = ?")
             .bind(&product_name)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(product_count, 0);
+    let audit_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ?")
+            .bind(admin_id)
+            .fetch_one(&pool)
+            .await?;
 
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_products WHERE name = ?")
+        .bind(&product_name)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
         .execute(&pool)
         .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(product_count, 0);
+    assert_eq!(audit_count, 0);
 
     Ok(())
 }
@@ -1885,6 +1931,55 @@ async fn earn_subscribe_debits_wallet_and_writes_ledger() -> Result<(), Box<dyn 
         r#"{{"product_id":{product_id},"amount":"20.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
 
+    for invalid_amount in ["20.0000000000000000001", "100000000000000000000"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/earn/subscriptions")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "product_id": product_id,
+                            "amount": invalid_amount,
+                            "idempotency_key": idempotency_key,
+                        })
+                        .to_string(),
+                    ))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = axum::body::to_bytes(response.into_body(), 8192).await?;
+        let message = String::from_utf8(bytes.to_vec())?;
+        assert!(message.contains("amount:"), "{message}");
+        assert!(
+            message.contains("DECIMAL(38,18) precision or range"),
+            "{message}"
+        );
+        let (available, frozen, locked): (BigDecimal, BigDecimal, BigDecimal) =
+            sqlx::query_as("SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+                .bind(user_id).bind(asset_id).fetch_one(&pool).await?;
+        assert_eq!(
+            (available, frozen, locked),
+            (decimal("100"), decimal("0"), decimal("0"))
+        );
+        for table in ["earn_subscriptions", "wallet_ledger"] {
+            let count: i64 =
+                sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE user_id = ?"))
+                    .bind(user_id)
+                    .fetch_one(&pool)
+                    .await?;
+            assert_eq!(count, 0, "{table}");
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), private_events.recv())
+                .await
+                .is_err()
+        );
+    }
+
     let response = app
         .oneshot(
             Request::builder()
@@ -1963,16 +2058,13 @@ async fn earn_subscribe_rejects_amount_scale_above_decimal_storage() -> Result<(
     let body = axum::body::to_bytes(response.into_body(), 4096).await?;
     assert_eq!(
         status,
-        StatusCode::BAD_REQUEST,
+        StatusCode::UNPROCESSABLE_ENTITY,
         "payload: {}",
         String::from_utf8_lossy(&body)
     );
-    let payload: Value = serde_json::from_slice(&body)?;
-    assert_eq!(payload["code"], "VALIDATION_ERROR");
-    assert_eq!(
-        payload["message"],
-        "validation error: earn subscription amount supports at most 18 decimal places"
-    );
+    let text = String::from_utf8(body.to_vec())?;
+    assert!(text.contains("amount:"), "{text}");
+    assert!(text.contains("DECIMAL(38,18) precision or range"), "{text}");
 
     Ok(())
 }

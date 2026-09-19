@@ -29,6 +29,7 @@ impl PresentationLayer for CreateAdminUserRequest {}
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminUserRechargeRequest {
     pub(crate) asset_id: u64,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) amount: BigDecimal,
     pub(crate) reason: Option<String>,
     pub(crate) idempotency_key: String,

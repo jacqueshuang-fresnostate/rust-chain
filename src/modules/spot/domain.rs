@@ -22,6 +22,32 @@ pub enum OrderSide {
     Sell,
 }
 
+/// 显式触发方向与买卖方向独立；空方向保留历史订单合同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerDirection {
+    Rising,
+    Falling,
+}
+
+impl TriggerDirection {
+    /// 稳定的持久化及请求身份文本，不推断买卖方向。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rising => "rising",
+            Self::Falling => "falling",
+        }
+    }
+
+    /// 触及阈值即激活，包含相等；成交限价由独立规则检查。
+    pub fn reached(self, market: &BigDecimal, trigger: &BigDecimal) -> bool {
+        match self {
+            Self::Rising => market >= trigger,
+            Self::Falling => market <= trigger,
+        }
+    }
+}
+
 /// 订单类型，决定价格字段的必填组合与是否需要触发价。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +104,8 @@ pub struct NewOrder {
     pub price: Option<BigDecimal>,
     /// 止损限价的触发价，其余类型恒为 None。
     pub trigger_price: Option<BigDecimal>,
+    pub trigger_direction: Option<TriggerDirection>,
+    pub triggered_at: Option<DateTime<Utc>>,
     pub quantity: BigDecimal,
     pub filled_quantity: BigDecimal,
     pub status: OrderStatus,
@@ -93,6 +121,8 @@ pub struct SpotOrder {
     pub order_type: OrderType,
     pub price: Option<BigDecimal>,
     pub trigger_price: Option<BigDecimal>,
+    pub trigger_direction: Option<TriggerDirection>,
+    pub triggered_at: Option<DateTime<Utc>>,
     pub quantity: BigDecimal,
     /// 已成交数量，与 `quantity` 的差值即剩余量，决定还有多少冻结资金未释放。
     pub filled_quantity: BigDecimal,
@@ -208,6 +238,8 @@ pub fn create_limit_order(
         order_type: OrderType::Limit,
         price: Some(price),
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity,
         filled_quantity: BigDecimal::from(0),
         status: OrderStatus::Pending,
@@ -237,6 +269,8 @@ pub fn create_market_order(
         order_type: OrderType::Market,
         price: None,
         trigger_price: None,
+        trigger_direction: None,
+        triggered_at: None,
         quantity,
         filled_quantity: BigDecimal::from(0),
         status: OrderStatus::Pending,
@@ -268,16 +302,18 @@ pub fn create_stop_limit_order(
         order_type: OrderType::StopLimit,
         price: Some(price),
         trigger_price: Some(trigger_price),
+        trigger_direction: None,
+        triggered_at: None,
         quantity,
         filled_quantity: BigDecimal::from(0),
         status: OrderStatus::Pending,
     })
 }
 
-/// 计算下单需要冻结的金额：买单为价格乘数量的报价资产额，卖单直接就是基础资产数量。
+/// 计算下单名义金额：买单为价格乘数量的报价资产额，卖单直接就是基础资产数量。
 /// 这个不对称来自现货的资金语义，买方付出报价资产换基础资产，卖方反之。
-/// 返回值不是 Result，因为它只做乘法不做校验，正负与精度由调用方在构造订单时保证。
-/// 市价单调用时传入的是服务端参考价，因此冻结额是估算值，成交后多余部分由结算路径退回。
+/// 返回值不是 Result，因为它只做乘法；不能直接写入资金，实际预留必须使用服务层资产量化与存储校验。
+/// 市价单传入的是参考价；既有请求重放可以用该名义值比对历史证据，实际成交额另行生成。
 pub fn spot_reservation_amount(
     side: OrderSide,
     price: &BigDecimal,
@@ -297,9 +333,9 @@ pub fn spot_reserve_asset_id<'a>(
     reserve_asset_id(side, base_asset_id, quote_asset_id)
 }
 
-/// 计算撤单时还应退回多少冻结资金，口径是「未成交数量」而非原始下单数量。
+/// 兼容纯领域调用的未成交名义额估算，不能作为实际撤单退款或订单预留剩余证据。
 /// 买单返回报价资产标识和价格乘剩余量的金额，卖单返回基础资产标识和剩余量本身。
-/// 部分成交的订单因此只退回未成交那部分，已成交部分的冻结额在结算时就已被扣走。
+/// 实际退款必须从原冻结快照和扣款、释放流水推导，以保留分笔截断及价差尾款。
 /// 买单没有价格时返回 `MissingPriceForWalletReservation`，因为无从折算报价资产金额；
 /// 卖单不依赖价格，所以任何情况下都能算出结果。
 pub fn spot_remaining_reserved_amount(
@@ -411,7 +447,7 @@ struct ReservedAmount {
     amount: BigDecimal,
 }
 
-/// 计算订单未成交部分仍占用的冻结资产与金额，是撤单退款额的唯一口径来源。
+/// 计算订单未成交部分的名义资产与金额，只保留兼容估算，不用于钱包退款。
 /// 剩余量取下单量减已成交量；买单折算成报价资产金额，卖单直接以基础资产数量表示。
 /// 买单缺少价格时返回服务层错误而非领域错误，因为这属于数据完整性问题而不是请求非法。
 /// 资产标识会被复制成新的 String，因为返回值不借用入参的生命周期。
@@ -510,8 +546,11 @@ fn validate_min_order_value(
 /// 负标度表示科学计数形式的整数，用 `max(0)` 归零，整数不占小数位。
 /// 只回答是否合规，具体报价格还是数量精度错误由调用方决定。
 fn validate_precision(amount: &BigDecimal, precision: u32) -> Result<(), ()> {
+    if precision > 18 || crate::numeric::ensure_amount_storage(amount, "spot value").is_err() {
+        return Err(());
+    }
     let (_, scale) = amount.normalized().as_bigint_and_exponent();
-    if scale.max(0) as u32 <= precision {
+    if scale.max(0) <= i64::from(precision) {
         Ok(())
     } else {
         Err(())

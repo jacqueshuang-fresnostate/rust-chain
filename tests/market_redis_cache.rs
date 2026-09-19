@@ -321,7 +321,11 @@ async fn redis_kline_compare_and_set_rejects_older_slot_and_older_forming_snapsh
         serde_json::from_str(&connection.get::<_, String>(&key).await?)?;
     assert_eq!(payload["open_time"], current_open.timestamp_millis());
     assert_eq!(payload["close"], "15");
-    assert!(payload.get("observed_at").is_none());
+    assert_eq!(
+        payload["observed_at"],
+        (current_open + chrono::Duration::seconds(20)).timestamp_millis()
+    );
+    assert_eq!(payload["source"], "unknown");
     let _: usize = connection.del(&[key, sequence_key]).await?;
     Ok(())
 }

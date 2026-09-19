@@ -1,12 +1,15 @@
-import { client, requestUrl } from './client'
+import { client, readAuthSessionSnapshot, requestUrl } from './client'
+import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
 import {
   createReferenceRequestKey,
   referenceRequestRegistry,
   type ReferenceRequestOptions,
 } from './requestCache'
-import { asNumber } from '@/core/format'
+import { requiredId, requiredSafeInteger, normalizeTimestamp } from '@/core/numeric'
 import { i18n } from '@/i18n'
-import { decimalTextFromBoundary, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+import { requiredDecimalText, normalizeDecimalText, type DecimalText } from '@/core/decimal'
+
+const applicationKeys = new RetryStableIdempotencyKeys('mobile-loan', undefined, () => globalThis.sessionStorage)
 
 export interface LoanProduct {
   id: number
@@ -15,11 +18,11 @@ export interface LoanProduct {
   assetSymbol: string
   name: string
   termDays: number
-  interestRate: number
+  interestRate: DecimalText
   interestCalculationMode: string
   minKycLevel: number
-  minAmount: number
-  maxAmount?: number
+  minAmount: DecimalText
+  maxAmount?: DecimalText
   minAmountText?: DecimalText
   maxAmountText?: DecimalText
 }
@@ -30,19 +33,20 @@ export interface LoanOrder {
   productName: string
   loanType: 'credit' | 'collateralized'
   assetSymbol: string
-  amount: number
-  interestRate: number
+  amount: DecimalText
+  interestRate: DecimalText
   termDays: number
   collateralAssetSymbol?: string
-  collateralAmount?: number
+  collateralAmount?: DecimalText
   status: string
-  interestAmount: number
-  repaymentAmount: number
+  interestAmount: DecimalText
+  repaymentAmount: DecimalText
   dueAt?: number
   createdAt: number
 }
 
 export async function fetchLoanProducts(limit = 50, options: ReferenceRequestOptions = {}): Promise<LoanProduct[]> {
+  requiredSafeInteger(limit, 'limit', 1)
   const url = requestUrl('/loan/products')
   return referenceRequestRegistry.request(createReferenceRequestKey(url, {
     limit,
@@ -50,17 +54,17 @@ export async function fetchLoanProducts(limit = 50, options: ReferenceRequestOpt
   }), 60_000, async () => {
     const response = await client.get<{ products?: Array<Record<string, unknown>> }>(url, { params: { limit } })
     return (response.data.products || []).map((product) => ({
-      id: asNumber(product.id),
+      id: requiredId(product.id),
       loanType: String(product.loan_type || 'credit').toLowerCase() === 'collateralized' ? 'collateralized' : 'credit',
-      assetId: asNumber(product.asset_id),
+      assetId: requiredId(product.asset_id),
       assetSymbol: String(product.asset_symbol || '').toUpperCase(),
       name: String(product.name || i18n.global.t('loan.defaultProduct')),
-      termDays: asNumber(product.term_days),
-      interestRate: asNumber(product.interest_rate),
+      termDays: requiredSafeInteger(product.term_days, 'term_days', 1),
+      interestRate: productDecimal(product.interest_rate),
       interestCalculationMode: String(product.interest_calculation_mode || ''),
-      minKycLevel: asNumber(product.min_kyc_level),
-      minAmount: asNumber(product.min_amount),
-      maxAmount: product.max_amount === null || product.max_amount === undefined ? undefined : asNumber(product.max_amount),
+      minKycLevel: requiredSafeInteger(product.min_kyc_level, 'min_kyc_level'),
+      minAmount: productDecimal(product.min_amount),
+      maxAmount: product.max_amount === null || product.max_amount === undefined ? undefined : productDecimal(product.max_amount),
       minAmountText: productDecimal(product.min_amount),
       maxAmountText: product.max_amount === null || product.max_amount === undefined
         ? undefined
@@ -70,21 +74,22 @@ export async function fetchLoanProducts(limit = 50, options: ReferenceRequestOpt
 }
 
 export async function fetchLoanOrders(limit = 50): Promise<LoanOrder[]> {
+  requiredSafeInteger(limit, 'limit', 1)
   const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(requestUrl('/loan/orders'), { params: { limit } })
   return (response.data.orders || []).map((order) => ({
-    id: asNumber(order.id),
-    productId: asNumber(order.product_id),
+    id: requiredId(order.id),
+    productId: requiredId(order.product_id),
     productName: String(order.product_name || i18n.global.t('loan.defaultOrder')),
     loanType: String(order.loan_type || 'credit').toLowerCase() === 'collateralized' ? 'collateralized' : 'credit',
     assetSymbol: String(order.asset_symbol || '').toUpperCase(),
-    amount: asNumber(order.amount),
-    interestRate: asNumber(order.interest_rate),
-    termDays: asNumber(order.term_days),
+    amount: productDecimal(order.amount),
+    interestRate: productDecimal(order.interest_rate),
+    termDays: requiredSafeInteger(order.term_days, 'term_days', 1),
     collateralAssetSymbol: optionalText(order.collateral_asset_symbol),
-    collateralAmount: order.collateral_amount === null || order.collateral_amount === undefined ? undefined : asNumber(order.collateral_amount),
+    collateralAmount: order.collateral_amount === null || order.collateral_amount === undefined ? undefined : productDecimal(order.collateral_amount),
     status: String(order.status || ''),
-    interestAmount: asNumber(order.interest_amount),
-    repaymentAmount: asNumber(order.repayment_amount),
+    interestAmount: productDecimal(order.interest_amount),
+    repaymentAmount: productDecimal(order.repayment_amount),
     dueAt: optionalTimestamp(order.due_at),
     createdAt: normalizeTimestamp(order.created_at),
   }))
@@ -96,22 +101,32 @@ export async function applyLoan(input: {
   collateralAssetId?: number
   collateralAmount?: DecimalText
 }): Promise<void> {
-  await client.post(requestUrl('/loan/orders'), {
-    product_id: input.productId,
+  const scope = readAuthSessionSnapshot().scope
+  if (!scope) throw new Error('authenticated session is required')
+  const payload = {
+    product_id: requiredId(input.productId),
     amount: normalizeDecimalText(input.amount),
-    collateral_asset_id: input.collateralAssetId,
+    collateral_asset_id: input.collateralAssetId === undefined ? undefined : requiredId(input.collateralAssetId),
     collateral_amount: input.collateralAmount === undefined
       ? undefined
       : normalizeDecimalText(input.collateralAmount),
-    idempotency_key: createIdempotencyKey('mobile-loan'),
+  }
+  const intent = canonicalRequestIntent({ ...payload, scope })
+  const key = applicationKeys.acquire(intent)
+  await client.post(requestUrl('/loan/orders'), {
+    ...payload,
+    idempotency_key: key,
   })
+  applicationKeys.complete(intent, key)
 }
 
 export async function cancelLoanOrder(orderId: number): Promise<void> {
+  requiredId(orderId)
   await client.post(requestUrl(`/loan/orders/${orderId}/cancel`), {})
 }
 
 export async function repayLoanOrder(orderId: number): Promise<void> {
+  requiredId(orderId)
   await client.post(requestUrl(`/loan/orders/${orderId}/repay`), {})
 }
 
@@ -125,16 +140,6 @@ function optionalTimestamp(value: unknown): number | undefined {
   return timestamp || undefined
 }
 
-function normalizeTimestamp(value: unknown): number {
-  const timestamp = asNumber(value)
-  return timestamp > 0 && timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
-}
-
-function createIdempotencyKey(scope: string): string {
-  return `${scope}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-}
-
 function productDecimal(value: unknown): DecimalText {
-  return decimalTextFromBoundary(value as string | number, { allowNegative: false })
-    || normalizeDecimalText('0')
+  return requiredDecimalText(value, 'decimal', 'loan', { allowNegative: false, maxIntegerDigits: 20, maxScale: 18 })
 }

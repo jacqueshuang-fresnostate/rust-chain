@@ -487,6 +487,12 @@ pub(crate) async fn mark_order_pending_with_provider(
     pool: &Pool<MySql>,
     update: &QuickRechargeOrderProviderUpdate,
 ) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(
+        &update.actual_amount,
+        36,
+        18,
+        "quick recharge actual_amount",
+    )?;
     sqlx::query(
         r#"UPDATE quick_recharge_orders
            SET status = 'pending',
@@ -584,6 +590,12 @@ pub(crate) async fn mark_order_paid_from_notify(
     tx: &mut Transaction<'_, MySql>,
     update: &QuickRechargeOrderPaidUpdate,
 ) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(
+        &update.actual_amount,
+        36,
+        18,
+        "quick recharge actual_amount",
+    )?;
     sqlx::query(
         r#"UPDATE quick_recharge_orders
            SET status = 'paid',
@@ -770,7 +782,7 @@ pub(crate) async fn load_user_email(pool: &Pool<MySql>, user_id: u64) -> AppResu
 
 /// 在已锁快充订单的回调事务中创建/锁定钱包，再把已验签 actual_amount 原值增加到 available。
 /// frozen/locked 保持原值；写一条 `quick_recharge` available 正流水，ref_type/ref_id 关联业务订单号并保存同一三桶账后快照。
-/// 当前函数只要求上层传入金额，内部不校验正数或资产 precision_scale，也不查重流水；订单 paid 状态短路负责回调幂等。
+/// 锁定资产精度后拒绝超精度或超存储金额，不舍入源金额或余额；订单 paid 状态短路负责回调幂等。
 /// 锁序为订单→钱包，订单状态、余额和流水由调用方事务提交；SQL 失败回滚本次全部本地变化。
 pub(crate) async fn credit_wallet_available(
     tx: &mut Transaction<'_, MySql>,
@@ -779,8 +791,17 @@ pub(crate) async fn credit_wallet_available(
     amount: &BigDecimal,
     ref_id: &str,
 ) -> AppResult<()> {
+    let precision = sqlx::query_scalar::<_, i32>(
+        "SELECT precision_scale FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    super::service::validate_recharge_credit_amount(amount, precision)?;
     let wallet = lock_or_create_wallet_row(tx, user_id, asset_id).await?;
     let available_after = wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "quick recharge available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)

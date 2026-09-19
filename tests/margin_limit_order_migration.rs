@@ -44,6 +44,8 @@ fn pending_margin_limits_are_excluded_from_position_and_interest_aggregates() {
 #[test]
 fn margin_limit_fill_resets_real_open_and_interest_times_together() {
     assert!(FILL_QUERY.contains(
-        "SET entry_price = ?, opened_at = CURRENT_TIMESTAMP(6),\n               interest_accrued_at = CURRENT_TIMESTAMP(6)"
+        "SET positions.entry_price = ?, positions.opened_at = CURRENT_TIMESTAMP(6),\n               positions.interest_accrued_at = CURRENT_TIMESTAMP(6)"
     ));
+    assert!(FILL_QUERY.contains("positions.hourly_interest_rate = products.hourly_interest_rate"));
+    assert!(FILL_QUERY.contains("AND positions.entry_price IS NULL"));
 }

@@ -66,7 +66,7 @@ test('借贷页保留真实申请、撤销、还款并开放逾期还款', () =>
   assert.match(loanSource, /status === 'disbursed' \|\| status === 'overdue'/)
   assert.match(loanSource, /requestOrderAction\(order\)/)
   assert.match(loanSource, /confirmOrderAction/)
-  assert.match(loanSource, /return decimalMultiply\(amountText\.value, decimalTextFromFiniteNumber\(product\.interestRate\)\)/)
+  assert.match(loanSource, /return decimalMultiply\(amountText\.value, product\.interestRate\)/)
   assert.doesNotMatch(loanSource, /product\.interestRate \* product\.termDays \/ 365/)
   assert.match(loanSource, /function statusLabel\(status: string\)/)
   assert.match(loanSource, /const productsReady = ref\(false\)/)

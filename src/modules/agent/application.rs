@@ -14,17 +14,20 @@ use crate::{
                 AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
                 AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
                 AgentPasswordChangeResponse, AgentSubAgentsResponse, AgentTeamTreeResponse,
-                AgentUserAssetsResponse, AgentUserMarginPositionsQuery,
-                AgentUserMarginPositionsResponse, AgentUserSecondsContractOrdersQuery,
-                AgentUserSecondsContractOrdersResponse, AgentUsersResponse,
-                ChangeAgentPasswordRequest, CreateInviteCodeRequest, UpdateInviteCodeStatusRequest,
+                AgentUserAssetsResponse, AgentUserMarginOrdersResponse,
+                AgentUserMarginPositionsQuery, AgentUserMarginPositionsResponse,
+                AgentUserOrdersQuery, AgentUserSecondsContractOrdersQuery,
+                AgentUserSecondsContractOrdersResponse, AgentUserSpotOrdersResponse,
+                AgentUsersResponse, ChangeAgentPasswordRequest, CreateInviteCodeRequest,
+                UpdateInviteCodeStatusRequest,
             },
             repository::{AgentAccessScope, AgentInviteCodeWrite},
             service::{
                 agent_admin_id_from_subject, agent_commissions_response,
                 agent_convert_stats_response, agent_dashboard_response, agent_financial_list_page,
-                agent_list_page, normalized_agent_margin_position_status,
-                normalized_agent_seconds_order_status, validate_agent_invite_code_status,
+                agent_list_page, normalized_agent_margin_order_status,
+                normalized_agent_margin_position_status, normalized_agent_seconds_order_status,
+                normalized_agent_spot_order_status, validate_agent_invite_code_status,
                 validate_agent_invite_code_usage_limit, validate_agent_password_change,
             },
         },
@@ -125,13 +128,61 @@ pub(crate) async fn list_agent_user_margin_positions(
         user_id,
         status.as_deref(),
         page,
+        false,
     )
     .await?;
     Ok(AgentUserMarginPositionsResponse { positions, total })
 }
 
+/// 查询团队用户全部杠杆委托与历史记录，pending 与已成交持仓通过入场价空值区分。
+/// 先校验筛选再解析令牌子树；无权与不存在统一为未找到，全程无交易或资金写入。
+pub(crate) async fn list_agent_user_margin_orders(
+    mysql: Option<Pool<MySql>>,
+    subject: &str,
+    user_id: u64,
+    query: AgentUserOrdersQuery,
+) -> AppResult<AgentUserMarginOrdersResponse> {
+    let status = normalized_agent_margin_order_status(query.status)?;
+    let page = agent_financial_list_page(query.limit, query.offset);
+    let (pool, scope) = agent_context(mysql, subject).await?;
+    ensure_agent_user_in_scope(&pool, &scope, user_id).await?;
+    let (orders, total) = infrastructure::list_agent_user_margin_positions(
+        &pool,
+        &scope,
+        user_id,
+        status.as_deref(),
+        page,
+        true,
+    )
+    .await?;
+    Ok(AgentUserMarginOrdersResponse { orders, total })
+}
+
+/// 查询子树用户现货订单的落库快照；订单行和计数均再次约束服务器派生范围。
+/// 不调用现货用户端服务，以免只读查看触发撮合；仅支持状态筛选及有界分页。
+pub(crate) async fn list_agent_user_spot_orders(
+    mysql: Option<Pool<MySql>>,
+    subject: &str,
+    user_id: u64,
+    query: AgentUserOrdersQuery,
+) -> AppResult<AgentUserSpotOrdersResponse> {
+    let status = normalized_agent_spot_order_status(query.status)?;
+    let page = agent_financial_list_page(query.limit, query.offset);
+    let (pool, scope) = agent_context(mysql, subject).await?;
+    ensure_agent_user_in_scope(&pool, &scope, user_id).await?;
+    let (orders, total) = infrastructure::list_agent_user_spot_orders(
+        &pool,
+        &scope,
+        user_id,
+        status.as_deref(),
+        page,
+    )
+    .await?;
+    Ok(AgentUserSpotOrdersResponse { orders, total })
+}
+
 /// 分页读取团队用户的全部秒合约订单；缺省不追加状态条件，因而明确包含 `opened`。
-/// 可选状态只接受 opened、settled 和 manual_review，行集与 total 共用该筛选并各自重复子树谓词。
+/// 可选状态接受 opened、settled、manual_review 和 refunded，行集与 total 共用筛选并各自重复子树谓词。
 /// 仅读取已持久化订单快照，不扫描到期单、不回填行情、不结算也不改钱包。
 pub(crate) async fn list_agent_user_seconds_contract_orders(
     mysql: Option<Pool<MySql>>,

@@ -5,7 +5,10 @@ use crate::{
         domain::{STATUS_DISBURSED, STATUS_OVERDUE, STATUS_REPAID},
         infrastructure::lock_loan_order,
     },
-    workers::loan_health,
+    workers::{
+        financial_retry::{self, RetryOutcome},
+        loan_health,
+    },
 };
 use chrono::{DateTime, Utc};
 use redis::{Client, aio::ConnectionManager};
@@ -39,6 +42,7 @@ pub struct LoanOverdueSummary {
     pub collected: u32,
     pub skipped: u32,
     pub failed: u32,
+    pub waiting_balance: u32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -51,6 +55,7 @@ enum LoanOverdueOutcome {
     Marked,
     Collected,
     Skipped,
+    WaitingBalance,
 }
 
 /// 单轮按到期时间和 ID 扫描已放款订单：成功上限为 `limit` 收敛到 1..=200，候选最多放大十倍且不超过 1,000。
@@ -68,26 +73,44 @@ pub async fn run_once_with_dependencies(
         if summary.marked >= loan_overdue_limit(limit) {
             break;
         }
+        let Some(lease) = financial_retry::claim(pool, "loan", candidate.order_id, now).await?
+        else {
+            continue;
+        };
         summary.scanned += 1;
-        match mark_order_overdue(pool, candidate.order_id, now).await {
-            Ok(LoanOverdueOutcome::Marked) => summary.marked += 1,
+        let outcome = match mark_order_overdue(pool, candidate.order_id, now).await {
+            Ok(LoanOverdueOutcome::Marked) => {
+                summary.marked += 1;
+                summary.waiting_balance += 1;
+                RetryOutcome::WaitingBalance
+            }
             Ok(LoanOverdueOutcome::Collected) => {
                 summary.marked += 1;
                 summary.collected += 1;
+                RetryOutcome::Complete
             }
-            Ok(LoanOverdueOutcome::Skipped) => summary.skipped += 1,
+            Ok(LoanOverdueOutcome::WaitingBalance) => {
+                summary.waiting_balance += 1;
+                RetryOutcome::WaitingBalance
+            }
+            Ok(LoanOverdueOutcome::Skipped) => {
+                summary.skipped += 1;
+                RetryOutcome::Complete
+            }
             Err(error) => {
                 summary.failed += 1;
                 warn!(order_id = candidate.order_id, %error, "贷款逾期标记失败");
+                RetryOutcome::Failed
             }
-        }
+        };
+        financial_retry::finish(pool, lease, now, outcome).await?;
     }
 
     Ok(summary)
 }
 
 /// 以至少 1 秒间隔持续扫描贷款逾期；候选查询等周期级错误只记录并继续，单项失败已由单轮隔离。
-/// `loan_orders.status/overdue_at` 是跨重启恢复点，循环不维护额外游标，也不补发提交后事件。
+/// 业务状态承担资金幂等，持久化重试记录承担跨重启公平调度；不补发提交后事件。
 pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
     let mut health_redis = match connect_loan_health_redis().await {
@@ -108,6 +131,7 @@ pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> A
                 collected = summary.collected,
                 skipped = summary.skipped,
                 failed = summary.failed,
+                waiting_balance = summary.waiting_balance,
                 "贷款逾期扫描周期完成"
             ),
             Err(error) => error!(%error, "贷款逾期扫描周期失败"),
@@ -153,14 +177,15 @@ async fn fetch_overdue_candidates(
     limit: u32,
 ) -> AppResult<Vec<LoanOverdueCandidate>> {
     sqlx::query_as::<_, LoanOverdueCandidate>(
-        r#"SELECT id AS order_id
-           FROM loan_orders
-           WHERE status IN ('disbursed', 'overdue')
-             AND due_at IS NOT NULL
-             AND due_at <= ?
-           ORDER BY due_at ASC, id ASC
+        r#"SELECT o.id AS order_id
+           FROM loan_orders o
+           LEFT JOIN financial_worker_retries r ON r.task_kind = 'loan' AND r.item_id = o.id
+           WHERE o.status IN ('disbursed', 'overdue') AND o.due_at <= ?
+             AND (r.next_attempt_at IS NULL OR r.next_attempt_at <= ?)
+           ORDER BY r.last_attempt_at ASC, o.due_at ASC, o.id ASC
            LIMIT ?"#,
     )
+    .bind(now.naive_utc())
     .bind(now.naive_utc())
     .bind(limit as i64)
     .fetch_all(pool)
@@ -226,7 +251,7 @@ async fn mark_order_overdue(
                 info!(order_id = order.id, %due_at, "贷款订单已标记逾期，可用余额不足尚未回收");
                 Ok(LoanOverdueOutcome::Marked)
             } else {
-                Ok(LoanOverdueOutcome::Skipped)
+                Ok(LoanOverdueOutcome::WaitingBalance)
             }
         }
         Err(error) => {

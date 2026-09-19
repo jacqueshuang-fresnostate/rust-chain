@@ -222,6 +222,8 @@ test('ticker stream forwards the complete backend 24h snapshot without recomputi
     volume_24h: '125.75',
     price_change_percent_24h: '-0.46875',
     observed_at: 1_786_480_001_000,
+    source: 'external',
+    provider: 'htx',
   }))
 
   assert.deepEqual(updates, [{
@@ -233,7 +235,18 @@ test('ticker stream forwards the complete backend 24h snapshot without recomputi
     volume: 125.75,
     changePercent: -0.46875,
     observedAt: 1_786_480_001_000,
+    source: 'external',
+    provider: 'htx',
   }])
+  sockets[0]?.emit('message', JSON.stringify({
+    symbol: 'BTC-USDT', last_price: '63701',
+    observed_at: 1_786_480_002_000, source: 'generated', provider: 'strategy',
+  }))
+  assert.equal(updates[1]?.source, 'generated')
+  assert.equal(updates[1]?.provider, 'strategy')
+  emitTicker(sockets[0], 'BTC-USDT', 63702)
+  assert.equal(updates[2]?.source, undefined)
+  assert.equal(updates[2]?.provider, undefined)
   stop()
 })
 

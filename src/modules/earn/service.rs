@@ -98,6 +98,8 @@ pub(crate) fn product_audit_json(product: &EarnProductResponse) -> Value {
         "early_redeem_fee_rate": product.early_redeem_fee_rate,
         "min_subscribe": product.min_subscribe,
         "max_subscribe": product.max_subscribe,
+        "principal_capacity": product.principal_capacity,
+        "liability_capacity": product.liability_capacity,
         "status": product.status,
     })
 }
@@ -734,11 +736,13 @@ const EARN_AMOUNT_MAX_INTEGER_DIGITS: usize = 20;
 /// 该时刻此后即固化，是提前赎回与到期赎回两种计费口径的分界，也是自动赎回任务的扫描依据。
 /// 日期加法溢出时返回参数错误并阻止创建订阅，不会退化成一个错误的到期时间。
 pub(crate) fn earn_matures_at(term_days: u32) -> AppResult<DateTime<Utc>> {
-    Utc::now()
+    let matures_at = Utc::now()
         .checked_add_signed(chrono::TimeDelta::days(term_days as i64))
         .ok_or_else(|| {
             AppError::Validation("earn product term_days exceeds supported maximum".to_owned())
-        })
+        })?;
+    crate::time::ensure_timestamp_storage(&matures_at, "earn matures_at")?;
+    Ok(matures_at)
 }
 
 /// 校验产品期限落在 1 到 3650 天之间，零和超上限分别返回不同的错误消息。
@@ -818,6 +822,35 @@ pub(crate) fn validate_amount(amount: &BigDecimal) -> AppResult<()> {
     )
 }
 
+/// 本金加全期毛收益的保守预算，不扣未来费用，也不改变实际赎回算法或历史 APR 快照。
+/// 毛收益向上取至 18 位，确保即使资产精度低于账本精度也不会低估兑付；不是外部现金余额。
+pub(crate) fn earn_liability_reservation(
+    amount: &BigDecimal,
+    apr_rate: &BigDecimal,
+    term_days: u32,
+) -> BigDecimal {
+    amount
+        + (amount * apr_rate * BigDecimal::from(term_days) / BigDecimal::from(365))
+            .with_scale_round(18, bigdecimal::RoundingMode::Ceiling)
+}
+
+/// 可空预算不默认启用；非空值须非负且同时满足资产精度与 DECIMAL(38,18) 存储范围。
+pub(crate) fn validate_exposure_capacity(
+    capacity: Option<&BigDecimal>,
+    precision: i32,
+) -> AppResult<()> {
+    if let Some(capacity) = capacity {
+        if capacity < &BigDecimal::from(0) {
+            return Err(AppError::Validation(
+                "earn capacity must be non-negative".to_owned(),
+            ));
+        }
+        validate_decimal_storage(&capacity.normalized(), 18, 20, "earn capacity")?;
+        validate_amount_asset_precision(capacity, precision)?;
+    }
+    Ok(())
+}
+
 /// 校验申购金额能被目标资产的小数位无损表达，超精度一律拒绝而非隐式截断。
 /// 与 `validate_amount` 的 18 位存储校验形成两道门槛：前者守数据库列，本函数守资产口径。
 /// 拒绝而非量化是为了让用户提交的金额与最终扣款金额完全一致，避免静默少扣或多扣。
@@ -835,9 +868,7 @@ pub(crate) fn validate_amount_asset_precision(
 }
 
 /// 判定一个十进制数能否无损存入指定精度的数据库列，APR、费率和金额三类校验共用该实现。
-/// 先比较 scale：超过允许的小数位即拒绝，注意此处不做归一化，因此 `1.500` 会按 3 位小数计。
-/// 再由有效数字位数反推整数位数：去掉符号与前导零后的长度减去 scale 即整数位。
-/// scale 为负表示该数以 10 的幂为单位存储，此时整数位改为有效数字加上 scale 的绝对值。
+/// 使用共享存储守卫检查有效小数位与整数容量，尾随零不改变数值也不占额外有效精度。
 /// 两项任一超限都返回参数错误，绝不静默截断，以免落库值与用户提交值不一致。
 /// label 参数决定错误消息指向哪个字段；本函数只判定不修改传入值。
 fn validate_decimal_storage(
@@ -846,30 +877,22 @@ fn validate_decimal_storage(
     max_integer_digits: usize,
     label: &str,
 ) -> AppResult<()> {
-    let (digits, scale) = value.as_bigint_and_exponent();
-    if scale > max_scale {
-        return Err(AppError::Validation(format!(
-            "{label} supports at most {max_scale} decimal places"
-        )));
-    }
-
-    let significant_digits = digits
-        .to_str_radix(10)
-        .trim_start_matches('-')
-        .trim_start_matches('0')
-        .len();
-    let integer_digits = if scale >= 0 {
-        significant_digits.saturating_sub(scale as usize)
-    } else {
-        significant_digits.saturating_add(scale.unsigned_abs() as usize)
-    };
-    if integer_digits > max_integer_digits {
-        return Err(AppError::Validation(format!(
-            "{label} exceeds decimal storage precision"
-        )));
-    }
-
-    Ok(())
+    crate::numeric::ensure_decimal_storage(
+        value,
+        max_integer_digits as u64 + max_scale as u64,
+        max_scale,
+        label,
+    )
+    .map_err(|_| {
+        let fits_scale = i32::try_from(max_scale)
+            .ok()
+            .is_some_and(|scale| amount_fits_asset_precision(value, scale));
+        AppError::Validation(if fits_scale {
+            format!("{label} exceeds decimal storage precision")
+        } else {
+            format!("{label} supports at most {max_scale} decimal places")
+        })
+    })
 }
 
 /// 裁剪并校验申购幂等键：裁剪后不得为空，且字节长度不超过 255。

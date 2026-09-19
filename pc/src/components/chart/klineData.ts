@@ -1,8 +1,11 @@
+import { mapMarketProvenance, type MarketProvenance } from '../../api/marketProvenance.ts'
+
 export type KlineModule = 'spot' | 'margin' | 'seconds' | 'market' | 'second' | 'swap'
 export type MarketWsModule = 'spot' | 'margin' | 'seconds'
 export type KlineFetcher = (symbol: string, resolution: string, from: number, to: number) => Promise<{ data: unknown }>
 
-export type KlineBar = {
+export type KlineBar = MarketProvenance & {
+  observedAt?: number
   timestamp: number
   open: number
   high: number
@@ -55,6 +58,8 @@ export function historyKlineBars(data: unknown): KlineBar[] {
   for (const row of data) {
     if (!Array.isArray(row)) continue
     const bar = normalizeKlineBar({
+      ...mapMarketProvenance(row as number[] & MarketProvenance),
+      observedAt: (row as number[] & { observedAt?: number }).observedAt,
       timestamp: row[0],
       open: row[1],
       high: row[2],
@@ -71,6 +76,8 @@ export function historyKlineBars(data: unknown): KlineBar[] {
 export function parseRealtimeKline(payload: unknown): KlineBar | null {
   if (!isRecord(payload)) return null
   return normalizeKlineBar({
+    ...mapMarketProvenance(payload),
+    observedAt: payload.observed_at ?? payload.observedAt,
     timestamp: payload.time ?? payload.timestamp ?? payload.open_time,
     open: payload.openPrice ?? payload.open,
     high: payload.highestPrice ?? payload.high,
@@ -107,6 +114,8 @@ function normalizeKlineBar(input: Record<string, unknown>): KlineBar | null {
   const volume = finiteNumber(input.volume) ?? 0
   const turnover = finiteNumber(input.turnover)
   return {
+    ...mapMarketProvenance(input),
+    ...(normalizeTimestamp(input.observedAt) ? { observedAt: normalizeTimestamp(input.observedAt) } : {}),
     timestamp,
     open,
     high,

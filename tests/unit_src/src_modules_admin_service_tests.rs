@@ -7,6 +7,31 @@ fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
 
+#[test]
+fn numeric_safety_admin_asset_pair_and_rate_envelopes() {
+    assert!(validate_trading_pair_asset_precisions(2, 8, 3, &decimal("1")).is_err());
+    assert!(validate_trading_pair_asset_precisions(8, 2, 8, &decimal("1.001")).is_err());
+    assert!(validate_trading_pair_asset_precisions(19, 2, 8, &decimal("1")).is_err());
+    assert!(validate_trading_pair_asset_precisions(8, -1, 8, &decimal("1")).is_err());
+    validate_trading_pair_asset_precisions(8, 2, 8, &decimal("1.2300")).unwrap();
+    validate_agent_commission_rate(&decimal("0.1234567800")).unwrap();
+    assert!(validate_agent_commission_rate(&decimal("0.123456789")).is_err());
+    assert!(
+        validate_convert_pair_values(
+            1,
+            2,
+            "fixed",
+            &decimal("0"),
+            &decimal("0"),
+            &decimal("1e20"),
+            None,
+            &decimal("0"),
+            None,
+        )
+        .is_err()
+    );
+}
+
 fn strategy_node(
     target_time: DateTime<Utc>,
     target_type: &str,
@@ -509,6 +534,130 @@ fn admin_permission_mapping_is_fail_closed_and_action_aware() {
             .iter()
             .any(|permission| permission == "governance.financial.read")
     );
+}
+
+#[test]
+fn financial_reconciliation_snapshot_permissions_are_exact_and_method_aware() {
+    for prefix in ["", "/admin/api/v1"] {
+        let root = format!("{prefix}/financial-reconciliation/snapshots");
+        let paths = [
+            root.clone(),
+            format!("{root}/1"),
+            format!("{root}/18446744073709551615"),
+            format!("{root}/1/follow-ups"),
+            format!("{root}/18446744073709551615/follow-ups"),
+        ];
+        for path in &paths {
+            for method in ["GET", "POST", "HEAD", "OPTIONS", "PATCH", "PUT", "DELETE"] {
+                let writable = path == &root || path.ends_with("/follow-ups");
+                let expected = match method {
+                    "GET" => "governance.financial.read",
+                    "POST" if writable => "governance.financial.operate",
+                    "HEAD" | "OPTIONS" => "admin.unmapped.read",
+                    _ => "admin.unmapped.write",
+                };
+                assert_eq!(
+                    required_admin_permission(method, path).as_deref(),
+                    Some(expected),
+                    "{method} {path}"
+                );
+            }
+        }
+        for method in ["GET", "HEAD", "OPTIONS"] {
+            assert_eq!(
+                required_admin_permission(method, &format!("{prefix}/financial-reconciliation"))
+                    .as_deref(),
+                Some("governance.financial.read"),
+                "preserve existing report reads"
+            );
+        }
+    }
+}
+
+#[test]
+fn financial_reconciliation_snapshot_permissions_reject_malformed_paths() {
+    let root = "/admin/api/v1/financial-reconciliation";
+    let mut paths = vec![
+        format!("{root}-export"),
+        format!("{root}/snapshots-export"),
+        format!("{root}/snapshots/"),
+        format!("{root}//snapshots"),
+        format!("{root}/snapshots/1/"),
+        format!("{root}/snapshots/1/extra"),
+        format!("{root}/snapshots/1/follow-ups/"),
+        format!("{root}/snapshots/1/follow-ups/2"),
+        format!("{root}/snapshots/1//follow-ups"),
+        format!("{root}/snapshots/1/follow-ups-export"),
+        format!("{root}/snapshots/1/follow-ups\n"),
+    ];
+    for id in [
+        "",
+        "0",
+        "00",
+        "01",
+        "-1",
+        "+1",
+        "1.0",
+        "1e2",
+        " 1",
+        "1 ",
+        "1\n",
+        "1\r",
+        "%31",
+        "%2F1",
+        "١",
+        "not-an-id",
+        "18446744073709551616",
+    ] {
+        paths.push(format!("{root}/snapshots/{id}"));
+        paths.push(format!("{root}/snapshots/{id}/follow-ups"));
+    }
+    for path in paths {
+        for method in ["GET", "POST", "HEAD", "OPTIONS", "PATCH", "PUT", "DELETE"] {
+            let expected = if matches!(method, "GET" | "HEAD" | "OPTIONS") {
+                "admin.unmapped.read"
+            } else {
+                "admin.unmapped.write"
+            };
+            assert_eq!(
+                required_admin_permission(method, &path).as_deref(),
+                Some(expected),
+                "{method} {path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn financial_reconciliation_snapshot_permissions_do_not_grant_writes_to_read_roles() {
+    use crate::modules::admin::domain::AdminScope;
+
+    let root = "/admin/api/v1/financial-reconciliation/snapshots";
+    for action in ["read", "write", "review", "operate", "settle"] {
+        let scope = AdminScope {
+            admin_id: 1,
+            username: "snapshot-test".to_owned(),
+            must_change_password: false,
+            auth_session_version: 0,
+            role_id: 1,
+            role_name: "snapshot-test".to_owned(),
+            permissions: [format!("governance.financial.{action}")]
+                .into_iter()
+                .collect(),
+        };
+        for path in [root.to_owned(), format!("{root}/1/follow-ups")] {
+            assert_eq!(
+                scope.allows(&required_admin_permission("GET", &path).unwrap()),
+                action == "read"
+            );
+            assert_eq!(
+                scope.allows(&required_admin_permission("POST", &path).unwrap()),
+                action == "operate"
+            );
+            assert!(!scope.allows(&required_admin_permission("PATCH", &path).unwrap()));
+        }
+        assert!(!scope.allows(&required_admin_permission("POST", &format!("{root}/1")).unwrap()));
+    }
 }
 
 #[test]

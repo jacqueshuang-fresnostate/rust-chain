@@ -1,4 +1,5 @@
 import { adminErrorMessage } from '../../shared/adminErrorMessage';
+import { requiredSafeInteger } from '../../shared/integer';
 import { IconList, IconPlus, IconRefresh } from '@douyinfe/semi-icons';
 import { Button, Card, Collapse, Descriptions, Popconfirm, SideSheet, Space, Tabs, Typography, Toast } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
@@ -54,11 +55,7 @@ const initialCreateValues: AgentCreateValues = {
 };
 
 function requiredPositiveInteger(value: string, label: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${label}必须为正整数`);
-  }
-  return parsed;
+  return requiredSafeInteger(value, label, 1);
 }
 
 function requiredString(value: string, label: string): string {

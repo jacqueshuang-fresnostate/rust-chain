@@ -53,6 +53,8 @@ pub(crate) struct SecondsContractSettlementPriceRow {
 /// 不能直接当作下单校验依据，下单必须使用带资产精度的规则行。
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct SecondsContractProductRow {
+    /// 产品同币种毛兑付预算，空值为不限制。
+    pub(crate) open_payout_capacity: Option<BigDecimal>,
     /// 产品主键。
     pub(crate) id: u64,
     /// 该产品挂靠的交易对编号，决定开仓价与结算价取自哪条行情。
@@ -82,6 +84,8 @@ pub(crate) struct SecondsContractProductRow {
 /// 且时长、赔率与投注区间已被解析为选中周期的取值而非产品默认档位。
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct SecondsContractProductRuleRow {
+    /// 已锁定的产品预算，不能用事务外配置作准入判断。
+    pub(crate) open_payout_capacity: Option<BigDecimal>,
     /// 产品主键，写入订单的 `product_id`。
     pub(crate) id: u64,
     /// 交易对编号，同时决定读取哪个行情缓存键取开仓价。
@@ -137,6 +141,8 @@ pub(crate) struct SecondsContractAdminOrderFilter {
 /// 其中的周期相关字段取自周期集合首条，与周期子表由同一次事务保持同步。
 #[derive(Debug, Clone)]
 pub(crate) struct SecondsContractProductWrite {
+    /// 管理员显式配置的毛兑付预算。
+    pub(crate) open_payout_capacity: Option<BigDecimal>,
     /// 目标交易对编号，写入前已确认该交易对存在。
     pub(crate) pair_id: u64,
     /// 目标质押资产编号，写入前已确认该资产存在。

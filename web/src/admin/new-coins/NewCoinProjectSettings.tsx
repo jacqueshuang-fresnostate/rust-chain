@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { apiRequest, ApiError } from '../../api/client';
 import { AdminCheckbox, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { ConfirmAction } from '../../shared/ConfirmAction';
-import { isPositiveDecimalText } from '../../shared/decimal';
+import { isPositiveDecimalText, requiredDecimalText } from '../../shared/decimal';
+import { requiredSafeInteger } from '../../shared/integer';
 import { useCanAdminRequest } from '../access';
 import { requiredNewCoinLocalDateTimeMillis } from '../newCoinDateTime';
 import { UnsavedChangesGuard } from '../settings/UnsavedChangesGuard';
@@ -88,24 +89,24 @@ export function NewCoinProjectSettings({ data, onSaved, onDirty }: { data: Proje
               let body: Record<string, unknown>;
               if (section === 'issuance') {
                 if (!isPositiveDecimalText(form.total) || !isPositiveDecimalText(form.price)) throw new Error('发行总量和发行价必须为正数');
-                body = { total_supply:form.total.trim(), issue_price:form.price.trim(), expected_total_supply:baseline.total, expected_issue_price:baseline.price };
+                body = { total_supply:requiredDecimalText(form.total, '发行总量'), issue_price:requiredDecimalText(form.price, '发行价'), expected_total_supply:baseline.total, expected_issue_price:baseline.price };
               } else if (section === 'unlock-rule') {
                 body = { unlock_type:form.unlockType };
                 if(form.unlockType==='immediate_on_listing') body.listed_at=requiredNewCoinLocalDateTimeMillis(form.listed,'计划上市时间');
                 if(form.unlockType==='fixed_time') body.fixed_unlock_at=requiredNewCoinLocalDateTimeMillis(form.fixed,'固定解禁时间');
                 if(form.unlockType==='relative_period') {
-                  const seconds=Number(form.relative); if(!Number.isSafeInteger(seconds)||seconds<=0) throw new Error('相对周期秒数必须为正整数');
+                  const seconds=requiredSafeInteger(form.relative, '相对周期秒数', 1, 4_294_967_295);
                   body.relative_unlock_seconds=seconds;
                 }
               } else if (section === 'unlock-fee-rule') {
                 body={unlock_fee_enabled:form.feeEnabled};
                 if(form.feeEnabled) {
                   if(!p.quote_asset_id || !isPositiveDecimalText(form.feeRate)) throw new Error('请检查计价资产和费用费率');
-                  Object.assign(body,{unlock_fee_rate:form.feeRate.trim(),unlock_fee_basis:form.feeBasis,unlock_fee_asset:p.quote_asset_id});
+                  Object.assign(body,{unlock_fee_rate:requiredDecimalText(form.feeRate, '解禁费率', 18, 8),unlock_fee_basis:form.feeBasis,unlock_fee_asset:p.quote_asset_id});
                 }
               } else {
                 body={enabled:form.purchaseEnabled};
-                if(form.purchaseEnabled) { const pair=Number(form.pairId); if(!Number.isSafeInteger(pair)||pair<=0) throw new Error('请选择购买交易对'); body.pair_id=pair; }
+                if(form.purchaseEnabled) body.pair_id=requiredSafeInteger(form.pairId, '购买交易对', 1);
               }
               await apiRequest(endpoint,{method:'PATCH',body:JSON.stringify({...body,expected_config:version,reason})});
               setBaseline(form); onDirty(false); await onSaved();

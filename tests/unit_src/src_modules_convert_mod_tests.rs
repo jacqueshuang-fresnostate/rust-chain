@@ -4,6 +4,69 @@ use chrono::{TimeDelta, TimeZone, Utc};
 use uuid::Uuid;
 
 #[test]
+fn numeric_safety_quote_ttl_rejects_duration_and_date_overflow() {
+    for (now, seconds) in [
+        (Utc::now(), i64::MAX),
+        (chrono::DateTime::<Utc>::MAX_UTC, 1),
+        (
+            chrono::DateTime::<Utc>::from_timestamp(i64::from(i32::MAX), 0).unwrap(),
+            1,
+        ),
+    ] {
+        assert_eq!(
+            ConvertQuote::new(QuoteId(Uuid::nil()), now, seconds).unwrap_err(),
+            ConvertQuoteError::InvalidTtl,
+        );
+    }
+}
+
+#[test]
+fn numeric_safety_convert_checks_storage_after_quantization() {
+    let decimal = |value: &str| value.parse::<BigDecimal>().unwrap();
+    let pair = repository::ConvertPairRule {
+        id: 1,
+        from_asset_id: 1,
+        to_asset_id: 2,
+        pricing_mode: "fixed".into(),
+        spread_rate: decimal("0"),
+        fee_rate: decimal("0.00000001"),
+        min_amount: decimal("0"),
+        max_amount: None,
+        fixed_rate: Some(decimal("1")),
+        market_pair_symbol: None,
+        market_base_asset_id: None,
+        market_quote_asset_id: None,
+        pricing_updated_at: Utc::now(),
+    };
+    let amounts = service::convert_quote_amounts(
+        &decimal("1.000000000000000001"),
+        &pair,
+        &decimal("1"),
+        18,
+        18,
+    )
+    .unwrap();
+    assert_eq!(amounts.fee_amount, decimal("0.00000001"));
+    assert_eq!(amounts.to_amount, decimal("0.999999990000000001"));
+    assert!(
+        service::convert_quote_amounts(
+            &decimal("99999999999999999999"),
+            &pair,
+            &decimal("2"),
+            18,
+            18,
+        )
+        .is_err()
+    );
+    assert!(service::normalize_convert_rate_for_storage(&decimal("1e20")).is_err());
+    assert!(service::ensure_convert_amount_precision(&decimal("1e20"), 18, "amount").is_err());
+    assert!(
+        service::ensure_convert_amount_precision(&decimal("1.230000000000000000000"), 2, "amount")
+            .is_ok()
+    );
+}
+
+#[test]
 fn convert_pair_response_serializes_configured_and_null_asset_logos() {
     let response = presentation::ConvertPairsResponse {
         pairs: vec![

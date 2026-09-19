@@ -21,6 +21,7 @@ pub(crate) struct CreateTradingPairRequest {
     pub(crate) logo_url: Option<String>,
     pub(crate) price_precision: i32,
     pub(crate) qty_precision: i32,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_order_value: BigDecimal,
     pub(crate) status: Option<String>,
     pub(crate) market_type: Option<String>,
@@ -43,6 +44,7 @@ pub(crate) struct UpdateTradingPairRequest {
     pub(crate) logo_url: Option<String>,
     pub(crate) price_precision: i32,
     pub(crate) qty_precision: i32,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) min_order_value: BigDecimal,
     pub(crate) status: String,
     pub(crate) market_type: String,
@@ -97,8 +99,11 @@ pub(crate) struct MarketStrategyGeneratorRequest {
     pub(crate) seed: Option<String>,
     #[serde(default)]
     pub(crate) regenerate_seed: bool,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) mean_reversion_strength: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) noise_scale: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) wick_scale: BigDecimal,
     pub(crate) volume_shape: String,
 }
@@ -152,14 +157,19 @@ impl PresentationLayer for MarketStrategyGeneratorPresetResponse {}
 pub(crate) struct CreateMarketStrategyRequest {
     pub(crate) pair_id: u64,
     pub(crate) strategy_type: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) start_price: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) target_price: BigDecimal,
     #[serde(with = "unix_millis")]
     pub(crate) start_time: DateTime<Utc>,
     #[serde(with = "unix_millis")]
     pub(crate) end_time: DateTime<Utc>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volatility: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volume_min: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volume_max: BigDecimal,
     #[serde(default)]
     pub(crate) nodes: Vec<MarketStrategyNodeRequest>,
@@ -174,14 +184,19 @@ impl PresentationLayer for CreateMarketStrategyRequest {}
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct UpdateMarketStrategyRequest {
     pub(crate) strategy_type: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) start_price: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) target_price: BigDecimal,
     #[serde(with = "unix_millis")]
     pub(crate) start_time: DateTime<Utc>,
     #[serde(with = "unix_millis")]
     pub(crate) end_time: DateTime<Utc>,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volatility: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volume_min: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volume_max: BigDecimal,
     #[serde(default)]
     pub(crate) nodes: Vec<MarketStrategyNodeRequest>,
@@ -261,11 +276,22 @@ pub(crate) struct MarketStrategyNodeRequest {
     #[serde(with = "unix_millis")]
     pub(crate) target_time: DateTime<Utc>,
     pub(crate) target_type: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) target_value: BigDecimal,
     pub(crate) execution_mode: String,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) tolerance: BigDecimal,
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) volatility: BigDecimal,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) volume_min: Option<BigDecimal>,
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) volume_max: Option<BigDecimal>,
 }
 

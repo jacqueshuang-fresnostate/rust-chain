@@ -27,6 +27,9 @@ use uuid::Uuid;
 
 static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
+#[path = "margin/numeric_workers.rs"]
+mod numeric_workers;
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -577,6 +580,10 @@ async fn margin_liquidation_worker_liquidates_unsafe_position_idempotently()
             .fetch_one(&pool)
             .await?;
     assert_eq!(record_count_after, 1);
+    let journal: (i64, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE transaction_key = ?",
+    ).bind(format!("margin:{}:liquidate", fixture.position_id)).fetch_one(&pool).await?;
+    assert_eq!(journal, (4, decimal("0")));
     Ok(())
 }
 
@@ -660,7 +667,10 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
         let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
         let event: Value = serde_json::from_str(event_message.payload())?;
         assert_eq!(event["type"], "margin.position.liquidated");
-        assert_eq!(event["payout_amount"], "0.000000000000000000");
+        assert_eq!(
+            decimal(event["payout_amount"].as_str().unwrap()),
+            decimal("0")
+        );
         assert_eq!(event["reason"], "cross_maintenance_margin");
         assert_eq!(event["mark_price"], "80.000000000000000000");
         let position_id = event["position_id"].as_u64().unwrap();
@@ -865,6 +875,14 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .fetch_one(&pool)
     .await?;
     assert_eq!(available_after_replay, decimal("0.000000000000000000"));
+    let reference = format!(
+        "{}:{}:{}",
+        fixture.user_id, fixture.margin_asset, fixture.position_id
+    );
+    let journal: (i64, BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT transaction_key), COALESCE(SUM(amount), 0), COALESCE(SUM(CASE WHEN account_code = 'platform_margin_liquidation_income' THEN amount ELSE 0 END), 0), COALESCE(SUM(CASE WHEN account_code = 'platform_margin_bad_debt_expense' THEN amount ELSE 0 END), 0) FROM platform_financial_journal WHERE context = 'margin' AND ref_type = 'margin_cross_account' AND ref_id = ?",
+    ).bind(reference).fetch_one(&pool).await?;
+    assert_eq!(journal, (1, decimal("0"), decimal("-9"), decimal("0")));
     Ok(())
 }
 

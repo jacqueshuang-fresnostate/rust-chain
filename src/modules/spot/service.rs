@@ -11,7 +11,7 @@ use crate::{
         NewOrder, OrderSide, OrderStatus, OrderType, SpotOrder, SpotTrade,
         presentation::{SpotFillResponse, SpotOrderResponse, SpotTradeResponse},
         repository::SpotIdempotentOrderRecord,
-        spot_remaining_reserved_amount, spot_reservation_amount, spot_reserve_asset_id,
+        spot_reservation_amount, spot_reserve_asset_id,
     },
     modules::wallet::{WalletRepository, WalletService},
 };
@@ -197,6 +197,8 @@ pub struct CancelSpotOrderCommand {
     pub order_id: String,
     pub base_asset_id: String,
     pub quote_asset_id: String,
+    /// 调用方在订单锁内按实际冻结、成交扣款与释放流水取得的剩余额，不重新乘算。
+    pub remaining_reserved_amount: BigDecimal,
     pub wallet_ledger: crate::modules::wallet::LedgerMetadata,
 }
 
@@ -205,6 +207,11 @@ pub struct FillSpotOrderCommand {
     pub order_id: String,
     pub base_asset_id: String,
     pub quote_asset_id: String,
+    /// 调用方在同一事务读取的真实资产精度，不是交易对展示位数。
+    pub base_asset_precision: i32,
+    pub quote_asset_precision: i32,
+    /// 该订单实际尚未消耗的预留，禁止用钱包整桶冻结余额替代。
+    pub remaining_reserved_amount: BigDecimal,
     pub fill_price: BigDecimal,
     pub fill_quantity: BigDecimal,
     pub wallet_ledger: crate::modules::wallet::LedgerMetadata,
@@ -246,17 +253,26 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
             return Ok(false);
         }
 
-        let remaining_reservation = spot_remaining_reserved_amount(
-            &order,
-            &command.base_asset_id,
-            &command.quote_asset_id,
+        let remaining = command.remaining_reserved_amount;
+        crate::numeric::ensure_amount_storage(&remaining, "spot remaining reservation").map_err(
+            |error| crate::modules::spot::SpotServiceError::Repository(error.to_string()),
         )?;
-        if remaining_reservation.1 > 0 {
+        if remaining < 0 {
+            return Err(crate::modules::spot::SpotServiceError::Repository(
+                "negative spot remaining reservation".to_owned(),
+            ));
+        }
+        if remaining > 0 {
             self.wallet_service
                 .unfreeze(crate::modules::wallet::UnfreezeBalanceCommand {
                     user_id: order.user_id.clone(),
-                    asset_id: remaining_reservation.0,
-                    amount: remaining_reservation.1,
+                    asset_id: spot_reserve_asset_id(
+                        order.side,
+                        &command.base_asset_id,
+                        &command.quote_asset_id,
+                    )
+                    .to_owned(),
+                    amount: remaining,
                     ledger: command.wallet_ledger,
                 })?;
         }
@@ -272,6 +288,34 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
         command: FillSpotOrderCommand,
     ) -> Result<crate::modules::spot::SpotOrder, crate::modules::spot::SpotServiceError> {
         let mut order = self.spot_repository.load_order(&command.order_id)?;
+        let map_error =
+            |error: AppError| crate::modules::spot::SpotServiceError::Repository(error.to_string());
+        ensure_spot_asset_amount(
+            &command.fill_quantity,
+            command.base_asset_precision,
+            "fill quantity",
+        )
+        .map_err(map_error)?;
+        let quote = spot_quote_amount(
+            &command.fill_price,
+            &command.fill_quantity,
+            command.quote_asset_precision,
+        )
+        .map_err(map_error)?;
+        let spent = match order.side {
+            OrderSide::Buy => &quote,
+            OrderSide::Sell => &command.fill_quantity,
+        };
+        crate::numeric::ensure_amount_storage(
+            &command.remaining_reserved_amount,
+            "spot reservation",
+        )
+        .map_err(map_error)?;
+        if spent > &command.remaining_reserved_amount {
+            return Err(crate::modules::spot::SpotServiceError::Repository(
+                "fill exceeds order reservation".to_owned(),
+            ));
+        }
         crate::modules::spot::apply_fill(&mut order, command.fill_quantity.clone())?;
 
         match order.side {
@@ -279,8 +323,8 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
                 self.wallet_service
                     .settle(crate::modules::wallet::SettleBalanceCommand {
                         user_id: order.user_id.clone(),
-                        debit_frozen_asset_id: command.quote_asset_id,
-                        debit_frozen_amount: command.fill_price * command.fill_quantity.clone(),
+                        debit_frozen_asset_id: command.quote_asset_id.clone(),
+                        debit_frozen_amount: quote.clone(),
                         credit_available_asset_id: command.base_asset_id,
                         credit_available_amount: command.fill_quantity,
                         ledger: command.wallet_ledger,
@@ -292,9 +336,25 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
                         user_id: order.user_id.clone(),
                         debit_frozen_asset_id: command.base_asset_id,
                         debit_frozen_amount: command.fill_quantity.clone(),
-                        credit_available_asset_id: command.quote_asset_id,
-                        credit_available_amount: command.fill_price * command.fill_quantity,
+                        credit_available_asset_id: command.quote_asset_id.clone(),
+                        credit_available_amount: quote.clone(),
                         ledger: command.wallet_ledger,
+                    })?;
+            }
+        }
+        if order.side == OrderSide::Buy && order.status == OrderStatus::Filled {
+            let surplus = command.remaining_reserved_amount - quote;
+            if surplus > 0 {
+                self.wallet_service
+                    .unfreeze(crate::modules::wallet::UnfreezeBalanceCommand {
+                        user_id: order.user_id.clone(),
+                        asset_id: command.quote_asset_id,
+                        amount: surplus,
+                        ledger: crate::modules::wallet::LedgerMetadata::new(
+                            "spot_price_improvement_release",
+                            "spot_order",
+                            &order.id,
+                        )?,
                     })?;
             }
         }
@@ -311,6 +371,7 @@ pub(crate) struct SpotOrderIdempotencyCheck {
     pub(crate) order_type: OrderType,
     pub(crate) price: Option<BigDecimal>,
     pub(crate) trigger_price: Option<BigDecimal>,
+    pub(crate) trigger_direction: Option<crate::modules::spot::TriggerDirection>,
     pub(crate) quantity: BigDecimal,
     pub(crate) reserved_amount: Option<BigDecimal>,
     pub(crate) request_reference_price: Option<BigDecimal>,
@@ -377,6 +438,12 @@ pub(crate) fn spot_order_request_fingerprint(
         sha2::Digest::update(&mut digest, (field.len() as u64).to_be_bytes());
         sha2::Digest::update(&mut digest, field.as_bytes());
     }
+    // 无方向的历史请求必须保留原始指纹字节；只为显式意图追加带标记字段。
+    if let Some(direction) = request.trigger_direction {
+        let field = format!("trigger_direction:{}", direction.as_str());
+        sha2::Digest::update(&mut digest, (field.len() as u64).to_be_bytes());
+        sha2::Digest::update(&mut digest, field.as_bytes());
+    }
     hex::encode(sha2::Digest::finalize(digest))
 }
 
@@ -400,6 +467,7 @@ pub(crate) fn spot_order_idempotency_check_for_insert(
         order_type: new_order.order_type,
         price: new_order.price.clone(),
         trigger_price: new_order.trigger_price.clone(),
+        trigger_direction: new_order.trigger_direction,
         quantity: new_order.quantity.clone(),
         reserved_amount: Some(reserved_amount.clone()),
         request_reference_price: match new_order.order_type {
@@ -421,8 +489,13 @@ pub(crate) fn ensure_spot_order_idempotency_matches(
         && existing.order_type == expected.order_type
         && existing.price == expected.price
         && existing.trigger_price == expected.trigger_price
+        && existing.trigger_direction == expected.trigger_direction
         && existing.quantity == expected.quantity
-        && existing.reserved_amount == expected.reserved_amount
+        // 委托参数与已存参考价才是请求身份，派生预留可能遵循历史存储舍入口径。
+        // 仅旧市价单缺少参考价快照时，仍用原预留作为可核对的有限证据。
+        && (existing.order_type != OrderType::Market
+            || existing.request_reference_price.is_some()
+            || existing.reserved_amount == expected.reserved_amount)
         && request_reference_price_matches(
             existing,
             expected.side,
@@ -573,7 +646,9 @@ pub(crate) fn spot_fill_wallet_lock_keys(
 pub(crate) fn parse_spot_order_request_id(order_id: &str) -> AppResult<u64> {
     order_id
         .parse::<u64>()
-        .map_err(|_| AppError::Validation("invalid spot order id".to_owned()))
+        .ok()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| AppError::Validation("invalid spot order id".to_owned()))
 }
 
 /// 按现货合同校验买卖订单成交匹配关系，集中复用输入边界、状态机或金额精度规则。
@@ -602,6 +677,15 @@ pub(crate) fn ensure_fill_price_matches_limits(
     sell_order: &SpotOrder,
     fill_price: &BigDecimal,
 ) -> AppResult<()> {
+    if [buy_order, sell_order].iter().any(|order| {
+        order.order_type == OrderType::StopLimit
+            && order.trigger_direction.is_some()
+            && order.triggered_at.is_none()
+    }) {
+        return Err(AppError::Conflict(
+            "explicit stop limit order has not triggered".to_owned(),
+        ));
+    }
     if let Some(buy_limit) = buy_order.price.as_ref()
         && fill_price > buy_limit
     {
@@ -678,6 +762,9 @@ pub(crate) fn spot_order_audit_json(order: &SpotOrder) -> Value {
         "side": order.side,
         "order_type": order.order_type,
         "price": order.price,
+        "trigger_price": order.trigger_price,
+        "trigger_direction": order.trigger_direction,
+        "triggered_at": order.triggered_at,
         "quantity": order.quantity,
         "filled_quantity": order.filled_quantity,
         "status": order.status,
@@ -781,10 +868,7 @@ pub(crate) fn is_triggerable_stop_limit_buy_order(
     order.side == OrderSide::Buy
         && order.order_type == OrderType::StopLimit
         && is_triggerable_order_status(order.status)
-        && order
-            .trigger_price
-            .as_ref()
-            .is_some_and(|trigger_price| market_price <= trigger_price)
+        && stop_limit_is_activated(order, market_price)
         && order
             .price
             .as_ref()
@@ -800,15 +884,41 @@ pub(crate) fn is_triggerable_stop_limit_sell_order(
     order.side == OrderSide::Sell
         && order.order_type == OrderType::StopLimit
         && is_triggerable_order_status(order.status)
-        && order
-            .trigger_price
-            .as_ref()
-            .is_some_and(|trigger_price| market_price >= trigger_price)
+        && stop_limit_is_activated(order, market_price)
         && order
             .price
             .as_ref()
             .is_some_and(|limit_price| market_price >= limit_price)
         && order.quantity > order.filled_quantity
+}
+
+/// 显式订单只读取已持久化激活标记；旧订单每次仍复核原买跌卖涨阈值，不追溯改变合同。
+fn stop_limit_is_activated(order: &SpotOrder, market_price: &BigDecimal) -> bool {
+    match order.trigger_direction {
+        Some(_) => order.triggered_at.is_some(),
+        None => order
+            .trigger_price
+            .as_ref()
+            .zip(order.price.as_ref())
+            .is_some_and(|(trigger, limit)| {
+                stop_limit_order_reaches_execution_price(order.side, market_price, trigger, limit)
+            }),
+    }
+}
+
+/// 仅未激活的可成交显式止限价订单可记录阈值命中；不依赖限价或库存，也不修改资金。
+pub(crate) fn should_activate_stop_limit_order(
+    order: &SpotOrder,
+    market_price: &BigDecimal,
+) -> bool {
+    order.order_type == OrderType::StopLimit
+        && is_triggerable_order_status(order.status)
+        && order.quantity > order.filled_quantity
+        && order.triggered_at.is_none()
+        && order
+            .trigger_direction
+            .zip(order.trigger_price.as_ref())
+            .is_some_and(|(direction, trigger)| direction.reached(market_price, trigger))
 }
 
 /// 处理价格的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
@@ -843,6 +953,8 @@ pub(crate) fn spot_order_reservation(
             AppError::Validation("reference_price is required for market orders".to_owned())
         })?,
     };
+    crate::numeric::ensure_amount_storage(price, "spot reservation price")?;
+    crate::numeric::ensure_amount_storage(&order.quantity, "spot quantity")?;
     let amount = spot_reservation_amount(order.side, price, &order.quantity);
     let base_asset_id = base_asset_id.to_string();
     let quote_asset_id = quote_asset_id.to_string();
@@ -850,6 +962,55 @@ pub(crate) fn spot_order_reservation(
         .parse::<u64>()
         .map_err(|_| AppError::Internal("invalid reserve asset id".to_owned()))?;
     Ok(SpotOrderReservation { asset_id, amount })
+}
+
+/// 校验现货源金额同时满足存储容量和真实资产精度；尾零不影响精度，不替用户舍入。
+pub(crate) fn ensure_spot_asset_amount(
+    amount: &BigDecimal,
+    precision: i32,
+    label: &str,
+) -> AppResult<()> {
+    if !(0..=18).contains(&precision) {
+        return Err(AppError::Validation(
+            "invalid spot asset precision".to_owned(),
+        ));
+    }
+    crate::numeric::ensure_amount_storage(amount, label)?;
+    if amount.normalized().fractional_digit_count() > i64::from(precision) {
+        return Err(AppError::Validation(format!(
+            "{label} exceeds asset precision"
+        )));
+    }
+    Ok(())
+}
+
+/// 逐笔生成报价金额并向零截断；预留和双方资金腿共用结果，零成交与存储溢出拒绝。
+/// 分笔截断之和不大于总量截断，未消耗预留只在全成或撤单按实际流水释放。
+pub(crate) fn spot_quote_amount(
+    price: &BigDecimal,
+    quantity: &BigDecimal,
+    quote_precision: i32,
+) -> AppResult<BigDecimal> {
+    crate::numeric::ensure_amount_storage(price, "spot price")?;
+    crate::numeric::ensure_amount_storage(quantity, "spot quantity")?;
+    if price <= &BigDecimal::from(0) || quantity <= &BigDecimal::from(0) {
+        return Err(AppError::Validation(
+            "spot price and quantity must be positive".to_owned(),
+        ));
+    }
+    if !(0..=18).contains(&quote_precision) {
+        return Err(AppError::Validation(
+            "invalid spot quote precision".to_owned(),
+        ));
+    }
+    let amount = (price * quantity).with_scale(i64::from(quote_precision));
+    ensure_spot_asset_amount(&amount, quote_precision, "spot quote amount")?;
+    if amount <= 0 {
+        return Err(AppError::Validation(
+            "spot quote amount is below one asset unit".to_owned(),
+        ));
+    }
+    Ok(amount)
 }
 
 fn market_reference_price_tolerance(reference_price: &BigDecimal) -> BigDecimal {

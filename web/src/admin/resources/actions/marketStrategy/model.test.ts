@@ -29,6 +29,80 @@ const twoNodePreset: MarketStrategyPreset = {
 };
 
 describe('market strategy model', () => {
+  it.each(['detail', 'preset'] as const)('rejects high-precision JSON numeric node fields from %s ingress before payload creation', (source) => {
+    for (const field of ['target_value', 'tolerance', 'volatility', 'volume_min', 'volume_max'] as const) {
+      const record = { ...marketStrategyBasePayload(validStrategy()), pair_id: 21, status: 'paused' };
+      Object.assign(record.nodes[0], { volume_min: '0', volume_max: '2', [field]: JSON.parse('1.000000000000000001') });
+      const preset = structuredClone(twoNodePreset);
+      Object.assign(preset.nodes[0], { volume_min: '0', volume_max: '2', [field]: JSON.parse('1.000000000000000001') });
+      const values = source === 'detail' ? marketStrategyFromRecord(record) : applyPreset(validStrategy(), preset)!;
+      expect(values.nodes).toHaveLength(source === 'detail' ? 1 : 2);
+      expect(isMarketStrategySubmittable(values, true), field).toBe(false);
+      expect(() => marketStrategyBasePayload(values), field).toThrow();
+    }
+  });
+
+  it.each(['detail', 'preset'] as const)('rejects high-precision JSON numeric generator knobs from %s ingress before payload creation', (source) => {
+    for (const field of ['mean_reversion_strength', 'noise_scale', 'wick_scale'] as const) {
+      const record = { ...marketStrategyBasePayload(validStrategy()), pair_id: 21, status: 'paused' };
+      record.generator[field] = JSON.parse('0.123456789123456789');
+      const preset = structuredClone(twoNodePreset);
+      preset.generator[field] = JSON.parse('0.123456789123456789');
+      const values = source === 'detail' ? marketStrategyFromRecord(record) : applyPreset(validStrategy(), preset)!;
+      expect(isMarketStrategySubmittable(values, true), field).toBe(false);
+      expect(() => marketStrategyBasePayload(values), field).toThrow();
+    }
+  });
+
+  it.each(['detail', 'preset'] as const)('retains exact strings and zero versus null in %s monetary drafts', (source) => {
+    const record = { ...marketStrategyBasePayload(validStrategy()), pair_id: 21, status: 'paused' };
+    const preset = structuredClone(twoNodePreset);
+    for (const input of [record, preset]) {
+      Object.assign(input.nodes[0], { target_value: '1.000000000000000001', tolerance: '0.0000000100', volume_min: '0', volume_max: '0' });
+      input.generator.mean_reversion_strength = '0.123456789123456789';
+    }
+    const values = source === 'detail' ? marketStrategyFromRecord(record) : applyPreset(validStrategy(), preset)!;
+    expect(isMarketStrategySubmittable(values, true)).toBe(true);
+    const payload = marketStrategyBasePayload(values);
+    expect(payload.nodes[0]).toMatchObject({ target_value: '1.000000000000000001', tolerance: '0.0000000100', volume_min: '0', volume_max: '0' });
+    expect(payload.generator.mean_reversion_strength).toBe('0.123456789123456789');
+    for (const input of [record, preset]) Object.assign(input.nodes[0], { volume_min: null, volume_max: null });
+    const noVolumes = source === 'detail' ? marketStrategyFromRecord(record) : applyPreset(validStrategy(), preset)!;
+    expect(marketStrategyBasePayload(noVolumes).nodes[0]).toMatchObject({ volume_min: null, volume_max: null });
+  });
+
+  it('preserves defaults only for absent settings, not explicit invalid numeric values', () => {
+    const payload = marketStrategyBasePayload(validStrategy());
+    const record = {
+      ...payload, pair_id: 21, status: 'paused', generator: {},
+      nodes: [{ target_time: payload.nodes[0].target_time, target_value: '1.5' }]
+    };
+    const values = marketStrategyFromRecord(record);
+    expect(marketStrategyBasePayload(values)).toMatchObject({
+      generator: { mean_reversion_strength: '0.55', noise_scale: '1', wick_scale: '0.75' },
+      nodes: [{ tolerance: '0', volatility: '0', volume_min: null, volume_max: null }]
+    });
+    expect(marketStrategyBasePayload(applyPreset(values, { ...twoNodePreset, generator: {} })!).generator)
+      .toMatchObject({ mean_reversion_strength: '0.55', noise_scale: '1', wick_scale: '0.75' });
+    for (const invalid of [null, false, 0, '']) {
+      expect(() => marketStrategyBasePayload(marketStrategyFromRecord({
+        ...record, generator: { mean_reversion_strength: invalid }
+      }))).toThrow();
+      expect(() => marketStrategyBasePayload(applyPreset(values, {
+        ...twoNodePreset, generator: { noise_scale: invalid }
+      })!)).toThrow();
+    }
+  });
+
+  it('rejects numeric detail amount fields before they can become command strings', () => {
+    const record = { ...marketStrategyBasePayload(validStrategy()), pair_id: 21, status: 'paused' };
+    for (const field of ['start_price', 'target_price', 'volatility', 'volume_min', 'volume_max']) {
+      expect(() => marketStrategyBasePayload(marketStrategyFromRecord({
+        ...record, [field]: JSON.parse('0.100000000000000001')
+      }))).toThrow();
+    }
+  });
+
   it('warns about global and local floor-scale wicks while preserving raw ratio payloads', () => {
     const values = validStrategy();
     Object.assign(values, { volatility: '1', wickScale: '5' });

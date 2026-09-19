@@ -27,6 +27,8 @@ use bigdecimal::BigDecimal;
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 
+pub(crate) mod exposure;
+
 /// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
 const EARN_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
 
@@ -122,7 +124,8 @@ fn earn_product_query() -> QueryBuilder<'static, MySql> {
                   products.term_days, products.apr_rate, products.redemption_fee_rate,
                   products.maturity_profit_fee_rate, products.early_redeem_fee_basis,
                   products.early_redeem_fee_rate,
-                  products.min_subscribe, products.max_subscribe, products.status
+                  products.min_subscribe, products.max_subscribe, products.status,
+                  products.principal_capacity, products.liability_capacity
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id
            LEFT JOIN earn_product_categories categories ON categories.code = products.category"#,
@@ -396,8 +399,8 @@ pub(crate) async fn insert_product_in_tx(
         r#"INSERT INTO earn_products
            (asset_id, name, banner_url, small_logo_url, category, introduction_json, term_days,
             apr_rate, redemption_fee_rate, maturity_profit_fee_rate, early_redeem_fee_basis,
-            early_redeem_fee_rate, min_subscribe, max_subscribe, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            early_redeem_fee_rate, min_subscribe, max_subscribe, status, principal_capacity, liability_capacity)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(input.asset_id)
     .bind(&input.name)
@@ -414,6 +417,8 @@ pub(crate) async fn insert_product_in_tx(
     .bind(&input.min_subscribe)
     .bind(&input.max_subscribe)
     .bind(&input.status)
+    .bind(&input.principal_capacity)
+    .bind(&input.liability_capacity)
     .execute(&mut **tx)
     .await?
     .last_insert_id();
@@ -432,7 +437,8 @@ pub(crate) async fn update_product_in_tx(
            SET asset_id = ?, name = ?, banner_url = ?, small_logo_url = ?, category = ?,
                introduction_json = ?, term_days = ?, apr_rate = ?, redemption_fee_rate = ?,
                maturity_profit_fee_rate = ?, early_redeem_fee_basis = ?,
-               early_redeem_fee_rate = ?, min_subscribe = ?, max_subscribe = ?, status = ?
+               early_redeem_fee_rate = ?, min_subscribe = ?, max_subscribe = ?, status = ?,
+               principal_capacity = ?, liability_capacity = ?
            WHERE id = ?"#,
     )
     .bind(input.asset_id)
@@ -450,6 +456,8 @@ pub(crate) async fn update_product_in_tx(
     .bind(&input.min_subscribe)
     .bind(&input.max_subscribe)
     .bind(&input.status)
+    .bind(&input.principal_capacity)
+    .bind(&input.liability_capacity)
     .bind(product_id)
     .execute(&mut **tx)
     .await?;
@@ -487,7 +495,8 @@ pub(crate) async fn load_product_by_id(
                   products.term_days, products.apr_rate, products.redemption_fee_rate,
                   products.maturity_profit_fee_rate, products.early_redeem_fee_basis,
                   products.early_redeem_fee_rate,
-                  products.min_subscribe, products.max_subscribe, products.status
+                  products.min_subscribe, products.max_subscribe, products.status,
+                  products.principal_capacity, products.liability_capacity
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id
            LEFT JOIN earn_product_categories categories ON categories.code = products.category
@@ -516,7 +525,8 @@ pub(crate) async fn lock_product_by_id(
                   products.term_days, products.apr_rate, products.redemption_fee_rate,
                   products.maturity_profit_fee_rate, products.early_redeem_fee_basis,
                   products.early_redeem_fee_rate,
-                  products.min_subscribe, products.max_subscribe, products.status
+                  products.min_subscribe, products.max_subscribe, products.status,
+                  products.principal_capacity, products.liability_capacity
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id
            LEFT JOIN earn_product_categories categories ON categories.code = products.category
@@ -607,7 +617,7 @@ pub(crate) async fn lock_active_product(
     let product = sqlx::query_as::<_, EarnProductRuleRow>(
         r#"SELECT id, asset_id, term_days, apr_rate, redemption_fee_rate,
                   maturity_profit_fee_rate, early_redeem_fee_basis, early_redeem_fee_rate,
-                  min_subscribe, max_subscribe, status
+                  min_subscribe, max_subscribe, status, principal_capacity, liability_capacity
            FROM earn_products
            WHERE id = ?
            LIMIT 1
@@ -708,6 +718,9 @@ pub(crate) async fn insert_earn_platform_journal_legs_in_tx(
     subscription_id: u64,
     legs: &[EarnPlatformJournalLeg],
 ) -> AppResult<()> {
+    for leg in legs {
+        crate::numeric::ensure_amount_storage(&leg.amount, "earn journal amount")?;
+    }
     let total = legs
         .iter()
         .fold(BigDecimal::from(0), |total, leg| total + leg.amount.clone());
@@ -748,6 +761,8 @@ pub(crate) async fn debit_wallet_for_subscription_in_tx(
     subscription_id: u64,
 ) -> AppResult<()> {
     let available_after = wallet.available.clone() - amount.clone();
+    crate::numeric::ensure_amount_storage(amount, "earn principal")?;
+    crate::numeric::ensure_amount_storage(&available_after, "earn available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -807,6 +822,8 @@ pub(crate) async fn credit_wallet_for_redemption_in_tx(
     redeem_amount: &BigDecimal,
 ) -> AppResult<()> {
     let available_after = wallet.available.clone() + redeem_amount.clone();
+    crate::numeric::ensure_amount_storage(redeem_amount, "earn redemption")?;
+    crate::numeric::ensure_amount_storage(&available_after, "earn available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(subscription.user_id)

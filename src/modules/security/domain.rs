@@ -292,6 +292,7 @@ pub struct LoginTwoFactorChallenge {
     pub challenge_type: LoginTwoFactorChallengeType,
     pub expires_at: DateTime<Utc>,
     pub consumed_at: Option<DateTime<Utc>>,
+    pub auth_session_version: u64,
 }
 
 #[derive(Debug, Clone)]

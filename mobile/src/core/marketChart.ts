@@ -21,7 +21,7 @@ export function resolveMarketChartPriceFormat(
 }
 
 export function normalizeMarketChartTimestamp(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 0
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 8_640_000_000_000_000) return 0
   const milliseconds = value < 1_000_000_000_000 ? value * 1000 : value
   return Math.floor(milliseconds / 1000)
 }

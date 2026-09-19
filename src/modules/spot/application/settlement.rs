@@ -3,6 +3,7 @@
 use crate::{
     error::{AppError, AppResult},
     modules::{
+        admin::infrastructure::{AdminAuditLogEntry, insert_admin_audit_log_entry_in_tx},
         agent::{
             infrastructure::insert_agent_business_commission_in_tx,
             repository::AgentBusinessCommissionWrite, service::AGENT_COMMISSION_PRODUCT_SPOT,
@@ -10,13 +11,17 @@ use crate::{
         spot::{
             OrderSide, SpotOrder, SpotTrade, apply_fill,
             infrastructure::{
-                SpotLedgerMetadata, apply_spot_wallet_settlement_leg, insert_spot_trade,
-                is_duplicate_key_error, load_existing_spot_trade_by_idempotency_key,
-                lock_spot_fill_orders_in_order, lock_spot_fill_wallet_rows_in_order,
-                pair_assets_in_tx, release_buy_order_surplus_reservation_after_fill,
+                SpotLedgerMetadata, apply_spot_wallet_settlement_leg,
+                ensure_manual_spot_fill_audit_matches_in_tx, insert_spot_fill_journal_in_tx,
+                insert_spot_trade, is_duplicate_key_error,
+                load_existing_spot_trade_by_idempotency_key, lock_spot_fill_orders_in_order,
+                lock_spot_fill_wallet_rows_in_order, pair_assets_in_tx,
+                release_buy_order_surplus_reservation_after_fill,
                 remaining_spot_fill_reservation_before_trade_in_tx, save_spot_order_fill_state,
             },
-            presentation::{FillSpotOrdersRequest, SpotFillResponse},
+            presentation::{
+                FillSpotOrdersRequest, SpotFillResponse, SpotOrderResponse, SpotTradeResponse,
+            },
             service::{
                 ensure_existing_spot_trade_matches_request, ensure_fill_orders_match,
                 ensure_fill_price_matches_limits, ensure_spot_fill_within_order_reservation,
@@ -33,14 +38,20 @@ use sqlx::{MySql, Pool, Transaction};
 /// 买方报价资产与卖方基础资产只能从 frozen 扣减，对手资产等额进入 available；每条资金腿、佣金及订单状态均同步写账本。
 /// 同一幂等键重放只接受完全一致的订单、价格和数量并返回既有成交；唯一键竞态会回滚后走只读重放，不重复结算。
 /// 本函数不发布外部事件；调用者只能在事务提交成功且 `is_new_trade` 为真时广播成交结果。
+/// 仅供手工成交：认证管理员与必填原因和资金同事务审计，重放必须匹配原审计；自动撮合不调用此路径。
 pub(crate) async fn settle_spot_fill(
     pool: &Pool<MySql>,
-    buy_order_id: &str,
-    sell_order_id: &str,
-    price: &BigDecimal,
-    quantity: &BigDecimal,
-    idempotency_key: &str,
+    admin_id: u64,
+    request: &FillSpotOrdersRequest,
 ) -> AppResult<(SpotOrder, SpotOrder, SpotTrade, bool)> {
+    let FillSpotOrdersRequest {
+        buy_order_id,
+        sell_order_id,
+        price,
+        quantity,
+        idempotency_key,
+        reason,
+    } = request;
     let mut tx = pool.begin().await?;
     let (mut buy_order, mut sell_order) =
         lock_spot_fill_orders_in_order(&mut tx, buy_order_id, sell_order_id).await?;
@@ -55,10 +66,22 @@ pub(crate) async fn settle_spot_fill(
             price,
             quantity,
         )?;
+        ensure_manual_spot_fill_audit_matches_in_tx(
+            &mut tx,
+            &trade.id,
+            admin_id,
+            reason,
+            idempotency_key,
+        )
+        .await?;
         tx.commit().await?;
         return Ok((buy_order, sell_order, trade, false));
     }
     ensure_fill_price_matches_limits(&buy_order, &sell_order, price)?;
+    let before_json = serde_json::json!({
+        "buy_order": SpotOrderResponse::from(buy_order.clone()),
+        "sell_order": SpotOrderResponse::from(sell_order.clone()),
+    });
     let assets = pair_assets_in_tx(&mut tx, &buy_order.pair_id).await?;
     let base_asset_id = assets.base_asset_id;
     let quote_asset_id = assets.quote_asset_id;
@@ -70,7 +93,9 @@ pub(crate) async fn settle_spot_fill(
         .user_id
         .parse::<u64>()
         .map_err(|_| AppError::Unauthorized)?;
-    let fill_quote_amount = price.clone() * quantity.clone();
+    assets.ensure_fill(price, quantity)?;
+    let fill_quote_amount =
+        crate::modules::spot::service::spot_quote_amount(price, quantity, assets.quote_precision)?;
     // 成交幂等键先占位再锁钱包，避免重复键事务和钱包结算互相等待造成死锁或 500。
     let trade = match insert_spot_trade(
         &mut tx,
@@ -85,15 +110,7 @@ pub(crate) async fn settle_spot_fill(
         Ok(trade) => trade,
         Err(AppError::Database(error)) if is_duplicate_key_error(&error) => {
             tx.rollback().await?;
-            return replay_existing_spot_fill(
-                pool,
-                buy_order_id,
-                sell_order_id,
-                price,
-                quantity,
-                idempotency_key,
-            )
-            .await;
+            return replay_existing_spot_fill(pool, admin_id, request).await;
         }
         Err(error) => return Err(error),
     };
@@ -162,6 +179,16 @@ pub(crate) async fn settle_spot_fill(
     )
     .await?;
 
+    insert_spot_fill_journal_in_tx(
+        &mut tx,
+        &trade,
+        buyer_id,
+        seller_id,
+        base_asset_id,
+        quote_asset_id,
+        &fill_quote_amount,
+    )
+    .await?;
     insert_spot_fill_commissions_in_tx(
         &mut tx,
         &trade,
@@ -175,6 +202,27 @@ pub(crate) async fn settle_spot_fill(
 
     save_spot_order_fill_state(&mut tx, &buy_order).await?;
     save_spot_order_fill_state(&mut tx, &sell_order).await?;
+    insert_admin_audit_log_entry_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditLogEntry {
+            action: "spot.fill",
+            target_type: "spot_trade",
+            target_id: trade
+                .id
+                .parse()
+                .map_err(|_| AppError::Internal("invalid spot trade id".to_owned()))?,
+            before_json: Some(before_json),
+            after_json: Some(serde_json::json!({
+                "idempotency_key": idempotency_key,
+                "buy_order": SpotOrderResponse::from(buy_order.clone()),
+                "sell_order": SpotOrderResponse::from(sell_order.clone()),
+                "trade": SpotTradeResponse::from(trade.clone()),
+            })),
+            reason: Some(reason.clone()),
+        },
+    )
+    .await?;
     tx.commit().await?;
     Ok((buy_order, sell_order, trade, true))
 }
@@ -182,25 +230,15 @@ pub(crate) async fn settle_spot_fill(
 /// 结算指定买卖订单并在事务提交后发布私有成交事件；调用方必须提供正数价格/数量及稳定幂等键，并确保订单方向与交易对匹配。
 /// 具体事务遵循“稳定订单锁→成交幂等占位→稳定钱包锁”顺序，以预留额约束 frozen 扣减，四条资金腿、佣金、流水和订单状态原子提交。
 /// 相同幂等键仅在参数完全一致时返回既有成交，且不会重复结算或发事件；结算失败无事件，事件仅对首次成交在提交后发布。
-pub(crate) async fn fill_spot_orders_with_events(
+async fn fill_spot_orders_with_events(
     pool: &Pool<MySql>,
-    buy_order_id: &str,
-    sell_order_id: &str,
-    price: &BigDecimal,
-    quantity: &BigDecimal,
-    idempotency_key: &str,
+    admin_id: u64,
+    request: &FillSpotOrdersRequest,
     hub: Option<&crate::modules::events::EventBroadcastHub>,
 ) -> AppResult<SpotFillResponse> {
     // 成交处理后的事件发布收口到应用层，路由只返回统一的填单响应。
-    let (buy_order, sell_order, trade, is_new_trade) = settle_spot_fill(
-        pool,
-        buy_order_id,
-        sell_order_id,
-        price,
-        quantity,
-        idempotency_key,
-    )
-    .await?;
+    let (buy_order, sell_order, trade, is_new_trade) =
+        settle_spot_fill(pool, admin_id, request).await?;
     let response = SpotFillResponse {
         buy_order: buy_order.into(),
         sell_order: sell_order.into(),
@@ -216,25 +254,19 @@ pub(crate) async fn fill_spot_orders_with_events(
 /// 参数失败时不启动事务；重放只返回一致成交且不重复资金或事件副作用，数据库失败则整笔回滚。
 pub(crate) async fn fill_spot_orders_with_events_with_request(
     pool: &Pool<MySql>,
+    admin_id: u64,
     request: FillSpotOrdersRequest,
     hub: Option<&crate::modules::events::EventBroadcastHub>,
 ) -> AppResult<SpotFillResponse> {
-    // 成交请求的参数边界（幂等键与数量、价格正数）放在应用服务层，避免路由重复校验。
+    if admin_id == 0 {
+        return Err(AppError::Unauthorized);
+    }
     let request = validate_fill_spot_order_request(request)?;
 
-    fill_spot_orders_with_events(
-        pool,
-        &request.buy_order_id,
-        &request.sell_order_id,
-        &request.price,
-        &request.quantity,
-        &request.idempotency_key,
-        hub,
-    )
-    .await
+    fill_spot_orders_with_events(pool, admin_id, &request, hub).await
 }
 
-/// 校验并标准化手工成交请求：成交价和数量必须为正，幂等键去除首尾空白后仍须非空。
+/// 校验并标准化手工成交请求：价格/数量为正，幂等键及原因非空且符合数据库字段长度。
 /// 该边界在开启结算事务前执行，不锁订单或钱包；失败时不占用幂等键、不改变冻结额/流水，也不发布事件。
 pub(super) fn validate_fill_spot_order_request(
     mut request: FillSpotOrdersRequest,
@@ -247,10 +279,25 @@ pub(super) fn validate_fill_spot_order_request(
             "idempotency_key is required".to_owned(),
         ));
     }
+    if request.idempotency_key.chars().count() > 255 {
+        return Err(AppError::Validation(
+            "idempotency_key must not exceed 255 characters".to_owned(),
+        ));
+    }
+    request.reason = request.reason.trim().to_owned();
+    if request.reason.is_empty() {
+        return Err(AppError::Validation("reason is required".to_owned()));
+    }
+    if request.reason.chars().count() > 512 {
+        return Err(AppError::Validation(
+            "reason must not exceed 512 characters".to_owned(),
+        ));
+    }
     Ok(request)
 }
 
 fn validate_positive_amount(amount: &BigDecimal, field: &str) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, field)?;
     if amount <= &BigDecimal::from(0) {
         Err(AppError::Validation(format!("{field} must be positive")))
     } else {
@@ -260,12 +307,17 @@ fn validate_positive_amount(amount: &BigDecimal, field: &str) -> AppResult<()> {
 
 async fn replay_existing_spot_fill(
     pool: &Pool<MySql>,
-    buy_order_id: &str,
-    sell_order_id: &str,
-    price: &BigDecimal,
-    quantity: &BigDecimal,
-    idempotency_key: &str,
+    admin_id: u64,
+    request: &FillSpotOrdersRequest,
 ) -> AppResult<(SpotOrder, SpotOrder, SpotTrade, bool)> {
+    let FillSpotOrdersRequest {
+        buy_order_id,
+        sell_order_id,
+        price,
+        quantity,
+        idempotency_key,
+        reason,
+    } = request;
     let mut tx = pool.begin().await?;
     let (buy_order, sell_order) =
         lock_spot_fill_orders_in_order(&mut tx, buy_order_id, sell_order_id).await?;
@@ -281,6 +333,14 @@ async fn replay_existing_spot_fill(
         price,
         quantity,
     )?;
+    ensure_manual_spot_fill_audit_matches_in_tx(
+        &mut tx,
+        &trade.id,
+        admin_id,
+        reason,
+        idempotency_key,
+    )
+    .await?;
     tx.commit().await?;
     Ok((buy_order, sell_order, trade, false))
 }

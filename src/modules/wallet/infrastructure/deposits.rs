@@ -432,6 +432,7 @@ pub(crate) async fn observe_deposit_event(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(AppError::NotFound)?;
+    crate::numeric::ensure_amount_storage(&request.amount, "deposit amount")?;
     if !amount_fits_asset_precision(&request.amount, target.precision_scale) {
         return Err(AppError::Validation(format!(
             "deposit amount supports at most {} decimal places",
@@ -537,7 +538,7 @@ pub(crate) async fn reverse_deposit_event(
         tx.commit().await?;
         return Ok(event);
     }
-    let available_after = (wallet.available.clone() - credit_amount.clone()).with_scale(18);
+    let available_after = wallet.available.clone() - credit_amount.clone();
     update_wallet_balance(
         &mut tx,
         event.user_id,
@@ -730,7 +731,7 @@ async fn credit_deposit_event_in_tx(
 ) -> AppResult<()> {
     let credit_amount = deposit_credit_amount(event)?;
     let wallet = lock_wallet_balance(tx, event.user_id, event.asset_id).await?;
-    let available_after = (wallet.available.clone() + credit_amount.clone()).with_scale(18);
+    let available_after = wallet.available.clone() + credit_amount.clone();
     update_wallet_balance(
         tx,
         event.user_id,

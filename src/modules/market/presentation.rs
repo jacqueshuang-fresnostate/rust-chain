@@ -13,6 +13,75 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// 公开行情来源旁路字段；只描述已有证据，不参与价格选择或资金执行。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct MarketProvenance {
+    pub(crate) source: String,
+    pub(crate) provider: Option<String>,
+}
+
+impl Default for MarketProvenance {
+    fn default() -> Self {
+        Self {
+            source: "unknown".into(),
+            provider: None,
+        }
+    }
+}
+
+impl MarketProvenance {
+    /// Mongo 历史 source 是生产方字符串而非当前市场配置；旧值缺失或未知时保留未知，不补造证据。
+    pub(crate) fn from_stored_provider(source: Option<&str>) -> Self {
+        use crate::modules::market::MarketDataProvider;
+        match source {
+            Some("bitget") => Self::from_provider(MarketDataProvider::Bitget),
+            Some("htx") => Self::from_provider(MarketDataProvider::Htx),
+            Some("coinbase") => Self::from_provider(MarketDataProvider::Coinbase),
+            Some("strategy") => Self::from_provider(MarketDataProvider::Strategy),
+            Some("default") => Self {
+                source: "default".into(),
+                provider: Some("strategy".into()),
+            },
+            _ => Self::default(),
+        }
+    }
+
+    /// 原样保留提供方；共享 strategy 提供方只能证明生成行情，不能证明默认或人工策略。
+    pub(crate) fn from_provider(provider: crate::modules::market::MarketDataProvider) -> Self {
+        use crate::modules::market::MarketDataProvider::*;
+        let (source, provider) = match provider {
+            Bitget => ("external", "bitget"),
+            Htx => ("external", "htx"),
+            Coinbase => ("external", "coinbase"),
+            Strategy => ("generated", "strategy"),
+        };
+        Self {
+            source: source.into(),
+            provider: Some(provider.into()),
+        }
+    }
+
+    /// 仅在生成提供方和本服务逐笔编号约定同时匹配时细分来源；不从交易对配置推测历史来源。
+    pub(crate) fn from_tick(tick: &crate::modules::market::MarketTradeTick) -> Self {
+        let mut provenance = Self::from_provider(tick.provider());
+        if tick.provider() == crate::modules::market::MarketDataProvider::Strategy {
+            let parts: Vec<_> = tick.trade_id().split(':').collect();
+            if let [source @ ("strategy" | "default"), id, version, second] = parts.as_slice()
+                && id.parse::<u64>().is_ok_and(|id| id > 0)
+                && version
+                    .strip_prefix('v')
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .is_some_and(|v| v > 0)
+                && second.parse::<i64>().ok() == Some(tick.traded_at().timestamp())
+            {
+                provenance.source = (*source).into();
+            }
+        }
+        provenance
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct MarketsResponse {
     pub(crate) markets: Vec<MarketResponse>,
@@ -57,6 +126,8 @@ pub(crate) struct MarketFavoriteMutationResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TickerResponse {
+    #[serde(flatten)]
+    pub(crate) provenance: MarketProvenance,
     pub(crate) symbol: String,
     pub(crate) last_price: String,
     pub(crate) high_24h: Option<String>,
@@ -80,6 +151,10 @@ pub(crate) struct KlineQueryParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct KlineResponse {
+    #[serde(flatten)]
+    pub(crate) provenance: MarketProvenance,
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) observed_at: Option<DateTime<Utc>>,
     pub(crate) symbol: String,
     pub(crate) interval: String,
     #[serde(with = "unix_millis")]
@@ -98,6 +173,8 @@ pub(crate) struct TradesQueryParams {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct DepthResponse {
+    #[serde(flatten)]
+    pub(crate) provenance: MarketProvenance,
     pub(crate) symbol: String,
     pub(crate) bids: Vec<DepthLevelResponse>,
     pub(crate) asks: Vec<DepthLevelResponse>,
@@ -113,6 +190,10 @@ pub(crate) struct DepthLevelResponse {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct DepthCachePayload {
+    #[serde(default)]
+    pub(crate) source: Option<String>,
+    #[serde(default)]
+    pub(crate) provider: Option<String>,
     pub(crate) symbol: String,
     pub(crate) bids: Vec<DepthCacheLevel>,
     pub(crate) asks: Vec<DepthCacheLevel>,
@@ -133,8 +214,8 @@ pub(crate) struct TradesResponse {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct TradeResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) provider: Option<String>,
+    #[serde(flatten)]
+    pub(crate) provenance: MarketProvenance,
     pub(crate) id: String,
     pub(crate) symbol: String,
     pub(crate) price: String,
@@ -150,6 +231,10 @@ impl DepthResponse {
     /// 本转换不判断数据有效性，空档位、零数量或买卖倒挂都会照原样透出，新鲜度由调用方自行判断。
     pub(crate) fn from_cache(depth: DepthCachePayload) -> Self {
         Self {
+            provenance: MarketProvenance {
+                source: depth.source.unwrap_or_else(|| "unknown".into()),
+                provider: depth.provider,
+            },
             symbol: depth.symbol,
             bids: depth
                 .bids
@@ -209,6 +294,10 @@ impl KlineResponse {
     /// 开盘时间由 BSON 时间转成 UTC，OHLCV 沿用文档中的十进制字符串，不做精度归一或高低价关系校验。
     pub(crate) fn from_document(symbol: &str, document: KlineDocumentRecord) -> Self {
         Self {
+            provenance: MarketProvenance::from_stored_provider(document.source.as_deref()),
+            observed_at: document
+                .updated_at
+                .map(|at| DateTime::<Utc>::from(at.to_system_time())),
             symbol: symbol.to_owned(),
             interval: document.interval,
             open_time: DateTime::<Utc>::from(document.open_time.to_system_time()),
@@ -225,7 +314,7 @@ impl TradeResponse {
     /// 映射策略展示逐笔为公共成交响应，保留来源、稳定编号及真实模拟方向；不冒充 spot_trades 的记录。
     pub(crate) fn from_synthetic_tick(tick: crate::modules::market::MarketTradeTick) -> Self {
         Self {
-            provider: Some("strategy".into()),
+            provenance: MarketProvenance::from_tick(&tick),
             id: tick.trade_id().into(),
             symbol: tick.symbol().into(),
             price: tick.price().to_string(),
@@ -244,7 +333,10 @@ impl TradeResponse {
     /// 方向字段恒为 BUY，说明该来源尚未区分主动买卖方向，前端不能据此展示真实的成交方向。
     pub(crate) fn from_record(row: crate::modules::market::repository::SpotTradeRecord) -> Self {
         Self {
-            provider: None,
+            provenance: MarketProvenance {
+                source: "platform".into(),
+                provider: Some("platform".into()),
+            },
             id: row.id.to_string(),
             symbol: ValidatedMarketSymbol::from_raw(&row.symbol)
                 .map(|symbol| symbol.as_str().to_owned())

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { client, requestUrl } from './client'
-import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
+import { normalizeSymbol, splitSymbol } from '@/core/format'
+import { requiredId, requiredIdentityText, normalizeTimestamp as safeTimestamp } from '@/core/numeric'
 import { parseMarginOrderTypes } from '@/core/marginOrder'
 import {
   mapMarginCrossAccountRisk,
@@ -9,8 +10,10 @@ import {
 import { mapMarginUserLeverageSetting } from '@/core/marginLeverage'
 import type { MarginOrderType, MarginProduct, WalletAccount } from '@/core/types'
 import { canonicalRequestIntent, RetryStableIdempotencyKeys } from './idempotency'
+import { parseSpotTriggerSnapshot } from '@/core/spotTrigger'
 import {
   normalizeDecimalText,
+  decimalTextFromBoundary,
   requiredDecimalText,
   type DecimalText,
 } from '@/core/decimal'
@@ -111,6 +114,9 @@ export interface SpotOrder {
   filledQuantityText: DecimalText
   status: string
   createdAt?: number
+  triggerPriceText?: DecimalText | null
+  triggerDirection?: 'rising' | 'falling' | null
+  triggeredAt?: number | null
 }
 
 export interface MarginPosition {
@@ -344,7 +350,7 @@ function mapSpotOrder(order: Record<string, unknown>): SpotOrder {
     allowNegative: false,
   })
   return {
-    id: String(order.id),
+    id: requiredIdentityText(order.id),
     symbol: String(order.pair_id || order.symbol || ''),
     side: String(order.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy',
     orderType: String(order.order_type || 'limit'),
@@ -355,6 +361,7 @@ function mapSpotOrder(order: Record<string, unknown>): SpotOrder {
     averagePriceText,
     quantityText,
     filledQuantityText,
+    ...parseSpotTriggerSnapshot(order),
     status: String(order.status || 'pending'),
     createdAt: normalizeTimestamp(order.created_at),
   }
@@ -441,10 +448,10 @@ export async function fetchMarginProducts(options: ReferenceRequestOptions = {})
         { allowNegative: false },
       )
       return {
-        id: product.id,
-        pairId: asNumber(product.pair_id),
+        id: requiredId(product.id),
+        pairId: requiredId(product.pair_id),
         symbol: `${pair.base}/${pair.quote}`,
-        marginAssetId: asNumber(product.margin_asset),
+        marginAssetId: requiredId(product.margin_asset),
         marginAssetSymbol: (product.margin_asset_symbol || pair.quote).toUpperCase(),
         logoUrl: String(product.logo_url || '').trim() || undefined,
         marginMode: modes[0] || 'isolated',
@@ -452,7 +459,7 @@ export async function fetchMarginProducts(options: ReferenceRequestOptions = {})
         orderTypes: [...orderTypes],
         pricePrecision: nonNegativeInteger(product.price_precision),
         leverageLevels: levels,
-        maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
+        maxLeverage: safeLeverage(product.max_leverage ?? levels.at(-1) ?? 1),
         minMargin: decimalDisplayNumber(minMarginText, 'margin product min_margin'),
         maxMargin: nullableDecimalDisplayNumber(maxMarginText),
         minMarginText,
@@ -471,8 +478,9 @@ export async function fetchMarginProducts(options: ReferenceRequestOptions = {})
 }
 
 export async function placeMarginOrder(input: MarginOrderInput): Promise<void> {
+  safeLeverage(input.leverage)
   const payload: Record<string, number | string> = {
-    product_id: input.productId,
+    product_id: requiredId(input.productId),
     direction: input.side,
     order_type: input.orderType,
     margin_mode: input.marginMode,
@@ -600,10 +608,10 @@ export async function fetchMarginPositionRisk(
     { allowNegative: false },
   )
   return {
-    positionId: String(risk.position_id ?? positionId),
-    pairId: asNumber(risk.pair_id),
+    positionId: requiredIdentityText(risk.position_id ?? positionId),
+    pairId: requiredId(risk.pair_id),
     symbol: String(risk.symbol || ''),
-    marginAssetId: asNumber(risk.margin_asset),
+    marginAssetId: requiredId(risk.margin_asset),
     direction: String(risk.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
     marginAmount: decimalDisplayNumber(marginAmountText, 'position risk margin_amount'),
     notionalAmount: decimalDisplayNumber(notionalAmountText, 'position risk notional_amount'),
@@ -663,6 +671,7 @@ export async function cancelMarginPosition(positionId: string): Promise<void> {
 }
 
 export async function closeAllMarginPositions(productId?: number): Promise<MarginBatchActionResult> {
+  if (productId !== undefined) requiredId(productId)
   const response = await client.post<{
     positions?: Array<Record<string, unknown>>
     failures?: Array<Record<string, unknown>>
@@ -671,6 +680,7 @@ export async function closeAllMarginPositions(productId?: number): Promise<Margi
 }
 
 export async function cancelAllMarginPositions(productId?: number): Promise<MarginBatchActionResult> {
+  if (productId !== undefined) requiredId(productId)
   const response = await client.post<{
     positions?: Array<Record<string, unknown>>
     failures?: Array<Record<string, unknown>>
@@ -682,6 +692,9 @@ export async function updateMarginLeverage(
   productId: number,
   leverage: number | MarginDirectionalLeverageInput,
 ): Promise<void> {
+  requiredId(productId)
+  if (typeof leverage === 'number') safeLeverage(leverage)
+  else { safeLeverage(leverage.longLeverage); safeLeverage(leverage.shortLeverage) }
   const payload = typeof leverage === 'number'
     ? { leverage: String(leverage) }
     : {
@@ -698,6 +711,7 @@ export async function updateMarginLeverage(
  * 默认模式和可选倍数。其他网络或服务端错误继续抛出，避免把真实故障误判成“未设置”。
  */
 export async function fetchMarginSetting(productId: number): Promise<MarginUserSetting> {
+  requiredId(productId)
   try {
     const response = await client.get<{
       leverage?: string | number | null
@@ -722,6 +736,7 @@ export async function fetchMarginSetting(productId: number): Promise<MarginUserS
 }
 
 export async function updateMarginMode(productId: number, mode: 'cross' | 'isolated'): Promise<void> {
+  requiredId(productId)
   await client.patch(requestUrl(`/margin/settings/${productId}/mode`), { margin_mode: mode })
 }
 
@@ -747,7 +762,15 @@ function resolveMarginModes(
 
 function parseLeverage(value: BackendMarginProduct['leverage_levels'], maxLeverage?: string | number): number[] {
   const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [maxLeverage || 1]
-  return [...new Set(values.map((item) => asNumber(String(item).replace(/x$/i, ''))).filter((item) => item > 0))].sort((a, b) => a - b)
+  return [...new Set(values.map((item) => safeLeverage(String(item).replace(/x$/i, ''))))].sort((a, b) => a - b)
+}
+
+function safeLeverage(value: unknown): number {
+  const decimal = decimalTextFromBoundary(value as string | number, { allowNegative: false, allowZero: false })
+  const number = decimal === null ? NaN : Number(decimal)
+  if (!Number.isFinite(number) || number > Number.MAX_SAFE_INTEGER
+    || decimalTextFromBoundary(number) !== decimal) throw new TradingFinancialContractError('leverage')
+  return number
 }
 
 function createIdempotencyKey(scope: string): string {
@@ -756,15 +779,14 @@ function createIdempotencyKey(scope: string): string {
 
 function normalizeTimestamp(value: unknown, field?: string): number | undefined {
   if (value === null || value === undefined || value === '') return undefined
-  const timestamp = typeof value === 'number'
-    ? value
-    : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN
-  const normalized = timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
-  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+  try {
+    const normalized = safeTimestamp(value)
+    if (normalized <= 0) throw new TypeError('invalid timestamp')
+    return normalized
+  } catch {
     if (field) throw new TradingFinancialContractError(field)
     return undefined
   }
-  return normalized
 }
 
 export function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
@@ -786,10 +808,10 @@ export function mapMarginPosition(position: Record<string, unknown>): MarginPosi
   const realizedPnlText = nullableTradingDecimal(position.realized_pnl, 'margin position realized_pnl')
   const interestAmountText = nonNegativeTradingDecimal(position.interest_amount, 'margin position interest_amount')
   return {
-    id: String(position.id),
-    productId: asNumber(position.product_id),
-    pairId: asNumber(position.pair_id),
-    marginAssetId: asNumber(position.margin_asset),
+    id: requiredIdentityText(position.id),
+    productId: requiredId(position.product_id),
+    pairId: requiredId(position.pair_id),
+    marginAssetId: requiredId(position.margin_asset),
     direction: String(position.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
     marginMode: String(position.margin_mode || 'isolated').toLowerCase() === 'cross' ? 'cross' : 'isolated',
     marginAmount: decimalDisplayNumber(marginAmountText, 'margin position margin_amount'),
@@ -798,7 +820,7 @@ export function mapMarginPosition(position: Record<string, unknown>): MarginPosi
     marginAmountText,
     notionalAmountText,
     borrowedAmountText,
-    leverage: asNumber(position.leverage, 1),
+    leverage: safeLeverage(position.leverage),
     orderType: String(position.order_type || '').trim().toLowerCase() === 'limit' ? 'limit' : 'market',
     entryPrice: nullableDecimalDisplayNumber(entryPriceText),
     entryPriceText,
@@ -818,8 +840,8 @@ export function mapMarginPosition(position: Record<string, unknown>): MarginPosi
 }
 
 export function mapMarginPositionExecution(execution: Record<string, unknown>): MarginPositionExecution {
-  const id = String(execution.id ?? '').trim()
-  const positionId = String(execution.position_id ?? '').trim()
+  const id = requiredIdentityText(execution.id)
+  const positionId = requiredIdentityText(execution.position_id)
   const idempotencyKey = String(execution.idempotency_key ?? '').trim()
   const closePercentage = typeof execution.close_percentage === 'number'
     ? execution.close_percentage
@@ -867,7 +889,7 @@ function mapMarginBatchAction(payload: {
 
 function nonNegativeInteger(value: unknown): number | null {
   const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
-  return typeof parsed === 'number' && Number.isInteger(parsed) && parsed >= 0 ? parsed : null
+  return typeof parsed === 'number' && Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 18 ? parsed : null
 }
 
 function uniqueSpotOrders(orders: SpotOrder[]): SpotOrder[] {
@@ -893,7 +915,7 @@ function mapMarginWallet(wallet: Record<string, unknown>): MarginWalletAccount {
     { allowNegative: false },
   )
   return {
-    assetId: asNumber(wallet.asset_id),
+    assetId: requiredId(wallet.asset_id),
     symbol: String(wallet.asset_symbol || '').toUpperCase(),
     logoUrl: String(wallet.logo_url || '').trim() || undefined,
     marginTransferEnabled: wallet.margin_transfer_enabled !== false,
@@ -919,7 +941,7 @@ function mapMarginCrossAccount(account: Record<string, unknown>): MarginCrossAcc
   const maintenanceMarginText = nonNegativeTradingDecimal(account.maintenance_margin, 'margin cross account maintenance_margin')
   const marginRatioText = nullableTradingDecimal(account.margin_ratio, 'margin cross account margin_ratio')
   return {
-    marginAssetId: asNumber(account.margin_asset),
+    marginAssetId: requiredId(account.margin_asset),
     status: String(account.status || ''),
     equity: decimalDisplayNumber(equityText, 'margin cross account equity'),
     unrealizedPnl: decimalDisplayNumber(unrealizedPnlText, 'margin cross account unrealized_pnl'),

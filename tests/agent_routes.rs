@@ -554,6 +554,251 @@ async fn agent_register_route_rejects_public_self_service_accounts() -> Result<(
 }
 
 #[tokio::test]
+async fn priority_session_generations_reject_surviving_user_and_agent_tokens()
+-> Result<(), Box<dyn Error>> {
+    use exchange_api::modules::auth::{
+        AgentCredentials, AuthService, MySqlAuthRepository, UserCredentials,
+        claims_from_bearer_token,
+    };
+    use std::sync::Arc;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (_, admin_id, _) = create_admin_with_password(&pool, "generation", "admin-password").await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let (user_id, email) = create_user_with_password(&pool, "generation", "user-password").await;
+    let parent = create_agent(&pool, "generation-parent").await;
+    let child = create_child_agent(&pool, parent, "generation-child").await;
+    let username: String =
+        sqlx::query_scalar("SELECT username FROM agent_admin_users WHERE id = ?")
+            .bind(child.admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    let manager = exchange_api::infra::auth::memory_manager(&settings);
+    let service = AuthService::new(
+        MySqlAuthRepository::new(pool.clone()),
+        Arc::new(settings.clone()),
+        Some(manager.clone()),
+        None,
+    );
+    let credentials = UserCredentials {
+        email: Some(email),
+        phone: None,
+        username: None,
+        password: Some("user-password".into()),
+        country_code: None,
+        username_login_enabled: false,
+    };
+    let proof = service.verify_user_credentials(credentials.clone()).await?;
+    let user_tokens = service.login_user(credentials.clone()).await?;
+    let agent_tokens = service
+        .login_agent(AgentCredentials {
+            username: Some(username.clone()),
+            password: Some("not-a-real-password".into()),
+        })
+        .await?;
+    let state = AppState::new(settings.clone())
+        .with_mysql(pool.clone())
+        .with_auth_manager(manager.clone());
+    assert!(
+        claims_from_bearer_token(&state, &user_tokens.access_token, TokenScope::User)
+            .await
+            .is_ok()
+    );
+    assert!(
+        claims_from_bearer_token(&state, &agent_tokens.access_token, TokenScope::Agent)
+            .await
+            .is_ok()
+    );
+    // 管理端不连接该会话后端，刻意让既有 Sa-Token 存活，覆盖撤销副作用未完成的边界。
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    for status in ["disabled", "active"] {
+        for (kind, id) in [("users", user_id), ("agents", parent.agent_id)] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PATCH")
+                        .uri(format!("/admin/api/v1/{kind}/{id}/status"))
+                        .header("authorization", format!("Bearer {admin_token}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            json!({"status": status, "reason":"generation recovery test"})
+                                .to_string(),
+                        ))?,
+                )
+                .await?;
+            let code = response.status();
+            let body = response_json(response).await?;
+            assert_eq!(code, StatusCode::OK, "{body}");
+        }
+        assert!(
+            claims_from_bearer_token(&state, &user_tokens.access_token, TokenScope::User)
+                .await
+                .is_err()
+        );
+        assert!(
+            claims_from_bearer_token(&state, &agent_tokens.access_token, TokenScope::Agent)
+                .await
+                .is_err()
+        );
+    }
+    // 模拟撤销未送达的刷新记录，不能靠重新启用换取新代际令牌。
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_at = NULL WHERE actor_type = 'user' AND actor_id = ?",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await?;
+    assert!(
+        service
+            .refresh(Some(user_tokens.refresh_token), TokenScope::User)
+            .await
+            .is_err()
+    );
+    assert!(
+        service
+            .refresh(Some(agent_tokens.refresh_token), TokenScope::Agent)
+            .await
+            .is_err()
+    );
+    assert!(
+        service.issue_tokens_for_actor(proof).await.is_err(),
+        "old password proof must not adopt current version"
+    );
+    let fresh = service.login_user(credentials).await?;
+    assert!(
+        claims_from_bearer_token(&state, &fresh.access_token, TokenScope::User)
+            .await
+            .is_ok()
+    );
+    let fresh_agent = service
+        .login_agent(AgentCredentials {
+            username: Some(username),
+            password: Some("not-a-real-password".into()),
+        })
+        .await?;
+    assert!(
+        claims_from_bearer_token(&state, &fresh_agent.access_token, TokenScope::Agent)
+            .await
+            .is_ok()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn commission_retry_queue_moves_beyond_thousand_failures_and_recovers()
+-> Result<(), Box<dyn Error>> {
+    use exchange_api::workers::agent_commission_settlement::run_once_with_dependencies;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let agent = create_agent(&pool, "retry-worker").await;
+    let from = create_asset(&pool, "RF").await;
+    let to = create_asset(&pool, "RT").await;
+    let pair = create_convert_pair(&pool, from, to).await;
+    let quote = create_convert_order(
+        &pool,
+        (pair, from, to),
+        agent.agent_user_id,
+        ("100", "200"),
+        "completed",
+    )
+    .await;
+    let mut first = 0;
+    for i in 0..1001 {
+        let id = create_commission_record_with_source_id(
+            &pool,
+            CommissionSeed {
+                agent_id: agent.agent_id,
+                user_id: agent.agent_user_id,
+                source_type: "convert_order",
+                source_id: &Uuid::now_v7().to_string(),
+                source_amount: "100",
+                commission_amount: "5",
+                status: "pending",
+            },
+        )
+        .await;
+        if i == 0 {
+            first = id;
+        }
+    }
+    let good = create_commission_record_with_source_id(
+        &pool,
+        CommissionSeed {
+            agent_id: agent.agent_id,
+            user_id: agent.agent_user_id,
+            source_type: "convert_order",
+            source_id: &quote,
+            source_amount: "100",
+            commission_amount: "5",
+            status: "pending",
+        },
+    )
+    .await;
+    sqlx::query("UPDATE agent_commission_records SET payout_asset_id = ?, commission_rate = 0.05 WHERE agent_id = ?")
+        .bind(from).bind(agent.agent_id).execute(&pool).await?;
+    let now = chrono::Utc::now() + chrono::TimeDelta::seconds(1);
+    // 全表扫描可能有其他测试的残留，限定轮数验证目标必能离开队尾。
+    for _ in 0..10 {
+        run_once_with_dependencies(&pool, now, 0, 200).await?;
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM agent_commission_records WHERE id = ?")
+                .bind(good)
+                .fetch_one(&pool)
+                .await?;
+        if status == "settled" {
+            break;
+        }
+    }
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM agent_commission_records WHERE id = ?")
+            .bind(good)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(status, "settled");
+    // 修复来源后，无需重启 worker 即可在持久化退避到期后恢复。
+    // 该唯一键要求同来源同代理只存在一笔，使用另一笔真实来源单。
+    let repaired_quote = create_convert_order(
+        &pool,
+        (pair, from, to),
+        agent.agent_user_id,
+        ("100", "200"),
+        "completed",
+    )
+    .await;
+    sqlx::query("UPDATE agent_commission_records SET source_id = ? WHERE id = ?")
+        .bind(repaired_quote)
+        .bind(first)
+        .execute(&pool)
+        .await?;
+    run_once_with_dependencies(&pool, now + chrono::TimeDelta::seconds(61), 0, 200).await?;
+    let repaired: String =
+        sqlx::query_scalar("SELECT status FROM agent_commission_records WHERE id = ?")
+            .bind(first)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(repaired, "settled");
+    let ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'agent_commission' AND ref_id = ?",
+    )
+    .bind(first.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 1);
+    // 已证实的坏夹具不再参与其他测试的全表 worker 扫描。
+    sqlx::query("UPDATE agent_commission_records SET status = 'rejected' WHERE agent_id = ? AND status = 'pending'").bind(agent.agent_id).execute(&pool).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn agent_login_route_rejects_inactive_parent_agent() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -2632,6 +2877,41 @@ async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only
     let opened_margin = insert_margin(child_user, "opened", "opened").await?;
     let closed_margin = insert_margin(child_user, "closed", "closed").await?;
     let other_margin = insert_margin(other_user, "opened", "other").await?;
+    let pending_margin = insert_margin(child_user, "opened", "pending").await?;
+    let canceled_margin = insert_margin(child_user, "canceled", "canceled").await?;
+    sqlx::query(
+        "UPDATE margin_positions SET order_type = 'limit', limit_price = 90, entry_price = NULL WHERE id IN (?, ?)",
+    )
+    .bind(pending_margin)
+    .bind(canceled_margin)
+    .execute(&pool)
+    .await?;
+
+    for (user_id, status) in [
+        (child_user, "open"),
+        (child_user, "partially_filled"),
+        (child_user, "filled"),
+        (child_user, "cancelled"),
+        (other_user, "open"),
+    ] {
+        sqlx::query(
+            "INSERT INTO spot_orders (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status) \
+             VALUES (?, ?, 'buy', 'limit', 90.123456789012345678, 2, IF(? = 'filled', 2, IF(? = 'partially_filled', 1, 0)), ?)",
+        )
+        .bind(user_id)
+        .bind(pair_id)
+        .bind(status)
+        .bind(status)
+        .bind(status)
+        .execute(&pool)
+        .await?;
+    }
+    let spot_before: Vec<(u64, String, BigDecimal)> = sqlx::query_as(
+        "SELECT id, status, filled_quantity FROM spot_orders WHERE pair_id = ? ORDER BY id",
+    )
+    .bind(pair_id)
+    .fetch_all(&pool)
+    .await?;
 
     let insert_seconds = |user_id: u64, status: &'static str, suffix: &'static str| {
         let pool = pool.clone();
@@ -2787,6 +3067,90 @@ async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only
     assert_eq!(opened_positions["total"], 1);
     assert_eq!(opened_positions["positions"][0]["id"], opened_margin);
 
+    for (filter, expected_total, expected_id) in [
+        ("", 4, None),
+        ("?status=pending", 1, Some(pending_margin)),
+        ("?status=opened", 1, Some(opened_margin)),
+        ("?status=closed", 1, Some(closed_margin)),
+        ("?status=canceled", 1, Some(canceled_margin)),
+    ] {
+        let (status, payload) = agent_get_json(
+            app.clone(),
+            &root_token,
+            format!("/agent/api/v1/users/{child_user}/margin-orders{filter}"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["total"], expected_total);
+        if let Some(id) = expected_id {
+            assert_eq!(payload["orders"][0]["id"], id);
+        }
+    }
+    let (_, page) = agent_get_json(
+        app.clone(),
+        &child_token,
+        format!("/agent/api/v1/users/{child_user}/margin-orders?status=pending&limit=1&offset=1"),
+    )
+    .await?;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["orders"].as_array().unwrap().len(), 0);
+
+    for (filter, count, length) in [
+        ("?limit=2&offset=1", 4, 2),
+        ("?status=open", 1, 1),
+        ("?status=partially_filled", 1, 1),
+        ("?status=filled", 1, 1),
+        ("?status=cancelled", 1, 1),
+        ("?status=filled&offset=1", 1, 0),
+    ] {
+        let (status, payload) = agent_get_json(
+            app.clone(),
+            &root_token,
+            format!("/agent/api/v1/users/{child_user}/spot-orders{filter}"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["total"], count);
+        assert_eq!(payload["orders"].as_array().unwrap().len(), length);
+        for row in payload["orders"].as_array().unwrap() {
+            assert_eq!(row["user_id"], child_user);
+            assert_eq!(row["price"], "90.123456789012345678");
+            assert!(row["quantity"].is_string());
+            assert!(row["filled_quantity"].is_string());
+            assert!(row["trigger_price"].is_null());
+            assert!(row["created_at"].as_i64().unwrap() > 1_000_000_000_000);
+            assert!(row["updated_at"].as_i64().unwrap() > 1_000_000_000_000);
+        }
+    }
+    for token in [&child_token, &grandchild_token] {
+        for suffix in ["margin-orders", "spot-orders"] {
+            let (status, _) = agent_get_json(
+                app.clone(),
+                token,
+                format!("/agent/api/v1/users/{child_user}/{suffix}"),
+            )
+            .await?;
+            assert_eq!(status, StatusCode::OK);
+        }
+    }
+    // 子树内尚无钱包和委托的用户读取必须为空，不得惰性创建账户。
+    for suffix in [
+        "assets",
+        "margin-positions",
+        "margin-orders",
+        "spot-orders",
+        "seconds-contract-orders",
+    ] {
+        let (status, payload) = agent_get_json(
+            app.clone(),
+            &root_token,
+            format!("/agent/api/v1/users/{root_user}/{suffix}"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["total"], 0);
+    }
+
     let (status, orders) = agent_get_json(
         app.clone(),
         &root_token,
@@ -2854,7 +3218,13 @@ async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only
         unassigned_user,
         u64::MAX,
     ] {
-        for suffix in ["assets", "margin-positions", "seconds-contract-orders"] {
+        for suffix in [
+            "assets",
+            "margin-positions",
+            "margin-orders",
+            "spot-orders",
+            "seconds-contract-orders",
+        ] {
             let (denied, denied_payload) = agent_get_json(
                 app.clone(),
                 &child_token,
@@ -2897,6 +3267,22 @@ async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only
     assert_eq!(margin_wallet_after, margin_wallet_before);
     assert_eq!(margin_statuses_after, margin_statuses_before);
     assert_eq!(seconds_statuses_after, seconds_statuses_before);
+    let spot_after: Vec<(u64, String, BigDecimal)> = sqlx::query_as(
+        "SELECT id, status, filled_quantity FROM spot_orders WHERE pair_id = ? ORDER BY id",
+    )
+    .bind(pair_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(spot_before, spot_after);
+    let empty_wallet_count: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM wallet_accounts WHERE user_id = ?) + \
+         (SELECT COUNT(*) FROM margin_wallet_accounts WHERE user_id = ?)",
+    )
+    .bind(root_user)
+    .bind(root_user)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(empty_wallet_count, 0);
 
     // 资产精度来自可变的数据库配置，接口必须拒绝超出 Decimal(38,18) 边界的脏值。
     sqlx::query("UPDATE assets SET precision_scale = 19 WHERE id = ?")
@@ -2926,7 +3312,13 @@ async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only
             .execute(&pool)
             .await?;
     }
-    for position_id in [opened_margin, closed_margin, other_margin] {
+    for position_id in [
+        opened_margin,
+        closed_margin,
+        other_margin,
+        pending_margin,
+        canceled_margin,
+    ] {
         sqlx::query("DELETE FROM margin_positions WHERE id = ?")
             .bind(position_id)
             .execute(&pool)
@@ -2952,6 +3344,10 @@ async fn agent_user_financial_views_enforce_subtree_filters_totals_and_read_only
         .await?;
     sqlx::query("DELETE FROM margin_products WHERE id = ?")
         .bind(margin_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE pair_id = ?")
+        .bind(pair_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM trading_pairs WHERE id = ?")

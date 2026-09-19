@@ -634,7 +634,13 @@ pub(crate) async fn login_user_with_optional_two_factor(
     } else {
         LoginTwoFactorChallengeType::SetupTwoFactor
     };
-    let challenge = create_login_two_factor_challenge(pool, user_id, challenge_type).await?;
+    let challenge = create_login_two_factor_challenge(
+        pool,
+        user_id,
+        challenge_type,
+        actor.auth_session_version,
+    )
+    .await?;
 
     match challenge_type {
         LoginTwoFactorChallengeType::LoginTwoFactor => Ok(UserLoginOutcome::TwoFactorChallenge {
@@ -888,11 +894,10 @@ pub(crate) async fn verify_login_two_factor_and_issue_tokens(
     consume_login_two_factor_challenge(pool, &challenge.challenge_id).await?;
 
     auth_service(state)?
-        .issue_tokens_for_actor(AuthActor::new(
-            ActorType::User,
-            challenge.user_id,
-            Some(challenge.user_id),
-        ))
+        .issue_tokens_for_actor(
+            AuthActor::new(ActorType::User, challenge.user_id, Some(challenge.user_id))
+                .with_auth_session_version(challenge.auth_session_version),
+        )
         .await
 }
 
@@ -965,11 +970,10 @@ pub(crate) async fn confirm_login_two_factor_setup_and_issue_tokens(
     consume_setup_login_two_factor_challenge(pool, &challenge.challenge_id).await?;
 
     auth_service(state)?
-        .issue_tokens_for_actor(AuthActor::new(
-            ActorType::User,
-            challenge.user_id,
-            Some(challenge.user_id),
-        ))
+        .issue_tokens_for_actor(
+            AuthActor::new(ActorType::User, challenge.user_id, Some(challenge.user_id))
+                .with_auth_session_version(challenge.auth_session_version),
+        )
         .await
 }
 

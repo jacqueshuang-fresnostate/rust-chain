@@ -9,17 +9,19 @@ use super::{
         change_agent_password, create_agent_invite_code, get_agent_convert_stats,
         get_agent_dashboard, get_agent_me, list_agent_commissions, list_agent_invite_codes,
         list_agent_sub_agents, list_agent_team_tree, list_agent_user_assets,
-        list_agent_user_margin_positions, list_agent_user_seconds_contract_orders,
-        list_agent_users, update_agent_invite_code_status,
+        list_agent_user_margin_orders, list_agent_user_margin_positions,
+        list_agent_user_seconds_contract_orders, list_agent_user_spot_orders, list_agent_users,
+        update_agent_invite_code_status,
     },
     presentation::{
         AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
         AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
         AgentPasswordChangeResponse, AgentSubAgentsResponse, AgentTeamTreeResponse,
-        AgentUserAssetsResponse, AgentUserMarginPositionsQuery, AgentUserMarginPositionsResponse,
+        AgentUserAssetsResponse, AgentUserMarginOrdersResponse, AgentUserMarginPositionsQuery,
+        AgentUserMarginPositionsResponse, AgentUserOrdersQuery,
         AgentUserSecondsContractOrdersQuery, AgentUserSecondsContractOrdersResponse,
-        AgentUsersResponse, ChangeAgentPasswordRequest, CreateInviteCodeRequest,
-        UpdateInviteCodeStatusRequest,
+        AgentUserSpotOrdersResponse, AgentUsersResponse, ChangeAgentPasswordRequest,
+        CreateInviteCodeRequest, UpdateInviteCodeStatusRequest,
     },
 };
 use crate::{error::AppResult, modules::auth::AgentAuth, state::AppState};
@@ -38,6 +40,11 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard", get(dashboard))
         .route("/users", get(list_users))
         .route("/users/:user_id/assets", get(list_user_assets))
+        .route(
+            "/users/:user_id/margin-orders",
+            get(list_user_margin_orders),
+        )
+        .route("/users/:user_id/spot-orders", get(list_user_spot_orders))
         .route(
             "/users/:user_id/margin-positions",
             get(list_user_margin_positions),
@@ -138,6 +145,32 @@ async fn list_user_margin_positions(
 ) -> AppResult<Json<AgentUserMarginPositionsResponse>> {
     Ok(Json(
         list_agent_user_margin_positions(state.mysql.clone(), &claims.sub, user_id, query).await?,
+    ))
+}
+
+/// 代理只读查看团队用户杠杆订单，包含尚未成交的限价委托与历史记录。
+/// 身份仅来自 AgentAuth，路由不接收代理范围也不调用交易写入口。
+async fn list_user_margin_orders(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Query(query): Query<AgentUserOrdersQuery>,
+) -> AppResult<Json<AgentUserMarginOrdersResponse>> {
+    Ok(Json(
+        list_agent_user_margin_orders(state.mysql.clone(), &claims.sub, user_id, query).await?,
+    ))
+}
+
+/// 返回当前代理子树内用户的现货委托快照，分页与状态均交给应用层校验。
+/// 越权统一返回未找到；查看不触发撮合、撤单或余额变化。
+async fn list_user_spot_orders(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Query(query): Query<AgentUserOrdersQuery>,
+) -> AppResult<Json<AgentUserSpotOrdersResponse>> {
+    Ok(Json(
+        list_agent_user_spot_orders(state.mysql.clone(), &claims.sub, user_id, query).await?,
     ))
 }
 

@@ -230,8 +230,8 @@ function alignDecimal(value: ExactDecimal, targetScale: number): bigint {
 }
 
 function normalizePrecisionScale(value: number): number {
-  if (!Number.isFinite(value)) return 18
-  return Math.min(18, Math.max(0, Math.trunc(value)))
+  if (!Number.isSafeInteger(value) || value < 0 || value > 18) throw new RangeError('invalid withdrawal precision')
+  return value
 }
 
 function truncatePreviewDecimal(value: number, precisionScale: number): number {
@@ -248,5 +248,7 @@ function truncatePreviewDecimal(value: number, precisionScale: number): number {
 }
 
 function tierBoundary(value: DecimalBoundary): DecimalText | null {
-  return decimalTextFromBoundary(value, { allowNegative: false, maxIntegerDigits: 20, maxScale: 18 })
+  const decimal = decimalTextFromBoundary(value, { allowNegative: false, maxIntegerDigits: 20, maxScale: 18 })
+  if (value != null && !decimal) throw new TypeError('invalid withdrawal fee boundary')
+  return decimal
 }

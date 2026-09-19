@@ -1,5 +1,10 @@
 use super::*;
 
+mod reversal;
+pub(crate) use reversal::*;
+mod source_lock;
+pub(crate) use source_lock::*;
+
 #[derive(Debug)]
 pub(crate) struct AdminAgentListFilter {
     pub(crate) agent_id: Option<u64>,
@@ -300,12 +305,25 @@ pub(crate) async fn update_admin_agent_status_in_tx(
 }
 
 /// 在调用方事务中把指定代理的全部门户账号状态批量覆盖为目标值。
-/// SQL 允许更新零行或多行且不校验数量；调用方负责先更新代理主状态、统一提交并记录审计。
+/// 停用还递增整个子树的会话代际，子节点状态不被改写，重新启用上级不复活旧令牌。
+/// SQL 允许更新零行或多行；调用方负责先更新代理主状态、统一提交并记录审计。
 pub(crate) async fn update_agent_admin_users_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
     status: &str,
 ) -> AppResult<()> {
+    if status != "active" {
+        sqlx::query(
+            r#"UPDATE agent_admin_users accounts
+               JOIN agents node ON node.id = accounts.agent_id
+               JOIN agents root ON root.id = ?
+               SET accounts.auth_session_version = accounts.auth_session_version + 1
+               WHERE node.path = root.path OR node.path LIKE CONCAT(root.path, '/%')"#,
+        )
+        .bind(agent_id)
+        .execute(&mut **tx)
+        .await?;
+    }
     sqlx::query("UPDATE agent_admin_users SET status = ? WHERE agent_id = ?")
         .bind(status)
         .bind(agent_id)
@@ -690,7 +708,7 @@ pub(crate) async fn load_agent_commission_source_status_in_tx(
     let status = match source_type {
         "seconds_contract_order" => {
             sqlx::query_scalar::<_, String>(
-                "SELECT status FROM seconds_contract_orders WHERE id = ? LIMIT 1",
+                "SELECT status FROM seconds_contract_orders WHERE id = ? LIMIT 1 FOR UPDATE",
             )
             .bind(parse_agent_commission_source_id(source_id)?)
             .fetch_optional(&mut **tx)

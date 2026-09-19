@@ -8,6 +8,7 @@ import en from '../../src/i18n/messages/en.ts'
 import zhCN from '../../src/i18n/messages/zh-CN.ts'
 import { createMarketChartHistorySession } from '../../src/core/marketChartHistory.ts'
 import { calculateMarketMovingAverages } from '../../src/core/marketIndicators.ts'
+import { marketSource } from '../../src/core/marketProvenance.ts'
 import type { KlinePoint, MarketTicker } from '../../src/core/types.ts'
 
 interface HostNode {
@@ -59,31 +60,36 @@ export function mountMobileMarketChart(loadOlder: (symbol: string, interval: str
     '@/api/market': { fetchOlderKlines: loadOlder },
     '@/core/marketChartHistory': { createMarketChartHistorySession },
     '@/core/marketIndicators': { calculateMarketMovingAverages },
+    '@/core/marketProvenance': { marketSource },
   }
-  const source = readFileSync(new URL('../../src/components/MobileMarketChart.vue', import.meta.url), 'utf8')
-  const { descriptor } = parse(source)
-  const compiled = compileScript(descriptor, { id: 'mobile-chart-test', inlineTemplate: true })
-  const syntax = ts.createSourceFile('mobile-chart.ts', compiled.content, ts.ScriptTarget.Latest, true)
-  const bindings: Record<string, unknown> = {}
-  for (const statement of syntax.statements) {
-    if (!ts.isImportDeclaration(statement) || !statement.importClause || statement.importClause.isTypeOnly) continue
-    const moduleName = (statement.moduleSpecifier as ts.StringLiteral).text
-    const values = modules[moduleName]
-    assert.ok(values, `Missing test I/O binding: ${moduleName}`)
-    if (statement.importClause.name) bindings[statement.importClause.name.text] = values.default
-    const named = statement.importClause.namedBindings
-    if (named && ts.isNamedImports(named)) {
-      for (const item of named.elements) {
-        if (!item.isTypeOnly) bindings[item.name.text] = values[(item.propertyName ?? item.name).text]
+  function compileComponent(name: string): Vue.Component {
+    const source = readFileSync(new URL(`../../src/components/${name}.vue`, import.meta.url), 'utf8')
+    const { descriptor } = parse(source)
+    const compiled = compileScript(descriptor, { id: `test-${name}`, inlineTemplate: true })
+    const syntax = ts.createSourceFile(`${name}.ts`, compiled.content, ts.ScriptTarget.Latest, true)
+    const bindings: Record<string, unknown> = {}
+    for (const statement of syntax.statements) {
+      if (!ts.isImportDeclaration(statement) || !statement.importClause || statement.importClause.isTypeOnly) continue
+      const moduleName = (statement.moduleSpecifier as ts.StringLiteral).text
+      const values = modules[moduleName]
+      assert.ok(values, `Missing test I/O binding: ${moduleName}`)
+      if (statement.importClause.name) bindings[statement.importClause.name.text] = values.default
+      const named = statement.importClause.namedBindings
+      if (named && ts.isNamedImports(named)) {
+        for (const item of named.elements) {
+          if (!item.isTypeOnly) bindings[item.name.text] = values[(item.propertyName ?? item.name).text]
+        }
       }
     }
+    const body = syntax.statements.filter((node) => !ts.isImportDeclaration(node)).map((node) => node.getText(syntax)).join('\n')
+    const output = ts.transpileModule(body.replace('export default ', 'return '), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+    }).outputText
+    return new Function(...Object.keys(bindings), output)(...Object.values(bindings)) as Vue.Component
   }
-  const body = syntax.statements.filter((node) => !ts.isImportDeclaration(node)).map((node) => node.getText(syntax)).join('\n')
-  const output = ts.transpileModule(body.replace('export default ', 'return '), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
-  }).outputText
-  const component = new Function(...Object.keys(bindings), output)(...Object.values(bindings)) as Vue.Component
-  const props = Vue.reactive({ marketType: undefined as MarketTicker['marketType'], symbol: 'BTCUSDT', interval: '1m', points, loading: false })
+  modules['@/components/MarketProvenanceLabel.vue'] = { default: compileComponent('MarketProvenanceLabel') }
+  const component = compileComponent('MobileMarketChart')
+  const props = Vue.reactive({ ticker: undefined as MarketTicker | undefined, marketType: undefined as MarketTicker['marketType'], symbol: 'BTCUSDT', interval: '1m', points, loading: false })
   const i18n = createI18n({ legacy: false, locale: 'zh-CN', messages: { en, 'zh-CN': zhCN } })
   const root = hostNode('root')
   const app = renderer.createApp({ render: () => Vue.h(component, props) })

@@ -320,15 +320,26 @@ impl MarketIngestionService {
         }
         let ticker_entry = MarketTickerCacheEntry::from_snapshot(ticker)
             .map_err(|error| AppError::Validation(error.to_string()))?;
+        let provenance = trade
+            .map(crate::modules::market::presentation::MarketProvenance::from_tick)
+            .unwrap_or_else(|| {
+                crate::modules::market::presentation::MarketProvenance::from_provider(
+                    depth.provider(),
+                )
+            });
         let depth_entry = MarketDepthCacheEntry::from_snapshot(depth)
-            .map_err(|error| AppError::Validation(error.to_string()))?;
+            .map_err(|error| AppError::Validation(error.to_string()))?
+            .with_provenance(provenance.clone());
         let (outcome, new_trade) = self
             .cache
             .save_synthetic_details(ticker_entry, depth_entry, trade)
             .await
             .map_err(market_cache_error)?;
         if outcome == MarketCacheWriteOutcome::Accepted {
-            self.publish(MarketFeedEvent::from_depth_snapshot(depth)?)?;
+            self.publish(
+                MarketFeedEvent::from_depth_snapshot(depth)?
+                    .with_depth_provenance(&provenance.source),
+            )?;
             if new_trade && let Some(tick) = trade {
                 self.publish(MarketFeedEvent::from_trade_tick(tick)?)?;
             }

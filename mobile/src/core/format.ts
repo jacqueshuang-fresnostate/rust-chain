@@ -1,4 +1,6 @@
 import { currentRuntimeIntlLocale } from './runtimeLocale.ts'
+import { decimalAbsolute, decimalCompare, decimalMultiply, decimalRoundHalfUp, decimalSign, decimalTextFromBoundary, formatDecimalText, normalizeDecimalText, type DecimalBoundary, type DecimalText } from './decimal.ts'
+import { normalizeTimestamp } from './numeric.ts'
 
 export function asNumber(value: unknown, fallback = 0): number {
   const numberValue = typeof value === 'number' ? value : Number(value)
@@ -23,34 +25,68 @@ export function splitSymbol(symbol: string, baseAsset?: string, quoteAsset?: str
 }
 
 export function formatPrice(value: unknown): string {
-  const numberValue = asNumber(value)
-  if (numberValue === 0) return '0.00'
-  const digits = numberValue < 0.1 ? 6 : numberValue < 1 ? 4 : 2
-  return new Intl.NumberFormat(currentRuntimeIntlLocale(), { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(numberValue)
+  const decimal = decimalTextFromBoundary(value as DecimalBoundary)
+  if (!decimal) return '--'
+  const absolute = decimalAbsolute(decimal)
+  const digits = decimalSign(decimal) === 0 ? 2 : decimalCompare(absolute, normalizeDecimalText('0.1')) < 0 ? 6 : decimalCompare(absolute, normalizeDecimalText('1')) < 0 ? 4 : 2
+  return formatDecimalText(roundVisible(decimal, digits), currentRuntimeIntlLocale(), { maximumFractionDigits: digits, minimumFractionDigits: digits })
 }
 
 export function formatAmount(value: unknown, digits = 4): string {
-  return new Intl.NumberFormat(currentRuntimeIntlLocale(), { maximumFractionDigits: digits }).format(asNumber(value))
+  const decimal = decimalTextFromBoundary(value as DecimalBoundary)
+  return decimal ? formatDecimalText(roundVisible(decimal, digits), currentRuntimeIntlLocale(), { maximumFractionDigits: digits }) : '--'
+}
+
+/** Confirmation and bill amounts retain every source digit, including tiny fees. */
+export function formatExactAmount(value: unknown): string {
+  const decimal = decimalTextFromBoundary(value as DecimalBoundary)
+  return decimal ? formatDecimalText(decimal, currentRuntimeIntlLocale()) : '--'
+}
+
+export function formatRatePercent(value: DecimalBoundary): string {
+  const decimal = decimalTextFromBoundary(value)
+  return decimal ? formatAmount(decimalMultiply(decimal, normalizeDecimalText('100')), 2) : '--'
 }
 
 export function formatFiat(value: unknown, currency = 'USD'): string {
-  return new Intl.NumberFormat(currentRuntimeIntlLocale(), {
+  const decimal = decimalTextFromBoundary(value as DecimalBoundary)
+  if (!decimal) return '--'
+  const locale = currentRuntimeIntlLocale()
+  const amount = formatDecimalText(decimalAbsolute(roundVisible(decimal, 2)), locale, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  })
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     maximumFractionDigits: 2,
-  }).format(asNumber(value))
+  }).formatToParts(decimalSign(decimal) < 0 ? -1 : 1).map((part) => {
+    if (part.type === 'integer') return amount
+    return ['group', 'decimal', 'fraction'].includes(part.type) ? '' : part.value
+  }).join('')
 }
 
 export function formatPercent(value: unknown): string {
-  const numberValue = asNumber(value)
-  return `${numberValue > 0 ? '+' : ''}${numberValue.toFixed(2)}%`
+  const decimal = decimalTextFromBoundary(value as DecimalBoundary)
+  if (!decimal) return '--'
+  const text = formatDecimalText(roundVisible(decimal, 2), currentRuntimeIntlLocale(), {
+    minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false,
+  })
+  return `${decimalSign(decimal) > 0 ? '+' : ''}${text}%`
 }
 
 export function formatCompact(value: unknown): string {
+  if (value == null || value === '') return '--'
+  const approximate = asNumber(value, Number.NaN)
+  if (!Number.isFinite(approximate)) return '--'
   return new Intl.NumberFormat(currentRuntimeIntlLocale(), {
     notation: 'compact',
     maximumFractionDigits: 2,
-  }).format(asNumber(value))
+  }).format(approximate)
+}
+
+function roundVisible(value: DecimalText, digits: number): DecimalText {
+  const rounded = decimalRoundHalfUp(value, digits)
+  return decimalSign(value) !== 0 && decimalSign(rounded) === 0 ? value : rounded
 }
 
 export function shortAddress(value: string, leading = 8, trailing = 6): string {
@@ -59,9 +95,9 @@ export function shortAddress(value: string, leading = 8, trailing = 6): string {
 }
 
 export function formatDateTime(value: unknown): string {
-  const timestamp = asNumber(value)
+  let timestamp: number
+  try { timestamp = normalizeTimestamp(value) } catch { return '--' }
   if (!timestamp) return '--'
-  const normalized = timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
   return new Intl.DateTimeFormat(currentRuntimeIntlLocale(), {
     year: 'numeric',
     month: '2-digit',
@@ -69,5 +105,5 @@ export function formatDateTime(value: unknown): string {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(new Date(normalized)).replace(/\//g, '-')
+  }).format(new Date(timestamp)).replace(/\//g, '-')
 }

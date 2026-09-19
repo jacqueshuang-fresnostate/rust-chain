@@ -67,6 +67,7 @@ pub(crate) async fn apply_spot_wallet_freeze(
     ref_type: &str,
     ref_id: &str,
 ) -> AppResult<()> {
+    ensure_spot_wallet_delta(tx, asset_id, amount, true).await?;
     let wallet = lock_wallet_row(tx, user_id, asset_id).await?;
     if wallet.available < *amount {
         return Err(AppError::Validation(format!(
@@ -76,6 +77,7 @@ pub(crate) async fn apply_spot_wallet_freeze(
     }
     let available_after = wallet.available.clone() - amount.clone();
     let frozen_after = wallet.frozen.clone() + amount.clone();
+    ensure_spot_wallet_storage(&available_after, &frozen_after, &wallet.locked)?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -169,6 +171,7 @@ pub(crate) async fn apply_spot_wallet_settlement_leg(
     credit_available: bool,
     ledger: SpotLedgerMetadata<'_>,
 ) -> AppResult<()> {
+    ensure_spot_wallet_delta(tx, asset_id, amount, true).await?;
     let wallet = lock_wallet_row(tx, user_id, asset_id).await?;
     let (amount_change, available_after, frozen_after, balance_type, balance_after) =
         if credit_available {
@@ -196,6 +199,7 @@ pub(crate) async fn apply_spot_wallet_settlement_leg(
                 frozen_after,
             )
         };
+    ensure_spot_wallet_storage(&available_after, &frozen_after, &wallet.locked)?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -325,6 +329,8 @@ pub(super) async fn apply_spot_wallet_unfreeze(
     ref_type: &str,
     ref_id: &str,
 ) -> AppResult<()> {
+    // 解冻必须沿用历史实际冻结的小数位，不按当前资产精度改写历史金额。
+    ensure_spot_wallet_delta(tx, asset_id, amount, false).await?;
     let wallet = lock_wallet_row(tx, user_id, asset_id).await?;
     if wallet.frozen < *amount {
         return Err(AppError::Validation(format!(
@@ -334,6 +340,7 @@ pub(super) async fn apply_spot_wallet_unfreeze(
     }
     let available_after = wallet.available.clone() + amount.clone();
     let frozen_after = wallet.frozen.clone() - amount.clone();
+    ensure_spot_wallet_storage(&available_after, &frozen_after, &wallet.locked)?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -390,6 +397,9 @@ async fn insert_spot_wallet_ledger(
     ref_type: &str,
     ref_id: &str,
 ) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(&amount, "spot ledger amount")?;
+    crate::numeric::ensure_amount_storage(balance_after, "spot ledger balance")?;
+    ensure_spot_wallet_storage(available_after, frozen_after, locked_after)?;
     sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,
@@ -409,5 +419,48 @@ async fn insert_spot_wallet_ledger(
     .bind(ref_id)
     .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+async fn ensure_spot_wallet_delta(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+    amount: &BigDecimal,
+    check_asset: bool,
+) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, "spot wallet delta")?;
+    if amount <= &BigDecimal::from(0) {
+        return Err(AppError::Validation(
+            "spot wallet delta must be positive".to_owned(),
+        ));
+    }
+    if check_asset {
+        let (precision,): (i32,) =
+            sqlx::query_as("SELECT precision_scale FROM assets WHERE id = ? FOR SHARE")
+                .bind(asset_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        crate::modules::spot::service::ensure_spot_asset_amount(
+            amount,
+            precision,
+            "spot wallet delta",
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_spot_wallet_storage(
+    available: &BigDecimal,
+    frozen: &BigDecimal,
+    locked: &BigDecimal,
+) -> AppResult<()> {
+    for value in [available, frozen, locked] {
+        crate::numeric::ensure_amount_storage(value, "spot wallet balance")?;
+        if value < &BigDecimal::from(0) {
+            return Err(AppError::Conflict(
+                "negative spot wallet balance".to_owned(),
+            ));
+        }
+    }
     Ok(())
 }

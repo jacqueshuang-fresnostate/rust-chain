@@ -1,7 +1,7 @@
-import type { KlinePoint, OrderBookLevel, TradePrint } from '../core/types.ts'
+import type { KlinePoint, MarketDepthSnapshot, TradePrint } from '../core/types.ts'
 import type { MarketDetailStreamContext, MarketDetailStreamSession } from './marketDetailStream.ts'
 
-type DepthSnapshot = { bids: OrderBookLevel[]; asks: OrderBookLevel[] }
+type DepthSnapshot = MarketDepthSnapshot
 
 interface MarketDetailSnapshotOptions {
   session: MarketDetailStreamSession

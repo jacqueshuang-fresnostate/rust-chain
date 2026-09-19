@@ -15,7 +15,8 @@ it('preserves exact decimal strings, explicit enable and captured version withou
 it('rejects lossy precision, nonfinite values, storage overflow and inverted bounds without rounding', () => {
   const draft = defaultMarketDraft(responseFixture());
   for (const patch of [
-    { volatility: 'NaN' }, { mean_reversion: '1.01' }, { wick_strength: '-0.1' },
+    { volatility: 'NaN' }, { volatility: '0e9999' }, { volume_min: '0'.repeat(257) },
+    { mean_reversion: '1.01' }, { wick_strength: '-0.1' },
     { price_min: '0' }, { price_max: '1e21' }, { initial_price: '0.0001' },
     { volume_min: '1.001' }, { volume_max: '-1' }, { depth_levels: '21' },
     { depth_levels: '1.5' }, { price_min: '3', price_max: '2' },

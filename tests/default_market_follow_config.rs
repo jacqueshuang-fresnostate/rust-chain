@@ -75,10 +75,8 @@ fn follow_configuration_rejects_mode_mismatch_and_invalid_ranges() {
         ("multiplier", json!("0")),
         ("multiplier", json!("-1")),
         ("multiplier", json!("3.00001")),
-        ("multiplier", json!("0.0000000000000000001")),
         ("max_move_ratio", json!("0")),
         ("max_move_ratio", json!("1.00001")),
-        ("max_move_ratio", json!("0.0000000000000000001")),
         ("stale_after_seconds", json!(14)),
         ("stale_after_seconds", json!(301)),
     ] {
@@ -91,6 +89,21 @@ fn follow_configuration_rejects_mode_mismatch_and_invalid_ranges() {
     }
     for seconds in [15, 300] {
         configuration(json!({"mode":"follow","follow":{"reference_pair_id":42,"multiplier":"3","max_move_ratio":"1","stale_after_seconds":seconds}})).validate(6,2).unwrap();
+    }
+}
+
+#[test]
+fn follow_decimal_ingress_rejects_excess_precision_before_business_validation() {
+    for field in ["multiplier", "max_move_ratio"] {
+        for source in ["0.0000000000000000001", "1e20", "1e999999999"] {
+            let mut input = json!({"mode":"follow","follow":{"reference_pair_id":42}});
+            input["follow"][field] = json!(source);
+            let error = serde_json::from_value::<DefaultMarketParameters>(input).unwrap_err();
+            assert!(error.to_string().contains("decimal"), "{field}: {error}");
+        }
+        let mut input = json!({"mode":"follow","follow":{"reference_pair_id":42}});
+        input["follow"][field] = json!("0.0000000000000000010");
+        assert!(serde_json::from_value::<DefaultMarketParameters>(input).is_ok());
     }
 }
 

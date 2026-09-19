@@ -9,6 +9,7 @@ import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { TimestampText } from '../../shared/TimestampText';
+import { compareDecimalText, decimalFitsStorage, isPositiveDecimalText, requiredDecimalText } from '../../shared/decimal';
 
 const { Text, Title } = Typography;
 
@@ -197,6 +198,7 @@ function formFromConfig(config: QuickRechargeConfig | null): QuickRechargeForm {
 }
 
 function payloadFromForm(form: QuickRechargeForm, reason: string) {
+  if (!validAmounts(form)) throw new Error('充值限制必须为存储范围内的正数，最大金额不得小于最小金额');
   return {
     enabled: form.enabled,
     api_base_url: form.apiBaseUrl.trim() || null,
@@ -213,10 +215,15 @@ function payloadFromForm(form: QuickRechargeForm, reason: string) {
     android_app_redirect_url: form.androidAppRedirectUrl.trim() || null,
     mobile_web_redirect_url: form.mobileWebRedirectUrl.trim() || null,
     desktop_web_redirect_url: form.desktopWebRedirectUrl.trim() || null,
-    min_amount: form.minAmount.trim() || '0.01',
-    max_amount: form.maxAmount.trim() || null,
+    min_amount: requiredDecimalText(form.minAmount, '最小金额', 36, 18),
+    max_amount: form.maxAmount.trim() ? requiredDecimalText(form.maxAmount, '最大金额', 36, 18) : null,
     reason
   };
+}
+
+function validAmounts(form: QuickRechargeForm): boolean {
+  return decimalFitsStorage(form.minAmount, 36, 18) && isPositiveDecimalText(form.minAmount) &&
+    (!form.maxAmount.trim() || (decimalFitsStorage(form.maxAmount, 36, 18) && compareDecimalText(form.maxAmount, form.minAmount) !== -1));
 }
 
 function missingEnableFields(form: QuickRechargeForm, config: QuickRechargeConfig | null) {
@@ -302,8 +309,8 @@ export function QuickRechargeConfigPage() {
   }, []);
 
   const missingFields = form.enabled ? missingEnableFields(form, config) : [];
-  const canSave = !loading;
-  const canTest = Boolean(config?.api_base_url?.trim() && config?.merchant_pid?.trim() && config?.merchant_secret_set && config?.notify_url?.trim() && testAmount.trim());
+  const canSave = !loading && validAmounts(form);
+  const canTest = Boolean(config?.api_base_url?.trim() && config?.merchant_pid?.trim() && config?.merchant_secret_set && config?.notify_url?.trim() && decimalFitsStorage(testAmount, 36, 18) && isPositiveDecimalText(testAmount));
   const enabledChanged = config ? form.enabled !== config.enabled : false;
   const enabledStatusText = enabledChanged ? (form.enabled ? '将启用，保存后生效' : '将停用，保存后生效') : form.enabled ? '当前已启用' : '当前未启用';
   const saveActionText = enabledChanged ? (form.enabled ? '保存并启用GMPay' : '保存并停用GMPay') : '保存快速充值配置';
@@ -385,12 +392,12 @@ export function QuickRechargeConfigPage() {
                 <ConfigSection title="单笔金额限制">
                   <FieldColumn size="half">
                     <FieldLabel label="单笔最小金额">
-                      <AdminTextInput ariaLabel="单笔最小金额" onChange={(minAmount) => setForm({ ...form, minAmount })} type="number" value={form.minAmount} />
+                      <AdminTextInput ariaLabel="单笔最小金额" onChange={(minAmount) => setForm({ ...form, minAmount })} value={form.minAmount} />
                     </FieldLabel>
                   </FieldColumn>
                   <FieldColumn size="half">
                     <FieldLabel label="单笔最大金额">
-                      <AdminTextInput ariaLabel="单笔最大金额" onChange={(maxAmount) => setForm({ ...form, maxAmount })} placeholder="留空表示不限制" type="number" value={form.maxAmount} />
+                      <AdminTextInput ariaLabel="单笔最大金额" onChange={(maxAmount) => setForm({ ...form, maxAmount })} placeholder="留空表示不限制" value={form.maxAmount} />
                     </FieldLabel>
                   </FieldColumn>
                 </ConfigSection>
@@ -430,7 +437,7 @@ export function QuickRechargeConfigPage() {
               <ConfigGrid>
                 <FieldColumn size="half">
                   <FieldLabel label="测试金额">
-                  <AdminTextInput ariaLabel="测试金额" onChange={setTestAmount} type="number" value={testAmount} />
+                  <AdminTextInput ariaLabel="测试金额" onChange={setTestAmount} value={testAmount} />
                   </FieldLabel>
                 </FieldColumn>
                 <FieldColumn size="half">
@@ -445,7 +452,7 @@ export function QuickRechargeConfigPage() {
                           const response = await apiRequest<QuickRechargeTestResponse>('/admin/api/v1/quick-recharge/config/test', {
                             method: 'POST',
                             body: JSON.stringify({
-                              amount: testAmount.trim(),
+                              amount: requiredDecimalText(testAmount, '测试金额', 36, 18),
                               reason
                             })
                           });

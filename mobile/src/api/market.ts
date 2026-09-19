@@ -11,9 +11,11 @@ import {
   mapMarketKlines,
   mapMarketTrades,
 } from './marketSocketProtocol'
-import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
+import { normalizeSymbol, splitSymbol } from '@/core/format'
+import { requiredId } from '@/core/numeric'
 import { mapMarketTicker, type BackendMarketRecord, type BackendTickerRecord } from '@/core/marketMapper'
-import type { KlinePoint, MarketPair, MarketTicker, OrderBookLevel, TradePrint } from '@/core/types'
+import type { KlinePoint, MarketPair, MarketTicker, MarketDepthSnapshot, TradePrint } from '@/core/types'
+import type { MarketProvenance } from '@/core/marketProvenance'
 
 type BackendMarket = BackendMarketRecord
 type BackendTicker = BackendTickerRecord
@@ -35,7 +37,7 @@ interface BackendDepthLevel {
   quantity?: number | string
 }
 
-interface BackendTrade {
+interface BackendTrade extends MarketProvenance {
   id?: string | number
   trade_id?: string | number
   side?: string
@@ -58,7 +60,7 @@ export async function fetchMarketPairs(options: ReferenceRequestOptions = {}): P
       .map((market) => {
         const pair = splitSymbol(market.symbol, market.base_asset, market.quote_asset)
         return {
-          id: asNumber(market.id),
+          id: requiredId(market.id),
           symbol: `${pair.base}/${pair.quote}`,
           base: pair.base,
           quote: pair.quote,
@@ -112,7 +114,8 @@ export async function fetchOlderKlines(
 async function fetchKlinePage(symbol: string, interval: string, end: number, limit: number): Promise<KlinePoint[]> {
   // The backend returns the latest <=100 bars ending at an inclusive millisecond
   // bound. A calculated start would hide available history across trading gaps.
-  limit = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 100
+  if (!Number.isSafeInteger(limit)) throw new TypeError('invalid kline limit')
+  limit = Math.min(100, Math.max(1, limit))
   const response = await client.get<BackendKline[] | { klines?: BackendKline[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/klines`),
     publicApiRequestConfig({ params: { interval, end, limit } }),
@@ -122,8 +125,8 @@ async function fetchKlinePage(symbol: string, interval: string, end: number, lim
   return mapMarketKlines(rawRows, limit).filter((point) => point.time <= end)
 }
 
-export async function fetchOrderBook(symbol: string): Promise<{ bids: OrderBookLevel[]; asks: OrderBookLevel[] }> {
-  const response = await client.get<{ bids?: BackendDepthLevel[]; asks?: BackendDepthLevel[] }>(
+export async function fetchOrderBook(symbol: string): Promise<MarketDepthSnapshot> {
+  const response = await client.get<MarketProvenance & { bids?: BackendDepthLevel[]; asks?: BackendDepthLevel[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/depth`),
     publicApiRequestConfig(),
   )

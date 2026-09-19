@@ -26,7 +26,7 @@ use crate::{
 use bigdecimal::BigDecimal;
 use md5::{Digest, Md5};
 use serde_json::{Map, Value, json};
-use std::{collections::BTreeMap, str::FromStr};
+use std::collections::BTreeMap;
 use url::Url;
 
 /// 可直接用于发起支付请求的渠道运行时配置，由持久化配置行解密并补齐必填项后得到。
@@ -204,12 +204,16 @@ pub(crate) fn validate_save_config_request(
     let token = validate_symbol_like(&request.token, "token", 32, false)?;
     let network = validate_symbol_like(&request.network, "network", 32, true)?;
     let min_amount = request.min_amount.clone();
+    crate::numeric::ensure_decimal_storage(&min_amount, 36, 18, "quick recharge min_amount")?;
     if min_amount <= 0 {
         return Err(AppError::Validation(
             "quick recharge min_amount must be positive".to_owned(),
         ));
     }
     let max_amount = request.max_amount.clone();
+    if let Some(amount) = &max_amount {
+        crate::numeric::ensure_decimal_storage(amount, 36, 18, "quick recharge max_amount")?;
+    }
     if let Some(max_amount) = max_amount.as_ref()
         && max_amount < &min_amount
     {
@@ -265,6 +269,7 @@ pub(crate) fn validate_recharge_amount(
     amount: &BigDecimal,
     config: &QuickRechargeRuntimeConfig,
 ) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(amount, 36, 18, "quick recharge amount")?;
     if amount < &config.min_amount {
         return Err(AppError::Validation(
             "quick recharge amount is below min_amount".to_owned(),
@@ -275,6 +280,27 @@ pub(crate) fn validate_recharge_amount(
     {
         return Err(AppError::Validation(
             "quick recharge amount is above max_amount".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 验签到账数必须无损适配订单列与资产精度；拒绝超精度源金额，不舍入钱包或支付方回执。
+pub(crate) fn validate_recharge_credit_amount(
+    amount: &BigDecimal,
+    precision_scale: i32,
+) -> AppResult<()> {
+    crate::numeric::ensure_decimal_storage(amount, 36, 18, "quick recharge actual_amount")?;
+    if !(0..=18).contains(&precision_scale) {
+        return Err(AppError::Internal(
+            "invalid quick recharge asset precision".to_owned(),
+        ));
+    }
+    if amount <= &BigDecimal::from(0)
+        || !crate::modules::wallet::amount_fits_asset_precision(amount, precision_scale)
+    {
+        return Err(AppError::Validation(
+            "quick recharge actual_amount must be positive and fit asset precision".to_owned(),
         ));
     }
     Ok(())
@@ -419,8 +445,10 @@ pub(crate) fn required_json_decimal(
     field: &str,
 ) -> AppResult<BigDecimal> {
     let value = required_json_string(object, field)?;
-    BigDecimal::from_str(&value)
-        .map_err(|_| AppError::Validation(format!("gmpay notify {field} is invalid")))
+    let amount = crate::numeric::parse_decimal_input(&value)
+        .map_err(|_| AppError::Validation(format!("gmpay notify {field} is invalid")))?;
+    crate::numeric::ensure_decimal_storage(&amount, 36, 18, field)?;
+    Ok(amount)
 }
 
 /// 把金额标准化为 GMPay 请求与签名统一使用的十进制文本，是签名一致性的关键前置步骤。

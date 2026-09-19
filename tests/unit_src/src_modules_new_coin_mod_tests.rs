@@ -14,6 +14,56 @@ fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
 
+#[test]
+fn numeric_safety_new_coin_amounts_and_relative_time_fail_closed() {
+    assert!(
+        service::authoritative_new_coin_quote_amount(
+            &decimal("99999999999999999999"),
+            &decimal("2"),
+            18,
+        )
+        .is_err()
+    );
+    assert!(service::quantize_unlock_fee_amount(&decimal("1e20"), 18).is_err());
+    assert_eq!(
+        service::quantize_unlock_fee_amount(&decimal("0.1234567890123456789"), 8).unwrap(),
+        decimal("0.12345678"),
+    );
+    let source = unlock_source("overflow", 1, at(1_700_000_000));
+    assert!(matches!(
+        apply_unlock_rule(
+            &UnlockRule::RelativePeriod {
+                seconds_after_source: i64::MAX
+            },
+            vec![source],
+        ),
+        Err(NewCoinDomainError::RelativePeriodOutOfRange),
+    ));
+}
+
+#[test]
+fn numeric_safety_relative_unlock_respects_timestamp_storage() {
+    for (source_time, seconds, accepted) in [
+        (i64::from(i32::MAX) - 1, 1, true),
+        (i64::from(i32::MAX), 1, false),
+        (-2, 1, false),
+    ] {
+        let result = apply_unlock_rule(
+            &UnlockRule::RelativePeriod {
+                seconds_after_source: seconds,
+            },
+            vec![unlock_source("timestamp", 1, at(source_time))],
+        );
+        assert_eq!(result.is_ok(), accepted);
+        if !accepted {
+            assert!(matches!(
+                result,
+                Err(NewCoinDomainError::RelativePeriodOutOfRange)
+            ));
+        }
+    }
+}
+
 fn unlock_source(
     source_id: &str,
     quantity: i64,

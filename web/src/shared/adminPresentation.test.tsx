@@ -51,6 +51,22 @@ describe('Admin Chinese presentation coverage', () => {
     expect(displayDetailValue({ duration_seconds: 60, payout_rate: '0.4', min_stake: '10' }, 'cycles')).toContain('净收益率（不含本金）');
   });
 
+  it('labels explicit spot triggers in resources, details and audit without translating intent', () => {
+    expect(adminFieldLabel('trigger_price')).toBe('触发价');
+    expect(adminFieldLabel('trigger_direction')).toBe('触发方向');
+    expect(adminFieldLabel('triggered_at')).toBe('激活时间');
+    expect(displayDetailValue('stop_limit', 'order_type')).toBe('条件限价');
+    expect(displayDetailValue('rising', 'trigger_direction')).toBe('上涨触发');
+    expect(displayDetailValue('falling', 'trigger_direction')).toBe('下跌触发');
+    expect(displayDetailValue('future-direction', 'trigger_direction')).toBe('future-direction');
+    expect(displayDetailValue('rising', 'reason')).toBe('rising');
+    expect(buildAuditFieldChanges(
+      { trigger_direction: 'rising' }, { trigger_direction: 'falling' }
+    )).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: '触发方向', before: '上涨触发', after: '下跌触发' })
+    ]));
+  });
+
   it('完整标注新币批次对账字段', () => {
     for (const key of [
       'supply_delta',

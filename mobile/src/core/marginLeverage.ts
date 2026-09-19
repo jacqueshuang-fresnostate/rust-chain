@@ -1,3 +1,5 @@
+import { decimalTextFromBoundary } from './decimal.ts'
+
 export type MarginLeverageDirection = 'long' | 'short'
 export type MarginMode = 'cross' | 'isolated'
 
@@ -50,7 +52,7 @@ export function mapMarginUserLeverageSetting(input: {
  * 弹窗的所有加减与快捷入口都必须从这个集合派生，避免界面生成后台不接受的倍数。
  */
 export function normalizeMarginLeverageLevels(levels: readonly number[]): number[] {
-  return [...new Set(levels.filter((level) => Number.isFinite(level) && level > 0))]
+  return [...new Set(levels.filter((level) => Number.isFinite(level) && level > 0 && level <= Number.MAX_SAFE_INTEGER))]
     .sort((left, right) => left - right)
 }
 
@@ -146,8 +148,9 @@ function positiveFinite(value: number | null | undefined): number | null {
 }
 
 function positiveNumericValue(value: unknown): number | null {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  const decimal = decimalTextFromBoundary(value as string | number, { allowNegative: false, allowZero: false })
+  const parsed = decimal === null ? NaN : Number(decimal)
+  return decimal !== null && Number.isFinite(parsed) && decimalTextFromBoundary(parsed) === decimal ? parsed : null
 }
 
 function nonNegativeFinite(value: number | null | undefined): number | null {

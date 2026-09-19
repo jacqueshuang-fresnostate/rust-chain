@@ -19,9 +19,10 @@ pub mod routes;
 
 pub use domain::{
     NewOrder, NewSpotTrade, OrderSide, OrderStatus, OrderType, SpotDomainError, SpotOrder,
-    SpotServiceError, SpotTrade, TradingPairRule, apply_fill, cancel_order, create_limit_order,
-    create_market_order, create_stop_limit_order, spot_remaining_reserved_amount,
-    spot_reservation_amount, spot_reserve_asset_id, transition_status, validate_order_request,
+    SpotServiceError, SpotTrade, TradingPairRule, TriggerDirection, apply_fill, cancel_order,
+    create_limit_order, create_market_order, create_stop_limit_order,
+    spot_remaining_reserved_amount, spot_reservation_amount, spot_reserve_asset_id,
+    transition_status, validate_order_request,
 };
 pub use infrastructure::MySqlSpotRepository;
 pub use repository::SpotRepository;

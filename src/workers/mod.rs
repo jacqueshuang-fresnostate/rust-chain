@@ -11,6 +11,7 @@ pub mod agent_commission_settlement;
 pub mod earn_auto_redemption;
 pub mod event_inbox;
 pub mod event_outbox;
+pub mod financial_retry;
 pub mod kline_recovery;
 pub mod loan_health;
 pub mod loan_overdue;

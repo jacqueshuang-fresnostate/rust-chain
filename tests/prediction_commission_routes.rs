@@ -22,6 +22,9 @@ use uuid::Uuid;
 
 mod support;
 
+#[path = "prediction/journal.rs"]
+mod journal;
+
 static PREDICTION_CONFIG_GOVERNANCE_LOCK: tokio::sync::Mutex<()> =
     tokio::sync::Mutex::const_new(());
 
@@ -235,8 +238,22 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
     assert_eq!(records[0].3, decimal("0.50617283"));
     assert_eq!(records[0].4, asset_id);
     assert_eq!(records[0].5, "pending");
+    let journal: (i64, BigDecimal) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM platform_financial_journal WHERE context = 'prediction' AND ref_id = ?",
+    ).bind(order_id.to_string()).fetch_one(&pool).await?;
+    assert_eq!(journal, (2, decimal("0")));
+    let income: BigDecimal = sqlx::query_scalar(
+        "SELECT amount FROM platform_financial_journal WHERE context = 'prediction' AND ref_id = ? AND account_code = 'platform_prediction_fee_income'",
+    ).bind(order_id.to_string()).fetch_one(&pool).await?;
+    assert_eq!(income, decimal("-0.1"));
 
     support::cleanup_direct_agent_commission(&pool, user_id, commission_fixture).await?;
+    sqlx::query(
+        "DELETE FROM platform_financial_journal WHERE context = 'prediction' AND ref_id = ?",
+    )
+    .bind(order_id.to_string())
+    .execute(&pool)
+    .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'prediction_order' AND ref_id = ?")
         .bind(order_id.to_string())
         .execute(&pool)
@@ -870,31 +887,31 @@ async fn prediction_configuration_writes_are_revision_guarded_and_audited_atomic
         );
         assert_eq!(settings_audit.ip.as_deref(), Some("203.0.113.84"));
 
-        let asset_list = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/api/v1/prediction/asset-configs")
-                    .header("authorization", format!("Bearer {token}"))
-                    .body(Body::empty())?,
-            )
-            .await?;
-        let asset_list_status = asset_list.status();
-        let asset_list_body = axum::body::to_bytes(asset_list.into_body(), 1_048_576).await?;
-        let asset_list_payload: Value = serde_json::from_slice(&asset_list_body)?;
-        assert_eq!(
-            asset_list_status,
-            StatusCode::OK,
-            "{asset_list_payload}"
-        );
-        let listed_asset = asset_list_payload["configs"]
-            .as_array()
-            .and_then(|configs| {
-                configs
-                    .iter()
-                    .find(|config| config["asset_id"].as_u64() == Some(asset_id))
-            })
-            .expect("new active asset must be listed for prediction configuration");
+        let mut offset = 0;
+        let listed_asset = loop {
+            let asset_list = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/admin/api/v1/prediction/asset-configs?limit=100&offset={offset}"))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())?,
+                )
+                .await?;
+            let asset_list_status = asset_list.status();
+            let asset_list_body = axum::body::to_bytes(asset_list.into_body(), 1_048_576).await?;
+            let asset_list_payload: Value = serde_json::from_slice(&asset_list_body)?;
+            assert_eq!(asset_list_status, StatusCode::OK, "{asset_list_payload}");
+            let configs = asset_list_payload["configs"].as_array().unwrap();
+            if let Some(config) = configs.iter().find(|config| config["asset_id"].as_u64() == Some(asset_id)) {
+                break config.clone();
+            }
+            offset += configs.len();
+            assert!(
+                !configs.is_empty() && (offset as u64) < asset_list_payload["total"].as_u64().unwrap(),
+                "new active asset must be listed for prediction configuration"
+            );
+        };
         assert_eq!(listed_asset["revision"], 0);
 
         let (blank_asset_status, _, blank_asset_payload) = write_prediction_admin_config(

@@ -196,14 +196,27 @@ fn parameter_validation_rejects_invalid_bounds_ratios_precisions_and_storage_ove
         json!({"volume_max":"20.000000001"}),
         json!({"depth_levels":0}),
         json!({"depth_levels":21}),
-        json!({"price_max":"1e100000"}),
-        json!({"volatility":"1e-100000"}),
     ] {
         let parameters: DefaultMarketParameters = serde_json::from_value(value.clone()).unwrap();
         assert!(parameters.validate(8, 8).is_err(), "{value}");
     }
     assert!(DefaultMarketParameters::default().validate(19, 8).is_err());
     assert!(DefaultMarketParameters::default().validate(8, 19).is_err());
+}
+
+#[test]
+fn parameter_ingress_rejects_pathological_exponents_before_generation() {
+    for value in [
+        json!({"price_max":"1e100000"}),
+        json!({"volatility":"1e-100000"}),
+    ] {
+        let error = serde_json::from_value::<DefaultMarketParameters>(value).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("decimal exponent is out of range")
+        );
+    }
 }
 
 #[test]

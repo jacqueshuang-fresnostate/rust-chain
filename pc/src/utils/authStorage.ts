@@ -4,6 +4,7 @@ type PersistedUserStore = {
 }
 
 const USER_STORE_KEY = 'user'
+const SESSION_SCOPE_KEY = 'hippo_pc_session_scope'
 
 function storage(): Storage | null {
   try {
@@ -63,10 +64,23 @@ export function readRefreshToken(): string {
   return stringValue(readPersistedUserStore()?.refreshToken)
 }
 
-export function writeAuthTokens(token: string, refreshToken?: string) {
+/** 登录创建身份边界；刷新只换令牌，保留结果未知的资金请求身份。 */
+export function readAuthSessionScope(): string {
+  if (!readAuthToken()) throw new Error('authenticated session is required')
+  const store = storage()
+  if (!store) throw new Error('session persistence is required')
+  const current = store.getItem(SESSION_SCOPE_KEY)
+  if (current) return current
+  const scope = globalThis.crypto.randomUUID()
+  store.setItem(SESSION_SCOPE_KEY, scope)
+  return scope
+}
+
+export function writeAuthTokens(token: string, refreshToken?: string, newSession = false) {
   const store = storage()
   if (!store) return
 
+  if (newSession) store.setItem(SESSION_SCOPE_KEY, globalThis.crypto.randomUUID())
   store.setItem('token', token)
   if (refreshToken) {
     store.setItem('refresh_token', refreshToken)
@@ -81,5 +95,5 @@ export function clearAuthStorage() {
   store.removeItem('token')
   store.removeItem('refresh_token')
   store.removeItem(USER_STORE_KEY)
+  store.removeItem(SESSION_SCOPE_KEY)
 }
-

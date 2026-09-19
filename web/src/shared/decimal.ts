@@ -35,6 +35,7 @@ function parseBoundedExponent(value: string | undefined): number | null {
 }
 
 function parseDecimal(value: string | number): ParsedDecimal | null {
+  if (typeof value === 'number' && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) return null;
   const source = typeof value === 'number' ? String(value) : value.trim();
   if (!source || source.length > MAX_FORMAT_DIGITS) return null;
 
@@ -82,6 +83,7 @@ function parseDecimal(value: string | number): ParsedDecimal | null {
 
 /**
  * 把十进制文本规范化为唯一表示。金额的系数从不转为 JavaScript Number。
+ * number 仅供兼容显示；权威金额入口必须先用 decimalFitsStorage 拒绝 number。
  */
 export function canonicalDecimalText(value: string | number): string | null {
   return parseDecimal(value)?.canonical ?? null;
@@ -178,6 +180,26 @@ export function decimalFitsPrecision(value: string | number, precision: number |
   const scale = validPrecision(precision);
   const parsed = parseDecimal(value);
   return scale !== null && parsed !== null && parsed.fraction.length <= scale;
+}
+
+/** 校验数据库 DECIMAL 容量；源金额不截断，尾随零不占有效精度。 */
+export function decimalFitsStorage(value: unknown, precision = 38, scale = 18): value is string {
+  if (typeof value !== 'string' || !Number.isSafeInteger(precision) || !Number.isSafeInteger(scale) ||
+    precision < 1 || precision > 65 || scale < 0 || scale > precision) return false;
+  const source = value.trim();
+  const match = DECIMAL_PATTERN.exec(source);
+  const exponent = match ? parseBoundedExponent(match[5]) : null;
+  if (source.length > 256 || exponent === null || Math.abs(exponent) > 256) return false;
+  const parsed = parseDecimal(value);
+  return parsed !== null && parsed.fraction.length <= scale &&
+    (parsed.integer === '0' ? 0 : parsed.integer.length) <= precision - scale;
+}
+
+export function requiredDecimalText(value: string, label: string, precision = 38, scale = 18): string {
+  if (!decimalFitsStorage(value, precision, scale)) {
+    throw new Error(`${label}超出数值范围或小数精度（${precision - scale} 位整数、${scale} 位小数），不会自动舍入`);
+  }
+  return value.trim();
 }
 
 /** 仅在最终展示边界进行十进制四舍五入，不经过 JavaScript Number。 */

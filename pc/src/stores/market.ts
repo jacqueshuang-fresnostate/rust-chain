@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export interface Ticker {
+  source?: string
+  provider?: string
   symbol: string
   icon: string
   open: number
@@ -29,21 +31,29 @@ export const useMarketStore = defineStore('market', () => {
   }
 
   function setTickers(newTickers: any[]) {
-    // Map backend response to internal structure if needed
-    // Assuming backend structure is similar to interface, but if not, map it here
-    tickers.value = newTickers.map(t => ({
-      symbol: t.symbol,
-      open: t.open,
-      high: t.high,
-      low: t.low,
-      close: t.close,
-      volume: t.volume,
-      turnover: t.turnover,
-      icon: typeof t.icon === 'string' ? t.icon : '',
-      time: t.time,
-      chg: typeof t.chg === 'number' ? t.chg : (t.open ? ((t.close - t.open) / t.open * 100)  : 0),
-      zone: t.zone
-    }))
+    const currentBySymbol = new Map(tickers.value.map(t => [compactMarketSymbol(t.symbol), t]))
+    tickers.value = newTickers.map(t => {
+      const current = currentBySymbol.get(compactMarketSymbol(t.symbol))
+      const snapshot = {
+        source: t.source,
+        provider: t.provider,
+        symbol: t.symbol,
+        open: t.open,
+        high: t.high,
+        low: t.low,
+        close: t.close,
+        volume: t.volume,
+        turnover: t.turnover,
+        icon: typeof t.icon === 'string' ? t.icon : '',
+        time: t.time,
+        chg: typeof t.chg === 'number' ? t.chg : (t.open ? ((t.close - t.open) / t.open * 100)  : 0),
+        zone: t.zone
+      }
+      if (current && current.time > 0 && (!Number.isFinite(t.time) || t.time < current.time)) {
+        return { ...current, icon: snapshot.icon || current.icon, zone: snapshot.zone }
+      }
+      return snapshot
+    })
   }
 
   function updateTicker(ticker: Ticker) {
@@ -51,11 +61,14 @@ export const useMarketStore = defineStore('market', () => {
     const index = tickers.value.findIndex(t => compactMarketSymbol(t.symbol) === compactSymbol)
     if (index !== -1) {
       const current = tickers.value[index]
+      if (ticker.time > 0 && current.time > ticker.time) return
       const open = finiteNumber(ticker.open, current.open)
       const close = finiteNumber(ticker.close, current.close)
       tickers.value[index] = {
         ...current,
         ...ticker,
+        source: ticker.source,
+        provider: ticker.provider,
         symbol: current.symbol || ticker.symbol,
         icon: ticker.icon || current.icon,
         open,
@@ -64,7 +77,7 @@ export const useMarketStore = defineStore('market', () => {
         low: finiteNumber(ticker.low, current.low),
         volume: finiteNumber(ticker.volume, current.volume),
         turnover: finiteNumber(ticker.turnover, current.turnover),
-        time: finiteNumber(ticker.time, current.time),
+        time: finiteNumber(ticker.time, 0),
         zone: finiteNumber(ticker.zone, current.zone),
         chg: typeof ticker.chg === 'number' ? ticker.chg : (open ? ((close - open) / open * 100) : 0),
       }

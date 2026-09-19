@@ -11,7 +11,6 @@ use bigdecimal::BigDecimal;
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::Value;
 use sqlx::{MySql, Pool};
-use std::str::FromStr;
 
 /// 读取行情接入链写入 Redis 的新鲜最新价，作为现货市价执行和触发判断的服务端权威价格。
 /// 缺失、过期、非正或损坏载荷均返回错误，不得回退使用客户端参考价完成成交。
@@ -36,7 +35,7 @@ pub(crate) async fn latest_spot_market_price(
         .get("last_price")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::Internal("cached ticker is missing last_price".to_owned()))?;
-    let price = BigDecimal::from_str(last_price)
+    let price = crate::numeric::parse_decimal_input(last_price)
         .map_err(|_| AppError::Internal("cached ticker last_price is invalid".to_owned()))?;
     if price <= 0 {
         return Err(AppError::Validation(
@@ -47,8 +46,11 @@ pub(crate) async fn latest_spot_market_price(
         .get("observed_at")
         .and_then(Value::as_i64)
         .ok_or_else(|| AppError::Internal("cached ticker is missing observed_at".to_owned()))?;
-    let stale_before = chrono::Utc::now().timestamp_millis() - 60_000;
-    if observed_at < stale_before {
+    let now = chrono::Utc::now().timestamp_millis();
+    let age = now
+        .checked_sub(observed_at)
+        .ok_or_else(|| AppError::Validation("spot ticker time is out of range".to_owned()))?;
+    if !(0..=60_000).contains(&age) {
         return Err(AppError::Validation("spot ticker is stale".to_owned()));
     }
     Ok(Some(price))
@@ -113,7 +115,7 @@ pub(crate) async fn triggered_limit_sell_order_ids(
 }
 
 /// 处理已触发限价买单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
-/// 筛选同时满足触发价和限价的止限价买单主键，执行事务会再次复核。
+/// 旧买单保留双重 <=；显式单阈值命中即入候选，已激活单仅检查限价，执行事务再次复核。
 pub(crate) async fn triggered_stop_limit_buy_order_ids(
     pool: &Pool<MySql>,
     pair_symbol: &str,
@@ -129,12 +131,23 @@ pub(crate) async fn triggered_stop_limit_buy_order_ids(
              AND orders.side = 'buy'
              AND orders.order_type = 'stop_limit'
              AND orders.status IN ('pending', 'open', 'partially_filled')
-             AND orders.trigger_price >= ?
-             AND orders.price >= ?
+             AND (
+                 (orders.trigger_direction IS NULL AND orders.trigger_price >= ? AND orders.price >= ?)
+                 OR (orders.trigger_direction IS NOT NULL AND (
+                     (orders.triggered_at IS NOT NULL AND orders.price >= ?)
+                     OR (orders.triggered_at IS NULL AND (
+                         (orders.trigger_direction = 'rising' AND orders.trigger_price <= ?)
+                         OR (orders.trigger_direction = 'falling' AND orders.trigger_price >= ?)
+                     ))
+                 ))
+             )
            ORDER BY orders.trigger_price DESC, orders.price DESC, orders.id ASC
            LIMIT ?"#,
     )
     .bind(pair_symbol)
+    .bind(market_price)
+    .bind(market_price)
+    .bind(market_price)
     .bind(market_price)
     .bind(market_price)
     .bind(i64::from(limit))
@@ -144,7 +157,7 @@ pub(crate) async fn triggered_stop_limit_buy_order_ids(
 }
 
 /// 处理已触发限价卖单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
-/// 筛选同时满足触发价和限价的止限价卖单主键，执行事务会再次复核。
+/// 旧卖单保留双重 >=；显式单阈值命中即入候选，已激活单仅检查限价，执行事务再次复核。
 pub(crate) async fn triggered_stop_limit_sell_order_ids(
     pool: &Pool<MySql>,
     pair_symbol: &str,
@@ -160,12 +173,23 @@ pub(crate) async fn triggered_stop_limit_sell_order_ids(
              AND orders.side = 'sell'
              AND orders.order_type = 'stop_limit'
              AND orders.status IN ('pending', 'open', 'partially_filled')
-             AND orders.trigger_price <= ?
-             AND orders.price <= ?
+             AND (
+                 (orders.trigger_direction IS NULL AND orders.trigger_price <= ? AND orders.price <= ?)
+                 OR (orders.trigger_direction IS NOT NULL AND (
+                     (orders.triggered_at IS NOT NULL AND orders.price <= ?)
+                     OR (orders.triggered_at IS NULL AND (
+                         (orders.trigger_direction = 'rising' AND orders.trigger_price <= ?)
+                         OR (orders.trigger_direction = 'falling' AND orders.trigger_price >= ?)
+                     ))
+                 ))
+             )
            ORDER BY orders.trigger_price ASC, orders.price ASC, orders.id ASC
            LIMIT ?"#,
     )
     .bind(pair_symbol)
+    .bind(market_price)
+    .bind(market_price)
+    .bind(market_price)
     .bind(market_price)
     .bind(market_price)
     .bind(i64::from(limit))

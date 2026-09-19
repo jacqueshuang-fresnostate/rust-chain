@@ -87,8 +87,18 @@ test('normalizes backend login 2FA challenges without creating a token session',
 
 test('uses only the new backend API base URL configuration', () => {
   assert.equal(Object.hasOwn(APP_CONFIG, 'API_DOMAIN'), false)
-  assert.equal(backendApiUrl('/auth/login'), 'http://127.0.0.1:8080/api/v1/auth/login')
-  assert.equal(backendApiUrl('wallet/accounts'), 'http://127.0.0.1:8080/api/v1/wallet/accounts')
+  const original = { ...APP_CONFIG }
+  try {
+    APP_CONFIG.BACKEND_API_DOMAIN = 'http://127.0.0.1:8080'
+    APP_CONFIG.BACKEND_API_PREFIX = '/api/v1'
+    assert.equal(backendApiUrl('/auth/login'), 'http://127.0.0.1:8080/api/v1/auth/login')
+    assert.equal(backendApiUrl('wallet/accounts'), 'http://127.0.0.1:8080/api/v1/wallet/accounts')
+    APP_CONFIG.BACKEND_API_DOMAIN = 'https://exchange.example'
+    APP_CONFIG.BACKEND_API_PREFIX = '/custom/v1/'
+    assert.equal(backendApiUrl('/auth/login'), 'https://exchange.example/custom/v1/auth/login')
+  } finally {
+    Object.assign(APP_CONFIG, original)
+  }
 })
 
 test('builds the new backend bearer authorization header', () => {
@@ -325,6 +335,8 @@ test('maps backend spot order payloads into PC order history rows', () => {
           order_type: 'stop_limit',
           price: '69000',
           trigger_price: '69500',
+          trigger_direction: 'falling',
+          triggered_at: 1_717_171_001_000,
           quantity: '0.3',
           filled_quantity: '0',
           average_price: null,
@@ -350,6 +362,10 @@ test('maps backend spot order payloads into PC order history rows', () => {
   assert.equal(page.data.content[1].time, 1_717_171_123_000)
   assert.equal(page.data.content[2].type, 'STOP_LIMIT')
   assert.equal(page.data.content[2].triggerPrice, 69500)
+  assert.equal(page.data.content[2].triggerDirection, 'falling')
+  assert.equal(page.data.content[2].triggeredAt, 1_717_171_001_000)
+  assert.equal(page.data.content[1].triggerDirection, null)
+  assert.equal(page.data.content[1].triggeredAt, null)
   assert.equal(page.data.content[2].price, 69000)
 })
 
@@ -404,6 +420,7 @@ test('maps PC spot order requests and trade wallet balances to backend shapes', 
     direction: 'SELL',
     type: 'STOP_LIMIT',
     triggerPrice: 69500,
+    triggerDirection: 'falling',
     price: 69000,
     amount: 0.3,
   }, 'spot-request-4'), {
@@ -412,6 +429,7 @@ test('maps PC spot order requests and trade wallet balances to backend shapes', 
     order_type: 'stop_limit',
     price: '69000',
     trigger_price: '69500',
+    trigger_direction: 'falling',
     quantity: '0.3',
     idempotency_key: 'spot-request-4',
   })

@@ -1,4 +1,5 @@
 import { adminErrorMessage } from '../../shared/adminErrorMessage';
+import { requiredSafeInteger } from '../../shared/integer';
 import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
@@ -165,15 +166,11 @@ function mbToBytes(value: string) {
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error('单个证件大小必须大于 0 MB');
   }
-  return Math.round(parsed * 1024 * 1024);
+  return requiredSafeInteger(Math.round(parsed * 1024 * 1024), '证件字节数', 1);
 }
 
 function positiveInteger(value: string, label: string) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${label}必须为正整数`);
-  }
-  return parsed;
+  return requiredSafeInteger(value, label, 1, 2_147_483_647);
 }
 
 function maskIdentityNumber(value: string) {
@@ -433,7 +430,7 @@ function KycWorkspacePage({ workspace }: { workspace: KycWorkspace }) {
           <Button
             aria-label={typeof value === 'number' ? `查看 KYC 申请 ${value}` : '查看 KYC 申请'}
             disabled={typeof value !== 'number'}
-            onClick={() => openDetail(Number(value))}
+            onClick={() => openDetail(requiredSafeInteger(value, '认证ID', 1))}
             size="small"
             theme="borderless"
           >

@@ -4,6 +4,7 @@
 
 mod close_executions;
 mod cross_accounts;
+pub(crate) mod interest;
 mod ledger;
 mod market_data;
 mod position_queries;
@@ -13,18 +14,20 @@ mod query_support;
 mod settlement;
 mod transfers;
 
+pub(crate) use interest::{accrue_locked_position_interest, load_margin_asset_precision};
+
 pub(crate) use close_executions::{
     MarginCloseExecutionWrite, insert_margin_close_execution,
     list_user_margin_position_close_executions, load_margin_close_execution_by_id,
-    load_margin_close_execution_by_key_readonly, lock_margin_close_execution_by_key,
+    load_margin_close_execution_by_key_in_tx, load_margin_close_execution_by_key_readonly,
 };
 pub(crate) use cross_accounts::{
     activate_cross_margin_account_for_open, bump_cross_margin_account_version,
-    discard_new_cross_margin_account_for_pending_order, ensure_and_lock_cross_margin_account,
-    ensure_and_lock_cross_margin_account_with_creation, load_cross_margin_account,
-    load_margin_open_product_account_scope, load_margin_position_account_scope,
-    lock_cross_margin_risk_positions, require_active_cross_margin_account,
-    update_locked_cross_margin_risk,
+    claim_cross_margin_account_for_close, discard_new_cross_margin_account_for_pending_order,
+    ensure_and_lock_cross_margin_account, ensure_and_lock_cross_margin_account_with_creation,
+    load_cross_margin_account, load_margin_open_product_account_scope,
+    load_margin_position_account_scope, lock_cross_margin_risk_positions,
+    require_active_cross_margin_account, update_locked_cross_margin_risk,
 };
 pub(crate) use market_data::{
     MarginRiskTicker, cached_margin_entry_price, cached_margin_mark_price,

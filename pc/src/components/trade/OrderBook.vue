@@ -9,6 +9,7 @@
         </div>
     </div>
 
+    <MarketProvenanceLabel class="px-2 py-1" :provenance="provenance" />
     <!-- Headers (Optional if needed, but flex row above handles title) -->
     <!-- Let's add a proper header row for columns -->
     <div class="flex px-2 py-1 text-[10px] text-muted-foreground">
@@ -48,9 +49,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatNumber } from '@/utils/format'
+import MarketProvenanceLabel from './MarketProvenanceLabel.vue'
+import type { MarketProvenance } from '@/api/marketProvenance'
 
 const props = defineProps<{
   symbol?: string
+  provenance?: MarketProvenance
   bids: Array<{ price: number, amount: number, total: number }>
   asks: Array<{ price: number, amount: number, total: number }>
   currentPrice: number

@@ -15,6 +15,35 @@ fn decimal(value: &str) -> BigDecimal {
 }
 
 #[test]
+fn market_adapter_rejects_unstorable_prices_before_financial_consumers() {
+    for price in [
+        "1e999999999",
+        "100000000000000000000",
+        "1.0000000000000000001",
+        "NaN",
+        "Infinity",
+    ] {
+        let payload = serde_json::json!({
+            "arg": {"channel": "trade", "instId": "BTCUSDT"},
+            "data": [{"tradeId": "numeric-review", "side": "buy", "price": price,
+                "size": "1", "ts": "1710000002000"}],
+        });
+        assert!(
+            BitgetMarketAdapter::trade_from_ws(&payload.to_string()).is_err(),
+            "{price}"
+        );
+    }
+    let exact = BitgetMarketAdapter::trade_from_ws(
+        r#"{"arg":{"channel":"trade","instId":"BTCUSDT"},"data":[{"tradeId":"exact","side":"buy","price":9007199254740993.000000000000000001,"size":"0.000000000000000001","ts":"1710000002000"}]}"#,
+    ).unwrap();
+    assert_eq!(
+        exact.price(),
+        &decimal("9007199254740993.000000000000000001")
+    );
+    assert_eq!(exact.quantity(), &decimal("0.000000000000000001"));
+}
+
+#[test]
 fn bitget_adapter_parses_ws_ticker_depth_kline_and_trade() {
     let ticker = BitgetMarketAdapter::ticker_from_ws(
         r#"{

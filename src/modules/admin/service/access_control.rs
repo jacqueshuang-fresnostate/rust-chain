@@ -91,6 +91,130 @@ pub(crate) fn admin_scope_from_record(record: AdminAccessRecord) -> AppResult<Ad
 /// 未登记的后台业务路径返回 `admin.unmapped`，仅 `*` 可访问，避免新路由因遗漏映射而默认放行。
 pub(crate) fn required_admin_permission(method: &str, raw_path: &str) -> Option<String> {
     let path = raw_path.strip_prefix("/admin/api/v1").unwrap_or(raw_path);
+    if path.starts_with("/seconds-contracts/")
+        && (path.contains("/refund-policy") || path.contains("/principal-refund"))
+    {
+        let read = matches!(method, "GET" | "HEAD" | "OPTIONS");
+        let parts = path.split('/').collect::<Vec<_>>();
+        let valid_id = parts.get(3).is_some_and(|id| {
+            id.starts_with(|c: char| c.is_ascii_digit() && c != '0')
+                && id.bytes().all(|c| c.is_ascii_digit())
+                && id.parse::<u64>().is_ok_and(|id| id > 0)
+        });
+        let permission = if parts.len() == 5 && valid_id {
+            match (parts[2], parts[4], method) {
+                ("products", "refund-policy", _) if read => "seconds.products.read",
+                ("products", "refund-policy", "PATCH") => "seconds.products.write",
+                ("orders", "principal-refund", _) if read => "seconds.orders.read",
+                ("orders", "principal-refund", "POST") => "seconds.orders.settle",
+                _ => {
+                    if read {
+                        "admin.unmapped.read"
+                    } else {
+                        "admin.unmapped.write"
+                    }
+                }
+            }
+        } else if read {
+            "admin.unmapped.read"
+        } else {
+            "admin.unmapped.write"
+        };
+        return Some(permission.to_owned());
+    }
+    if path.starts_with("/wallet/withdrawal-policies") {
+        let read = matches!(method, "GET" | "HEAD" | "OPTIONS");
+        let valid = path
+            .strip_prefix("/wallet/withdrawal-policies/")
+            .is_some_and(|id| {
+                id.starts_with(|c: char| c.is_ascii_digit() && c != '0')
+                    && id.bytes().all(|c| c.is_ascii_digit())
+                    && id.parse::<u64>().is_ok_and(|id| id > 0)
+            });
+        let resource = if valid && (read || method == "PATCH") {
+            "system.security"
+        } else {
+            "admin.unmapped"
+        };
+        return Some(format!(
+            "{resource}.{}",
+            if read { "read" } else { "write" }
+        ));
+    }
+    if path.starts_with("/financial-reconciliation") {
+        let read = matches!(method, "GET" | "HEAD" | "OPTIONS");
+        let parts = path.split('/').collect::<Vec<_>>();
+        let collection = path == "/financial-reconciliation/snapshots";
+        let valid_id = parts.len() >= 4
+            && parts[1] == "financial-reconciliation"
+            && parts[2] == "snapshots"
+            && parts[3].starts_with(|c: char| c.is_ascii_digit() && c != '0')
+            && parts[3].bytes().all(|c| c.is_ascii_digit())
+            && parts[3].parse::<u64>().is_ok_and(|id| id > 0);
+        let detail = valid_id && parts.len() == 4;
+        let followups = valid_id && parts.len() == 5 && parts[4] == "follow-ups";
+        return Some(
+            if (path == "/financial-reconciliation" && read)
+                || (method == "GET" && (collection || detail || followups))
+            {
+                "governance.financial.read".to_owned()
+            } else if method == "POST" && (collection || followups) {
+                "governance.financial.operate".to_owned()
+            } else {
+                format!("admin.unmapped.{}", if read { "read" } else { "write" })
+            },
+        );
+    }
+    if path.starts_with("/agent-commissions/") && path.contains("/reversal") {
+        let parts = path.split('/').collect::<Vec<_>>();
+        if method == "POST"
+            && parts.len() == 4
+            && parts[1] == "agent-commissions"
+            && parts[3] == "reversal"
+            && parts[2].starts_with(|c: char| c.is_ascii_digit() && c != '0')
+            && parts[2].bytes().all(|c| c.is_ascii_digit())
+            && parts[2].parse::<u64>().is_ok_and(|id| id > 0)
+        {
+            return Some("agents.commissions.settle".to_owned());
+        }
+        return Some(format!(
+            "admin.unmapped.{}",
+            if matches!(method, "GET" | "HEAD" | "OPTIONS") {
+                "read"
+            } else {
+                "write"
+            }
+        ));
+    }
+    if path.starts_with("/governance/financial-retries") {
+        let parts = path.split('/').collect::<Vec<_>>();
+        if path == "/governance/financial-retries" && matches!(method, "GET" | "HEAD" | "OPTIONS") {
+            return Some("governance.financial.read".to_owned());
+        }
+        if parts.len() == 6
+            && parts[1] == "governance"
+            && parts[2] == "financial-retries"
+            && parts[4].starts_with(|c: char| c.is_ascii_digit() && c != '0')
+            && parts[4].bytes().all(|v| v.is_ascii_digit())
+            && parts[4].parse::<u64>().is_ok_and(|id| id > 0)
+            && ((method == "POST"
+                && parts[5] == "requeue"
+                && matches!(parts[3], "earn" | "loan" | "commission"))
+                || (method == "PATCH"
+                    && parts[5] == "incident"
+                    && matches!(parts[3], "earn" | "loan" | "commission" | "seconds")))
+        {
+            return Some("governance.financial.operate".to_owned());
+        }
+        return Some(format!(
+            "admin.unmapped.{}",
+            if matches!(method, "GET" | "HEAD" | "OPTIONS") {
+                "read"
+            } else {
+                "write"
+            }
+        ));
+    }
     if path.starts_with("/auth/") || path == "/auth" || path == "/access/me" {
         return None;
     }
@@ -202,6 +326,7 @@ fn permission_resource(path: &str) -> Option<&'static str> {
         ("/seconds-contracts/products", "seconds.products"),
         ("/seconds-contracts/orders", "seconds.orders"),
         ("/wallet/withdrawals", "wallet.withdrawals"),
+        ("/wallet/withdrawal-policies", "system.security"),
         ("/wallet/deposits", "wallet.deposits"),
         ("/wallet/accounts", "wallet.accounts"),
         ("/wallet/ledger", "wallet.ledger"),

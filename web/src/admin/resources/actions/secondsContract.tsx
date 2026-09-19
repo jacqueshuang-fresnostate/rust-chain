@@ -3,12 +3,16 @@ import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from 'rea
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { compareDecimalText, decimalFitsPrecision, decimalFitsStorage, isPositiveDecimalText, requiredDecimalText } from '../../../shared/decimal';
+import { parseSafeInteger } from '../../../shared/integer';
 import { AdminRequestActionBoundary } from '../../access';
+import { SecondsPrincipalRefundAction, SecondsRefundPolicyAction } from './secondsRefund';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminSelect, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
   AssetSelect,
+  type AssetOption,
   type CreateActionProps,
   FormModal,
   MarketPairSelect,
@@ -16,11 +20,13 @@ import {
   completeCreate,
   createModalProps,
   includeCurrentOption,
+  isNonNegativeDecimalInput,
   nextToggleStatus,
   openRecordDetail,
   optionalString,
   recordString,
   requiredPositiveInteger,
+  requiredNonNegativeDecimal,
   requiredString,
   statusOptions,
   submitAction,
@@ -39,6 +45,7 @@ type SecondsProductValues = {
   stakeAsset: string;
   periods: SecondsProductPeriodValues[];
   status: string;
+  openPayoutCapacity: string;
 };
 
 type SecondsProductPeriodValues = {
@@ -71,7 +78,8 @@ function newSecondsProduct(): SecondsProductValues {
     pairId: '',
     stakeAsset: '',
     periods: [newSecondsProductPeriod()],
-    status: 'active'
+    status: 'active',
+    openPayoutCapacity: ''
   };
 }
 
@@ -148,19 +156,28 @@ function SecondsProductTabs({
 }
 
 function isSecondsProductPeriodSubmittable(period: SecondsProductPeriodValues): boolean {
-  return Boolean(period.durationSeconds.trim() && period.payoutRate.trim() && period.minStake.trim());
+  return parseSafeInteger(period.durationSeconds, 1, 4_294_967_295) !== null &&
+    decimalFitsStorage(period.payoutRate, 18, 8) && isNonNegativeDecimalInput(period.payoutRate) &&
+    decimalFitsStorage(period.minStake) && isPositiveDecimalText(period.minStake) &&
+    (!period.maxStake.trim() || (decimalFitsStorage(period.maxStake) && compareDecimalText(period.maxStake, period.minStake) !== -1));
 }
 
 function secondsProductDurationKeys(periods: SecondsProductPeriodValues[]): string[] {
-  return periods.map((period) => period.durationSeconds.trim()).filter(Boolean);
+  return periods.map((period) => String(parseSafeInteger(period.durationSeconds, 1, 4_294_967_295)));
 }
 
-function isSecondsProductCreatable(values: SecondsProductValues): boolean {
+function validPayoutCapacity(value: string, precision?: number): boolean {
+  return !value.trim() || (isNonNegativeDecimalInput(value) && decimalFitsPrecision(value, precision) &&
+    compareDecimalText(value, '100000000000000000000') === -1);
+}
+
+function isSecondsProductCreatable(values: SecondsProductValues, assets: AssetOption[]): boolean {
   const durationKeys = secondsProductDurationKeys(values.periods);
   return Boolean(
     values.pairId.trim() &&
       values.stakeAsset.trim() &&
       values.status.trim() &&
+      validPayoutCapacity(values.openPayoutCapacity, assets.find((asset) => asset.id === values.stakeAsset)?.precisionScale) &&
       values.periods.length > 0 &&
       values.periods.every(isSecondsProductPeriodSubmittable) &&
       durationKeys.length === new Set(durationKeys).size
@@ -190,6 +207,7 @@ function secondsProductFromRecord(record: ApiRecord): SecondsProductValues {
     logoUrl: recordString(record, 'logo_url'),
     pairId: recordString(record, 'pair_id'),
     stakeAsset: recordString(record, 'stake_asset'),
+    openPayoutCapacity: typeof record.open_payout_capacity === 'number' ? 'invalid' : recordString(record, 'open_payout_capacity'),
     periods: periods.length
       ? periods
       : [
@@ -204,16 +222,18 @@ function secondsProductFromRecord(record: ApiRecord): SecondsProductValues {
   };
 }
 
-function secondsProductRequestBody(values: SecondsProductValues, reason: string) {
+export function secondsProductRequestBody(values: SecondsProductValues, reason: string) {
+  if (!values.periods.every(isSecondsProductPeriodSubmittable)) throw new Error('周期金额、费率或秒数无效');
   return {
     pair_id: requiredPositiveInteger(values.pairId, '秒合约交易对ID'),
     stake_asset: requiredPositiveInteger(values.stakeAsset, '押注资产ID'),
+    open_payout_capacity: values.openPayoutCapacity.trim() ? requiredNonNegativeDecimal(values.openPayoutCapacity, '未结毛兑付容量') : null,
     logo_url: optionalString(values.logoUrl),
     cycles: values.periods.map((period) => ({
-      duration_seconds: requiredPositiveInteger(period.durationSeconds, '周期秒数'),
-      payout_rate: requiredString(period.payoutRate, '净收益率'),
-      min_stake: requiredString(period.minStake, '最小押注'),
-      max_stake: optionalString(period.maxStake)
+      duration_seconds: requiredPositiveInteger(period.durationSeconds, '周期秒数', 4_294_967_295),
+      payout_rate: requiredDecimalText(period.payoutRate, '净收益率', 18, 8),
+      min_stake: requiredDecimalText(period.minStake, '最小押注'),
+      max_stake: period.maxStake.trim() ? requiredDecimalText(period.maxStake, '最大押注') : undefined
     })),
     status: requiredString(values.status, '状态'),
     reason
@@ -228,6 +248,7 @@ export function SecondsProductRowActions({ helpers, record }: { helpers: RowActi
 
   return (
     <>
+      <SecondsRefundPolicyAction productId={productId} helpers={helpers} />
       <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/seconds-contracts/products', productId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
@@ -387,6 +408,7 @@ function SecondsProductEditAction({ helpers, productId, record }: { helpers: Row
                   onChange={(stakeAsset) => setConfig({ ...config, stakeAsset })}
                 />
                 <AdminImageUpload label="秒合约交易对 Logo" value={config.logoUrl} variant="avatar" onChange={(logoUrl) => setConfig({ ...config, logoUrl })} />
+                <label>未结毛兑付容量<AdminTextInput ariaLabel="未结毛兑付容量" value={config.openPayoutCapacity} onChange={(openPayoutCapacity) => setConfig({ ...config, openPayoutCapacity })} /></label>
                 <label>
                   状态
                   <AdminSelect ariaLabel="状态" onChange={(status) => setConfig({ ...config, status })} optionList={statusOptions} value={config.status} />
@@ -399,7 +421,7 @@ function SecondsProductEditAction({ helpers, productId, record }: { helpers: Row
             <div className="admin-action-footer">
               <ConfirmAction
                 actionText="提交修改"
-                disabled={!isSecondsProductCreatable(config)}
+                disabled={!isSecondsProductCreatable(config, assetOptions)}
                 title="确认修改秒合约产品"
                 onConfirm={async (reason) => {
                   await submitAction('修改秒合约产品', () =>
@@ -423,9 +445,10 @@ function SecondsProductEditAction({ helpers, productId, record }: { helpers: Row
 export function SecondsOrderRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
   const orderId = recordString(record, 'id');
   const canSettle = recordString(record, 'status') === 'opened';
+  const needsReview = recordString(record, 'status') === 'manual_review';
 
-  async function settle(result: 'win' | 'loss', reason: string) {
-    await submitAction(result === 'win' ? '结算赢' : '结算输', () =>
+  async function settle(result: 'win' | 'loss' | 'auto', reason: string) {
+    await submitAction(result === 'auto' ? '恢复结算' : result === 'win' ? '结算赢' : '结算输', () =>
       apiRequest(`/admin/api/v1/seconds-contracts/orders/${orderId}/settle`, {
         method: 'POST',
         body: JSON.stringify({ result, reason })
@@ -436,12 +459,19 @@ export function SecondsOrderRowActions({ helpers, record }: { helpers: RowAction
 
   return (
     <>
+      <SecondsPrincipalRefundAction helpers={helpers} record={record} />
       <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/seconds-contracts/orders', orderId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
       <AdminRequestActionBoundary endpoint={`/admin/api/v1/seconds-contracts/orders/${orderId}/settle`} method="POST">
+        {needsReview ? (
+          <ConfirmAction actionText="恢复结算" disabled={!orderId} title="依据历史行情恢复结算" onConfirm={(reason) => settle('auto', reason)} />
+        ) : (
+          <>
         <ConfirmAction actionText="结算赢" disabled={!orderId || !canSettle} title="结算赢" onConfirm={(reason) => settle('win', reason)} />
         <ConfirmAction actionText="结算输" disabled={!orderId || !canSettle} title="结算输" onConfirm={(reason) => settle('loss', reason)} />
+          </>
+        )}
       </AdminRequestActionBoundary>
     </>
   );
@@ -494,6 +524,7 @@ export function CreateSecondsPairAction({ onCreated }: CreateActionProps = {}) {
                 onChange={(stakeAsset) => setSecondsProduct({ ...secondsProduct, stakeAsset })}
               />
               <AdminImageUpload label="秒合约交易对 Logo" value={secondsProduct.logoUrl} variant="avatar" onChange={(logoUrl) => setSecondsProduct({ ...secondsProduct, logoUrl })} />
+              <label>未结毛兑付容量<AdminTextInput ariaLabel="未结毛兑付容量" value={secondsProduct.openPayoutCapacity} onChange={(openPayoutCapacity) => setSecondsProduct({ ...secondsProduct, openPayoutCapacity })} /></label>
               <label>
                 初始状态
                 <AdminSelect ariaLabel="初始状态" onChange={(status) => setSecondsProduct({ ...secondsProduct, status })} optionList={statusOptions} value={secondsProduct.status} />
@@ -506,7 +537,7 @@ export function CreateSecondsPairAction({ onCreated }: CreateActionProps = {}) {
           <div className="admin-action-footer">
             <ConfirmAction
               actionText="提交添加秒合约交易对"
-              disabled={!isSecondsProductCreatable(secondsProduct)}
+              disabled={!isSecondsProductCreatable(secondsProduct, assetOptions)}
               title="确认添加秒合约交易对"
               onConfirm={async (reason) => {
                 await submitAction('添加秒合约交易对', () =>

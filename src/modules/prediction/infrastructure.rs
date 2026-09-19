@@ -157,6 +157,12 @@ pub(crate) async fn create_quote_in_db(
         &(request.stake_amount.clone() * effective.fee_rate.clone()),
         asset.precision_scale,
     );
+    crate::numeric::ensure_amount_storage(&shares, "prediction shares")?;
+    crate::numeric::ensure_amount_storage(&fee_amount, "prediction fee")?;
+    crate::numeric::ensure_amount_storage(
+        &(&request.stake_amount + &fee_amount),
+        "prediction total payment",
+    )?;
     let effective_payout_cap =
         effective_payout_cap_in_tx(&mut tx, request.asset_id, &effective.payout_cap_overrides)
             .await?;
@@ -1504,12 +1510,14 @@ async fn effective_payout_cap_in_tx(
     overrides: &Option<Value>,
 ) -> AppResult<BigDecimal> {
     let asset_key = asset_id.to_string();
-    if let Some(value) = overrides
-        && let Some(cap) = value
+    if let Some(value) = overrides {
+        service::validate_payout_cap_overrides(Some(value))?;
+        if let Some(cap) = value
             .get(asset_key.as_str())
             .and_then(service::decimal_from_json)
-    {
-        return Ok(cap);
+        {
+            return Ok(cap);
+        }
     }
     Ok(sqlx::query_as::<_, (BigDecimal,)>(
         "SELECT max_payout_amount FROM prediction_asset_configs WHERE asset_id = ? LIMIT 1",
@@ -1566,6 +1574,8 @@ pub(crate) async fn apply_wallet_prediction_open(
     let available_after_stake = wallet.available.clone() - stake_amount.clone();
     let frozen_after = wallet.frozen.clone() + stake_amount.clone();
     let available_after_fee = available_after_stake.clone() - fee_amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after_fee, "prediction available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "prediction frozen balance")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -1619,7 +1629,16 @@ pub(crate) async fn apply_wallet_prediction_open(
         )
         .await?;
     }
-    Ok(())
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        "prediction",
+        &format!("prediction:{order_id}:fee"),
+        asset_id,
+        "prediction_order",
+        order_id,
+        &super::journal::fee_legs(fee_amount),
+    )
+    .await
 }
 
 /// 在竞猜结算事务内释放订单冻结本金并按胜负写结算流水；调用前订单必须已锁定且仍为 open。
@@ -1653,6 +1672,8 @@ pub(crate) async fn apply_wallet_prediction_settlement(
     }
     let frozen_after = wallet.frozen.clone() - stake_amount.clone();
     let available_after = wallet.available.clone() + payout_amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "prediction available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "prediction frozen balance")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -1696,7 +1717,16 @@ pub(crate) async fn apply_wallet_prediction_settlement(
         )
         .await?;
     }
-    Ok(())
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        "prediction",
+        &format!("prediction:{order_id}:settle"),
+        asset_id,
+        "prediction_order",
+        order_id,
+        &super::journal::settlement_legs(stake_amount, payout_amount),
+    )
+    .await
 }
 
 /// 在无效竞猜退款事务内解冻并退回本金，可按已选退款策略额外退还正手续费。
@@ -1729,6 +1759,8 @@ pub(crate) async fn apply_wallet_prediction_refund(
     let available_after_stake = wallet.available.clone() + stake_amount.clone();
     let frozen_after = wallet.frozen.clone() - stake_amount.clone();
     let available_after_fee = available_after_stake.clone() + fee_refund_amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after_fee, "prediction available balance")?;
+    crate::numeric::ensure_amount_storage(&frozen_after, "prediction frozen balance")?;
     sqlx::query(
         "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
     )
@@ -1782,7 +1814,16 @@ pub(crate) async fn apply_wallet_prediction_refund(
         )
         .await?;
     }
-    Ok(())
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        "prediction",
+        &format!("prediction:{order_id}:refund"),
+        asset_id,
+        "prediction_order",
+        order_id,
+        &super::journal::refund_legs(fee_refund_amount),
+    )
+    .await
 }
 
 /// 确保钱包账户行存在后在调用方事务内加锁读取三态余额，是三个资金函数共同的取锁入口。
@@ -1843,6 +1884,15 @@ pub(crate) async fn insert_wallet_ledger(
     change_type: &str,
     order_id: u64,
 ) -> AppResult<()> {
+    for value in [
+        &amount,
+        balance_after,
+        available_after,
+        frozen_after,
+        locked_after,
+    ] {
+        crate::numeric::ensure_amount_storage(value, "prediction wallet ledger")?;
+    }
     sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,

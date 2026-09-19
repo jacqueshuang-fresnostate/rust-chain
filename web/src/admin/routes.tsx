@@ -67,6 +67,18 @@ export const adminRoutes: RouteObject[] = [
       (await import('./governance/FinancialIdempotencyPage')).FinancialIdempotencyPage
   ),
   guardedLazyRoute(
+    'governance/financial-retries',
+    async () => (await import('./governance/FinancialRetriesPage')).FinancialRetriesPage
+  ),
+  guardedLazyRoute(
+    'financial-reconciliation',
+    async () => (await import('./governance/FinancialReconciliationPage')).FinancialReconciliationPage
+  ),
+  guardedLazyRoute(
+    'seconds-contract/orders/:orderId',
+    async () => (await import('./governance/FinancialRetriesPage')).FinancialRetrySecondsOrderPage
+  ),
+  guardedLazyRoute(
     'support',
     async () => (await import('./support/AdminSupportPage')).AdminSupportPage
   ),
@@ -95,6 +107,7 @@ export const adminRoutes: RouteObject[] = [
   resourceRoute('wallet/quick-recharge-orders', 'quickRechargeOrders'),
   resourceRoute('wallet/deposits', 'walletDeposits'),
   resourceRoute('wallet/withdrawals', 'walletWithdrawals'),
+  guardedLazyRoute('wallet/withdrawal-policies', async () => (await import('./actions/WithdrawalPolicyPage')).WithdrawalPolicyPage),
   resourceRoute('wallet/ledger', 'walletLedger'),
   resourceRoute('loan/products', 'loanProducts'),
   resourceRoute('loan/orders', 'loanOrders'),

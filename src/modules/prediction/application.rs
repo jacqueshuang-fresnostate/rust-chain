@@ -102,6 +102,7 @@ pub(crate) async fn save_admin_settings(
     let refund_policy =
         service::normalize_invalid_refund_policy(&request.default_invalid_refund_policy)?;
     service::ensure_non_negative_decimal(&request.default_fee_rate, "default_fee_rate")?;
+    crate::numeric::ensure_decimal_storage(&request.default_fee_rate, 18, 8, "default_fee_rate")?;
     if request.sync_interval_seconds < 30 {
         return Err(AppError::Validation(
             "sync_interval_seconds must be at least 30".to_owned(),
@@ -487,7 +488,9 @@ pub(crate) async fn update_admin_market(
     }
     if let Some(rate) = request.fee_rate_override.as_ref() {
         service::ensure_non_negative_decimal(rate, "fee_rate_override")?;
+        crate::numeric::ensure_decimal_storage(rate, 18, 8, "fee_rate_override")?;
     }
+    service::validate_payout_cap_overrides(request.payout_cap_overrides.as_ref())?;
 
     let updated = infrastructure::update_admin_market(
         &pool,

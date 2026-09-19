@@ -339,11 +339,16 @@ pub(crate) async fn create_earn_product(
         early_redeem_fee_rate: fee_config.early_redeem_fee_rate,
         min_subscribe: request.min_subscribe,
         max_subscribe: request.max_subscribe,
+        principal_capacity: request.principal_capacity,
+        liability_capacity: request.liability_capacity,
         status,
     };
     let pool = earn_mysql_pool(pool)?;
     let mut tx = pool.begin().await?;
     infrastructure::ensure_asset_exists(&mut tx, write.asset_id).await?;
+    let precision = infrastructure::load_asset_precision_in_tx(&mut tx, write.asset_id).await?;
+    super::service::validate_exposure_capacity(write.principal_capacity.as_ref(), precision)?;
+    super::service::validate_exposure_capacity(write.liability_capacity.as_ref(), precision)?;
     infrastructure::ensure_active_category_exists(&mut tx, &write.category).await?;
     let product_id = infrastructure::insert_product_in_tx(&mut tx, &write).await?;
     let product = infrastructure::load_product_by_id(&mut tx, product_id).await?;
@@ -399,12 +404,19 @@ pub(crate) async fn update_earn_product(
         early_redeem_fee_rate: fee_config.early_redeem_fee_rate,
         min_subscribe: request.min_subscribe,
         max_subscribe: request.max_subscribe,
+        principal_capacity: request.principal_capacity,
+        liability_capacity: request.liability_capacity,
         status,
     };
     let pool = earn_mysql_pool(pool)?;
     let mut tx = pool.begin().await?;
     let before = infrastructure::lock_product_by_id(&mut tx, product_id).await?;
     infrastructure::ensure_asset_exists(&mut tx, write.asset_id).await?;
+    let precision = infrastructure::load_asset_precision_in_tx(&mut tx, write.asset_id).await?;
+    super::service::validate_exposure_capacity(write.principal_capacity.as_ref(), precision)?;
+    super::service::validate_exposure_capacity(write.liability_capacity.as_ref(), precision)?;
+    infrastructure::exposure::ensure_product_exposure_asset(&mut tx, product_id, write.asset_id)
+        .await?;
     infrastructure::ensure_active_category_exists(&mut tx, &write.category).await?;
     infrastructure::update_product_in_tx(&mut tx, product_id, &write).await?;
     let after = infrastructure::load_product_by_id(&mut tx, product_id).await?;
@@ -614,10 +626,19 @@ async fn subscribe_in_tx(
         }
         Err(error) => return Err(error),
     };
+    if let Some(existing) =
+        infrastructure::exposure::load_subscription_replay(&mut tx, user_id, &idempotency_key)
+            .await?
+    {
+        ensure_existing_subscription_matches_request(&existing, product_id, &amount)?;
+        tx.commit().await?;
+        return Ok((existing, false));
+    }
     validate_product_amount(&amount, &product)?;
     let asset_precision =
         infrastructure::load_asset_precision_in_tx(&mut tx, product.asset_id).await?;
     validate_amount_asset_precision(&amount, asset_precision)?;
+    infrastructure::exposure::ensure_subscription_capacity(&mut tx, &product, &amount).await?;
     let matures_at = earn_matures_at(product.term_days)?;
     let Some(subscription_id) = infrastructure::insert_subscription_in_tx(
         &mut tx,

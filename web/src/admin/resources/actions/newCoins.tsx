@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { decimalFitsStorage, isPositiveDecimalText, requiredDecimalText } from '../../../shared/decimal';
+import { parseSafeInteger } from '../../../shared/integer';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import { AdminRequestActionBoundary } from '../../access';
@@ -124,8 +126,7 @@ const newCoinUnlockFeeBasisOptions: SemiSelectOption[] = [
 ];
 
 function isPositiveIntegerInput(value: string): boolean {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0;
+  return parseSafeInteger(value, 1) !== null;
 }
 
 function hasValidNewCoinUnlockSchedule(values: NewCoinProjectValues): boolean {
@@ -142,18 +143,17 @@ function hasValidNewCoinUnlockSchedule(values: NewCoinProjectValues): boolean {
 }
 
 export function isNewCoinProjectCreatable(values: NewCoinProjectValues): boolean {
-  const assetId = Number(values.assetId);
-  const quoteAssetId = Number(values.quoteAssetId);
+  const assetId = parseSafeInteger(values.assetId, 1);
+  const quoteAssetId = parseSafeInteger(values.quoteAssetId, 1);
   return Boolean(
-    Number.isInteger(assetId) &&
-    assetId > 0 &&
-    Number.isInteger(quoteAssetId) &&
-    quoteAssetId > 0 &&
+    assetId !== null &&
+    quoteAssetId !== null &&
     assetId !== quoteAssetId &&
     values.symbol.trim() &&
     values.lifecycleStatus.trim() &&
-    values.totalSupply.trim() &&
-    values.issuePrice.trim() &&
+    decimalFitsStorage(values.totalSupply) && isPositiveDecimalText(values.totalSupply) &&
+    decimalFitsStorage(values.issuePrice) && isPositiveDecimalText(values.issuePrice) &&
+    (!values.unlockFeeEnabled || values.unlockFeeEnabled === 'false' || decimalFitsStorage(values.unlockFeeRate, 18, 8)) &&
     values.unlockType.trim() &&
     hasValidNewCoinUnlockSchedule(values)
   );
@@ -292,8 +292,8 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
                 quote_asset_id: requiredPositiveInteger(project.quoteAssetId, '计价资产'),
                 symbol: requiredString(project.symbol, '项目符号'),
                 lifecycle_status: requiredString(project.lifecycleStatus, '生命周期'),
-                total_supply: requiredString(project.totalSupply, '发行总量'),
-                issue_price: requiredString(project.issuePrice, '发行价'),
+                total_supply: requiredDecimalText(project.totalSupply, '发行总量'),
+                issue_price: requiredDecimalText(project.issuePrice, '发行价'),
                 unlock_type: requiredString(project.unlockType, '解禁类型'),
                 unlock_fee_enabled: unlockFeeEnabled,
                 reason
@@ -308,7 +308,7 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
                 body.relative_unlock_seconds = requiredPositiveInteger(project.relativeUnlockSeconds, '相对解禁秒数');
               }
               if (unlockFeeEnabled) {
-                body.unlock_fee_rate = requiredString(project.unlockFeeRate, '解禁费率');
+                body.unlock_fee_rate = requiredDecimalText(project.unlockFeeRate, '解禁费率', 18, 8);
                 body.unlock_fee_basis = requiredString(project.unlockFeeBasis, '解禁费计费基准');
                 body.unlock_fee_asset = optionalPositiveInteger(project.unlockFeeAsset, '解禁费资产');
               }

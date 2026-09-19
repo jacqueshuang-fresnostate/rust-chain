@@ -499,7 +499,15 @@ exception terminal state: manual_review
 - Settlement reads append-only event-time snapshots. It never substitutes the current Redis ticker, processing time, a generated candle, or a guessed price for a missing historical tick. Archived `default`-generator ticks are valid settlement evidence when they already exist in the event-time window; they are not synthesized at settlement time.
 - Tick selection is deterministic for an order window and records tick id, source, observed time, and price on the order.
 - After the configured maximum wait, a still-unprovable order transitions atomically from `opened` to `manual_review`, records a stable failure code/time/window, and appends one settlement-exception record.
-- `manual_review` is an operational terminal state for automatic settlement. It causes no guessed payout and no implicit refund. A future refund command must define commission reversal and strong idempotency separately.
+- `manual_review` is an operational terminal state for automatic settlement. It causes no guessed payout and no implicit refund. Explicit principal refund is governed only by the prospective snapshot contract below; it never invents a commission rollback.
+- Admin `POST /seconds-contracts/orders/:id/settle` with `result=auto` and a
+  required reason may resolve `manual_review` using the same validated event-time
+  history as ordinary settlement. No client price or requested win/loss can
+  resolve a reviewed order. Missing evidence leaves review and funds unchanged.
+- Recovery retains the original exception, writes a
+  `seconds_contract_order.recover` audit with operator/reason/before/after price
+  evidence, and commits wallet/ledger/final state atomically. Replays return the
+  stored result without selecting a new price or paying twice.
 - Repeated scans and worker restart cannot settle or exception the same order twice.
 
 ### 4. Validation & Error Matrix
@@ -519,3 +527,93 @@ exception terminal state: manual_review
 - Route tests cover capability checks at both activation and opening, and prove failure occurs before debit.
 - Worker tests cover deterministic tick choice, restart replay, normal win/loss settlement, bounded missing-tick retry, and one-time manual-review transition.
 - Database assertions cover settlement provenance and the append-only exception record.
+
+## Scenario: Prospective Manual-Review Principal Refund
+
+### Scope And API
+
+Migration `0139_seconds_principal_refund.sql` adds independent policy heads,
+append-only revisions, opening snapshots and refund receipts. It activates no
+policy, chooses no waiting interval and backfills no order.
+
+- `GET/PATCH /admin/api/v1/seconds-contracts/products/:id/refund-policy`
+  reads/replaces a versioned policy. PATCH accepts only `expected_version`,
+  `enabled`, `wait_seconds`, `reason`; authenticated actor is server-derived.
+- `GET /admin/api/v1/seconds-contracts/orders/:id/principal-refund`
+  reads the original policy version, wait, eligibility time and receipt.
+- `POST` on that order path accepts only `idempotency_key` and `reason`.
+  Monetary amount, recipient, policy, evidence and actor cannot be supplied.
+- Exact permissions are product read/write, order read/settle respectively.
+  Both OpenAPI aliases describe the same contracts.
+
+### Contracts
+
+- Absent product policy is version zero, disabled, null interval. Enablement
+  requires an explicit unsigned integer interval (explicit zero is allowed);
+  disablement requires null. Version CAS, immutable revision and mandatory
+  normalized 1–512-character reason audit commit atomically under product lock.
+- Only the NEW-order insertion branch snapshots enabled policy under the same
+  product lock. Disabled and historical orders have no snapshot. Replay never
+  inserts one. Later configuration changes, including disabling, never revoke
+  or grant existing order rights; execution uses the original enabled revision.
+- Products with refund-policy revision history cannot be physically deleted;
+  disable them instead. Immutable policy evidence must survive product closure.
+- Only unresolved `manual_review` caused by `missing_settlement_snapshot`
+  qualifies. The immutable original exception window must match the order.
+  Database time must reach first exception detection time plus snapshotted wait.
+  Current product timing, client clocks and operational incident deadlines have
+  no financial-policy effect.
+- Explicit RR transaction locks source order, then the original historical price
+  range, then source commissions by ascending ID, then wallet. Valid history
+  refuses refund and allows original evidence-based recovery. Database errors,
+  invalid price/provenance, missing exceptions or mismatching snapshots refuse.
+  Empty indexed history-range locks serialize late archival with refund commit;
+  late history is retained but never reopens a refunded order.
+- All seconds commission mutations use source-order-first locking. Pre-read
+  source hints run before the funds transaction; lock-time source identity and
+  status are rechecked, never taken from a stale consistent snapshot. Worker,
+  manual, batch and explicit reversal share that lock discipline.
+- Pending source commissions become rejected without amount/basis changes;
+  rejected rows remain unchanged. Settled/reversed/unknown commission states or
+  ANY original payout ledger evidence refuse the entire refund. No implicit
+  clawback, debt, negative balance, retroactive rate or source basis exists.
+- Exactly one original available debit must match order/user/asset/principal,
+  with no settlement/refund ledger. Current asset precision must accommodate
+  the exact original amount; otherwise refuse, never round. Original wallet
+  must exist, and negative balance corruption refuses. Credit only available;
+  frozen and locked are unchanged.
+- `refunded` is terminal and is not win/loss. Original order, exception and
+  commission bases remain intact; result and settlement price stay null.
+  Wallet, ledger (`seconds_contract_principal_refund`), receipt, state, rejected
+  commissions, platform journal and actor/reason audit commit together.
+- Refund journal key is `seconds_contract:{id}:refund`, legs are pending
+  liability +principal and user wallet liability -principal. Every asset sums
+  to zero; duplicate legs fail the transaction.
+- Receipt uniqueness covers order, original debit and actor/key digest.
+  Same actor/raw key/trimmed reason replays stored receipt even after restart.
+  Any raw mismatch, changed actor/reason or digest collision conflicts. No API
+  updates/deletes snapshots, revisions or receipts.
+- Admin/Agent/PC/Mobile show the refund terminal state and principal-refund
+  ledger category. They do not fabricate win, loss, zero settlement price or
+  zero returned principal. Missing PnL/evidence remains unavailable.
+- Only a NEW successful commit emits `seconds_contract.order.refunded` on the
+  original user's private channel through the existing event wrapper. Its
+  `refund_amount` is the exact principal; `result` and `settlement_price` are
+  null, with no invented payout or win. Replay and failure emit nothing.
+  The existing in-memory hub is a best-effort refresh hint, not a durable outbox;
+  reconnect/read reconciliation remains authoritative.
+
+### Required Verification
+
+Real isolated MySQL tests cover defaults, explicit interval validation,
+prospective snapshot and old replay exclusion, policy version conflicts,
+disable-after-open semantics, waiting boundaries, authenticated permissions,
+strict payload, refund/settlement/payment races, late archive serialization,
+concurrent exact replay, cross-order keys, actor/reason conflicts, restart,
+original debit/precision/corrupt evidence, paid-commission refusal,
+journal/audit rollback and exact per-asset balance conservation.
+The real route test subscribes to private channels and checks one new-commit
+event, no replay/failure events, original-user isolation and neutral payload.
+Frontend tests cover disabled/null forms, pinned versions and retained drafts,
+legacy refusal, server eligibility times, stable unknown-outcome retry and
+strict receipt validation; both locale families and ledger mappers are checked.

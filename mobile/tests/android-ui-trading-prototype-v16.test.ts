@@ -18,7 +18,7 @@ test('v16 现货与合约保留独立路由、实时报价、盘口和真实下�
   assert.match(tradeSource, /data-order-surface="live"/)
   assert.match(tradeSource, /t\('marketDetail\.high24h'\)/)
   assert.match(tradeSource, /t\('marketDetail\.low24h'\)/)
-  assert.match(tradeSource, /<MobileMarketChart :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :ticker="ticker" :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
   assert.match(tradeSource, /<OrderBookPanel/)
   assert.match(tradeSource, /fetchWalletAccounts\(\)/)
   assert.match(tradeSource, /fetchMarginWallets\(\)/)

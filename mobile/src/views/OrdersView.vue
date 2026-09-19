@@ -215,10 +215,15 @@ function orderRecord(row: TransactionOrderRow, history: boolean) {
       status: history ? statusLabel(order.status) : t('orders.waitingFill'),
       statusTone: history ? statusTone(order.status) : 'warning' as const,
       chips: [
-        { label: order.orderType === 'market' ? t('trade.marketOrderShort') : t('trade.limitOrderShort'), tone: sideTone },
+        { label: order.orderType === 'stop_limit' ? t('orders.stopLimit') : order.orderType === 'market' ? t('trade.marketOrderShort') : t('trade.limitOrderShort'), tone: sideTone },
         { label: order.side === 'buy' ? t('orders.buy') : t('orders.sell'), tone: sideTone },
       ],
       time: dateTime(order.createdAt, true),
+      secondaryMetrics: order.orderType === 'stop_limit' ? [
+        { label: t('orders.triggerPrice'), value: decimal(order.triggerPriceText) },
+        { label: t('orders.triggerDirection'), value: t(order.triggerDirection === 'rising' ? 'orders.triggerRising' : order.triggerDirection === 'falling' ? 'orders.triggerFalling' : 'orders.triggerLegacy') },
+        { label: t('orders.triggeredAt'), value: order.triggeredAt ? dateTime(order.triggeredAt, true) : t(order.triggerDirection ? 'orders.triggerPending' : 'orders.triggerLegacy') },
+      ] : undefined,
       metrics: history
         ? [
             { label: metricLabel(t('orders.orderQuantity'), pair.base), value: decimal(order.quantityText) },
@@ -738,9 +743,9 @@ onBeforeUnmount(() => {
       :leverage="closePosition?.leverage || 1"
       :base-asset="closePosition ? splitPair(symbolFor(closePosition)).base : '--'"
       :quote-asset="closePosition ? splitPair(symbolFor(closePosition)).quote : '--'"
-      :mark-price="closeRisk?.markPrice || null"
-      :position-quantity="closeRisk?.positionQuantity || null"
-      :estimated-pnl="closeRisk?.unrealizedPnl || null"
+      :mark-price="closeRisk?.markPriceText ?? null"
+      :position-quantity="closeRisk?.positionQuantityText ?? null"
+      :estimated-pnl="closeRisk?.unrealizedPnlText ?? null"
       :error="closeError"
       @close="closeCloseSheet"
       @confirm="confirmClose"

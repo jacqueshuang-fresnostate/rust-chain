@@ -6,7 +6,11 @@ import type { ApiRecord } from '../../../api/types';
 import type { AdminResourceBatchHelpers } from '../AdminResourcePage';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
-import { type RowActionHelpers, createModalProps, errorMessage, recordString, requiredPositiveInteger, requiredString, statusOptions, submitAction } from './shared';
+import { type RowActionHelpers, createModalProps, errorMessage, recordString, requiredPositiveInteger, requiredNonNegativeDecimal, statusOptions, submitAction } from './shared';
+import { compareDecimalText, decimalFitsStorage, isNonNegativeDecimalText } from '../../../shared/decimal';
+import { parseSafeInteger } from '../../../shared/integer';
+import { CommissionReversalAction } from './commissionReversal';
+import { AdminRequestActionBoundary } from '../../access';
 
 type AgentCommissionRuleValues = {
   agentId: string;
@@ -23,7 +27,9 @@ const initialAgentCommissionRule: AgentCommissionRuleValues = {
 };
 
 function isAgentCommissionRuleSubmittable(values: AgentCommissionRuleValues, includeAgentId: boolean): boolean {
-  return Boolean((!includeAgentId || values.agentId.trim()) && values.productType.trim() && values.commissionRate.trim() && values.status.trim());
+  return Boolean((!includeAgentId || parseSafeInteger(values.agentId, 1) !== null) && values.productType.trim() &&
+    decimalFitsStorage(values.commissionRate, 18, 8) && isNonNegativeDecimalText(values.commissionRate) &&
+    compareDecimalText(values.commissionRate, '1') !== 1 && values.status.trim());
 }
 
 const agentCommissionRuleProductOptions: SemiSelectOption[] = [
@@ -74,7 +80,7 @@ export function CreateAgentCommissionRuleAction({ onCreated }: { onCreated?: () 
                     body: JSON.stringify({
                       agent_id: requiredPositiveInteger(rule.agentId, '代理ID'),
                       product_type: rule.productType,
-                      commission_rate: requiredString(rule.commissionRate, '佣金比例'),
+                      commission_rate: requiredNonNegativeDecimal(rule.commissionRate, '佣金比例', 18, 8),
                       status: rule.status,
                       reason
                     })
@@ -120,7 +126,7 @@ export function AgentCommissionRuleRowActions({ helpers, record }: { helpers: Ro
                   apiRequest(`/admin/api/v1/agent-commission-rules/${ruleId}`, {
                     method: 'PATCH',
                     body: JSON.stringify({
-                      commission_rate: requiredString(rule.commissionRate, '佣金比例'),
+                      commission_rate: requiredNonNegativeDecimal(rule.commissionRate, '佣金比例', 18, 8),
                       status: rule.status,
                       reason
                     })
@@ -157,7 +163,8 @@ export function AgentCommissionBatchActions({ helpers }: { helpers: AdminResourc
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const ids = [...new Set(helpers.selectedRows.map((row) => Number(row.id)).filter((id) => Number.isSafeInteger(id) && id > 0))];
+  const parsedIds = helpers.selectedRows.map((row) => parseSafeInteger(row.id, 1));
+  const ids = parsedIds.every((id): id is number => id !== null) ? [...new Set(parsedIds)] : [];
   const selectedKey = [...ids].sort((a, b) => a - b).join(',');
   const confirmedKey = confirmation ? [...confirmation.ids].sort((a, b) => a - b).join(',') : '';
   const scopeValid = Boolean(confirmation && !confirmation.invalidated && ids.length > 0 && ids.length <= BATCH_STATUS_LIMIT && selectedKey === confirmedKey);
@@ -250,8 +257,11 @@ export function AgentCommissionRowActions({ helpers, record }: { helpers: RowAct
 
   return (
     <>
-      <ConfirmAction actionText="结算" disabled={!commissionId || !canUpdate} title="结算代理佣金" onConfirm={(reason) => updateStatus('settled', reason)} />
-      <ConfirmAction actionText="拒绝" disabled={!commissionId || !canUpdate} title="拒绝代理佣金" onConfirm={(reason) => updateStatus('rejected', reason)} />
+      <AdminRequestActionBoundary endpoint={`/admin/api/v1/agent-commissions/${commissionId}/status`} method="PATCH">
+        <ConfirmAction actionText="结算" disabled={!commissionId || !canUpdate} title="结算代理佣金" onConfirm={(reason) => updateStatus('settled', reason)} />
+        <ConfirmAction actionText="拒绝" disabled={!commissionId || !canUpdate} title="拒绝代理佣金" onConfirm={(reason) => updateStatus('rejected', reason)} />
+      </AdminRequestActionBoundary>
+      <CommissionReversalAction helpers={helpers} record={record} />
     </>
   );
 }

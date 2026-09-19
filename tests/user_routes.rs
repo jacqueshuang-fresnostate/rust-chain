@@ -172,6 +172,10 @@ async fn cleanup_security_users(pool: &MySqlPool, user_ids: &[u64]) -> Result<()
         sqlx::query("DELETE FROM smtp_configs WHERE name = 'default'")
             .execute(pool)
             .await?;
+        sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
         sqlx::query("DELETE FROM users WHERE id = ?")
             .bind(user_id)
             .execute(pool)
@@ -1820,6 +1824,25 @@ async fn user_security_password_change_requires_old_password_and_revokes_refresh
     assert_eq!(changed_payload["scope"], "user");
     assert!(changed_payload["access_token"].is_string());
     assert!(changed_payload["refresh_token"].is_string());
+
+    let stale_access = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/user/profile",
+        Some(&token),
+        json!(null),
+    )
+    .await;
+    assert_eq!(stale_access.status(), StatusCode::UNAUTHORIZED);
+    let fresh_access = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/user/profile",
+        changed_payload["access_token"].as_str(),
+        json!(null),
+    )
+    .await;
+    assert_eq!(fresh_access.status(), StatusCode::OK);
 
     let old_login = json_request(
         app.clone(),

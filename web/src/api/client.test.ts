@@ -69,6 +69,24 @@ describe('apiRequest', () => {
     await expect(apiRequest('/admin/api/v1/test')).resolves.toBeUndefined();
   });
 
+  it.each(['{"id":9007199254740993}', '{"total":1e9999}', '{"nested":[{"id":-9007199254740993}]}'])(
+    'rejects unsafe JSON numbers before a response becomes actionable: %s', async (raw) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(raw)));
+      await expect(apiRequest('/admin/api/v1/test')).rejects.toBeInstanceOf(ContractError);
+    }
+  );
+  it('preserves exact decimal text and finite chart fractions', async () => {
+    const payload = { amount: '9007199254740993.000000000000000001', progress: 0.5, id: Number.MAX_SAFE_INTEGER };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(payload))));
+    await expect(apiRequest('/admin/api/v1/test')).resolves.toEqual(payload);
+  });
+  it.each([NaN, Infinity, 0, 0.5, 2_147_483_648])('rejects invalid timeout %s without sending', async (timeoutMs) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(apiRequest('/admin/api/v1/test', { timeoutMs })).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('keeps the timeout active until the JSON response body is consumed', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>

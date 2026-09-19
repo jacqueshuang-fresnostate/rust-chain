@@ -342,6 +342,7 @@ pub(crate) fn ensure_unlock_fee_payment_matches(
 /// `field` 只参与错误文案拼接，用于让调用方知道是数量、价格还是金额越界，不影响判定本身。
 /// 这是资金入口的第一道守卫，必须在开启事务之前调用，避免为无效请求占用行锁。
 pub(crate) fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(amount, field)?;
     if amount <= &BigDecimal::default() {
         Err(AppError::Validation(format!("{field} must be positive")))
     } else {
@@ -455,6 +456,7 @@ pub(crate) fn ensure_new_coin_amount_precision(
             "asset precision_scale must be between 0 and 18".to_owned(),
         ));
     }
+    crate::numeric::ensure_amount_storage(amount, field)?;
     let truncated = truncate_amount_to_asset_precision(amount, precision_scale);
     if truncated.normalized() != amount.normalized() {
         return Err(AppError::Validation(format!(
@@ -474,10 +476,9 @@ pub(crate) fn quantize_unlock_fee_amount(
             "unlock fee asset precision_scale must be between 0 and 18".to_owned(),
         ));
     }
-    Ok(truncate_amount_to_asset_precision(
-        amount,
-        payment_asset_precision_scale,
-    ))
+    let amount = truncate_amount_to_asset_precision(amount, payment_asset_precision_scale);
+    crate::numeric::ensure_amount_storage(&amount, "unlock fee amount")?;
+    Ok(amount)
 }
 
 /// 解禁市值和利润都以项目 `issue_price` 的计价资产为单位。

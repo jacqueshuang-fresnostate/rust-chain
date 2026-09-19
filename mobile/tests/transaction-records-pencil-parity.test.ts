@@ -251,7 +251,7 @@ test('委托类型栏、等待点、标签顺序和操作按钮与 390px Pencil 
 
 test('margin 时间与 execution DTO 严格保留毫秒和 DecimalText，旧代理缺字段仍可编译', () => {
   assert.match(tradingApi, /if \(value === null \|\| value === undefined \|\| value === ''\) return undefined/)
-  assert.match(tradingApi, /timestamp < 1_000_000_000_000 \? timestamp \* 1000 : timestamp/)
+  assert.match(tradingApi, /const normalized = safeTimestamp\(value\)/)
   assert.match(tradingApi, /openedAt: normalizeTimestamp\(position\.opened_at, 'margin position opened_at'\)/)
   assert.match(tradingApi, /createdAt: normalizeTimestamp\(position\.created_at, 'margin position created_at'\)/)
   assert.match(tradingApi, /closedAt: normalizeTimestamp\(position\.closed_at, 'margin position closed_at'\)/)

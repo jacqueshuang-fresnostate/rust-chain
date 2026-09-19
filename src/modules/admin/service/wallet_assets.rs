@@ -7,6 +7,32 @@
 
 use super::*;
 
+/// 交易对数量必须能由基准资产无损结算，最小成交额必须符合计价资产精度；坏资产元数据直接失败。
+pub(crate) fn validate_trading_pair_asset_precisions(
+    base_precision: i32,
+    quote_precision: i32,
+    qty_precision: i32,
+    min_order_value: &BigDecimal,
+) -> AppResult<()> {
+    if !(0..=18).contains(&base_precision) || !(0..=18).contains(&quote_precision) {
+        return Err(AppError::Internal(
+            "invalid trading pair asset precision".to_owned(),
+        ));
+    }
+    if !(0..=base_precision).contains(&qty_precision) {
+        return Err(AppError::Validation(
+            "qty_precision exceeds base asset precision".to_owned(),
+        ));
+    }
+    crate::numeric::ensure_amount_storage(min_order_value, "min_order_value")?;
+    if !crate::modules::wallet::amount_fits_asset_precision(min_order_value, quote_precision) {
+        return Err(AppError::Validation(
+            "min_order_value exceeds quote asset precision".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// 校验新资产符号、名称、精度、类型、状态、充提限额费率及阶梯提现费配置。
 /// 不查询 symbol 唯一性或关联交易对；这些并发约束由创建事务与数据库唯一键保证。
 /// 资产类型与状态在创建请求中是可选项，仅在显式提供时才校验，缺省值由应用层补齐而非在此处填充。
@@ -480,6 +506,7 @@ fn validate_optional_asset_amount(value: Option<&BigDecimal>, field: &str) -> Ap
 /// 断言资产金额不为负，是最小充值额与充提手续费共用的底层判定。
 /// 零被视为合法值，因此免手续费可以直接配 0；上界与小数位数不在此限制，由资产精度和数据库列类型约束。
 fn validate_asset_amount(value: &BigDecimal, field: &str) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(value, field)?;
     if value < &BigDecimal::from(0) {
         return Err(AppError::Validation(format!(
             "{field} must be non-negative"

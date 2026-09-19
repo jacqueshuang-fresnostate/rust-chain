@@ -18,6 +18,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 struct CachedTickerPayload {
     /// 最新成交价，必须为正数才会被采纳。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     last_price: BigDecimal,
     /// 行情观测时间，以 Unix 毫秒存储，用于判定缓存是否已经陈旧。
     #[serde(with = "crate::time::unix_millis")]
@@ -110,6 +111,7 @@ async fn cached_valid_margin_ticker(
     let ticker = cached_ticker_price(redis, symbol)
         .await?
         .ok_or_else(|| AppError::Validation(format!("{missing_message} for pair {pair_id}")))?;
+    crate::numeric::ensure_amount_storage(&ticker.last_price, label)?;
     if ticker.last_price <= 0 {
         return Err(AppError::Validation(format!(
             "{label} price must be positive for pair {pair_id}"

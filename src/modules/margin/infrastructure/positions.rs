@@ -28,6 +28,8 @@ pub(crate) struct MarginOpenProductRule {
     pub(crate) price_precision: i32,
     /// 保证金计价币种，决定抵押从哪个资产的钱包扣。
     pub(crate) margin_asset: u64,
+    /// 来自保证金资产目录的权威金额精度，不从交易对价格或数量精度推断。
+    pub(crate) precision_scale: i32,
     /// 产品默认保证金模式，请求未指定模式时采用。
     pub(crate) margin_mode: String,
     /// 产品支持的保证金模式集合，选定模式必须在其中。
@@ -219,6 +221,7 @@ pub(crate) async fn mark_margin_limit_position_filled(
     position_id: u64,
     market_price: &BigDecimal,
 ) -> AppResult<bool> {
+    crate::numeric::ensure_amount_storage(market_price, "margin fill price")?;
     let result = sqlx::query(
         r#"UPDATE margin_positions positions
            INNER JOIN margin_products products ON products.id = positions.product_id
@@ -303,9 +306,11 @@ pub(crate) async fn lock_active_open_product(
     let product = sqlx::query_as::<_, MarginOpenProductRule>(
         r#"SELECT products.id, products.pair_id, pairs.symbol, pairs.price_precision, products.margin_asset,
                   products.margin_mode, products.margin_modes, products.leverage_levels, products.min_margin,
-                  products.max_margin, products.hourly_interest_rate, products.status
+                  products.max_margin, products.hourly_interest_rate, products.status,
+                  assets.precision_scale
            FROM margin_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
+           INNER JOIN assets ON assets.id = products.margin_asset
            WHERE products.id = ?
            LIMIT 1
            FOR UPDATE"#,

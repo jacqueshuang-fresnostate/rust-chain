@@ -13,6 +13,7 @@ export const WALLET_LEDGER_TRANSACTION_TYPES = [
     'spot_price_improvement_release',
     'seconds_contract_open',
     'seconds_contract_settle_win',
+    'seconds_contract_principal_refund',
     'margin_position_open',
     'margin_position_close',
     'margin_position_liquidate',

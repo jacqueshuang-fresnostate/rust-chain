@@ -4,10 +4,31 @@
 
 use crate::{
     error::{AppError, AppResult},
-    modules::spot::{OrderSide, OrderStatus, OrderType, SpotOrder, SpotServiceError},
+    modules::spot::{OrderSide, OrderStatus, OrderType, SpotOrder},
 };
 
 pub(super) const SYSTEM_SPOT_LIQUIDITY_EMAIL: &str = "__system_spot_liquidity@internal.local";
+
+impl sqlx::Type<sqlx::MySql> for crate::modules::spot::TriggerDirection {
+    fn type_info() -> sqlx::mysql::MySqlTypeInfo {
+        <String as sqlx::Type<sqlx::MySql>>::type_info()
+    }
+
+    fn compatible(info: &sqlx::mysql::MySqlTypeInfo) -> bool {
+        <String as sqlx::Type<sqlx::MySql>>::compatible(info)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::MySql> for crate::modules::spot::TriggerDirection {
+    fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let value = <String as sqlx::Decode<sqlx::MySql>>::decode(value)?;
+        match value.as_str() {
+            "rising" => Ok(Self::Rising),
+            "falling" => Ok(Self::Falling),
+            _ => Err(format!("invalid stored spot trigger direction: {value}").into()),
+        }
+    }
+}
 
 /// 返回数据库唯一键冲突，该只读访问不会触发外部查询或业务状态变更。
 pub(crate) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
@@ -90,30 +111,6 @@ pub(super) fn order_type_as_str(order_type: OrderType) -> &'static str {
     }
 }
 
-/// 映射现货服务错误的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
-/// 把领域服务错误映射为稳定应用错误码，不吞掉冲突、资金不足或状态失败。
-pub(super) fn map_spot_service_error(error: SpotServiceError) -> AppError {
-    match error {
-        SpotServiceError::Repository(message) if message.starts_with("missing") => {
-            AppError::NotFound
-        }
-        SpotServiceError::Repository(message) => AppError::Internal(message),
-        SpotServiceError::Domain(error) => {
-            AppError::Validation(format!("invalid spot order: {error:?}"))
-        }
-        SpotServiceError::Wallet(error) => AppError::Validation(format!("wallet error: {error:?}")),
-        SpotServiceError::MissingPriceForWalletReservation => {
-            AppError::Validation("price is required for wallet reservation".to_owned())
-        }
-        SpotServiceError::MissingReferencePriceForMarketOrder => {
-            AppError::Validation("reference_price is required for market orders".to_owned())
-        }
-        SpotServiceError::MissingTriggerPriceForStopLimitOrder => {
-            AppError::Validation("trigger_price is required for stop limit orders".to_owned())
-        }
-    }
-}
-
 /// 映射数据库错误的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
 /// 把数据库唯一键冲突映射为现货冲突语义，其他错误保持数据库失败。
 pub(super) fn map_spot_sqlx_error(error: sqlx::Error) -> crate::modules::spot::SpotServiceError {
@@ -126,9 +123,13 @@ pub(super) fn parse_spot_u64_identifier(
     field: &str,
     value: &str,
 ) -> Result<u64, crate::modules::spot::SpotServiceError> {
-    value.parse::<u64>().map_err(|error| {
-        crate::modules::spot::SpotServiceError::Repository(format!(
-            "invalid numeric {field} `{value}`: {error}"
-        ))
-    })
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            crate::modules::spot::SpotServiceError::Repository(format!(
+                "invalid positive numeric {field} `{value}`"
+            ))
+        })
 }

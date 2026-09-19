@@ -1,5 +1,53 @@
 # Mobile Backend Integration Contract
 
+## Numeric Safety And Exact Authority
+
+- Backend money, prices, rates and quantities are decimal JSON strings.
+  Financial adapters must call `requiredDecimalText` on the original value;
+  `String(number)` cannot restore digits lost by JSON parsing. Convert, Earn,
+  Loan and Prediction models retain `DecimalText`, including quotes, bills,
+  limits and fees (20 integer digits / 18 effective fractional digits).
+- Existing numeric display companions in wallet/trading/seconds models are
+  compatibility presentation only. Their exact `*Text` fields control balances,
+  maximums, order derivations and confirmations. Missing exact text disables the
+  financial action; do not fall back to numeric companions. Chart OHLCV, pixel
+  ratios and local slider percentages may remain finite numbers.
+- `core/decimal.ts` bounds source text to 1024 characters and normalized integer
+  and fractional parts to 100 digits each. Arithmetic revalidates branded input
+  and bounds intermediate powers/scales; forged brands and huge exponents must
+  fail before BigInt expansion. These resource bounds are not storage precision.
+  User money inputs still use 20/18 or stricter asset precision.
+- Confirmed/reviewed bills use exact formatting. General presentation may cap
+  digits, but a tiny nonzero amount must remain visibly nonzero (or use an
+  explicit less-than threshold). Long confirmation values wrap inside their
+  own columns. Wallet buckets are added before presentation, never independently
+  rounded. Margin-close previews use exact decimal ratios; only the selected
+  integer percentage and position ID enter the existing close API.
+- IDs, counts and pagination retain their existing number API shape and must
+  pass `requiredSafeInteger`/`requiredId`. JSON unsafe numbers are rejected by
+  shared HTTP/private-stream boundaries, not coerced to rounded IDs. String-ID
+  contracts remain strings; supporting larger numeric IDs requires coordinated
+  backend migration. Numeric time values must be safe integers and fit the JS
+  Date range after any seconds-to-milliseconds conversion.
+- Behavioral tests load real adapters with only transport replaced, exercise
+  `9007199254740993.000000000000000001`, `0.000000000000000001`, fractional JSON
+  numbers, invalid decimals, giant scales/exponents and unsafe IDs. Run
+  `npm --prefix mobile run release:gate` plus real-browser narrow/desktop
+  confirmation checks; save evidence and explicitly distinguish native-device,
+  database and production checks that were not run.
+
+## Earn And Loan Uncertain Submission Recovery
+
+- Earn subscriptions and loan applications retain the canonical request key in
+  session storage before sending. A timeout or lost response keeps the key;
+  only a successful response releases it. Storage failure stops submission.
+- The opaque login scope is part of intent identity, survives token refresh and
+  page reload, and changes for another login. Never persist access tokens as
+  financial intent keys. Decimal parameters use canonical exact decimal text.
+- Tests execute real adapters with a committed-but-lost response and assert the
+  retry uses one key; changed parameters or a successful new operation get new
+  keys. PC loan follows the same contract through its auth-storage login scope.
+
 ## Backward Market Chart Pagination
 
 ### 1. Scope / Trigger
@@ -193,8 +241,10 @@ type PredictionOutcome = 'yes' | 'no'
 interface SecondsOrder {
   id: number
   direction: SecondsDirection
-  stakeAmount: number
-  payoutRate: number
+  stakeAmount: number // legacy display companion only
+  stakeAmountText: DecimalText
+  payoutRate: number // legacy display companion only
+  payoutRateText: DecimalText
   entryPrice?: number
   settlementPrice?: number
   status: string
@@ -205,7 +255,7 @@ interface PredictionQuote {
   quoteId: string
   outcome: PredictionOutcome
   assetId: number
-  stakeAmount: number
+  stakeAmount: DecimalText
   expiresAt: number
 }
 
@@ -214,7 +264,7 @@ interface PredictionOrder {
   outcome: string
   status: string
   result?: string
-  refundAmount: number
+  refundAmount: DecimalText
 }
 
 interface DepositAsset { symbol: string; name?: string }
@@ -224,7 +274,7 @@ openSecondsOrder(input: {
   productId: number
   durationSeconds: number
   direction: SecondsDirection
-  stakeAmount: number
+  stakeAmount: DecimalText
   idempotencyKey?: string
 }): Promise<SecondsOrder>
 
@@ -232,7 +282,7 @@ requestPredictionQuote(input: {
   marketId: number
   outcome: PredictionOutcome
   assetId: number
-  stakeAmount: number
+  stakeAmount: DecimalText
 }): Promise<PredictionQuote>
 
 confirmPredictionQuote(quoteId: string): Promise<PredictionOrder>

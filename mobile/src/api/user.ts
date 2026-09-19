@@ -1,5 +1,5 @@
 import { client, persistAuthTokens, requestUrl } from './client'
-import { asNumber } from '@/core/format'
+import { requiredId, requiredSafeInteger, normalizeTimestamp } from '@/core/numeric'
 
 export interface UserProfile {
   id: number
@@ -102,13 +102,13 @@ export async function fetchUserProfile(): Promise<UserProfile> {
   const response = await client.get<Record<string, unknown>>(requestUrl('/user/profile'))
   const profile = response.data
   return {
-    id: asNumber(profile.id),
+    id: requiredId(profile.id),
     username: optionalText(profile.username),
     email: optionalText(profile.email),
     phone: optionalText(profile.phone),
     avatarUrl: optionalText(profile.avatar_url),
     countryCode: optionalText(profile.country_code),
-    kycLevel: asNumber(profile.kyc_level),
+    kycLevel: requiredSafeInteger(profile.kyc_level, 'kyc_level'),
     emailVerified: Boolean(profile.email_verified_at),
     fundPasswordSet: Boolean(profile.fund_password_set),
     createdAt: normalizeTimestamp(profile.created_at),
@@ -135,7 +135,7 @@ export async function fetchKycStatus(): Promise<KycStatus> {
   return {
     config: {
       enabled: Boolean(config.enabled),
-      targetKycLevel: asNumber(config.target_kyc_level),
+      targetKycLevel: requiredSafeInteger(config.target_kyc_level, 'target_kyc_level'),
       requiredDocuments: stringArray(config.required_documents),
       allowedCountries: stringArray(config.allowed_countries),
       countryDocumentTypes: (Array.isArray(config.country_document_types) ? config.country_document_types : []).map((item) => {
@@ -146,7 +146,7 @@ export async function fetchKycStatus(): Promise<KycStatus> {
           handheldDocumentTypes: stringArray(rule.handheld_document_types),
         }
       }).filter((rule) => Boolean(rule.country)),
-      maxDocumentSizeBytes: asNumber(config.max_document_size_bytes, 5 * 1024 * 1024),
+      maxDocumentSizeBytes: requiredSafeInteger(config.max_document_size_bytes ?? 5 * 1024 * 1024, 'max_document_size_bytes', 1),
     },
     latestSubmission: response.data.latest_submission ? mapKycSubmission(response.data.latest_submission) : undefined,
   }
@@ -261,8 +261,8 @@ export async function fetchReferralCode(): Promise<ReferralCode> {
   const response = await client.get<Record<string, unknown>>(requestUrl('/referral/my-code'))
   return {
     code: String(response.data.code || '').trim(),
-    usedCount: asNumber(response.data.used_count),
-    usageLimit: response.data.usage_limit === null || response.data.usage_limit === undefined ? undefined : asNumber(response.data.usage_limit),
+    usedCount: requiredSafeInteger(response.data.used_count, 'used_count'),
+    usageLimit: response.data.usage_limit === null || response.data.usage_limit === undefined ? undefined : requiredSafeInteger(response.data.usage_limit, 'usage_limit'),
     status: String(response.data.status || ''),
   }
 }
@@ -270,7 +270,7 @@ export async function fetchReferralCode(): Promise<ReferralCode> {
 export async function fetchReferralInvites(): Promise<InviteRecord[]> {
   const response = await client.get<{ users?: Array<Record<string, unknown>> }>(requestUrl('/referral/my-invites'))
   return (response.data.users || []).map((user) => ({
-    userId: asNumber(user.user_id),
+    userId: requiredId(user.user_id),
     email: optionalText(user.email),
     phone: optionalText(user.phone),
     status: String(user.status || ''),
@@ -307,7 +307,7 @@ export function mapKycSubmission(submission: Record<string, unknown>): KycSubmis
     ? normalizedStatus
     : statusSource
   return {
-    id: asNumber(submission.id),
+    id: requiredId(submission.id),
     realName: String(submission.real_name || ''),
     submissionType: String(submission.submission_type || 'personal').toLowerCase() === 'enterprise' ? 'enterprise' : 'personal',
     country: String(submission.country || ''),
@@ -316,7 +316,7 @@ export function mapKycSubmission(submission: Record<string, unknown>): KycSubmis
     businessRegistrationNumber: optionalText(submission.business_registration_number),
     documentType: String(submission.document_type || ''),
     status,
-    targetKycLevel: asNumber(submission.target_kyc_level),
+    targetKycLevel: requiredSafeInteger(submission.target_kyc_level, 'target_kyc_level'),
     reviewReason: optionalText(submission.review_reason),
     submittedAt: normalizeTimestamp(submission.submitted_at),
   }
@@ -329,9 +329,4 @@ function optionalText(value: unknown): string | undefined {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : []
-}
-
-function normalizeTimestamp(value: unknown): number {
-  const timestamp = asNumber(value)
-  return timestamp > 0 && timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
 }

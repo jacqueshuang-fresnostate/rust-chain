@@ -42,6 +42,14 @@
 
       <!-- Trigger Price Input -->
       <div class="space-y-1" v-if="orderType === 'STOP_LIMIT'">
+        <label class="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{{ $t('trade.trigger_direction') }}</span>
+          <select v-model="triggerDirection" class="min-w-0 flex-1 border border-input rounded bg-background p-2 text-foreground">
+            <option value="" disabled>{{ $t('trade.enter_trigger_direction') }}</option>
+            <option value="rising">{{ $t('trade.trigger_rising') }}</option>
+            <option value="falling">{{ $t('trade.trigger_falling') }}</option>
+          </select>
+        </label>
         <div class="flex items-center bg-background border border-input rounded px-3 h-10 focus-within:border-primary transition-colors hover:border-border/80">
           <span class="text-xs text-muted-foreground w-16 shrink-0">{{ $t('trade.trigger_price') }}</span>
           <input
@@ -149,6 +157,7 @@ const direction = ref<OrderDirection>('BUY')
 const orderType = ref<OrderType>('LIMIT_PRICE')
 const price = ref<number | null>(null)
 const triggerPrice = ref<number | null>(null)
+const triggerDirection = ref<'' | 'rising' | 'falling'>('')
 const amount = ref<number | null>(null)
 const loading = ref(false)
 
@@ -244,6 +253,7 @@ const setPercent = (p: number) => {
 }
 
 const submitOrder = async () => {
+    if (loading.value) return
     if (!props.symbol) return
     if (!isLoggedIn.value) {
         goToLogin()
@@ -252,6 +262,10 @@ const submitOrder = async () => {
     loading.value = true
     try {
         // Validation
+        if (orderType.value === 'STOP_LIMIT' && !triggerDirection.value) {
+            toast.error(t('trade.enter_trigger_direction'))
+            return
+        }
         if (orderType.value === 'STOP_LIMIT' && !triggerPrice.value) {
             toast.error(t('trade.enter_trigger_price'))
             return
@@ -277,6 +291,7 @@ const submitOrder = async () => {
             params.amount = amount.value
         } else if (orderType.value === 'STOP_LIMIT') {
             params.triggerPrice = triggerPrice.value
+            params.triggerDirection = triggerDirection.value
             params.price = price.value
             params.amount = amount.value
         } else if (orderType.value === 'MARKET_PRICE') {

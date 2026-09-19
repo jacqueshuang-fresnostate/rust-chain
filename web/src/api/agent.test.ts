@@ -12,6 +12,8 @@ import {
   getAgentTeamTree,
   getAgentUserAssets,
   getAgentUserMarginPositions,
+  getAgentUserMarginOrders,
+  getAgentUserSpotOrders,
   getAgentUserSecondsContractOrders,
   getAgentUsers,
   updateAgentInviteCodeStatus
@@ -28,6 +30,21 @@ describe('agent API', () => {
     vi.unstubAllGlobals();
     authStore.setSession({ accessToken: 'admin-token', refreshToken: 'admin-refresh', scope: 'admin', subject: 'admin:1' });
     authStore.setSession({ accessToken: 'agent-token', refreshToken: 'agent-refresh', scope: 'agent', subject: 'agent:9' });
+  });
+
+  it('rejects unsafe identity, invitation limits and pagination before fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getAgentUserAssets(Number.MAX_SAFE_INTEGER + 1)).rejects.toThrow();
+    await expect(getAgentUserAssets(1, { offset: 4_294_967_296 })).rejects.toThrow();
+    await expect(getAgentUserAssets(1, { limit: 0.5 })).rejects.toThrow();
+    expect(() => createAgentInviteCode(2_147_483_648)).toThrow();
+    expect(() => updateAgentInviteCodeStatus(Number.MAX_SAFE_INTEGER + 1, 'disabled')).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each([12.5, 'NaN', '1e100000', '1e-19'])('rejects malformed legacy portal commission amount %s', async (amount) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ commissions: [{ id: 1, commission_amount: amount }] })));
+    await expect(getAgentCommissions()).rejects.toBeInstanceOf(ContractError);
   });
 
   it('uses the agent auth scope for portal reads', async () => {
@@ -198,6 +215,60 @@ describe('agent API', () => {
 
     await expect(getAgentUserAssets(42)).rejects.toBeInstanceOf(ContractError);
     await expect(getAgentUserAssets(42)).rejects.toBeInstanceOf(ContractError);
+  });
+
+  it('validates spot snapshots and uses scoped order endpoints with exact filters', async () => {
+    const order = {
+      id: 1, user_id: 42, pair_id: 3, symbol: 'BTC-USDT', side: 'buy', order_type: 'limit',
+      price: '90.123456789012345678', trigger_price: null, quantity: '2', filled_quantity: '1',
+      status: 'partially_filled', created_at: 1_735_732_800_000, updated_at: 1_735_732_800_000
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ orders: [order], total: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ orders: [], total: 0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getAgentUserSpotOrders(42, { status: 'partially_filled', limit: 20, offset: 0 }))
+      .resolves.toEqual({ orders: [order], total: 1 });
+    await expect(getAgentUserMarginOrders(42, { status: 'pending', limit: 20, offset: 20 }))
+      .resolves.toEqual({ orders: [], total: 0 });
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      'http://127.0.0.1:8080/agent/api/v1/users/42/spot-orders?status=partially_filled&limit=20&offset=0',
+      'http://127.0.0.1:8080/agent/api/v1/users/42/margin-orders?status=pending&limit=20&offset=20'
+    ]);
+    fetchMock.mock.calls.forEach((call) => {
+      expect((call[1].headers as Headers).get('Authorization')).toBe('Bearer agent-token');
+    });
+    for (const invalid of [
+      { ...order, price: 90 },
+      { ...order, quantity: 'NaN' },
+      { ...order, trigger_price: undefined },
+      { ...order, side: 'long' },
+      { ...order, status: 'opened' },
+      { ...order, order_type: 'unknown' },
+      { ...order, updated_at: '2026-09-18' }
+    ]) {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ orders: [invalid], total: 1 }));
+      await expect(getAgentUserSpotOrders(42)).rejects.toBeInstanceOf(ContractError);
+    }
+  });
+
+  it('preserves pending margin order null entry price and validates the shared row contract', async () => {
+    const order = {
+      id: 3, user_id: 42, product_id: 4, pair_id: 5, symbol: 'BTC-USDT',
+      margin_asset: 2, margin_asset_symbol: 'USDT', wallet_scope: 'margin', margin_mode: 'isolated',
+      direction: 'long', order_type: 'limit', margin_amount: '10', leverage: '2', notional_amount: '20',
+      borrowed_amount: '10', interest_amount: '0', entry_price: null, limit_price: '90',
+      exit_price: null, realized_pnl: null, opened_at: 1_735_732_800_000, created_at: 1_735_732_800_000,
+      closed_at: null, status: 'opened'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ orders: [order], total: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ orders: [{ ...order, margin_amount: 10 }], total: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ orders: [{ ...order, status: 'pending' }], total: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getAgentUserMarginOrders(42)).resolves.toEqual({ orders: [order], total: 1 });
+    await expect(getAgentUserMarginOrders(42)).rejects.toBeInstanceOf(ContractError);
+    await expect(getAgentUserMarginOrders(42)).rejects.toBeInstanceOf(ContractError);
   });
 
   it('rejects incomplete metadata, invalid precision, non-millisecond timestamps, and unknown enums', async () => {

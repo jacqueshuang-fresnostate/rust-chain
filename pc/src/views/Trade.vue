@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col h-full overflow-hidden bg-background text-foreground">
+  <div class="flex flex-col h-full min-h-0 min-w-0 overflow-hidden bg-background text-foreground">
     <!-- Header: Ticker Info -->
     <div class="h-16 min-h-[4rem] border-b border-border flex items-center px-4 bg-card justify-between z-10 shrink-0">
       <div class="flex items-center space-x-6 overflow-x-auto no-scrollbar w-full">
@@ -15,7 +15,9 @@
               <span :class="['text-2xl font-bold font-mono', (currentTicker?.chg || 0) >= 0 ? 'text-up' : 'text-down']">
                  {{ formatPrice(currentPrice) }}
               </span>
-              <span class="text-sm text-muted-foreground font-medium">≈ ${{ formatPrice(currentPrice) }}</span>
+              <div><span class="text-sm text-muted-foreground font-medium">≈ ${{ formatPrice(currentPrice) }}</span>
+                <MarketProvenanceLabel :provenance="currentTicker" :observed-at="currentTicker?.time" live />
+              </div>
           </div>
              <div class="flex flex-col shrink-0">
                  <span class="text-xs text-muted-foreground">24h {{ $t('market.change') }}</span>
@@ -49,16 +51,16 @@
     </div>
 
     <!-- Main Layout -->
-    <div class="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+    <div class="flex-1 min-h-0 min-w-0 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
       <!-- Left: Order Book -->
       <div class="w-full lg:w-[320px] h-[500px] lg:h-full border-b lg:border-b-0 lg:border-r border-border flex flex-col bg-card shrink-0 order-3 lg:order-1">
-        <OrderBook :bids="orderBookBids" :asks="orderBookAsks" :currentPrice="currentPrice" class="flex-1" :symbol="activeSymbol" :visible-rows="20" />
+        <OrderBook :bids="orderBookBids" :asks="orderBookAsks" :provenance="depthProvenance" :currentPrice="currentPrice" class="flex-1" :symbol="activeSymbol" :visible-rows="20" />
       </div>
 
       <!-- Center: Chart & Order History -->
-      <div class="w-full lg:flex-1 flex flex-col min-h-[500px] lg:h-full bg-background relative order-1 lg:order-2">
+      <div class="w-full min-w-0 min-h-0 h-[660px] lg:h-full lg:flex-1 shrink-0 flex flex-col overflow-hidden bg-background relative order-1 lg:order-2">
          <!-- Chart -->
-         <div class="flex-1 border-b border-border relative flex flex-col min-h-[350px]">
+         <div class="flex-1 min-w-0 min-h-0 border-b border-border relative flex flex-col">
              <!-- Chart Toolbar -->
              <div class="h-10 border-b border-border bg-card flex items-center px-4 gap-4 overflow-x-auto no-scrollbar shrink-0">
                 <span :class="settingStore.chartProvider === 'klinecharts' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ $t('trade.original') }}</span>
@@ -74,13 +76,13 @@
             <MarketChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" :precision="precision" period="1m" class="flex-1" :key="`${activeSymbol}-${precision}`" />
          </div>
          <!-- Order History -->
-         <div class="h-[260px] bg-card border-t-4 border-background shrink-0 flex flex-col z-20 relative">
+         <div class="h-[260px] min-w-0 min-h-0 bg-card border-t-4 border-background shrink-0 flex flex-col z-20 relative">
             <OrderHistory :symbol="activeSymbol" />
          </div>
       </div>
 
       <!-- Right: Trade Form & Trades -->
-      <div class="w-full lg:w-[340px] border-t lg:border-t-0 lg:border-l border-border flex flex-col bg-card shrink-0 order-2 lg:order-3">
+      <div class="w-full min-w-0 lg:min-h-0 lg:w-[340px] lg:overflow-y-auto border-t lg:border-t-0 lg:border-l border-border flex flex-col bg-card shrink-0 order-2 lg:order-3">
          <div class="flex-none">
              <OrderForm :symbol="activeSymbol" :currentPrice="currentPrice" />
          </div>
@@ -94,6 +96,7 @@
 </template>
 
 <script setup lang="ts">
+import MarketProvenanceLabel from '@/components/trade/MarketProvenanceLabel.vue'
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import numeral from 'numeral'
@@ -106,6 +109,7 @@ import OrderHistory from '@/components/trade/OrderHistory.vue'
 import { useMarketStore } from '@/stores/market'
 import { useSettingStore } from '@/stores/setting'
 import { fetchMarketSnapshot, fetchTradePlate } from '@/api/market'
+import { mapMarketProvenance, type MarketProvenance } from '@/api/marketProvenance'
 import { stompService } from '@/api/stomp'
 import { useAuthRequired } from '@/composables/useAuthRequired'
 
@@ -123,6 +127,9 @@ const currentPrice = computed(() => currentTicker.value?.close || 0)
 // Data Refs
 const orderBookBids = ref<any[]>([])
 const orderBookAsks = ref<any[]>([])
+const depthProvenance = ref<MarketProvenance>()
+let depthGeneration = 0
+let liveDepthReceived = false
 const chartData = ref<any[]>([])
 
 // Subscriptions
@@ -178,11 +185,13 @@ const mapItems = (items: any[]) => {
 // Fetch Order Book
 const refreshOrderBook = async () => {
     if (!activeSymbol.value) return
+    const generation = depthGeneration
     try {
         const res = await fetchTradePlate(activeSymbol.value)
-        if (res.data) {
+        if (generation === depthGeneration && !liveDepthReceived && res.data) {
 
             const data = res.data
+            depthProvenance.value = mapMarketProvenance(data)
             if (data.bids) orderBookBids.value = mapItems(data.bids)
             if (data.asks) orderBookAsks.value = mapItems(data.asks)
         }
@@ -209,15 +218,21 @@ const subscribeToData = async () => {
     clearMarketDataSubscriptions()
 
     const topic = `spot:depth:${activeSymbol.value}`
-    plateSub = await stompService.subscribe('spot', topic, (msg) => {
+    const generation = depthGeneration
+    const subscription = await stompService.subscribe('spot', topic, (msg) => {
+        if (generation !== depthGeneration) return
         try {
             const data = JSON.parse(msg.body)
+            liveDepthReceived = true
+            depthProvenance.value = mapMarketProvenance(data)
             if (data.bids) orderBookBids.value = mapItems(data.bids)
             if (data.asks) orderBookAsks.value = mapItems(data.asks)
         } catch (e) {
             console.error(e)
         }
     })
+    if (generation !== depthGeneration) { subscription.unsubscribe(); return }
+    plateSub = subscription
 
     const tickerTopic = `spot:ticker:${activeSymbol.value}`
     tickerSub = await stompService.subscribe('spot', tickerTopic, (msg) => {
@@ -252,6 +267,11 @@ watch(currentPrice, () => {
 }, { immediate: true })
 
 watch(activeSymbol, () => {
+    depthGeneration += 1
+    liveDepthReceived = false
+    depthProvenance.value = undefined
+    orderBookBids.value = []
+    orderBookAsks.value = []
     refreshOrderBook()
     subscribeToData()
     // KLine and Trades are handled in their own components
@@ -285,6 +305,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+    depthGeneration += 1
     clearMarketDataSubscriptions()
     if (privateSub) privateSub.unsubscribe()
 })

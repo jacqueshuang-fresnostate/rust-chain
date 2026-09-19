@@ -118,14 +118,15 @@ async fn create_challenge(
     let challenge_id = Uuid::now_v7().to_string();
     sqlx::query(
         r#"INSERT INTO login_two_factor_challenges
-              (challenge_id, user_id, challenge_type, expires_at, consumed_at)
-           VALUES (?, ?, ?, ?, ?)"#,
+              (challenge_id, user_id, challenge_type, expires_at, consumed_at, auth_session_version)
+           VALUES (?, ?, ?, ?, ?, (SELECT auth_session_version FROM users WHERE id = ?))"#,
     )
     .bind(&challenge_id)
     .bind(user_id)
     .bind(challenge_type)
     .bind(expires_at.naive_utc())
     .bind(consumed_at.map(|value| value.naive_utc()))
+    .bind(user_id)
     .execute(pool)
     .await
     .unwrap();
@@ -211,6 +212,10 @@ async fn login_setup_challenge_enrolls_totp_and_issues_tokens_once() -> Result<(
         return Ok(());
     };
     let user_id = create_user(&pool).await;
+    sqlx::query("UPDATE users SET auth_session_version = 3 WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
     let challenge_id = create_challenge(
         &pool,
         user_id,
@@ -284,6 +289,11 @@ async fn login_setup_challenge_enrolls_totp_and_issues_tokens_once() -> Result<(
     assert!(confirmed_payload["refresh_token"].is_string());
     assert_eq!(confirmed_payload["token_type"], "Bearer");
     assert_eq!(confirmed_payload["scope"], "user");
+    let claims = exchange_api::modules::auth::decode_claims(
+        &test_settings(),
+        confirmed_payload["access_token"].as_str().unwrap(),
+    )?;
+    assert!(claims.token_id.starts_with("sv:3:"));
 
     let (totp_enabled, secret_persisted): (bool, bool) = sqlx::query_as(
         r#"SELECT totp_enabled, totp_secret_encrypted IS NOT NULL
@@ -311,6 +321,40 @@ async fn login_setup_challenge_enrolls_totp_and_issues_tokens_once() -> Result<(
         "login_2fa_challenge_expired"
     );
 
+    cleanup_user(&pool, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn login_setup_rejects_challenge_from_revoked_generation() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let user_id = create_user(&pool).await;
+    let challenge = create_challenge(
+        &pool,
+        user_id,
+        "setup_2fa",
+        Utc::now() + Duration::minutes(5),
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE users SET auth_session_version = auth_session_version + 1 WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    let app = build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+    let response = post_json(
+        app,
+        "/api/v1/auth/login/2fa/setup",
+        json!({"setup_challenge_id":challenge}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(response).await?["code"],
+        "login_2fa_challenge_expired"
+    );
     cleanup_user(&pool, user_id).await?;
     Ok(())
 }

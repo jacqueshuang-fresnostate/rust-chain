@@ -206,7 +206,7 @@ The shared domain function converts cumulative rates into positive differences a
 ### 1. Scope / Trigger
 
 - Trigger: an agent creates an invite code, its linked user calls `GET /api/v1/referral/my-code`, or an authenticated agent opens a team user's financial detail.
-- Financial detail covers existing spot/margin wallet accounts, margin positions, and seconds-contract orders only.
+- Financial detail covers existing spot/margin wallet accounts, margin orders, filled margin positions, spot orders, and seconds-contract orders.
 
 ### 2. Signatures
 
@@ -216,6 +216,8 @@ The shared domain function converts cumulative rates into positive differences a
 - Read-only routes:
   - `GET /agent/api/v1/users/{user_id}/assets`
   - `GET /agent/api/v1/users/{user_id}/margin-positions`
+  - `GET /agent/api/v1/users/{user_id}/margin-orders`
+  - `GET /agent/api/v1/users/{user_id}/spot-orders`
   - `GET /agent/api/v1/users/{user_id}/seconds-contract-orders`
 - Every list response carries a filter-consistent `total`; financial page defaults to 20, caps limit at 100, and caps offset at 100000.
 
@@ -230,8 +232,13 @@ The shared domain function converts cumulative rates into positive differences a
 - Parent agents may read users owned by descendant agents. Parent, sibling, unrelated-root, unassigned, and nonexistent users are indistinguishable as `NOT_FOUND` to an out-of-scope caller.
 - Membership pre-checks are not persistent authorization. Each wallet/position/order row query and its COUNT query must independently join `user_referrals -> agents` and repeat the materialized-path predicate.
 - Asset rows retain one account per source ledger and expose `account_type = spot | margin`; balances from the two ledgers are never silently merged. `logo_url` remains present even when null, and stored `precision_scale` outside `0..=18` fails closed instead of reaching amount formatting.
-- Missing seconds-contract status means no status predicate and therefore includes `opened`, `settled`, and `manual_review`. Margin and seconds status filters must also apply to COUNT.
+- Missing seconds-contract status means no status predicate and therefore includes `opened`, `settled`, `manual_review`, and `refunded`. Margin and seconds status filters must also apply to COUNT. Principal refunds remain a separate terminal status with no invented win/loss.
+- Margin orders and positions share `margin_positions`; no separate order ledger is invented. `margin-orders` returns `{ orders, total }` using the position row DTO. `status=pending` selects stored `opened AND entry_price IS NULL`; `status=opened` selects `opened AND entry_price IS NOT NULL`. Missing status includes all records; other filters are `closed | canceled | liquidated`. Response status remains the stored enum, not `pending`.
+- `margin-positions` always requires `entry_price IS NOT NULL`, including its COUNT, so an unfilled/canceled limit order is never labelled a position. Its existing status parameters remain accepted for compatibility.
+- Spot orders return `{ orders, total }`, with `side=buy|sell`, `order_type=market|limit|stop_limit`, nullable Decimal `price/trigger_price`, Decimal `quantity/filled_quantity`, and millisecond `created_at/updated_at`. Optional status is `pending | open | partially_filled | filled | cancelled | rejected`; missing status includes ongoing and historical orders.
 - In the seconds-contract portal table, the backend value `opened` is labelled `进行中`; the generic margin-position label `持仓中` must not be reused for that context.
+- Opened seconds orders show a display-only countdown using `max(0, ceil((expires_at - Date.now()) / 1000))`, updated once per second and resynchronized on visibility/focus. Format is `mm:ss` (or `hh:mm:ss`); zero reads `待结算`, never a client-invented settled state. Settled/manual-review rows show `-`. Countdown expiry makes no API call or financial write; timer/listeners are cleaned on row removal, tab/page/user changes and unmount.
+- The portfolio has five lazy-loaded, independently paged tabs. Pending margin orders display `待成交` from status plus entry-price nullability; the orders table displays `created_at` as placement time, not a fabricated fill time. Refresh invalidates that tab's cached pages; user or agent session generation changes reset all financial caches and pending requests. Late responses cannot replace newer filters.
 - Financial routes execute SELECT-only snapshots. They must not lazily create wallets, load market prices, accrue interest, settle contracts, close/liquidate positions, mutate balances, or write ledgers/events.
 - Every amount, price, rate, leverage, and PnL crosses JSON as Decimal text; timestamps use Unix milliseconds.
 
@@ -251,13 +258,16 @@ The shared domain function converts cumulative rates into positive differences a
 - Bad: checking subtree membership once and then querying financial rows by only `user_id`; a concurrent reassignment can leak the old user's records.
 - Bad: defaulting seconds orders to `settled`; active exposure disappears from the agent view.
 - Bad: combining spot and margin balances for the same asset without an account-type discriminator.
+- Bad: classifying every stored `opened` margin row as a position; unfilled limit orders also use that status.
 
 ### 6. Tests Required
 
 - Invite integration: generated portal codes are six uppercase alphanumeric characters; concurrent linked-user first reads converge; a newer portal active code becomes effective immediately; disabling it falls back to the next latest active code; same-status mutation is idempotent; a historical long code still binds.
 - Scope integration: root reads direct/descendant users while child requests for parent, sibling, other root, unassigned, and nonexistent users all return not-found, including requests that append an `agent_id` query.
 - Financial integration: spot/margin accounts remain distinct, status-filtered totals match rows, default seconds results include `opened`, Decimal/timestamp fields retain their wire types, invalid stored precision fails closed, and before/after wallet and order snapshots are identical.
-- Route unit tests: all three endpoints require agent scope, validate statuses, and enforce pagination bounds.
+- Route unit tests: all five endpoints require agent scope, validate statuses, and enforce pagination bounds.
+- Margin/spot integration: pending and canceled-unfilled margin records appear in orders but never positions; filled/partial/canceled spot orders retain accurate status totals and scoped paging. Reads leave balances, order states and fill quantities unchanged.
+- Countdown fake-clock tests cover sub-second ceiling, hourly formatting, expiry and already-expired rows, terminal states, background clock jumps, cached-tab return, pagination, refreshed settlement and timer cleanup; ticking must not add API requests.
 - OpenAPI and web tests: routes/schemas preserve Decimal strings and milliseconds; detail tabs lazy-load, cache successful query keys, isolate filter refreshes, and keep the team-users nav selected.
 
 ### 7. Wrong vs Correct
@@ -283,3 +293,35 @@ WHERE orders.user_id = :user_id
 ```
 
 Rows and COUNT repeat the server-derived subtree predicate, and the surrounding use case remains strictly read-only.
+
+## Explicit Commission Reversal And Source Refund
+
+- `POST /admin/api/v1/agent-commissions/:id/reversal` requires an authenticated
+  Admin and exact `agents.commissions.settle`; body is strictly
+  `{idempotency_key, reason}`. Legacy PATCH status remains independently gated.
+- Only settled commissions with a unique positive available payout ledger
+  matching original amount/asset may reverse. Debit that ledger's recipient,
+  never the current mutable agent owner. Preserve source, source amount, rate,
+  commission amount, asset and original payout; append an immutable reversal
+  snapshot and advance status to `reversed`.
+- Available must cover the exact original amount; frozen/locked are untouched.
+  Insufficiency refuses atomically, with no negatives, synthetic debt or
+  retroactive commission recalculation.
+- Wallet, reversal ledger, receipt, status, authenticated reason audit and
+  platform journal commit together. Original payout legs are commission expense
+  +amount and user commission wallet liability -amount; reversal is exactly
+  opposite. Transaction keys are `agent_commission:{id}:payout|reverse`.
+- Actor/key digest uniqueness is an index guard, not proof of replay: compare
+  raw key, actor and normalized reason. Exact replay returns the original
+  receipt after restart; changed request/collision/cross-record reuse conflicts.
+  Migration 0137 repairs UTF-8 text metadata without editing applied 0135.
+- Source refunds never imply commission reversals. Seconds refunds require
+  opening-time opt-in policy and reject pending source commissions; any paid
+  status or payout evidence refuses the source refund instead of clawing back.
+- Seconds paths lock the source order before commissions and wallet, with
+  lock-time current source eligibility. Hint reads precede transaction begin,
+  avoiding old RR snapshots and nested pool acquisition. Other source lifecycle
+  contracts are unchanged. Append-only payout evidence has no ledger range lock.
+- Test actual MySQL concurrency, restart/raw replay conflict, changing agent
+  bindings, insufficient balances, journal/audit rollback, source refund races,
+  per-asset zero-sum legs and settle-only frontend/backend authorization.

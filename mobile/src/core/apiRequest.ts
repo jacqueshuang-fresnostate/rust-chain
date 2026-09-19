@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance, type CreateAxiosDefaults } from 'axios'
+import { assertSafeJsonNumbers } from './numeric.ts'
 
 export const DEFAULT_API_REQUEST_TIMEOUT_MS = 12_000
 
@@ -9,7 +10,7 @@ export interface ComposedAbortSignal {
 
 /** Creates the shared HTTP transport with a bounded default timeout. */
 export function createApiHttpClient(config: CreateAxiosDefaults = {}): AxiosInstance {
-  return axios.create({
+  const client = axios.create({
     ...config,
     timeout: config.timeout ?? DEFAULT_API_REQUEST_TIMEOUT_MS,
     headers: {
@@ -17,6 +18,16 @@ export function createApiHttpClient(config: CreateAxiosDefaults = {}): AxiosInst
       ...config.headers,
     },
   })
+  client.interceptors.request.use((request) => {
+    assertSafeJsonNumbers(request.data)
+    assertSafeJsonNumbers(request.params)
+    return request
+  })
+  client.interceptors.response.use((response) => {
+    assertSafeJsonNumbers(response.data)
+    return response
+  })
+  return client
 }
 
 /**

@@ -242,7 +242,7 @@ test('本地 Lightweight Charts 单引擎保留真实数据、指标、成交量
   assert.match(lightweightChartSource, /role="region"/)
   assert.doesNotMatch(lightweightChartSource, /role="img"/)
   assert.match(lightweightChartSource, /\.market-chart-engine\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
-  assert.match(tradeSource, /<MobileMarketChart :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :ticker="ticker" :market-type="ticker\?\.marketType" :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
 
   const chartRuntimeSources = [chartSource, lightweightChartSource]
   for (const runtimeSource of chartRuntimeSources) {

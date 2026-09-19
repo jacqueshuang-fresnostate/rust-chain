@@ -1074,6 +1074,7 @@ async fn apply_new_coin_allocation(
 
     let wallet = lock_or_create_wallet_row(tx, user_id, asset_id).await?;
     let locked_after = wallet.locked.clone() + quantity.clone();
+    crate::numeric::ensure_amount_storage(&locked_after, "new coin locked balance")?;
     sqlx::query("UPDATE wallet_accounts SET locked = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&locked_after)
         .bind(user_id)
@@ -1202,6 +1203,7 @@ async fn debit_wallet_available(
         )));
     }
     let available_after = wallet.available.clone() - amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "new coin available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -1242,6 +1244,7 @@ async fn credit_wallet_available(
 ) -> AppResult<()> {
     let wallet = lock_or_create_wallet_row(tx, user_id, asset_id).await?;
     let available_after = wallet.available.clone() + amount.clone();
+    crate::numeric::ensure_amount_storage(&available_after, "new coin available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(&available_after)
         .bind(user_id)
@@ -1426,6 +1429,15 @@ async fn insert_new_coin_wallet_ledger(
     ref_type: &str,
     ref_id: &str,
 ) -> AppResult<u64> {
+    for value in [
+        &amount,
+        balance_after,
+        available_after,
+        frozen_after,
+        locked_after,
+    ] {
+        crate::numeric::ensure_amount_storage(value, "new coin wallet ledger")?;
+    }
     let result = sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,

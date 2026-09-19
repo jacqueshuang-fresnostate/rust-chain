@@ -86,7 +86,7 @@ test('现货钱包持有资产归属当前持仓面板，委托与历史仅导�
   assert.doesNotMatch(accountWorkspace, /orders\.cancelAll|openOrders\('positions'\)|trade\.positionsAndAssets/)
   assert.doesNotMatch(spotTemplate, /openOrders\('positions'\)/)
 
-  assert.match(tradeSource, /const spotVisibleBalances = computed\(\(\) => spotWallets\.value\.filter\(\(wallet\) => \([\s\S]*?\[baseAsset\.value, quoteAsset\.value\]\.includes\(wallet\.symbol\)[\s\S]*?hasBalance\([\s\S]*?wallet\.availableText \?\? wallet\.available,[\s\S]*?wallet\.frozenText \?\? wallet\.frozen,[\s\S]*?wallet\.lockedText \?\? wallet\.locked/)
+  assert.match(tradeSource, /const spotVisibleBalances = computed\(\(\) => spotWallets\.value\.filter\(\(wallet\) => \([\s\S]*?\[baseAsset\.value, quoteAsset\.value\]\.includes\(wallet\.symbol\)[\s\S]*?hasBalance\(wallet\.availableText, wallet\.frozenText, wallet\.lockedText\)/)
   assert.match(tradeSource, /else \{\s*const wallets = await fetchWalletAccounts\(\)\s*if \(!isCurrentTradingBalancesRequest[\s\S]*?spotWallets\.value = wallets\s*marginPositions\.value = \[\]/)
   const tradingImport = tradeSource.match(/import \{[\s\S]*?\} from '@\/api\/trading'/)?.[0]
   assert.ok(tradingImport)

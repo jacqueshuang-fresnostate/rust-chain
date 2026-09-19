@@ -23,6 +23,8 @@ use super::{
     },
     service::{NormalizedSecondsContractProductCycle, optional_string},
 };
+pub(crate) mod refund;
+
 use crate::{
     error::{AppError, AppResult},
     modules::market::market_ticker_redis_key,
@@ -33,8 +35,35 @@ use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 
+pub(crate) mod exposure;
+
 /// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
 const SECONDS_CONTRACT_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
+
+/// 在原订单资金事务内追加秒合约平台分录；开仓和结算使用独立业务键，唯一冲突回滚整笔资金操作。
+/// payout 为 None 表示开仓，Some(0) 仍是需要确认收入的已结算输单，不得跳过。
+pub(crate) async fn insert_seconds_journal_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    order_id: u64,
+    asset_id: u64,
+    stake: &BigDecimal,
+    payout: Option<&BigDecimal>,
+) -> AppResult<()> {
+    let (phase, legs) = match payout {
+        None => ("open", super::journal::open_legs(stake)),
+        Some(payout) => ("settle", super::journal::settlement_legs(stake, payout)),
+    };
+    crate::modules::wallet::infrastructure::insert_wallet_platform_journal_legs_in_tx(
+        tx,
+        "seconds_contract",
+        &format!("seconds_contract:{order_id}:{phase}"),
+        asset_id,
+        "seconds_contract_order",
+        order_id,
+        &legs,
+    )
+    .await
+}
 
 /// 识别 MySQL 唯一键冲突，供秒合约开仓幂等恢复分支使用。
 ///
@@ -148,7 +177,7 @@ fn seconds_contract_product_query() -> QueryBuilder<'static, MySql> {
                   products.stake_asset, assets.symbol AS stake_asset_symbol,
                   products.logo_url,
                   products.duration_seconds, products.payout_rate, products.min_stake,
-                  products.max_stake, products.status
+                  products.max_stake, products.status, products.open_payout_capacity
            FROM seconds_contract_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.stake_asset
@@ -191,7 +220,7 @@ pub(crate) async fn load_product_by_id_from_pool(
                   products.stake_asset, assets.symbol AS stake_asset_symbol,
                   products.logo_url,
                   products.duration_seconds, products.payout_rate, products.min_stake,
-                  products.max_stake, products.status
+                  products.max_stake, products.status, products.open_payout_capacity
            FROM seconds_contract_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.stake_asset
@@ -398,8 +427,8 @@ pub(crate) async fn insert_product(
 ) -> AppResult<u64> {
     let product_id = sqlx::query(
         r#"INSERT INTO seconds_contract_products
-           (pair_id, stake_asset, logo_url, duration_seconds, payout_rate, min_stake, max_stake, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+           (pair_id, stake_asset, logo_url, duration_seconds, payout_rate, min_stake, max_stake, status, open_payout_capacity)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(write.pair_id)
     .bind(write.stake_asset)
@@ -409,6 +438,7 @@ pub(crate) async fn insert_product(
     .bind(&write.min_stake)
     .bind(&write.max_stake)
     .bind(&write.status)
+    .bind(&write.open_payout_capacity)
     .execute(&mut **tx)
     .await?
     .last_insert_id();
@@ -429,7 +459,7 @@ pub(crate) async fn update_product(
     sqlx::query(
         r#"UPDATE seconds_contract_products
            SET pair_id = ?, stake_asset = ?, logo_url = ?, duration_seconds = ?, payout_rate = ?,
-               min_stake = ?, max_stake = ?, status = ?
+               min_stake = ?, max_stake = ?, status = ?, open_payout_capacity = ?
            WHERE id = ?"#,
     )
     .bind(write.pair_id)
@@ -440,6 +470,7 @@ pub(crate) async fn update_product(
     .bind(&write.min_stake)
     .bind(&write.max_stake)
     .bind(&write.status)
+    .bind(&write.open_payout_capacity)
     .bind(product_id)
     .execute(&mut **tx)
     .await?;
@@ -488,7 +519,7 @@ pub(crate) async fn load_product_by_id(
                   products.stake_asset, assets.symbol AS stake_asset_symbol,
                   products.logo_url,
                   products.duration_seconds, products.payout_rate, products.min_stake,
-                  products.max_stake, products.status
+                  products.max_stake, products.status, products.open_payout_capacity
            FROM seconds_contract_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.stake_asset
@@ -517,7 +548,7 @@ pub(crate) async fn lock_product_by_id(
                   products.stake_asset, assets.symbol AS stake_asset_symbol,
                   products.logo_url,
                   products.duration_seconds, products.payout_rate, products.min_stake,
-                  products.max_stake, products.status
+                  products.max_stake, products.status, products.open_payout_capacity
            FROM seconds_contract_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.stake_asset
@@ -795,7 +826,7 @@ pub(crate) async fn lock_active_product(
         r#"SELECT products.id, products.pair_id, pairs.symbol,
                   products.stake_asset, assets.precision_scale AS stake_asset_precision,
                   products.duration_seconds, products.payout_rate, products.min_stake,
-                  products.max_stake, products.status
+                  products.max_stake, products.status, products.open_payout_capacity
            FROM seconds_contract_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.stake_asset
@@ -848,6 +879,7 @@ pub(crate) async fn lock_active_product(
     };
 
     Ok(SecondsContractProductRuleRow {
+        open_payout_capacity: product.open_payout_capacity,
         id: product.id,
         pair_id: product.pair_id,
         symbol: product.symbol,
@@ -942,6 +974,7 @@ pub(crate) async fn update_wallet_available(
     asset_id: u64,
     available_after: &BigDecimal,
 ) -> AppResult<()> {
+    crate::numeric::ensure_amount_storage(available_after, "seconds available balance")?;
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
         .bind(available_after)
         .bind(user_id)
@@ -961,6 +994,14 @@ pub(crate) async fn insert_wallet_ledger(
     tx: &mut Transaction<'_, MySql>,
     entry: SecondsContractWalletLedgerWrite,
 ) -> AppResult<()> {
+    for value in [
+        &entry.amount,
+        &entry.available_after,
+        &entry.frozen_after,
+        &entry.locked_after,
+    ] {
+        crate::numeric::ensure_amount_storage(value, "seconds wallet ledger")?;
+    }
     sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,
@@ -1055,6 +1096,26 @@ pub(crate) async fn mark_order_settled(
     if update.rows_affected() != 1 {
         return Err(AppError::Conflict(
             "seconds contract order changed during settlement".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 已锁定审核单且核验历史证据后，在同一结算事务内恢复为 opened，随后必须结算或整体回滚。
+/// 不清除追加式异常证据；外部不会观察到单独提交的 reopened 状态。
+pub(crate) async fn restore_reviewed_order_for_settlement(
+    tx: &mut Transaction<'_, MySql>,
+    order_id: u64,
+) -> AppResult<()> {
+    let updated = sqlx::query(
+        "UPDATE seconds_contract_orders SET status = 'opened' WHERE id = ? AND status = 'manual_review'",
+    )
+    .bind(order_id)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "seconds contract review state changed".to_owned(),
         ));
     }
     Ok(())
@@ -1321,6 +1382,7 @@ fn product_response_from_row(
     };
     let default_cycle = cycles.first();
     SecondsContractProductResponse {
+        open_payout_capacity: product.open_payout_capacity,
         id: product.id,
         pair_id: product.pair_id,
         symbol: product.symbol,

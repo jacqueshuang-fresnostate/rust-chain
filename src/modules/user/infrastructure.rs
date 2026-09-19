@@ -181,8 +181,8 @@ pub(crate) async fn lock_user_password_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
 ) -> AppResult<UserPasswordRecord> {
-    let row = sqlx::query_as::<_, (u64, String, String)>(
-        r#"SELECT id, password_hash, status
+    let row = sqlx::query_as::<_, (u64, String, String, u64)>(
+        r#"SELECT id, password_hash, status, auth_session_version
            FROM users
            WHERE id = ?
            LIMIT 1
@@ -196,6 +196,7 @@ pub(crate) async fn lock_user_password_in_tx(
         id: row.0,
         password_hash: row.1,
         status: row.2,
+        auth_session_version: row.3,
     })
 }
 
@@ -231,7 +232,7 @@ pub(crate) async fn update_user_password_hash_in_tx(
     user_id: u64,
     password_hash: &str,
 ) -> AppResult<()> {
-    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+    sqlx::query("UPDATE users SET password_hash = ?, auth_session_version = auth_session_version + 1 WHERE id = ?")
         .bind(password_hash)
         .bind(user_id)
         .execute(&mut **tx)

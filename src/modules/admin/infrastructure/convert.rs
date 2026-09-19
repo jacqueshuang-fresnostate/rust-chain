@@ -273,7 +273,11 @@ fn admin_convert_pair_query() -> QueryBuilder<'static, MySql> {
                   to_assets.symbol AS to_asset_symbol,
                   pairs.pricing_mode, pairs.spread_rate, pairs.fee_rate, pairs.min_amount,
                   pairs.max_amount, pairs.target_min_amount, pairs.target_max_amount,
-                  pairs.enabled
+                  pairs.enabled,
+                  COALESCE((SELECT enabled FROM convert_inventory_accounts WHERE pair_id = pairs.id), FALSE) AS inventory_enabled,
+                  (SELECT funded_amount FROM convert_inventory_accounts WHERE pair_id = pairs.id) AS inventory_funded_amount,
+                  (SELECT consumed_amount FROM convert_inventory_accounts WHERE pair_id = pairs.id) AS inventory_consumed_amount,
+                  (SELECT revision FROM convert_inventory_accounts WHERE pair_id = pairs.id) AS inventory_revision
            FROM convert_pairs pairs
            INNER JOIN assets from_assets ON from_assets.id = pairs.from_asset
            INNER JOIN assets to_assets ON to_assets.id = pairs.to_asset"#,

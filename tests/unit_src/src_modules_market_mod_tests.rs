@@ -1,3 +1,4 @@
+use super::adapters::MarketFeedEvent;
 use super::*;
 use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
@@ -13,6 +14,237 @@ fn kline_upsert_filter_for_test(key: &KlineUpsertKey) -> mongodb::bson::Document
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
+}
+
+#[test]
+fn market_provenance_ticker_and_candle_cache_rest_ws_agree() {
+    use super::presentation::{KlineResponse, TickerResponse};
+    let open = Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap();
+    let observed = open + chrono::Duration::seconds(30);
+    for (provider, source) in [
+        (MarketDataProvider::Bitget, "external"),
+        (MarketDataProvider::Htx, "external"),
+        (MarketDataProvider::Coinbase, "external"),
+        (MarketDataProvider::Strategy, "generated"),
+    ] {
+        let ticker =
+            MarketTickerSnapshot::new(provider, "BTCUSDT", decimal("1.25"), decimal("2"), observed)
+                .unwrap();
+        let cached =
+            serde_json::to_value(MarketTickerCacheEntry::from_snapshot(&ticker).unwrap()).unwrap();
+        let rest: TickerResponse = serde_json::from_value(cached).unwrap();
+        let rest = serde_json::to_value(rest).unwrap();
+        let event = MarketFeedEvent::from_ticker_snapshot(&ticker).unwrap();
+        assert_eq!(rest["source"], source);
+        for field in ["source", "provider", "observed_at", "last_price"] {
+            assert_eq!(event.payload()[field], rest[field]);
+        }
+        let candle = MarketKlineSnapshot::new(
+            provider,
+            "BTCUSDT",
+            "1m",
+            open,
+            MarketKlineValues {
+                open: decimal("1"),
+                high: decimal("2"),
+                low: decimal("0.5"),
+                close: decimal("1.25"),
+                volume: decimal("2"),
+            },
+            observed,
+        )
+        .unwrap();
+        let cached =
+            serde_json::to_value(MarketKlineCacheEntry::from_snapshot(&candle).unwrap()).unwrap();
+        let rest: KlineResponse = serde_json::from_value(cached).unwrap();
+        let rest = serde_json::to_value(rest).unwrap();
+        let event = MarketFeedEvent::from_kline_snapshot(&candle).unwrap();
+        assert_eq!(rest["source"], source);
+        assert_ne!(rest["observed_at"], rest["open_time"]);
+        for field in ["source", "provider", "observed_at", "open_time", "close"] {
+            assert_eq!(event.payload()[field], rest[field]);
+        }
+    }
+}
+
+#[test]
+fn market_provenance_legacy_ticker_candle_and_mongo_remain_unknown() {
+    use super::presentation::{KlineResponse, TickerResponse};
+    let time = 1_790_000_000_000_i64;
+    let ticker: TickerResponse = serde_json::from_value(serde_json::json!({
+        "symbol": "BTCUSDT", "last_price": "1.25", "volume_24h": "2", "observed_at": time,
+    }))
+    .unwrap();
+    assert_eq!(ticker.provenance.source, "unknown");
+    assert!(ticker.provenance.provider.is_none());
+    let candle: KlineResponse = serde_json::from_value(serde_json::json!({
+        "symbol": "BTCUSDT", "interval": "1m", "open_time": time,
+        "open": "1", "high": "2", "low": "0.5", "close": "1.25", "volume": "2",
+    }))
+    .unwrap();
+    assert_eq!(candle.provenance.source, "unknown");
+    assert!(candle.observed_at.is_none());
+    for (stored, expected) in [
+        (None, "unknown"),
+        (Some("future"), "unknown"),
+        (Some("strategy"), "generated"),
+        (Some("htx"), "external"),
+    ] {
+        let mut doc = doc! {
+            "interval": "1m", "open_time": BsonDateTime::from_millis(time),
+            "open": "1", "high": "2", "low": "0.5", "close": "1.25", "volume": "2",
+        };
+        if let Some(source) = stored {
+            doc.insert("source", source);
+            doc.insert("updated_at", BsonDateTime::from_millis(time + 30_000));
+        }
+        let row = mongodb::bson::from_document(doc).unwrap();
+        let response = KlineResponse::from_document("BTCUSDT", row);
+        assert_eq!(response.provenance.source, expected);
+        assert_eq!(
+            response.observed_at.map(|at| at.timestamp_millis()),
+            stored.map(|_| time + 30_000)
+        );
+    }
+}
+
+#[test]
+fn market_provenance_depth_cache_rest_and_ws_preserve_provider() {
+    use super::presentation::{DepthCachePayload, DepthResponse};
+    for (provider, source, name) in [
+        (MarketDataProvider::Bitget, "external", "bitget"),
+        (MarketDataProvider::Htx, "external", "htx"),
+        (MarketDataProvider::Coinbase, "external", "coinbase"),
+        (MarketDataProvider::Strategy, "generated", "strategy"),
+    ] {
+        let snapshot =
+            MarketDepthSnapshot::new(provider, "BTCUSDT", vec![], vec![], Utc::now()).unwrap();
+        let cache =
+            serde_json::to_value(MarketDepthCacheEntry::from_snapshot(&snapshot).unwrap()).unwrap();
+        let rest = serde_json::to_value(DepthResponse::from_cache(
+            serde_json::from_value::<DepthCachePayload>(cache).unwrap(),
+        ))
+        .unwrap();
+        let event = MarketFeedEvent::from_depth_snapshot(&snapshot).unwrap();
+        assert_eq!(rest["source"], source);
+        assert_eq!(rest["provider"], name);
+        assert_eq!(event.payload()["source"], rest["source"]);
+        assert_eq!(event.payload()["provider"], rest["provider"]);
+    }
+}
+
+#[test]
+fn market_provenance_legacy_depth_never_invents_a_provider() {
+    let cache =
+        serde_json::json!({"symbol":"BTCUSDT","bids":[],"asks":[],"observed_at":1790000000000_i64});
+    let response = presentation::DepthResponse::from_cache(serde_json::from_value(cache).unwrap());
+    let body = serde_json::to_value(response).unwrap();
+    assert_eq!(body["source"], "unknown");
+    assert!(body["provider"].is_null());
+}
+
+#[test]
+fn market_provenance_generated_depth_uses_the_same_evidence_in_cache_and_event() {
+    let time = Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap();
+    for source in ["strategy", "default"] {
+        let tick = MarketTradeTick::new(
+            MarketDataProvider::Strategy,
+            "BTCUSDT",
+            format!("{source}:42:v2:{}", time.timestamp()),
+            MarketTradeSide::Buy,
+            decimal("1"),
+            decimal("2"),
+            time,
+        )
+        .unwrap();
+        let evidence = presentation::MarketProvenance::from_tick(&tick);
+        let depth = MarketDepthSnapshot::new(
+            MarketDataProvider::Strategy,
+            "BTCUSDT",
+            vec![],
+            vec![],
+            time,
+        )
+        .unwrap();
+        let cache = MarketDepthCacheEntry::from_snapshot(&depth)
+            .unwrap()
+            .with_provenance(evidence.clone());
+        let event = MarketFeedEvent::from_depth_snapshot(&depth)
+            .unwrap()
+            .with_depth_provenance(&evidence.source);
+        let response = presentation::DepthResponse::from_cache(
+            serde_json::from_value(serde_json::to_value(cache).unwrap()).unwrap(),
+        );
+        let body = serde_json::to_value(response).unwrap();
+        assert_eq!(body["source"], source);
+        assert_eq!(event.payload()["source"], body["source"]);
+        assert_eq!(event.payload()["provider"], body["provider"]);
+    }
+}
+
+#[test]
+fn market_provenance_generated_trade_identity_is_evidence_not_pair_configuration() {
+    let time = Utc.with_ymd_and_hms(2026, 9, 18, 12, 0, 0).unwrap();
+    for (provider, id, source) in [
+        (
+            MarketDataProvider::Strategy,
+            format!("default:42:v2:{}", time.timestamp()),
+            "default",
+        ),
+        (
+            MarketDataProvider::Strategy,
+            format!("strategy:9:v1:{}", time.timestamp()),
+            "strategy",
+        ),
+        (
+            MarketDataProvider::Strategy,
+            "default:unverified".into(),
+            "generated",
+        ),
+        (
+            MarketDataProvider::Strategy,
+            "default:42:v2:0".into(),
+            "generated",
+        ),
+        (
+            MarketDataProvider::Htx,
+            format!("default:42:v2:{}", time.timestamp()),
+            "external",
+        ),
+    ] {
+        let tick = MarketTradeTick::new(
+            provider,
+            "BTCUSDT",
+            id,
+            MarketTradeSide::Sell,
+            decimal("1.20"),
+            decimal("2"),
+            time,
+        )
+        .unwrap();
+        let event = MarketFeedEvent::from_trade_tick(&tick).unwrap();
+        let rest =
+            serde_json::to_value(presentation::TradeResponse::from_synthetic_tick(tick)).unwrap();
+        assert_eq!(rest["source"], source);
+        assert_eq!(event.payload()["source"], rest["source"]);
+        assert_eq!(event.payload()["provider"], rest["provider"]);
+        assert_eq!(rest["direction"], "SELL");
+    }
+}
+
+#[test]
+fn market_provenance_only_platform_record_conversion_labels_platform_trade() {
+    let trade = presentation::TradeResponse::from_record(repository::SpotTradeRecord {
+        id: 7,
+        symbol: "BTC_USDT".into(),
+        price: decimal("1.20"),
+        quantity: decimal("2"),
+        created_at: Utc::now(),
+    });
+    let body = serde_json::to_value(trade).unwrap();
+    assert_eq!(body["source"], "platform");
+    assert_eq!(body["provider"], "platform");
+    assert_eq!(body["symbol"], "BTCUSDT");
 }
 
 #[test]
@@ -282,6 +514,8 @@ fn forming_read_model_merges_only_current_in_range_slot_and_keeps_latest_limit()
     use super::presentation::KlineResponse;
     let open = Utc.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
     let candle = |time, close: &str| KlineResponse {
+        provenance: Default::default(),
+        observed_at: None,
         symbol: "SIMUSDT".into(),
         interval: "5m".into(),
         open_time: time,

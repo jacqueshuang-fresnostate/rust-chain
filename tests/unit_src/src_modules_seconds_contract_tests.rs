@@ -3,6 +3,52 @@ use bigdecimal::BigDecimal;
 use chrono::{TimeDelta, TimeZone, Utc};
 use std::str::FromStr;
 
+#[test]
+fn numeric_safety_seconds_stake_storage_ignores_only_trailing_zeros() {
+    for value in [
+        "1e-18",
+        "99999999999999999999.999999999999999999",
+        "1.000000000000000000000",
+    ] {
+        service::validate_stake_amount(&value.parse().unwrap()).unwrap();
+    }
+    for value in ["1e20", "1e-19", "1e100000", "1e-4294967297"] {
+        assert!(service::validate_stake_amount(&value.parse().unwrap()).is_err());
+    }
+}
+
+#[test]
+fn gross_payout_budget_preserves_net_rate_and_capacity_precision() {
+    let decimal = |value: &str| BigDecimal::from_str(value).unwrap();
+    assert_eq!(
+        service::maximum_gross_payout(&decimal("100"), &decimal("0.4")),
+        decimal("140")
+    );
+    assert_eq!(
+        service::maximum_gross_payout(&decimal("100"), &decimal("1.4")),
+        decimal("240")
+    );
+    assert_eq!(
+        service::maximum_gross_payout(&decimal("0.000000000000000001"), &decimal("0.4")),
+        decimal("0.000000000000000002")
+    );
+    for value in [None, Some(decimal("0")), Some(decimal("1.2300"))] {
+        service::validate_payout_capacity(value.as_ref(), 2).unwrap();
+    }
+    for value in ["-1", "1.001", "100000000000000000000"] {
+        assert!(service::validate_payout_capacity(Some(&decimal(value)), 2).is_err());
+    }
+}
+
+#[test]
+fn manual_review_requires_evidence_based_settlement_mode() {
+    assert!(service::ensure_manual_settlement_allowed("manual_review", true).is_ok());
+    assert!(service::ensure_manual_settlement_allowed("manual_review", false).is_err());
+    assert!(service::ensure_manual_settlement_allowed("opened", false).is_ok());
+    assert!(service::ensure_manual_settlement_allowed("settled", true).is_ok());
+    assert!(service::ensure_manual_settlement_allowed("refunded", true).is_err());
+}
+
 fn snapshot(expires_at: chrono::DateTime<Utc>) -> repository::SecondsContractSettlementPriceRow {
     repository::SecondsContractSettlementPriceRow {
         id: 1,

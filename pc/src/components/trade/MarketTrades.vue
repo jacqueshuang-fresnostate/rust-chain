@@ -7,8 +7,8 @@
           <span class="w-1/3 text-right">{{ $t('trade.amount') }}({{ baseSymbol }})</span>
           <span class="w-1/3 text-right">{{ $t('trade.time') }}</span>
        </div>
-       <div v-for="(trade, i) in trades" :key="i" class="flex text-[10px] px-2 py-0.5 hover:bg-muted/50 transition-colors">
-          <span class="w-1/3 font-mono" :class="trade.direction === 'BUY' ? 'text-up' : 'text-down'">{{ formatNumber(trade.price, 'price') }}</span>
+       <div v-for="trade in trades" :key="marketTradeIdentity(trade)" class="flex text-[10px] px-2 py-0.5 hover:bg-muted/50 transition-colors">
+          <span class="w-1/3 font-mono" :class="trade.direction === 'BUY' ? 'text-up' : 'text-down'">{{ formatNumber(trade.price, 'price') }}<MarketProvenanceLabel :provenance="trade" /></span>
           <span class="w-1/3 text-right text-muted-foreground font-mono">{{ formatNumber(trade.amount, 'amount') }}</span>
           <span class="w-1/3 text-right text-muted-foreground">{{ formatTime(trade.time) }}</span>
        </div>
@@ -23,6 +23,9 @@ import { fetchLatestTrade as fetchMarketTrade } from '@/api/market'
 import { fetchLatestTrade as fetchSecondTrade } from '@/api/second'
 import { fetchLatestTrade as fetchSwapTrade } from '@/api/contract'
 import { stompService } from '@/api/stomp'
+import MarketProvenanceLabel from './MarketProvenanceLabel.vue'
+import { marketTradeIdentity } from '@/api/marketProvenance'
+import type { PcMarketTrade } from '@/api/backendAdapters'
 
 const props = withDefaults(defineProps<{
   symbol?: string
@@ -31,8 +34,9 @@ const props = withDefaults(defineProps<{
   module: 'spot'
 })
 
-const trades = ref<any[]>([])
+const trades = ref<PcMarketTrade[]>([])
 let tradeSub: any = null
+let generation = 0
 
 const baseSymbol = computed(() => props.symbol?.split('/')[0] || 'BTC')
 const quoteSymbol = computed(() => props.symbol?.split('/')[1] || 'USDT')
@@ -82,10 +86,11 @@ const formatTime = (ts: number | string) => {
 
 const fetchTrades = async () => {
     if (!props.symbol) return
+    const currentGeneration = generation
     try {
         const fetcher = getTradeFetcher()
         const res = await fetcher(props.symbol)
-        if (res.data) {
+        if (currentGeneration === generation && res.data) {
             const data = res.data
             // Handle both direct arrays and wrapped { code, data } responses
             let list: any[]
@@ -98,7 +103,13 @@ const fetchTrades = async () => {
             } else {
                 list = []
             }
-            trades.value = list
+            const seen = new Set<string>()
+            trades.value = [...trades.value, ...list].filter((trade) => {
+                const identity = marketTradeIdentity(trade)
+                if (seen.has(identity)) return false
+                seen.add(identity)
+                return true
+            }).slice(0, 50)
         }
     } catch (e) {
         console.error('Failed to fetch trades', e)
@@ -115,21 +126,30 @@ const subscribeTrades = async () => {
     const topic = getTradeTopic(props.symbol)
     console.log(`[MarketTrades][${props.module}] Subscribing to:`, topic)
     const wsModule = normalizeWsModule(props.module)
-    tradeSub = await stompService.subscribe(wsModule, topic, (msg) => {
+    const currentGeneration = generation
+    const subscription = await stompService.subscribe(wsModule, topic, (msg) => {
+        if (currentGeneration !== generation) return
         try {
             const data = JSON.parse(msg.body)
             const items = Array.isArray(data) ? data : [data]
-            trades.value.unshift(...items)
-            if (trades.value.length > 50) {
-                trades.value = trades.value.slice(0, 50)
-            }
+            const seen = new Set<string>()
+            trades.value = [...items, ...trades.value].filter((trade) => {
+                const identity = marketTradeIdentity(trade)
+                if (seen.has(identity)) return false
+                seen.add(identity)
+                return true
+            }).slice(0, 50)
         } catch (e) {
             console.error(e)
         }
     })
+    if (currentGeneration !== generation) subscription.unsubscribe()
+    else tradeSub = subscription
 }
 
-watch(() => props.symbol, () => {
+watch(() => [props.symbol, props.module], () => {
+    generation += 1
+    trades.value = []
     fetchTrades()
     subscribeTrades()
 })
@@ -140,6 +160,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+    generation += 1
     if (tradeSub) tradeSub.unsubscribe()
 })
 </script>

@@ -7,7 +7,7 @@
 //! 交易对一律先经 `sanitize_symbol` 规范化，写入方与下单、结算、强平等读取方必须共用本模块的生成函数。
 //! 所有 key 都不设 TTL，行情靠持续覆盖保持新鲜，因此消费端只能依据载荷里的 `observed_at` 判断是否陈旧。
 //! ticker 与 K 线的覆盖走 Lua 脚本做原子防倒退：ticker 比较 `observed_at`，K 线先比 `open_time` 再比 `observed_at`，
-//! 后者的时序另存在伴随 key `market:kline-sequence:<SYMBOL>:<INTERVAL>`，以免改动对外 JSON 合同。
+//! 后者的时序另存在伴随 key `market:kline-sequence:<SYMBOL>:<INTERVAL>`；JSON 同时公开观察时间供展示陈旧状态。
 //! ticker 在时间相同且序列化载荷逐字节相同时返回 `ReplayedIdentical`，
 //! 仅用于修复先写 Redis 后写 MySQL 失败的归档；同时间不同载荷和更旧载荷仍返回 `RejectedStale`。
 //! 被判定为陈旧的写入不是错误，调用方必须据此中止广播、撮合和检查点推进等派生副作用。
@@ -34,6 +34,8 @@ use thiserror::Error;
 // Redis 缓存 DTO 保持和现有前端/撮合读取格式兼容，key 生成集中在基础设施层。
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MarketTickerCacheEntry {
+    #[serde(flatten)]
+    provenance: crate::modules::market::presentation::MarketProvenance,
     symbol: String,
     last_price: BigDecimal,
     high_24h: BigDecimal,
@@ -75,6 +77,7 @@ impl MarketTickerCacheEntry {
         let symbol = ValidatedMarketSymbol::from_raw(symbol)?.as_str().to_owned();
         let redis_key = market_ticker_redis_key(&symbol);
         Ok(Self {
+            provenance: Default::default(),
             symbol,
             last_price: values.last_price,
             high_24h: values.high_24h,
@@ -156,11 +159,20 @@ impl MarketTickerCacheEntry {
             ),
             snapshot.observed_at(),
         )
+        .map(|mut entry| {
+            entry.provenance =
+                crate::modules::market::presentation::MarketProvenance::from_provider(
+                    snapshot.provider(),
+                );
+            entry
+        })
     }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MarketDepthCacheEntry {
+    #[serde(flatten)]
+    provenance: crate::modules::market::presentation::MarketProvenance,
     symbol: String,
     bids: Vec<MarketDepthLevel>,
     asks: Vec<MarketDepthLevel>,
@@ -183,6 +195,7 @@ impl MarketDepthCacheEntry {
         let symbol = ValidatedMarketSymbol::from_raw(symbol)?.as_str().to_owned();
         let redis_key = market_depth_redis_key(&symbol);
         Ok(Self {
+            provenance: Default::default(),
             symbol,
             bids,
             asks,
@@ -200,6 +213,22 @@ impl MarketDepthCacheEntry {
             snapshot.asks().to_vec(),
             snapshot.observed_at(),
         )
+        .map(|entry| {
+            entry.with_provenance(
+                crate::modules::market::presentation::MarketProvenance::from_provider(
+                    snapshot.provider(),
+                ),
+            )
+        })
+    }
+
+    /// 附加已验证生成帧的来源证据；不改变档位、时间或缓存键。
+    pub(crate) fn with_provenance(
+        mut self,
+        provenance: crate::modules::market::presentation::MarketProvenance,
+    ) -> Self {
+        self.provenance = provenance;
+        self
     }
 
     /// 返回规范化交易对，写入时会用它重新推导 depth key，确保盘口只能落到本交易对的固定位置。
@@ -235,6 +264,8 @@ impl MarketDepthCacheEntry {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct MarketKlineCacheEntry {
+    #[serde(flatten)]
+    provenance: crate::modules::market::presentation::MarketProvenance,
     symbol: String,
     interval: String,
     #[serde(with = "unix_millis")]
@@ -245,7 +276,7 @@ pub struct MarketKlineCacheEntry {
     close: BigDecimal,
     volume: BigDecimal,
     redis_key: String,
-    #[serde(skip)]
+    #[serde(with = "unix_millis")]
     observed_at: DateTime<Utc>,
 }
 
@@ -261,8 +292,8 @@ impl MarketKlineCacheEntry {
         Self::with_observed_at(symbol, interval, open_time, values, open_time)
     }
 
-    /// 构造携带内部观察时序的最新 K 线缓存 DTO；`observed_at` 只用于 Redis 原子防倒退，不进入既有消费者 JSON。
-    /// 该字段标注了 `#[serde(skip)]`，因此对外 JSON 合同保持不变，时序改由伴随 key 单独保存。
+    /// 构造携带观察时序的最新 K 线缓存 DTO；`observed_at` 同时公开给展示端，防倒退仍以既有伴随 key 为准。
+    /// 来源与观察时间是附加证据，不改变 OHLCV、键名或时序规则；旧缓存缺失来源时显示未知。
     /// 交易对先规范化，周期再经 [`KlineUpsertKey`] 校验，两者共同决定 `market:kline:<SYMBOL>:<INTERVAL>` 这个 key。
     /// 该时间必须取领域快照的真实观察时间；同槽更旧或同时间异载荷拒绝，同时间同载荷允许存储修复。
     /// 传入本机时间会让每次推送都显得更新，防倒退随之失效，同分钟内的旧 owner 就能覆盖新数据。
@@ -278,6 +309,7 @@ impl MarketKlineCacheEntry {
         let interval = interval.to_owned();
         let redis_key = market_kline_redis_key(&symbol, &interval);
         Ok(Self {
+            provenance: Default::default(),
             symbol,
             interval,
             open_time,
@@ -346,7 +378,7 @@ impl MarketKlineCacheEntry {
         &self.redis_key
     }
 
-    /// 返回仅供 Redis CAS 比较的观察时间；该字段跳过 JSON 序列化以保持现有消费者合同。
+    /// 返回 Redis CAS 比较和展示端共用的观察时间；不得用本地重读时间刷新历史行情。
     /// 它被单独写进伴随 key，与 `open_time` 组成 `开盘时间:观察时间` 形式的时序串。
     /// 同一开盘时间下，观察时间相等或更早的推送会被判为陈旧，这正是拦截同分钟旧 owner 的关键。
     pub fn observed_at(&self) -> DateTime<Utc> {
@@ -371,6 +403,13 @@ impl MarketKlineCacheEntry {
             },
             snapshot.observed_at(),
         )
+        .map(|mut entry| {
+            entry.provenance =
+                crate::modules::market::presentation::MarketProvenance::from_provider(
+                    snapshot.provider(),
+                );
+            entry
+        })
     }
 }
 

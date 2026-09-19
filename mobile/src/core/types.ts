@@ -1,6 +1,7 @@
 import type { DecimalText } from './decimal'
+import type { MarketProvenance } from './marketProvenance'
 
-export interface MarketTicker {
+export interface MarketTicker extends MarketProvenance {
   marketType?: 'external' | 'internal' | 'strategy'
   id?: number
   symbol: string
@@ -17,6 +18,7 @@ export interface MarketTicker {
   volume: number
   changePercent: number
   observedAt?: number
+  sourceObservedAt?: number
 }
 
 export interface MarketFavorite {
@@ -34,7 +36,8 @@ export interface MarketPair {
   quote: string
 }
 
-export interface KlinePoint {
+export interface KlinePoint extends MarketProvenance {
+  observedAt?: number
   time: number
   open: number
   high: number
@@ -51,7 +54,13 @@ export interface OrderBookLevel {
   quantityText: DecimalText
 }
 
-export interface TradePrint {
+export interface MarketDepthSnapshot {
+  bids: OrderBookLevel[]
+  asks: OrderBookLevel[]
+  provenance?: MarketProvenance
+}
+
+export interface TradePrint extends MarketProvenance {
   id: string
   side: 'buy' | 'sell'
   price: number

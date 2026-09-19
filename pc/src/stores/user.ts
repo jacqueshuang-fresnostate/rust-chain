@@ -29,7 +29,7 @@ export const useUserStore = defineStore('user', () => {
 
   function setToken(newToken: string) {
     token.value = newToken
-    writeAuthTokens(newToken)
+    writeAuthTokens(newToken, undefined, true)
   }
 
   function setUser(userData: any) {
@@ -38,7 +38,7 @@ export const useUserStore = defineStore('user', () => {
 
   function setAuthSession(session: AuthSession) {
     token.value = session.token
-    writeAuthTokens(session.token, session.refreshToken)
+    writeAuthTokens(session.token, session.refreshToken, true)
     if (session.user) {
       setUser(session.user)
     }

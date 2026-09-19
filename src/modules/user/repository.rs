@@ -20,6 +20,7 @@ pub(crate) struct UserPasswordRecord {
     pub(crate) id: u64,
     pub(crate) password_hash: String,
     pub(crate) status: String,
+    pub(crate) auth_session_version: u64,
 }
 
 /// 邀请码持久化记录：应用层只依赖归属、用量和状态判断，不关心 invite_codes 表结构。

@@ -498,6 +498,8 @@ impl MySqlNewCoinReadRepository {
             ));
         }
 
+        crate::numeric::ensure_amount_storage(&available_after, "unlock available balance")?;
+        crate::numeric::ensure_amount_storage(&locked_after, "unlock locked balance")?;
         let wallet_updated = sqlx::query(
             "UPDATE wallet_accounts SET available = ?, locked = ? WHERE user_id = ? AND asset_id = ?",
         )

@@ -293,7 +293,7 @@ describe('QuickRechargeConfigPage', () => {
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
-            amount: '12.5',
+            amount: '12.50',
             reason: 'verify quick recharge provider'
           })
         })

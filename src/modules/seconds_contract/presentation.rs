@@ -12,6 +12,8 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod refund;
+
 /// 用户侧产品目录查询串，只支持限制条数。
 /// 缺省时由 `route_limit` 补默认 50 并封顶 100；产品目录不支持偏移分页。
 #[derive(Debug, Deserialize)]
@@ -67,6 +69,7 @@ pub(crate) struct OpenSecondsContractOrderRequest {
     /// 看涨或看跌，服务端会去空白转小写后只接受 `up` 与 `down`。
     pub(crate) direction: String,
     /// 投注本金，必须为正数并符合质押资产精度与该周期的投注区间。
+    #[serde(deserialize_with = "crate::numeric::deserialize_decimal")]
     pub(crate) stake_amount: BigDecimal,
     /// 客户端生成的幂等键，同一用户下重复提交同键请求不会二次扣款。
     pub(crate) idempotency_key: String,
@@ -79,10 +82,22 @@ pub(crate) struct SecondsContractProductCycleInput {
     /// 周期时长，单位为秒，必须为正且在同一产品内唯一。
     pub(crate) duration_seconds: Option<u32>,
     /// 赢单净收益率，允许为零但不允许为负。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) payout_rate: Option<BigDecimal>,
     /// 该周期的单笔最小投注额，必须为正数。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) min_stake: Option<BigDecimal>,
     /// 该周期的单笔最大投注额，真正可省略，省略表示不设上限。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_stake: Option<BigDecimal>,
 }
 
@@ -110,6 +125,12 @@ pub(crate) struct SecondsContractProductCycleResponse {
 /// 优先采用 `cycles`；未给出时才用 `duration_seconds` 等旧字段合成唯一周期，此时这三项变为必填。
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateSecondsContractProductRequest {
+    /// 同产品同押注币种的未结毛兑付预算；空值关闭，零禁止新增开仓。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) open_payout_capacity: Option<BigDecimal>,
     /// 挂靠的交易对编号，不得为零且必须真实存在。
     pub(crate) pair_id: u64,
     /// 质押资产编号，不得为零且必须真实存在。
@@ -119,10 +140,22 @@ pub(crate) struct CreateSecondsContractProductRequest {
     /// 旧版单周期时长，仅在未提供 `cycles` 时使用。
     pub(crate) duration_seconds: Option<u32>,
     /// 旧版单周期赔率，仅在未提供 `cycles` 时使用。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) payout_rate: Option<BigDecimal>,
     /// 旧版单周期最小投注额，仅在未提供 `cycles` 时使用。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) min_stake: Option<BigDecimal>,
     /// 旧版单周期最大投注额，仅在未提供 `cycles` 时使用。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_stake: Option<BigDecimal>,
     /// 多周期配置集合，给出时不得为空数组，且各条时长必须互不相同。
     pub(crate) cycles: Option<Vec<SecondsContractProductCycleInput>>,
@@ -136,6 +169,12 @@ pub(crate) struct CreateSecondsContractProductRequest {
 /// 与创建请求的唯一结构差异是 `status` 从可选变为必填，前端必须显式表明更新后的上下架状态。
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateSecondsContractProductRequest {
+    /// 全量编辑时空值关闭预算，已有订单仍按原赔率快照占用。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
+    pub(crate) open_payout_capacity: Option<BigDecimal>,
     /// 更新后的交易对编号，允许改挂到其他交易对。
     pub(crate) pair_id: u64,
     /// 更新后的质押资产编号。
@@ -145,10 +184,22 @@ pub(crate) struct UpdateSecondsContractProductRequest {
     /// 旧版单周期时长，仅在未提供 `cycles` 时生效。
     pub(crate) duration_seconds: Option<u32>,
     /// 旧版单周期赔率，仅在未提供 `cycles` 时生效。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) payout_rate: Option<BigDecimal>,
     /// 旧版单周期最小投注额，仅在未提供 `cycles` 时生效。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) min_stake: Option<BigDecimal>,
     /// 旧版单周期最大投注额，仅在未提供 `cycles` 时生效。
+    #[serde(
+        default,
+        deserialize_with = "crate::numeric::deserialize_optional_decimal"
+    )]
     pub(crate) max_stake: Option<BigDecimal>,
     /// 更新后的完整周期集合，按覆盖处理，遗漏的周期视为删除。
     pub(crate) cycles: Option<Vec<SecondsContractProductCycleInput>>,
@@ -180,6 +231,8 @@ pub(crate) struct DeleteSecondsContractProductRequest {
 /// 顶层的时长、赔率与投注区间是 `cycles` 首条的冗余展开，供不解析周期数组的旧客户端直接读取。
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SecondsContractProductResponse {
+    /// 未结毛兑付预算，不代表真实现金余额。
+    pub(crate) open_payout_capacity: Option<BigDecimal>,
     /// 产品主键。
     pub(crate) id: u64,
     /// 交易对编号。
@@ -319,7 +372,7 @@ pub(crate) struct OpenSecondsContractOrderResponse {
 /// 后台人工结算请求体；服务端用事件时点价格推导胜负，并要求该结果与调用方请求一致。
 #[derive(Debug, Deserialize)]
 pub(crate) struct SettleSecondsContractOrderRequest {
-    /// 期望结算结果，只接受 `win` 或 `loss`；与事件价格推导结果或既有终态冲突时会被拒绝。
+    /// `auto` 按服务端历史证据判定，且是人工审核单唯一可用模式；`win/loss` 仍须与历史价格一致。
     pub(crate) result: String,
     /// 审计原因，业务上必填，用于记录人工介入结算的依据。
     pub(crate) reason: Option<String>,

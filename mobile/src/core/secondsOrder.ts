@@ -1,4 +1,4 @@
-import { asNumber } from './format.ts'
+import { requiredId, requiredSafeInteger, normalizeTimestamp } from './numeric.ts'
 import {
   decimalMultiply,
   decimalNegate,
@@ -472,6 +472,9 @@ export function enqueueSecondsSettlementResults(
 export function secondsOrderStatusPresentation(
   order: Pick<SecondsOrder, 'result' | 'status'>,
 ): SecondsOrderStatusPresentation {
+  if (order.status.trim().toLowerCase() === 'refunded') {
+    return { translationKey: 'seconds.statusRefunded', source: 'refunded', tone: 'pending' }
+  }
   const resultSource = order.result?.trim()
   const result = resultSource?.toLowerCase()
   if (result === 'win') {
@@ -493,6 +496,7 @@ export function secondsOrderStatusPresentation(
     won: 'seconds.statusWon',
     lost: 'seconds.statusLost',
     settled: 'seconds.statusSettled',
+    manual_review: 'seconds.statusManualReview',
     cancelled: 'seconds.statusCancelled',
     canceled: 'seconds.statusCancelled',
   }
@@ -672,13 +676,13 @@ export function mapSecondsOrder(order: Record<string, unknown>): SecondsOrder {
     false,
   )
   return {
-    id: asNumber(order.id),
+    id: requiredId(order.id),
     symbol: String(order.symbol || ''),
     stakeAssetSymbol: String(order.stake_asset_symbol || '').toUpperCase(),
     direction,
     stakeAmount: decimalDisplayNumber(stakeAmountText),
     stakeAmountText,
-    durationSeconds: asNumber(order.duration_seconds),
+    durationSeconds: requiredSafeInteger(order.duration_seconds, 'duration_seconds', 1),
     payoutRate: decimalDisplayNumber(payoutRateText),
     payoutRateText,
     entryPrice: entryPriceText ? decimalDisplayNumber(entryPriceText) : undefined,
@@ -738,9 +742,4 @@ function exactSecondsOrderDecimal(value: unknown): DecimalText | null {
 function decimalDisplayNumber(value: DecimalText): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : Number.NaN
-}
-
-function normalizeTimestamp(value: unknown): number {
-  const timestamp = asNumber(value)
-  return timestamp > 0 && timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
 }

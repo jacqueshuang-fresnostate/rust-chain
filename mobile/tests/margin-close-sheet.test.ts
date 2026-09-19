@@ -109,8 +109,8 @@ test('弹窗只呈现真实仓位数据并用可拖动比例派生部分平仓�
   assert.match(sheetSource, /v-model\.number="closePercentage"/)
   assert.match(sheetSource, /t\('trade\.marginCloseMarketPrice'\)/)
   assert.match(sheetSource, /t\('trade\.marginClosePercentage', \{ percentage: closePercentage \}\)/)
-  assert.match(sheetSource, /marginClosePreviewAmount\(props\.positionQuantity, closePercentage\.value\)/)
-  assert.match(sheetSource, /marginClosePreviewAmount\(props\.estimatedPnl, closePercentage\.value\)/)
+  assert.match(sheetSource, /marginClosePreviewText\(props\.positionQuantity, closePercentage\.value\)/)
+  assert.match(sheetSource, /marginClosePreviewText\(props\.estimatedPnl, closePercentage\.value\)/)
   assert.doesNotMatch(sheetSource, /79,800|0\.6369|12\.27|BTCUSDT/)
 })
 

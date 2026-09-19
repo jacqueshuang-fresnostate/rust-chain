@@ -13,6 +13,15 @@ use std::{
 };
 use tower::ServiceExt;
 
+#[test]
+fn jwt_ttl_must_not_wrap_to_an_expired_or_infinite_token() {
+    let state = test_state();
+    for ttl in [0, u64::MAX, i64::MAX as u64, 253_402_300_799] {
+        assert!(issue_token(&state.settings, "1", TokenScope::User, ttl).is_err());
+    }
+    assert!(issue_token(&state.settings, "1", TokenScope::User, 60).is_ok());
+}
+
 fn test_state() -> AppState {
     AppState::new(Settings {
         app_env: "test".to_owned(),

@@ -3,6 +3,7 @@
 //! 统一导出预测订单与资金相关的 DDD 分层 API。
 pub mod application;
 pub mod infrastructure;
+pub(crate) mod journal;
 pub mod presentation;
 pub mod repository;
 pub mod routes;

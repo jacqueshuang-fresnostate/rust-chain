@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Toast } from '@douyinfe/semi-ui';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -79,7 +79,10 @@ const productRecord: ApiRecord = {
   interest_calculation_mode: 'full_term',
   min_kyc_level: 1,
   min_amount: '10',
-  max_amount: '1000'
+  max_amount: '1000',
+  user_principal_limit: null,
+  product_principal_capacity: null,
+  deny_borrowing_while_overdue: false
 };
 
 function rowHelpers() {
@@ -97,7 +100,7 @@ describe('loan product revision actions', () => {
     listAdminResourceMock.mockReset();
     listAdminResourceMock.mockImplementation(async (endpoint) => {
       if (endpoint === '/admin/api/v1/assets') {
-        return { rows: [{ id: 11, symbol: 'USDT', name: 'Tether' }], raw: {} };
+        return { rows: [{ id: 11, symbol: 'USDT', name: 'Tether', precision_scale: 18 }], raw: {} };
       }
       if (endpoint === '/admin/api/v1/countries') {
         return {
@@ -190,5 +193,91 @@ describe('loan product revision actions', () => {
 
     expect(screen.getByRole('button', { name: '修改' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '禁用' })).toBeDisabled();
+  });
+
+  it('roundtrips exact exposure decimals and the overdue policy through the existing edit form', async () => {
+    const user = userEvent.setup();
+    const collateralPolicy = {
+      initial_ltv: '0.50',
+      maintenance_ltv: '0.70',
+      liquidation_ltv: '0.90',
+      collateral_assets: [{ collateral_asset_id: 12, oracle_symbol: 'BTCUSDT', oracle_source: 'market_ticker_redis', oracle_max_age_seconds: 30 }]
+    };
+    renderWithQueryClient(<LoanProductRowActions helpers={rowHelpers()} record={{
+      ...productRecord,
+      ...collateralPolicy,
+      loan_type: 'collateralized',
+      user_principal_limit: '9007199254740993.000000000000000001',
+      product_principal_capacity: '0',
+      deny_borrowing_while_overdue: true
+    }} />);
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    expect(await screen.findByLabelText('用户同币种本金上限')).toHaveValue('9007199254740993.000000000000000001');
+    expect(screen.getByLabelText('产品本金容量')).toHaveValue('0');
+    expect(screen.getByRole('switch', { name: '逾期未结禁止新增借款' })).toBeChecked();
+    await waitFor(() => expect(screen.getByRole('button', { name: '提交修改' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '提交修改' }));
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: '精确限额' } });
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(apiRequestMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(apiRequestMock.mock.calls[0][1]?.body))).toMatchObject({
+      user_principal_limit: '9007199254740993.000000000000000001',
+      product_principal_capacity: '0',
+      deny_borrowing_while_overdue: true,
+      ...collateralPolicy,
+      revision: 7
+    });
+  });
+
+  it('rejects negative, malformed, overprecision and overflow limits and clears blank values to null', async () => {
+    const user = userEvent.setup();
+    renderWithQueryClient(<LoanProductRowActions helpers={rowHelpers()} record={{
+      ...productRecord, user_principal_limit: '10', product_principal_capacity: '20',
+      deny_borrowing_while_overdue: true
+    }} />);
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    const limit = await screen.findByLabelText('用户同币种本金上限');
+    const capacity = screen.getByLabelText('产品本金容量');
+    for (const input of [limit, capacity]) {
+      for (const value of ['-1', '1oops', '0.0000000000000000001', '100000000000000000000']) {
+        fireEvent.change(input, { target: { value } });
+        expect(screen.getByRole('button', { name: '提交修改' })).toBeDisabled();
+      }
+      fireEvent.change(input, { target: { value: '' } });
+    }
+    await user.click(screen.getByRole('switch', { name: '逾期未结禁止新增借款' }));
+    await user.click(screen.getByRole('button', { name: '提交修改' }));
+    fireEvent.change(await screen.findByLabelText('操作原因'), { target: { value: '取消限制' } });
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(apiRequestMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(String(apiRequestMock.mock.calls[0][1]?.body))).toMatchObject({
+      user_principal_limit: null, product_principal_capacity: null,
+      deny_borrowing_while_overdue: false
+    });
+  });
+
+  it('does not silently convert a malformed or missing exposure configuration into a disabled policy', () => {
+    const record = { ...productRecord, user_principal_limit: 9007199254740992 };
+    renderWithQueryClient(<LoanProductRowActions helpers={rowHelpers()} record={record} />);
+    expect(screen.getByRole('button', { name: '修改' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '禁用' })).toBeEnabled();
+  });
+
+  it('uses the selected asset precision without rounding a new limit', async () => {
+    listAdminResourceMock.mockImplementation(async (endpoint) => ({
+      rows: endpoint === '/admin/api/v1/assets'
+        ? [{ id: 11, symbol: 'USDT', name: 'Tether', precision_scale: 2 }]
+        : [{ country_code: 'CN', country_name: '中国', default_locale: 'zh-CN' }],
+      raw: {}
+    }));
+    const user = userEvent.setup();
+    renderWithQueryClient(<LoanProductRowActions helpers={rowHelpers()} record={productRecord} />);
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    const limit = await screen.findByLabelText('用户同币种本金上限');
+    fireEvent.change(limit, { target: { value: '1.001' } });
+    expect(screen.getByRole('button', { name: '提交修改' })).toBeDisabled();
+    fireEvent.change(limit, { target: { value: '1.2300' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: '提交修改' })).toBeEnabled());
+    expect(apiRequestMock).not.toHaveBeenCalled();
   });
 });

@@ -18,15 +18,14 @@ use crate::{
     },
     state::AppState,
 };
-use bigdecimal::{BigDecimal, ToPrimitive};
-use chrono::{DateTime, Duration, TimeDelta, Timelike, Utc};
+use bigdecimal::BigDecimal;
+use chrono::{DateTime, Duration, TimeDelta, Utc};
 use mongodb::{
     Database,
     bson::{DateTime as BsonDateTime, Document, doc},
     options::{FindOptions, UpdateOptions},
 };
 use sqlx::{MySql, Pool};
-use std::str::FromStr;
 use thiserror::Error;
 use tracing::warn;
 
@@ -949,10 +948,13 @@ pub fn kline_recovery_gap(
     let checkpoint_open_time = align_open_time(checkpoint_open_time, interval)?;
     let now = align_open_time(now, interval)?;
     let mut missing_open_times = Vec::new();
-    let mut open_time = checkpoint_open_time + interval;
-    while open_time <= now && missing_open_times.len() < MAX_CANDLES_PER_STRATEGY_RUN {
+    let mut next = checkpoint_open_time.checked_add_signed(interval);
+    while let Some(open_time) = next.filter(|time| *time <= now) {
+        if missing_open_times.len() == MAX_CANDLES_PER_STRATEGY_RUN {
+            break;
+        }
         missing_open_times.push(open_time);
-        open_time += interval;
+        next = open_time.checked_add_signed(interval);
     }
 
     Ok(KlineRecoveryGap { missing_open_times })
@@ -1106,26 +1108,27 @@ fn recovery_interval_name(interval: TimeDelta) -> AppResult<&'static str> {
 fn last_closed_open_time(now: DateTime<Utc>, interval: TimeDelta) -> AppResult<DateTime<Utc>> {
     let aligned =
         align_open_time(now, interval).map_err(|error| AppError::Validation(error.to_string()))?;
-    Ok(aligned - interval)
+    aligned.checked_sub_signed(interval).ok_or_else(|| {
+        AppError::Validation("closed candle time is outside the supported range".to_owned())
+    })
 }
 
-/// 把时间向下对齐到周期边界：非正周期直接返回 `InvalidInterval`，其余按秒数取整后回落到毫秒精度。
-/// 换算经过浮点运算，适用于当前使用的分钟到天级周期；结果超出可表示范围时同样返回 `InvalidInterval`。
+/// 按整数毫秒向下对齐周期边界；拒绝非整毫秒或超界周期，避免浮点对齐和强转导致槽位偏移。
+/// 负时间使用欧几里得除法保持向下取整；结果超出可表示范围时返回 `InvalidInterval`。
 /// 对齐只做向下取整，绝不会把时间推进到下一个槽位，缺口枚举与恢复终点推导都依赖这一点。
 fn align_open_time(
     value: DateTime<Utc>,
     interval: TimeDelta,
 ) -> Result<DateTime<Utc>, KlineRecoveryGapError> {
-    if interval <= TimeDelta::zero() {
+    let interval_millis = interval.num_milliseconds();
+    if interval_millis <= 0 || TimeDelta::milliseconds(interval_millis) != interval {
         return Err(KlineRecoveryGapError::InvalidInterval);
     }
-    let interval_seconds = interval
-        .num_seconds()
-        .to_f64()
+    let aligned_millis = value
+        .timestamp_millis()
+        .div_euclid(interval_millis)
+        .checked_mul(interval_millis)
         .ok_or(KlineRecoveryGapError::InvalidInterval)?;
-    let timestamp = value.timestamp() as f64 + f64::from(value.nanosecond()) / 1_000_000_000.0;
-    let aligned_seconds = (timestamp / interval_seconds).floor() * interval_seconds;
-    let aligned_millis = (aligned_seconds * 1000.0).floor() as i64;
     DateTime::<Utc>::from_timestamp_millis(aligned_millis)
         .ok_or(KlineRecoveryGapError::InvalidInterval)
 }
@@ -1153,7 +1156,7 @@ fn decimal_min(left: &BigDecimal, right: &BigDecimal) -> BigDecimal {
 /// 把十进制文本解析为 `BigDecimal`，失败时统一转成带原始原因的校验错误。
 /// 策略参数与已存蜡烛数值都经由它进入计算，因此非法文本会在任何写入发生之前被拦下。
 fn parse_decimal(value: &str) -> AppResult<BigDecimal> {
-    BigDecimal::from_str(value)
+    crate::numeric::parse_decimal_input(value)
         .map_err(|error| AppError::Validation(format!("invalid decimal value: {error}")))
 }
 

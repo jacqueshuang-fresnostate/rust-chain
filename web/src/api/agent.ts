@@ -1,5 +1,6 @@
 import { apiRequest, ContractError } from './client';
-import { canonicalDecimalText } from '../shared/decimal';
+import { canonicalDecimalText, decimalFitsStorage } from '../shared/decimal';
+import { isUnixMillis, requiredSafeInteger } from '../shared/integer';
 
 export type AgentMe = Record<string, unknown> & {
   agent_admin_id: number;
@@ -17,9 +18,16 @@ export type AgentDashboard = Record<string, unknown> & {
   team_user_count: number;
   active_invite_code_count: number;
   commission_record_count: number;
-  pending_commission_amount: string | number;
-  settled_commission_amount: string | number;
-  total_commission_amount: string | number;
+  pending_commission_amount: string;
+  settled_commission_amount: string;
+  total_commission_amount: string;
+  commission_assets?: Array<{
+    payout_asset_id: number | null;
+    commission_record_count: number;
+    pending_commission_amount: string;
+    settled_commission_amount: string;
+    total_commission_amount: string;
+  }>;
 };
 
 export type AgentTeamUser = Record<string, unknown> & {
@@ -49,14 +57,14 @@ export type AgentCommission = Record<string, unknown> & {
   email?: string | null;
   source_type: string;
   source_id: string;
-  source_amount: string | number;
-  commission_amount: string | number;
+  source_amount: string;
+  commission_amount: string;
   status: string;
   depth: number;
   payout_ledger_id?: number | null;
   payout_asset_id?: number | null;
-  payout_amount?: string | number | null;
-  payout_balance_after?: string | number | null;
+  payout_amount?: string | null;
+  payout_balance_after?: string | null;
   payout_created_at?: number | null;
   created_at: number;
 };
@@ -66,8 +74,8 @@ export type AgentConvertStats = Record<string, unknown> & {
   total_orders: number;
   pending_orders: number;
   completed_orders: number;
-  total_from_amount: string | number;
-  total_to_amount: string | number;
+  total_from_amount: string;
+  total_to_amount: string;
 };
 
 export type AgentSubAgent = Record<string, unknown> & {
@@ -105,7 +113,7 @@ export type AgentInviteCodesResponse = {
 export type AgentCommissionsResponse = {
   agent_id: number;
   total_records: number;
-  total_commission_amount: string | number;
+  total_commission_amount: string;
   commissions: AgentCommission[];
 };
 
@@ -130,7 +138,25 @@ export type AgentFinancialPageQuery = {
 };
 
 export type AgentMarginPositionStatus = 'opened' | 'closed' | 'canceled' | 'liquidated';
-export type AgentSecondsContractOrderStatus = 'opened' | 'settled' | 'manual_review';
+export type AgentMarginOrderStatus = AgentMarginPositionStatus | 'pending';
+export type AgentSpotOrderStatus = 'pending' | 'open' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected';
+export type AgentSecondsContractOrderStatus = 'opened' | 'settled' | 'manual_review' | 'refunded';
+
+export type AgentUserSpotOrder = Record<string, unknown> & {
+  id: number;
+  user_id: number;
+  pair_id: number;
+  symbol: string;
+  side: 'buy' | 'sell';
+  order_type: 'market' | 'limit' | 'stop_limit';
+  price: string | null;
+  trigger_price: string | null;
+  quantity: string;
+  filled_quantity: string;
+  status: AgentSpotOrderStatus;
+  created_at: number;
+  updated_at: number;
+};
 
 export type AgentUserAsset = Record<string, unknown> & {
   account_id: number;
@@ -208,11 +234,33 @@ export type AgentUserSecondsContractOrdersResponse = {
   total: number;
 };
 
-const agentRequest = <T>(path: string, init: RequestInit = {}) =>
-  apiRequest<T>(path, {
+const agentRequest = async <T>(path: string, init: RequestInit = {}) => {
+  const value = await apiRequest<T>(path, {
     ...init,
     authScope: 'agent'
   });
+  validateAgentNumbers(value, path);
+  return value;
+};
+
+function validateAgentNumbers(value: unknown, path: string): void {
+  if (Array.isArray(value)) { value.forEach((row) => validateAgentNumbers(row, path)); return; }
+  if (!isRecord(value)) return;
+  for (const [key, field] of Object.entries(value)) {
+    if (field === null || field === undefined) continue;
+    const fail = () => { throw new ContractError(`代理接口字段 ${key} 的数值格式无效`, { path }); };
+    if (/(?:^|_)(amount|price|rate|quantity|balance_after|pnl)$/.test(key) || ['available', 'frozen', 'locked', 'leverage'].includes(key)) {
+      // SQL SUM may legitimately exceed the per-row DECIMAL(38,18) envelope.
+      if (!decimalFitsStorage(field, key.startsWith('total_') || key === 'pending_commission_amount' || key === 'settled_commission_amount' ? 65 : 38, 18)) fail();
+    } else if (key.endsWith('_at')) {
+      if (!isUnixMillis(field)) fail();
+    } else if (key !== 'source_id' && (key === 'id' || key.endsWith('_id') || key.endsWith('_count') ||
+      ['total', 'total_records', 'total_orders', 'pending_orders', 'completed_orders', 'usage_limit', 'depth', 'level', 'kyc_level'].includes(key))) {
+      if (typeof field !== 'number' || !Number.isSafeInteger(field) || field < 0) fail();
+    }
+    validateAgentNumbers(field, path);
+  }
+}
 
 type AgentFinancialRowContract = {
   decimalFields: readonly string[];
@@ -231,8 +279,8 @@ type AgentFinancialRowContract = {
 function appendAgentFinancialQuery(path: string, query: AgentFinancialPageQuery & { status?: string }) {
   const params = new URLSearchParams();
   if (query.status) params.set('status', query.status);
-  if (query.limit !== undefined) params.set('limit', String(query.limit));
-  if (query.offset !== undefined) params.set('offset', String(query.offset));
+  if (query.limit !== undefined) params.set('limit', String(requiredSafeInteger(query.limit, '分页大小', 1, 4_294_967_295)));
+  if (query.offset !== undefined) params.set('offset', String(requiredSafeInteger(query.offset, '分页偏移', 0, 4_294_967_295)));
   const suffix = params.toString();
   return suffix ? `${path}?${suffix}` : path;
 }
@@ -298,11 +346,11 @@ async function listAgentFinancialRows<T extends Record<string, unknown>>(
     });
     contract.timestampFields?.forEach((field) => {
       const timestamp = row[field];
-      assertContract(typeof timestamp === 'number' && Number.isSafeInteger(timestamp), field, 'Unix 毫秒安全整数');
+      assertContract(isUnixMillis(timestamp), field, 'Unix 毫秒安全整数');
     });
     contract.nullableTimestampFields?.forEach((field) => {
       const timestamp = row[field];
-      assertContract(timestamp === null || (typeof timestamp === 'number' && Number.isSafeInteger(timestamp)), field, 'Unix 毫秒安全整数或 null');
+      assertContract(timestamp === null || isUnixMillis(timestamp), field, 'Unix 毫秒安全整数或 null');
     });
     Object.entries(contract.enumFields ?? {}).forEach(([field, allowed]) => {
       assertContract(typeof row[field] === 'string' && allowed.includes(row[field] as string), field, `枚举 ${allowed.join('/')}`);
@@ -328,6 +376,7 @@ export function getAgentUsers(): Promise<AgentUsersResponse> {
 }
 
 export async function getAgentUserAssets(userId: number, query: AgentFinancialPageQuery = {}): Promise<AgentUserAssetsResponse> {
+  requiredSafeInteger(userId, '用户ID', 1);
   const endpoint = appendAgentFinancialQuery(`/agent/api/v1/users/${encodeURIComponent(String(userId))}/assets`, query);
   const response = await listAgentFinancialRows<AgentUserAsset>(endpoint, 'assets', {
     requiredFields: ['account_id', 'account_type', 'asset_id', 'asset_symbol', 'logo_url', 'precision_scale', 'available', 'frozen', 'locked', 'updated_at'],
@@ -346,8 +395,24 @@ export async function getAgentUserMarginPositions(
   userId: number,
   query: AgentFinancialPageQuery & { status?: AgentMarginPositionStatus } = {}
 ): Promise<AgentUserMarginPositionsResponse> {
+  requiredSafeInteger(userId, '用户ID', 1);
   const endpoint = appendAgentFinancialQuery(`/agent/api/v1/users/${encodeURIComponent(String(userId))}/margin-positions`, query);
-  const response = await listAgentFinancialRows<AgentUserMarginPosition>(endpoint, 'positions', {
+  const response = await listAgentMarginRows(endpoint, 'positions');
+  return { positions: response.rows, total: response.total };
+}
+
+export async function getAgentUserMarginOrders(
+  userId: number,
+  query: AgentFinancialPageQuery & { status?: AgentMarginOrderStatus } = {}
+): Promise<{ orders: AgentUserMarginPosition[]; total: number }> {
+  requiredSafeInteger(userId, '用户ID', 1);
+  const endpoint = appendAgentFinancialQuery(`/agent/api/v1/users/${encodeURIComponent(String(userId))}/margin-orders`, query);
+  const response = await listAgentMarginRows(endpoint, 'orders');
+  return { orders: response.rows, total: response.total };
+}
+
+function listAgentMarginRows(endpoint: string, responseKey: 'positions' | 'orders') {
+  return listAgentFinancialRows<AgentUserMarginPosition>(endpoint, responseKey, {
     requiredFields: [
       'id', 'user_id', 'product_id', 'pair_id', 'symbol', 'margin_asset', 'margin_asset_symbol', 'wallet_scope', 'margin_mode',
       'direction', 'order_type', 'margin_amount', 'leverage', 'notional_amount', 'borrowed_amount', 'interest_amount', 'entry_price',
@@ -367,13 +432,35 @@ export async function getAgentUserMarginPositions(
       status: ['opened', 'closed', 'canceled', 'liquidated']
     }
   });
-  return { positions: response.rows, total: response.total };
+}
+
+export async function getAgentUserSpotOrders(
+  userId: number,
+  query: AgentFinancialPageQuery & { status?: AgentSpotOrderStatus } = {}
+): Promise<{ orders: AgentUserSpotOrder[]; total: number }> {
+  requiredSafeInteger(userId, '用户ID', 1);
+  const endpoint = appendAgentFinancialQuery(`/agent/api/v1/users/${encodeURIComponent(String(userId))}/spot-orders`, query);
+  const response = await listAgentFinancialRows<AgentUserSpotOrder>(endpoint, 'orders', {
+    requiredFields: ['id', 'user_id', 'pair_id', 'symbol', 'side', 'order_type', 'price', 'trigger_price', 'quantity', 'filled_quantity', 'status', 'created_at', 'updated_at'],
+    decimalFields: ['quantity', 'filled_quantity'],
+    nullableDecimalFields: ['price', 'trigger_price'],
+    integerFields: ['id', 'user_id', 'pair_id'],
+    stringFields: ['symbol'],
+    timestampFields: ['created_at', 'updated_at'],
+    enumFields: {
+      side: ['buy', 'sell'],
+      order_type: ['market', 'limit', 'stop_limit'],
+      status: ['pending', 'open', 'partially_filled', 'filled', 'cancelled', 'rejected']
+    }
+  });
+  return { orders: response.rows, total: response.total };
 }
 
 export async function getAgentUserSecondsContractOrders(
   userId: number,
   query: AgentFinancialPageQuery & { status?: AgentSecondsContractOrderStatus } = {}
 ): Promise<AgentUserSecondsContractOrdersResponse> {
+  requiredSafeInteger(userId, '用户ID', 1);
   const endpoint = appendAgentFinancialQuery(`/agent/api/v1/users/${encodeURIComponent(String(userId))}/seconds-contract-orders`, query);
   const response = await listAgentFinancialRows<AgentUserSecondsContractOrder>(endpoint, 'orders', {
     requiredFields: [
@@ -389,7 +476,7 @@ export async function getAgentUserSecondsContractOrders(
     nullableTimestampFields: ['settled_at'],
     enumFields: {
       direction: ['up', 'down'],
-      status: ['opened', 'settled', 'manual_review']
+      status: ['opened', 'settled', 'manual_review', 'refunded']
     },
     nullableEnumFields: { result: ['win', 'loss'] }
   });
@@ -401,6 +488,7 @@ export function getAgentInviteCodes(): Promise<AgentInviteCodesResponse> {
 }
 
 export function createAgentInviteCode(usageLimit?: number): Promise<AgentInviteCode> {
+  if (usageLimit !== undefined) requiredSafeInteger(usageLimit, '使用上限', 1, 2_147_483_647);
   return agentRequest<AgentInviteCode>('/agent/api/v1/invite-codes', {
     method: 'POST',
     body: JSON.stringify({ usage_limit: usageLimit })
@@ -408,6 +496,7 @@ export function createAgentInviteCode(usageLimit?: number): Promise<AgentInviteC
 }
 
 export function updateAgentInviteCodeStatus(inviteCodeId: number, status: 'active' | 'disabled'): Promise<AgentInviteCode> {
+  requiredSafeInteger(inviteCodeId, '邀请码ID', 1);
   return agentRequest<AgentInviteCode>(`/agent/api/v1/invite-codes/${inviteCodeId}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status })
